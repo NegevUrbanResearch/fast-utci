@@ -1,0 +1,21 @@
+# Core dependencies for fast-utci
+trimesh
+ladybug-core
+numpy
+pandas
+
+# Visualization dependencies
+matplotlib
+plotly
+
+# Scientific computing
+scipy
+
+# Future UTCI calculation dependencies
+pythermalcomfort
+
+
+# Optional dependencies for enhanced functionality
+# These may be needed for specific features
+# honeybee-radiance>=1.50.0  # Uncomment if using honeybee-radiance
+# open3d>=0.13.0  # Uncomment if using Open3D for advanced 3D processing
