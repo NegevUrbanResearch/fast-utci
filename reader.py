@@ -56,7 +56,7 @@ def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
     
     epw = EPW(str(file_path))
     
-    # Extract data for UTCI calculations
+    # Extract data for UTCI calculations and SolarCal model
     data = {
         'datetime': epw.dry_bulb_temperature.datetimes,
         'air_temp': epw.dry_bulb_temperature.values,
@@ -64,23 +64,28 @@ def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
         'relative_humidity': epw.relative_humidity.values,
         'global_horizontal_radiation': epw.global_horizontal_radiation.values,
         'direct_normal_radiation': epw.direct_normal_radiation.values,
-        'diffuse_horizontal_radiation': epw.diffuse_horizontal_radiation.values
+        'diffuse_horizontal_radiation': epw.diffuse_horizontal_radiation.values,
+        'horizontal_infrared_radiation_intensity': epw.horizontal_infrared_radiation_intensity.values,
+        'surface_temp': epw.dry_bulb_temperature.values  # Use air temp as surface temp default
     }
     
     return pd.DataFrame(data)
 
 # for convenience
 def read_project_data(model_path: Union[str, Path], 
-                     weather_path: Union[str, Path]) -> Tuple[trimesh.Trimesh, pd.DataFrame]:
+                     weather_path: Union[str, Path]) -> Tuple[trimesh.Trimesh, pd.DataFrame, EPW]:
     """
     Read model and weather data for UTCI calculations.
     
-    Returns model mesh ready for Radiance and weather DataFrame for MRT calculation.
+    Returns model mesh ready for Radiance, weather DataFrame for MRT calculation, and original EPW object.
     """
     model = read_model(model_path)
     weather_df = read_weather_data(weather_path)
     
-    return model, weather_df
+    # Also return the original EPW object for SolarCal calculations
+    epw = EPW(str(weather_path))
+    
+    return model, weather_df, epw
 
 
 

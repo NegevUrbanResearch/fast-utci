@@ -11,11 +11,18 @@ plotly
 # Scientific computing
 scipy
 
-# Future UTCI calculation dependencies
+# UTCI calculation dependencies
 pythermalcomfort
 
+# MRT Calculator - Radiance integration
+honeybee-radiance  # For Radiance simulations and MRT calculations
+ladybug-comfort # For OutdoorSolarCal and SolarBodyParameter
+joblib  # Parallel processing for MRT calculations
+
+# Progress tracking and performance
+tqdm>=4.60.0  # Progress bars
+psutil>=5.8.0  # System monitoring
 
 # Optional dependencies for enhanced functionality
 # These may be needed for specific features
-# honeybee-radiance>=1.50.0  # Uncomment if using honeybee-radiance
 # open3d>=0.13.0  # Uncomment if using Open3D for advanced 3D processing

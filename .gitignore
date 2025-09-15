@@ -1,6 +1,6 @@
 # Environments
 .env
 .venv
-.cursor
-PRDs
 __pycache__
+.cursor
+cache
