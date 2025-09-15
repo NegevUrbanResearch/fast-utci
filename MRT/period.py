@@ -24,18 +24,12 @@ class AnalysisPeriod:
     
     def __post_init__(self):
         """Validate analysis period parameters."""
-        if not (1 <= self.start_month <= 12):
-            raise ValueError(f"Invalid start_month: {self.start_month}")
-        if not (1 <= self.start_day <= 31):
-            raise ValueError(f"Invalid start_day: {self.start_day}")
-        if not (0 <= self.start_hour <= 23):
-            raise ValueError(f"Invalid start_hour: {self.start_hour}")
-        if not (1 <= self.end_month <= 12):
-            raise ValueError(f"Invalid end_month: {self.end_month}")
-        if not (1 <= self.end_day <= 31):
-            raise ValueError(f"Invalid end_day: {self.end_day}")
-        if not (0 <= self.end_hour <= 23):
-            raise ValueError(f"Invalid end_hour: {self.end_hour}")
+        assert 1 <= self.start_month <= 12, f"Invalid start_month: {self.start_month}"
+        assert 1 <= self.start_day <= 31, f"Invalid start_day: {self.start_day}"
+        assert 0 <= self.start_hour <= 23, f"Invalid start_hour: {self.start_hour}"
+        assert 1 <= self.end_month <= 12, f"Invalid end_month: {self.end_month}"
+        assert 1 <= self.end_day <= 31, f"Invalid end_day: {self.end_day}"
+        assert 0 <= self.end_hour <= 23, f"Invalid end_hour: {self.end_hour}"
 
 
 def create_analysis_period(start_month: int, start_day: int, 
@@ -141,8 +135,7 @@ def filter_weather_data(weather_df: pd.DataFrame,
     Returns:
         Filtered weather DataFrame
     """
-    if 'datetime' not in weather_df.columns:
-        raise ValueError("Weather DataFrame must have 'datetime' column")
+    assert 'datetime' in weather_df.columns, "Weather DataFrame must have 'datetime' column"
     
     # Convert datetime column to list for mask creation
     datetimes = weather_df['datetime'].tolist()
@@ -188,33 +181,6 @@ def filter_arrays_by_period(arrays_dict: dict,
     return filtered_arrays, filtered_datetimes
 
 
-def get_august_15_analysis_period() -> AnalysisPeriod:
-    """
-    Get analysis period for August 15th (for validation testing).
-    
-    Returns:
-        AnalysisPeriod for August 15th, all hours
-    """
-    return create_analysis_period(
-        start_month=8, start_day=15,
-        end_month=8, end_day=15,
-        start_hour=0, end_hour=23
-    )
-
-
-def get_hour_13_14_filter() -> List[int]:
-    """
-    Get hour filter for hour 13 (1-2 PM) for validation testing.
-    
-    The file name "13_14" refers to the time period 13:00-14:00 (1-2 PM),
-    which is represented by hour 13 in the EPW data.
-    
-    Returns:
-        List of hours [13]
-    """
-    return [13]  # Hour 13 represents the 1-2 PM period (13:00-14:00)
-
-
 def create_validation_period_filter() -> Tuple[AnalysisPeriod, List[int]]:
     """
     Create analysis period and hour filter for validation against GH data.
@@ -225,6 +191,12 @@ def create_validation_period_filter() -> Tuple[AnalysisPeriod, List[int]]:
     Returns:
         Tuple of (analysis_period, target_hours)
     """
-    period = get_august_15_analysis_period()
-    hours = get_hour_13_14_filter()
+    period = create_analysis_period(
+        start_month=8, start_day=15,
+        end_month=8, end_day=15,
+        start_hour=0, end_hour=23
+    )
+    hours = [13]  # Hour 13 represents the 1-2 PM period (13:00-14:00)
     return period, hours
+
+

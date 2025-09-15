@@ -10,21 +10,15 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 import warnings
 
-try:
-    from ladybug_comfort.collection.solarcal import OutdoorSolarCal
-    from ladybug_comfort.parameter.solarcal import SolarCalParameter
-    from ladybug.datacollection import HourlyContinuousCollection
-    from ladybug.datatype.temperature import Temperature
-    from ladybug.datatype.energyflux import EnergyFlux
-    from ladybug.header import Header
-    from ladybug.location import Location
-    LADYBUG_AVAILABLE = True
-except ImportError as e:
-    warnings.warn(f"ladybug-comfort not available: {e}. SolarCal will be limited.")
-    LADYBUG_AVAILABLE = False
-    # Create dummy classes for type hints when ladybug not available
-    class Location: pass
-    class SolarCalParameter: pass
+from ladybug_comfort.collection.solarcal import OutdoorSolarCal
+from ladybug_comfort.parameter.solarcal import SolarCalParameter
+from ladybug.datacollection import HourlyContinuousCollection, HourlyDiscontinuousCollection
+from ladybug.datatype.temperature import Temperature
+from ladybug.datatype.energyflux import EnergyFlux
+from ladybug.datatype.fraction import Fraction
+from ladybug.header import Header
+from ladybug.location import Location
+from ladybug.analysisperiod import AnalysisPeriod
 
 
 @dataclass 
@@ -38,7 +32,7 @@ class SolarCalResult:
 
 
 def create_solar_body_parameters(absorptivity: float = 0.7,
-                                emissivity: float = 0.95) -> Optional[Any]:
+                                emissivity: float = 0.95) -> SolarCalParameter:
     """
     Create SolarCalParameter object for human body characteristics.
     
@@ -47,11 +41,8 @@ def create_solar_body_parameters(absorptivity: float = 0.7,
         emissivity: Longwave emissivity of skin/clothing (0-1)
         
     Returns:
-        SolarCalParameter object or None if ladybug-comfort not available
+        SolarCalParameter object
     """
-    if not LADYBUG_AVAILABLE:
-        return None
-        
     return SolarCalParameter(
         body_absorptivity=absorptivity,
         body_emissivity=emissivity
@@ -67,8 +58,7 @@ def compute_mrt_solarcal(air_temperature: np.ndarray,
                         location: Location,
                         datetimes: Any,
                         ground_reflectance: float = 0.25,
-                        solar_body_par: Optional[Any] = None,
-                        epw_data: Optional[Any] = None) -> SolarCalResult:
+                        solar_body_par: Optional[SolarCalParameter] = None) -> SolarCalResult:
     """
     Compute MRT using ladybug-comfort OutdoorSolarCal for parity with Grasshopper.
     
@@ -87,124 +77,70 @@ def compute_mrt_solarcal(air_temperature: np.ndarray,
     Returns:
         SolarCalResult with MRT and component values
     """
-    if not LADYBUG_AVAILABLE:
-        # Fallback: return air temperature as MRT
-        warnings.warn("ladybug-comfort not available. Using air temperature as MRT.")
-        n_hours = len(air_temperature)
-        return SolarCalResult(
-            mrt=air_temperature.copy(),
-            short_erf=np.zeros(n_hours),
-            long_erf=np.zeros(n_hours),
-            short_dmrt=np.zeros(n_hours),
-            long_dmrt=np.zeros(n_hours)
-        )
+    # Create SolarCal wrapper and compute
+    wrapper = SolarCalWrapper(location, ground_reflectance, solar_body_par)
+    return wrapper.compute_mrt(
+        air_temperature, direct_normal_rad, diffuse_horizontal_rad,
+        horizontal_infrared_rad, fract_body_exp, sky_exposure, datetimes
+    )
+
+
+class SolarCalWrapper:
+    """Simplified wrapper for SolarCal calculations."""
     
-    try:
-        # Create analysis period for the headers
-        from ladybug.analysisperiod import AnalysisPeriod
+    def __init__(self, location: Location, ground_reflectance: float = 0.25, 
+                 solar_body_par: Optional[SolarCalParameter] = None):
+        self.location = location
+        self.ground_reflectance = ground_reflectance
+        self.solar_body_par = solar_body_par or create_solar_body_parameters()
+    
+    def compute_mrt(self, air_temperature: np.ndarray, direct_normal_rad: np.ndarray,
+                   diffuse_horizontal_rad: np.ndarray, horizontal_infrared_rad: np.ndarray,
+                   fract_body_exp: np.ndarray, sky_exposure: float, datetimes: Any) -> SolarCalResult:
+        """Compute MRT with simplified collection handling."""
         
-        # For proper SolarCal operation, we need to provide full daily data
-        # and let SolarCal handle the filtering, just like Grasshopper does
-        dt = datetimes[0]  # Use first datetime to determine the day
+        # Create analysis period header
+        dt = datetimes[0] if hasattr(datetimes, '__len__') else datetimes
         analysis_period_header = AnalysisPeriod(dt.month, dt.day, 0, dt.month, dt.day, 23)
         
-        # Create ladybug data collections
-        temp_header = Header(Temperature(), 'C', analysis_period_header, {'location': location})
-        flux_header = Header(EnergyFlux(), 'W/m2', analysis_period_header, {'location': location})
+        # Create headers
+        temp_header = Header(Temperature(), 'C', analysis_period_header, {'location': self.location})
+        flux_header = Header(EnergyFlux(), 'W/m2', analysis_period_header, {'location': self.location})
         
-        # For single hour data, use HourlyDiscontinuousCollection instead
-        from ladybug.datacollection import HourlyDiscontinuousCollection
-        if len(datetimes) == 1:
-            air_temp_coll = HourlyDiscontinuousCollection(temp_header, air_temperature, datetimes)
-            dir_norm_coll = HourlyDiscontinuousCollection(flux_header, direct_normal_rad, datetimes)
-            diff_horiz_coll = HourlyDiscontinuousCollection(flux_header, diffuse_horizontal_rad, datetimes)
-            horiz_ir_coll = HourlyDiscontinuousCollection(flux_header, horizontal_infrared_rad, datetimes)
+        # Create collections - use discontinuous for single values
+        is_single_value = len(air_temperature) == 1 if hasattr(air_temperature, '__len__') else True
+        
+        if is_single_value:
+            air_temp_coll = HourlyDiscontinuousCollection(temp_header, air_temperature, [dt])
+            dir_norm_coll = HourlyDiscontinuousCollection(flux_header, direct_normal_rad, [dt])
+            diff_horiz_coll = HourlyDiscontinuousCollection(flux_header, diffuse_horizontal_rad, [dt])
+            horiz_ir_coll = HourlyDiscontinuousCollection(flux_header, horizontal_infrared_rad, [dt])
         else:
             air_temp_coll = HourlyContinuousCollection(temp_header, air_temperature)
             dir_norm_coll = HourlyContinuousCollection(flux_header, direct_normal_rad)
             diff_horiz_coll = HourlyContinuousCollection(flux_header, diffuse_horizontal_rad)
             horiz_ir_coll = HourlyContinuousCollection(flux_header, horizontal_infrared_rad)
         
-        # Handle fract_body_exp - can be scalar or time series
-        if np.isscalar(fract_body_exp) or len(np.unique(fract_body_exp)) == 1:
-            # Use scalar value
+        # Handle fract_body_exp
+        if np.isscalar(fract_body_exp) or (hasattr(fract_body_exp, '__len__') and len(np.unique(fract_body_exp)) == 1):
             fract_exp_input = float(fract_body_exp[0] if hasattr(fract_body_exp, '__len__') else fract_body_exp)
         else:
-            # Use time series - create collection
-            from ladybug.datatype.fraction import Fraction
-            fract_header = Header(Fraction(), 'fraction', location)
-            fract_exp_input = HourlyContinuousCollection(fract_header, fract_body_exp, datetimes)
+            fract_header = Header(Fraction(), 'fraction', self.location)
+            fract_exp_input = HourlyContinuousCollection(fract_header, fract_body_exp)
         
-        # Create default body parameters if not provided
-        if solar_body_par is None:
-            solar_body_par = create_solar_body_parameters()
-        
-        # Create OutdoorSolarCal object
+        # Create SolarCal and compute
         solar_cal = OutdoorSolarCal(
-            location,
-            dir_norm_coll,
-            diff_horiz_coll,
-            horiz_ir_coll,
-            air_temp_coll,        # surface_temperatures
-            fract_exp_input,      # fraction_body_exposed
-            sky_exposure,         # sky_exposure
-            ground_reflectance,   # floor_reflectance
-            solar_body_par        # solarcal_body_parameter
+            self.location, dir_norm_coll, diff_horiz_coll, horiz_ir_coll,
+            air_temp_coll, fract_exp_input, sky_exposure, 
+            self.ground_reflectance, self.solar_body_par
         )
         
-        # Extract results
-        mrt_values = np.array(solar_cal.mean_radiant_temperature.values)
-        short_erf_values = np.array(solar_cal.shortwave_effective_radiant_field.values)
-        long_erf_values = np.array(solar_cal.longwave_effective_radiant_field.values) 
-        short_dmrt_values = np.array(solar_cal.shortwave_mrt_delta.values)
-        long_dmrt_values = np.array(solar_cal.longwave_mrt_delta.values)
-        
         return SolarCalResult(
-            mrt=mrt_values,
-            short_erf=short_erf_values,
-            long_erf=long_erf_values,
-            short_dmrt=short_dmrt_values,
-            long_dmrt=long_dmrt_values
-        )
-        
-    except Exception as e:
-        warnings.warn(f"SolarCal calculation failed: {e}. Using air temperature as MRT.")
-        n_hours = len(air_temperature)
-        return SolarCalResult(
-            mrt=air_temperature.copy(),
-            short_erf=np.zeros(n_hours),
-            long_erf=np.zeros(n_hours), 
-            short_dmrt=np.zeros(n_hours),
-            long_dmrt=np.zeros(n_hours)
+            mrt=np.array(solar_cal.mean_radiant_temperature.values),
+            short_erf=np.array(solar_cal.shortwave_effective_radiant_field.values),
+            long_erf=np.array(solar_cal.longwave_effective_radiant_field.values),
+            short_dmrt=np.array(solar_cal.shortwave_mrt_delta.values),
+            long_dmrt=np.array(solar_cal.longwave_mrt_delta.values)
         )
 
 
-def simple_mrt_approximation(air_temperature: np.ndarray,
-                           direct_normal_rad: np.ndarray,
-                           diffuse_horizontal_rad: np.ndarray,
-                           fract_body_exp: np.ndarray,
-                           absorptivity: float = 0.7) -> np.ndarray:
-    """
-    Simple MRT approximation for cases where ladybug-comfort is not available.
-    
-    This is a basic approximation and should not be used for final results.
-    The proper SolarCal implementation is needed for accuracy.
-    
-    Args:
-        air_temperature: Air temperature array (°C)
-        direct_normal_rad: Direct normal radiation (W/m²)
-        diffuse_horizontal_rad: Diffuse horizontal radiation (W/m²)
-        fract_body_exp: Solar exposure fraction (0-1)
-        absorptivity: Solar absorptivity (0-1)
-        
-    Returns:
-        Approximate MRT values (°C)
-    """
-    # Very simple approximation: add solar heating to air temperature
-    # This is NOT accurate and only for fallback when ladybug is unavailable
-    
-    # Estimate solar heating effect
-    total_solar = direct_normal_rad * fract_body_exp + diffuse_horizontal_rad * 0.5
-    solar_heating = absorptivity * total_solar / 20.0  # Rough conversion to °C
-    
-    return air_temperature + solar_heating

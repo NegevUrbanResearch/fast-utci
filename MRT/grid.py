@@ -174,30 +174,25 @@ def load_surface_and_create_grid(surface_file: str,
     Returns:
         AnalysisGrid generated from loaded surface
     """
-    try:
-        loaded = trimesh.load(surface_file)
-        
-        if isinstance(loaded, trimesh.Trimesh):
-            surface_mesh = loaded
-        elif isinstance(loaded, trimesh.Scene):
-            # Use first mesh in scene
-            meshes = [geom for geom in loaded.geometry.values() 
-                     if isinstance(geom, trimesh.Trimesh)]
-            if not meshes:
-                raise ValueError("No valid meshes found in scene")
-            surface_mesh = meshes[0]
-        else:
-            raise ValueError(f"Unsupported file type: {type(loaded)}")
-        
-        return create_grid_from_surface(
-            surface_mesh.vertices,
-            surface_mesh.faces,
-            grid_size,
-            offset_distance
-        )
-        
-    except Exception as e:
-        raise ValueError(f"Failed to load surface from {surface_file}: {e}")
+    loaded = trimesh.load(surface_file)
+    
+    if isinstance(loaded, trimesh.Trimesh):
+        surface_mesh = loaded
+    elif isinstance(loaded, trimesh.Scene):
+        # Use first mesh in scene
+        meshes = [geom for geom in loaded.geometry.values() 
+                 if isinstance(geom, trimesh.Trimesh)]
+        assert meshes, "No valid meshes found in scene"
+        surface_mesh = meshes[0]
+    else:
+        raise ValueError(f"Unsupported file type: {type(loaded)}")
+    
+    return create_grid_from_surface(
+        surface_mesh.vertices,
+        surface_mesh.faces,
+        grid_size,
+        offset_distance
+    )
 
 
 def filter_grid_by_bounds(grid: AnalysisGrid,

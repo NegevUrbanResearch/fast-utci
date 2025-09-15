@@ -13,6 +13,72 @@ import warnings
 
 from .solar import SunData, get_tregenza_dome_vectors
 from .mesh import MeshContext, batch_ray_intersections
+from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, DEFAULT_BATCH_SIZE
+
+# Global cache for sky vectors (computed once, reused across all positions)
+_sky_vectors_cache = None
+_sky_weights_cache = None
+
+def _get_cached_sky_vectors():
+    """Get cached sky vectors, computing them once if needed."""
+    global _sky_vectors_cache, _sky_weights_cache
+    if _sky_vectors_cache is None:
+        _sky_vectors_cache, _sky_weights_cache = get_tregenza_dome_vectors()
+        # Ensure optimal memory layout for better cache performance
+        _sky_vectors_cache = np.ascontiguousarray(_sky_vectors_cache, dtype=np.float64)
+        _sky_weights_cache = np.ascontiguousarray(_sky_weights_cache, dtype=np.float64)
+    return _sky_vectors_cache, _sky_weights_cache
+
+def _get_optimal_batch_size(n_rays: int, ray_type: str = "mixed") -> int:
+    """
+    Calculate optimal batch size based on ray count, type, and available memory.
+    
+    Args:
+        n_rays: Number of rays to process
+        ray_type: Type of rays ("sky", "solar", or "mixed")
+        
+    Returns:
+        Optimal batch size that balances performance and memory safety
+    """
+    import psutil
+    
+    # Base batch sizes optimized for different ray types
+    if ray_type == "sky":
+        # Sky rays: typically 145 rays per position, can use larger batches
+        base_batch_size = 20000
+    elif ray_type == "solar":
+        # Solar rays: typically 1 ray per position, use smaller batches
+        base_batch_size = 5000
+    else:
+        # Mixed or unknown: use default
+        base_batch_size = DEFAULT_BATCH_SIZE
+    
+    try:
+        # Get available memory (in bytes)
+        available_memory = psutil.virtual_memory().available
+        
+        # Estimate memory needed per ray (origins + directions + results)
+        # 3 floats for origin + 3 floats for direction + 1 bool for result = 7 * 8 bytes
+        memory_per_ray = 7 * 8  # 56 bytes per ray
+        
+        # Use 25% of available memory for ray processing (more generous than before)
+        max_memory_for_rays = available_memory * 0.25
+        
+        # Calculate maximum safe batch size
+        max_safe_batch = int(max_memory_for_rays / memory_per_ray)
+        
+        # Use the smaller of: base_batch_size, max_safe_batch, or n_rays
+        optimal_batch_size = min(base_batch_size, max_safe_batch, n_rays)
+        
+        # Ensure minimum batch size for efficiency
+        min_batch_size = 100 if ray_type == "solar" else 500
+        optimal_batch_size = max(min_batch_size, optimal_batch_size)
+        
+        return optimal_batch_size
+        
+    except Exception:
+        # Fallback to conservative batch size if memory detection fails
+        return min(base_batch_size, n_rays, 5000)
 
 
 @dataclass
@@ -25,8 +91,8 @@ class ExposureResult:
 
 
 def create_human_sample_points(position: np.ndarray,
-                              pt_count: int = 1,
-                              height: float = 1.8) -> np.ndarray:
+                              pt_count: int = DEFAULT_PT_COUNT,
+                              height: float = DEFAULT_HUMAN_HEIGHT) -> np.ndarray:
     """
     Create vertical sample points representing human body for exposure testing.
     
@@ -40,20 +106,26 @@ def create_human_sample_points(position: np.ndarray,
     """
     position = np.asarray(position)
     
+    # Pre-allocate array for better performance
+    sample_points = np.empty((pt_count, 3), dtype=np.float64)
+    
     if pt_count == 1:
         # Single point at mid-height
-        sample_z = position[2] + height / 2
-        return np.array([[position[0], position[1], sample_z]])
+        sample_points[0, 0] = position[0]
+        sample_points[0, 1] = position[1]
+        sample_points[0, 2] = position[2] + height / 2
     else:
         # Multiple points distributed along height
         z_offsets = np.linspace(height * 0.1, height * 0.9, pt_count)
-        sample_points = []
         
-        for z_offset in z_offsets:
-            sample_z = position[2] + z_offset
-            sample_points.append([position[0], position[1], sample_z])
-            
-        return np.array(sample_points)
+        # Fill X and Y coordinates (same for all points)
+        sample_points[:, 0] = position[0]
+        sample_points[:, 1] = position[1]
+        
+        # Fill Z coordinates (distributed along height)
+        sample_points[:, 2] = position[2] + z_offsets
+        
+    return sample_points
 
 
 def compute_solar_exposure(sample_points: np.ndarray,
@@ -93,16 +165,17 @@ def compute_solar_exposure(sample_points: np.ndarray,
             # No occlusion context - full exposure when sun is up
             fract_body_exp[hour_idx] = 1.0
         else:
-            # Test occlusion for each sample point
-            # Rays point FROM sample points TOWARD sun (reverse of sun vector)
-            ray_directions = np.tile(-sun_vector, (n_points, 1))
+            # Pre-allocate ray directions array (more efficient than np.tile)
+            ray_directions = np.empty((n_points, 3), dtype=np.float64)
+            ray_directions[:] = -sun_vector  # Broadcast -sun_vector to all rows
             
-            # Test ray intersections
+            # Test ray intersections with optimized batch sizing
+            optimal_batch_size = _get_optimal_batch_size(n_points, "solar")
             hits = batch_ray_intersections(
                 origins=sample_points,
                 directions=ray_directions,
                 mesh_context=mesh_context,
-                batch_size=min(1000, n_points)
+                batch_size=optimal_batch_size
             )
             
             # Fraction of points NOT occluded (visible to sun)
@@ -132,31 +205,35 @@ def compute_sky_exposure(sample_points: np.ndarray,
         # No occlusion - full sky exposure
         return 1.0
     
-    # Get Tregenza dome vectors and weights
-    sky_vectors, sky_weights = get_tregenza_dome_vectors()
+    # Get cached Tregenza dome vectors and weights (computed once globally)
+    sky_vectors, sky_weights = _get_cached_sky_vectors()
     n_sky_patches = len(sky_vectors)
     
-    # Test sky visibility for each sample point
+    # Pre-allocate arrays for better performance
     total_visible_weight = 0.0
     total_weight = np.sum(sky_weights)
+    
+    # Pre-allocate ray origins array (reused for each point)
+    ray_origins = np.empty((n_sky_patches, 3), dtype=np.float64)
     
     point_iter = range(n_points)
     if show_progress and n_points > 1:
         point_iter = tqdm(point_iter, desc="Computing sky exposure", unit="points")
     
     for point_idx in point_iter:
-        point = sample_points[point_idx:point_idx+1]  # Keep 2D shape
+        point = sample_points[point_idx]
         
-        # Create rays pointing to each sky patch
-        ray_origins = np.tile(point, (n_sky_patches, 1))
-        ray_directions = sky_vectors
+        # Fill pre-allocated ray origins array (more efficient than np.tile)
+        ray_origins[:] = point  # Broadcast point to all rows
         
-        # Test intersections
+        # Test intersections (sky_vectors are already pre-computed)
+        # Test intersections with sky patches using optimized batch sizing
+        optimal_batch_size = _get_optimal_batch_size(n_sky_patches, "sky")
         hits = batch_ray_intersections(
             origins=ray_origins,
-            directions=ray_directions,
+            directions=sky_vectors,
             mesh_context=mesh_context,
-            batch_size=min(1000, n_sky_patches)
+            batch_size=optimal_batch_size
         )
         
         # Sum weights of visible (non-occluded) sky patches
@@ -173,8 +250,8 @@ def compute_sky_exposure(sample_points: np.ndarray,
 def compute_exposure(position: np.ndarray,
                     sun_data: SunData,
                     mesh_context: Optional[MeshContext] = None,
-                    pt_count: int = 1,
-                    height: float = 1.8,
+                    pt_count: int = DEFAULT_PT_COUNT,
+                    height: float = DEFAULT_HUMAN_HEIGHT,
                     show_progress: bool = True) -> ExposureResult:
     """
     Compute both solar and sky exposure for a single position.
@@ -214,8 +291,8 @@ def compute_exposure(position: np.ndarray,
 def compute_exposure_batch(positions: np.ndarray,
                           sun_data: SunData,
                           mesh_context: Optional[MeshContext] = None,
-                          pt_count: int = 1,
-                          height: float = 1.8,
+                          pt_count: int = DEFAULT_PT_COUNT,
+                          height: float = DEFAULT_HUMAN_HEIGHT,
                           show_progress: bool = True,
                           n_workers: Optional[int] = None) -> List[ExposureResult]:
     """
@@ -235,8 +312,8 @@ def compute_exposure_batch(positions: np.ndarray,
     """
     n_positions = len(positions)
     
-    # For small datasets, use serial processing to avoid overhead
-    if n_positions < 50 or mesh_context is None:
+    # Use serial processing for small datasets or when no context
+    if n_positions < 100 or mesh_context is None:
         return _compute_exposure_serial(positions, sun_data, mesh_context, pt_count, height, show_progress)
     
     # Use parallel processing for larger datasets
@@ -255,7 +332,10 @@ def _compute_exposure_serial(positions: np.ndarray,
     
     position_iter = range(n_positions)
     if show_progress:
-        position_iter = tqdm(position_iter, desc="Computing exposure (serial)", unit="pos")
+        # Use minimal progress bar settings to reduce overhead
+        position_iter = tqdm(position_iter, desc="Computing exposure (serial)", 
+                           unit="pos", mininterval=1.0, maxinterval=5.0, 
+                           smoothing=0.1, leave=False)
     
     for pos_idx in position_iter:
         position = positions[pos_idx]
@@ -283,121 +363,94 @@ def _compute_exposure_parallel(positions: np.ndarray,
                              n_workers: Optional[int]) -> List[ExposureResult]:
     """Parallel exposure computation for larger datasets."""
     import multiprocessing as mp
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from multiprocessing import Pool, Queue
+    import time
     
     n_positions = len(positions)
     
     if n_workers is None:
         n_workers = max(1, mp.cpu_count() - 1)
     
-    # Split positions into chunks for parallel processing
-    chunk_size = max(1, n_positions // (n_workers * 2))  # 2x workers for better load balancing
+    # Sort positions spatially for better cache locality when accessing mesh data
+    # Sort by X coordinate first, then Y, then Z for consistent ordering
+    sorted_indices = np.lexsort((positions[:, 2], positions[:, 1], positions[:, 0]))
+    sorted_positions = positions[sorted_indices]
+    
+    # Create chunks with improved load balancing
+    # Use dynamic chunk sizing to ensure more even distribution
+    base_chunk_size = max(100, n_positions // n_workers)
     chunks = []
     
-    for i in range(0, n_positions, chunk_size):
-        end_idx = min(i + chunk_size, n_positions)
-        chunks.append((i, positions[i:end_idx]))
+    # Distribute positions more evenly across workers
+    positions_per_worker = n_positions // n_workers
+    extra_positions = n_positions % n_workers
+    
+    start_idx = 0
+    for worker_id in range(n_workers):
+        # Some workers get one extra position for better load balancing
+        chunk_size = positions_per_worker + (1 if worker_id < extra_positions else 0)
+        end_idx = start_idx + chunk_size
+        
+        if start_idx < n_positions:
+            chunks.append(sorted_positions[start_idx:end_idx])
+            start_idx = end_idx
     
     print(f"Processing {n_positions} positions with {n_workers} workers in {len(chunks)} chunks")
     
     # Process chunks in parallel
-    results = [None] * n_positions  # Pre-allocate results list
-    
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        # Submit all chunks
-        future_to_chunk = {}
-        for chunk_idx, (start_idx, chunk_positions) in enumerate(chunks):
-            future = executor.submit(
-                _process_exposure_chunk,
-                chunk_positions,
-                sun_data,
-                mesh_context,
-                pt_count,
-                height,
-                chunk_idx
-            )
-            future_to_chunk[future] = (chunk_idx, start_idx, len(chunk_positions))
+    if show_progress:
+        # Use simpler progress tracking without Queue (avoid multiprocessing issues)
+        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None) for chunk in chunks]
         
-        # Collect results with progress tracking
-        completed_positions = 0
-        
-        if show_progress:
-            pbar = tqdm(total=n_positions, desc="Computing exposure (parallel)", unit="pos")
-        
-        for future in as_completed(future_to_chunk):
-            chunk_idx, start_idx, chunk_size = future_to_chunk[future]
+        with Pool(processes=n_workers) as pool:
+            # Use imap for progress tracking
+            results = []
+            start_time = time.time()
             
-            try:
-                chunk_results = future.result()
+            with tqdm(total=n_positions, desc="Computing exposure", unit="pos", 
+                     mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
                 
-                # Store results in correct positions
-                for i, result in enumerate(chunk_results):
-                    results[start_idx + i] = result
-                
-                completed_positions += len(chunk_results)
-                
-                if show_progress:
-                    pbar.update(len(chunk_results))
-                    
-            except Exception as e:
-                print(f"Chunk {chunk_idx} failed: {e}")
-                # Fill with dummy results to maintain list structure
-                for i in range(chunk_size):
-                    dummy_result = ExposureResult(
-                        fract_body_exp=np.array([0.0]),
-                        sky_exposure=0.0,
-                        position=positions[start_idx + i],
-                        sample_points=np.array([[0, 0, 0]])
-                    )
-                    results[start_idx + i] = dummy_result
-                
-                if show_progress:
+                for chunk_results in pool.imap(_compute_exposure_chunk, chunk_args):
+                    results.extend(chunk_results)
+                    chunk_size = len(chunk_results)
                     pbar.update(chunk_size)
-        
-        if show_progress:
-            pbar.close()
+                    
+                    # Update description with time estimate
+                    elapsed = time.time() - start_time
+                    if elapsed > 0:
+                        rate = pbar.n / elapsed
+                        eta = (n_positions - pbar.n) / rate if rate > 0 else 0
+                        pbar.set_description(f"Computing exposure ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
+                
+    else:
+        # No progress bar - use simple processing
+        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None) for chunk in chunks]
+        with Pool(processes=n_workers) as pool:
+            chunk_results_list = pool.map(_compute_exposure_chunk, chunk_args)
+            results = []
+            for chunk_results in chunk_results_list:
+                results.extend(chunk_results)
     
-    # Filter out any None results
-    final_results = [r for r in results if r is not None]
-    
-    if len(final_results) != n_positions:
-        print(f"Warning: Expected {n_positions} results, got {len(final_results)}")
-    
-    return final_results
+    return results
 
 
-def _process_exposure_chunk(positions: np.ndarray,
-                          sun_data: SunData,
-                          mesh_context: MeshContext,
-                          pt_count: int,
-                          height: float,
-                          chunk_idx: int) -> List[ExposureResult]:
-    """Process a chunk of positions in a separate process."""
-    try:
-        chunk_results = []
-        
-        for position in positions:
-            result = compute_exposure(
-                position=position,
-                sun_data=sun_data,
-                mesh_context=mesh_context,
-                pt_count=pt_count,
-                height=height,
-                show_progress=False  # No progress bars in worker processes
-            )
-            chunk_results.append(result)
-        
-        return chunk_results
-        
-    except Exception as e:
-        print(f"Error in chunk {chunk_idx}: {e}")
-        # Return dummy results to maintain structure
-        return [
-            ExposureResult(
-                fract_body_exp=np.array([0.0]),
-                sky_exposure=0.0,
-                position=pos,
-                sample_points=np.array([[0, 0, 0]])
-            )
-            for pos in positions
-        ]
+def _compute_exposure_chunk(args):
+    """Worker function for parallel processing of position chunks."""
+    chunk_positions, sun_data, mesh_context, pt_count, height, _ = args
+    n_positions = len(chunk_positions)
+    
+    # Pre-allocate results list for better performance
+    results = [None] * n_positions
+    
+    for i, position in enumerate(chunk_positions):
+        result = compute_exposure(
+            position=position,
+            sun_data=sun_data,
+            mesh_context=mesh_context,
+            pt_count=pt_count,
+            height=height,
+            show_progress=False  # No progress bars in worker processes
+        )
+        results[i] = result
+    
+    return results

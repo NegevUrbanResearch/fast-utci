@@ -31,6 +31,19 @@ except ImportError:
     warnings.warn("ladybug-core not available. EPW handling will be limited.")
     LADYBUG_AVAILABLE = False
 
+# UTCI thermal comfort thresholds
+UTCI_COMFORT_THRESHOLDS = {
+    'extreme_cold': (-float('inf'), -40),
+    'very_cold': (-40, -27),
+    'cold': (-27, -13),
+    'cool': (-13, 9),
+    'comfortable': (9, 26),
+    'warm': (26, 32),
+    'hot': (32, 38),
+    'very_hot': (38, 46),
+    'extreme_hot': (46, float('inf'))
+}
+
 
 class UTCICalculator:
     """
@@ -81,19 +94,14 @@ class UTCICalculator:
             self.weather_df = weather_data.copy()
             self.epw_data = epw_object
         elif isinstance(weather_data, EPW):
-            # Convert EPW to DataFrame
+            # Convert EPW to DataFrame using reader module
             self.epw_data = weather_data
-            self.weather_df = self._epw_to_dataframe(weather_data)
+            self.weather_df = read_weather_data(weather_data)
         else:
             raise ValueError(f"Unsupported weather_data type: {type(weather_data)}")
         
         # Add time columns if not present
-        if 'hour' not in self.weather_df.columns:
-            self.weather_df['hour'] = [dt.hour for dt in self.weather_df['datetime']]
-        if 'month' not in self.weather_df.columns:
-            self.weather_df['month'] = [dt.month for dt in self.weather_df['datetime']]
-        if 'day' not in self.weather_df.columns:
-            self.weather_df['day'] = [dt.day for dt in self.weather_df['datetime']]
+        self._add_time_columns()
         
         print(f"Loaded weather data:")
         if self.epw_data:
@@ -103,25 +111,20 @@ class UTCICalculator:
         print(f"  Wind speed range: {self.weather_df['wind_speed'].min():.1f} to {self.weather_df['wind_speed'].max():.1f} m/s")
         print(f"  Humidity range: {self.weather_df['relative_humidity'].min():.1f} to {self.weather_df['relative_humidity'].max():.1f} %")
     
-    def _epw_to_dataframe(self, epw_data: EPW) -> pd.DataFrame:
-        """Convert EPW data to pandas DataFrame (fallback for direct EPW input)."""
-        data = {
-            'datetime': epw_data.dry_bulb_temperature.datetimes,
-            'air_temp': epw_data.dry_bulb_temperature.values,
-            'relative_humidity': epw_data.relative_humidity.values,
-            'wind_speed': epw_data.wind_speed.values,
-            'wind_direction': epw_data.wind_direction.values,
-            'direct_normal_radiation': epw_data.direct_normal_radiation.values,
-            'diffuse_horizontal_radiation': epw_data.diffuse_horizontal_radiation.values,
-            'horizontal_infrared_radiation_intensity': epw_data.horizontal_infrared_radiation_intensity.values
-        }
-        
-        return pd.DataFrame(data)
+    def _add_time_columns(self) -> None:
+        """Add time columns to weather DataFrame if not present."""
+        if 'hour' not in self.weather_df.columns:
+            self.weather_df['hour'] = [dt.hour for dt in self.weather_df['datetime']]
+        if 'month' not in self.weather_df.columns:
+            self.weather_df['month'] = [dt.month for dt in self.weather_df['datetime']]
+        if 'day' not in self.weather_df.columns:
+            self.weather_df['day'] = [dt.day for dt in self.weather_df['datetime']]
     
     def compute_utci(self, 
                      mrt_results: Dict[str, Any],
                      analysis_period: Optional[Any] = None,
-                     target_hours: Optional[List[int]] = None) -> Dict[str, Any]:
+                     target_hours: Optional[List[int]] = None,
+                     show_progress: bool = False) -> Dict[str, Any]:
         """
         Compute UTCI from MRT results and weather data.
         
@@ -129,6 +132,7 @@ class UTCICalculator:
             mrt_results: Dictionary from MRTCalculator.compute_mrt()
             analysis_period: Optional time period filter
             target_hours: Optional hour filter (0-23)
+            show_progress: Whether to show progress bar
             
         Returns:
             Dictionary with UTCI results per position
@@ -139,67 +143,31 @@ class UTCICalculator:
         if self.weather_df is None:
             raise ValueError("Weather data must be loaded before computing UTCI")
         
-        # Filter weather data
-        weather_filtered = self._filter_weather_data(analysis_period, target_hours)
+        # Prepare weather data once
+        weather_filtered = self._prepare_weather_data(analysis_period, target_hours)
+        
+        # Set up iteration with optional progress bar
+        if show_progress:
+            try:
+                from tqdm import tqdm
+                pos_iter = tqdm(mrt_results.items(), desc="Computing UTCI", unit="pos")
+            except ImportError:
+                pos_iter = mrt_results.items()
+        else:
+            pos_iter = mrt_results.items()
         
         utci_results = {}
         
-        for pos_key, mrt_data in mrt_results.items():
-            mrt_values = mrt_data['mrt']
-            position = mrt_data['position']
-            
-            # Get corresponding weather data
-            n_hours = len(mrt_values)
-            if len(weather_filtered) < n_hours:
-                warnings.warn(f"Weather data length ({len(weather_filtered)}) < MRT data length ({n_hours})")
-                # Pad weather data by repeating last values
-                while len(weather_filtered) < n_hours:
-                    weather_filtered = pd.concat([weather_filtered, weather_filtered.iloc[-1:]], ignore_index=True)
-            
-            # Truncate to match MRT data length
-            weather_subset = weather_filtered.iloc[:n_hours].copy()
-            
-            # Compute UTCI for each hour
-            utci_values = []
-            
-            for i in range(n_hours):
-                try:
-                    utci_result = utci(
-                        tdb=weather_subset.iloc[i]['air_temp'],           # Air temperature [°C]
-                        tr=mrt_values[i],                                 # Mean radiant temperature [°C]
-                        v=weather_subset.iloc[i]['wind_speed'],           # Wind speed [m/s]
-                        rh=weather_subset.iloc[i]['relative_humidity']    # Relative humidity [%]
-                    )
-                    # Extract numeric UTCI value from result
-                    if hasattr(utci_result, 'utci'):
-                        utci_val = float(utci_result.utci)
-                    elif isinstance(utci_result, dict) and 'utci' in utci_result:
-                        utci_val = float(utci_result['utci'])
-                    else:
-                        utci_val = float(utci_result)
-                    
-                    utci_values.append(utci_val)
-                    
-                except Exception as e:
-                    warnings.warn(f"UTCI calculation failed for hour {i}: {e}")
-                    utci_values.append(np.nan)
-            
-            # Store results
-            utci_results[pos_key] = {
-                'position': position,
-                'utci': np.array(utci_values),
-                'mrt': mrt_values,
-                'air_temp': weather_subset['air_temp'].values[:n_hours],
-                'wind_speed': weather_subset['wind_speed'].values[:n_hours],
-                'relative_humidity': weather_subset['relative_humidity'].values[:n_hours],
-                'datetime': weather_subset['datetime'].values[:n_hours] if 'datetime' in weather_subset.columns else None
-            }
+        for pos_key, mrt_data in pos_iter:
+            utci_results[pos_key] = self._calculate_utci_for_position(
+                mrt_data, weather_filtered
+            )
         
         return utci_results
     
-    def _filter_weather_data(self, 
-                           analysis_period: Optional[Any], 
-                           target_hours: Optional[List[int]]) -> pd.DataFrame:
+    def _prepare_weather_data(self, 
+                             analysis_period: Optional[Any], 
+                             target_hours: Optional[List[int]]) -> pd.DataFrame:
         """Filter weather data by analysis period and target hours."""
         df = self.weather_df.copy()
         
@@ -230,83 +198,54 @@ class UTCICalculator:
         
         return df.reset_index(drop=True)
     
-    def compute_utci_batch(self,
-                          mrt_results: Dict[str, Any],
-                          analysis_period: Optional[Any] = None,
-                          target_hours: Optional[List[int]] = None,
-                          show_progress: bool = True) -> Dict[str, Any]:
-        """
-        Compute UTCI for batch of positions with progress tracking.
+    def _calculate_utci_for_position(self, mrt_data: Dict[str, Any], weather_filtered: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate UTCI for a single position."""
+        mrt_values = mrt_data['mrt']
+        position = mrt_data['position']
+        n_hours = len(mrt_values)
         
-        Args:
-            mrt_results: Dictionary from MRTCalculator.compute_mrt()
-            analysis_period: Optional time period filter
-            target_hours: Optional hour filter
-            show_progress: Whether to show progress bar
-            
-        Returns:
-            Dictionary with UTCI results per position
-        """
-        if show_progress:
-            from tqdm import tqdm
-            pos_iter = tqdm(mrt_results.items(), desc="Computing UTCI", unit="pos")
+        # Get corresponding weather data
+        weather_subset = weather_filtered.iloc[:min(n_hours, len(weather_filtered))].copy()
+        
+        # Handle length mismatch by padding with last values
+        if len(weather_subset) < n_hours:
+            last_weather = weather_subset.iloc[-1:] if len(weather_subset) > 0 else weather_filtered.iloc[:1]
+            while len(weather_subset) < n_hours:
+                weather_subset = pd.concat([weather_subset, last_weather], ignore_index=True)
+        
+        # Calculate UTCI for each hour
+        utci_values = []
+        for i in range(n_hours):
+            try:
+                utci_result = utci(
+                    tdb=weather_subset.iloc[i]['air_temp'],
+                    tr=mrt_values[i],
+                    v=weather_subset.iloc[i]['wind_speed'],
+                    rh=weather_subset.iloc[i]['relative_humidity']
+                )
+                utci_values.append(self._extract_utci_value(utci_result))
+            except Exception as e:
+                warnings.warn(f"UTCI calculation failed for hour {i}: {e}")
+                utci_values.append(np.nan)
+        
+        return {
+            'position': position,
+            'utci': np.array(utci_values),
+            'mrt': mrt_values,
+            'air_temp': weather_subset['air_temp'].values[:n_hours],
+            'wind_speed': weather_subset['wind_speed'].values[:n_hours],
+            'relative_humidity': weather_subset['relative_humidity'].values[:n_hours],
+            'datetime': weather_subset['datetime'].values[:n_hours] if 'datetime' in weather_subset.columns else None
+        }
+    
+    def _extract_utci_value(self, utci_result) -> float:
+        """Extract numeric UTCI value from pythermalcomfort result."""
+        if hasattr(utci_result, 'utci'):
+            return float(utci_result.utci)
+        elif isinstance(utci_result, dict) and 'utci' in utci_result:
+            return float(utci_result['utci'])
         else:
-            pos_iter = mrt_results.items()
-        
-        utci_results = {}
-        
-        # Get filtered weather data once
-        weather_filtered = self._filter_weather_data(analysis_period, target_hours)
-        
-        for pos_key, mrt_data in pos_iter:
-            mrt_values = mrt_data['mrt']
-            position = mrt_data['position']
-            
-            # Get corresponding weather data
-            n_hours = len(mrt_values)
-            weather_subset = weather_filtered.iloc[:min(n_hours, len(weather_filtered))].copy()
-            
-            # Handle length mismatch
-            if len(weather_subset) < n_hours:
-                # Repeat last weather entry
-                last_weather = weather_subset.iloc[-1:] if len(weather_subset) > 0 else weather_filtered.iloc[:1]
-                while len(weather_subset) < n_hours:
-                    weather_subset = pd.concat([weather_subset, last_weather], ignore_index=True)
-            
-            # Vectorized UTCI calculation for better performance
-            utci_values = []
-            
-            for i in range(n_hours):
-                try:
-                    utci_result = utci(
-                        tdb=weather_subset.iloc[i]['air_temp'],
-                        tr=mrt_values[i],
-                        v=weather_subset.iloc[i]['wind_speed'],
-                        rh=weather_subset.iloc[i]['relative_humidity']
-                    )
-                    # Extract numeric UTCI value from result
-                    if hasattr(utci_result, 'utci'):
-                        utci_val = float(utci_result.utci)
-                    elif isinstance(utci_result, dict) and 'utci' in utci_result:
-                        utci_val = float(utci_result['utci'])
-                    else:
-                        utci_val = float(utci_result)
-                    
-                    utci_values.append(utci_val)
-                except:
-                    utci_values.append(np.nan)
-            
-            utci_results[pos_key] = {
-                'position': position,
-                'utci': np.array(utci_values),
-                'mrt': mrt_values,
-                'air_temp': weather_subset['air_temp'].values[:n_hours],
-                'wind_speed': weather_subset['wind_speed'].values[:n_hours],
-                'relative_humidity': weather_subset['relative_humidity'].values[:n_hours],
-                'datetime': weather_subset['datetime'].values[:n_hours] if 'datetime' in weather_subset.columns else None
-            }
-        
-        return utci_results
+            return float(utci_result)
     
     def classify_thermal_comfort(self, utci_values: np.ndarray) -> Tuple[np.ndarray, Dict[str, int]]:
         """
@@ -318,19 +257,16 @@ class UTCICalculator:
         Returns:
             Tuple of (comfort_categories, category_counts)
         """
-        # UTCI thermal comfort categories
         categories = np.full(utci_values.shape, 'unknown', dtype=object)
         
-        # Apply UTCI classification
-        categories[utci_values < -40] = 'extreme_cold'
-        categories[(utci_values >= -40) & (utci_values < -27)] = 'very_cold'
-        categories[(utci_values >= -27) & (utci_values < -13)] = 'cold'
-        categories[(utci_values >= -13) & (utci_values < 9)] = 'cool'
-        categories[(utci_values >= 9) & (utci_values < 26)] = 'comfortable'
-        categories[(utci_values >= 26) & (utci_values < 32)] = 'warm'
-        categories[(utci_values >= 32) & (utci_values < 38)] = 'hot'
-        categories[(utci_values >= 38) & (utci_values < 46)] = 'very_hot'
-        categories[utci_values >= 46] = 'extreme_hot'
+        # Apply UTCI classification using constants
+        for category, (min_val, max_val) in UTCI_COMFORT_THRESHOLDS.items():
+            if min_val == -float('inf'):
+                categories[utci_values < max_val] = category
+            elif max_val == float('inf'):
+                categories[utci_values >= min_val] = category
+            else:
+                categories[(utci_values >= min_val) & (utci_values < max_val)] = category
         
         # Count categories
         unique, counts = np.unique(categories, return_counts=True)
@@ -369,7 +305,7 @@ class UTCICalculator:
                     'x': position[0],
                     'y': position[1],
                     'z': position[2],
-                    'hour': i,
+                    'hour': pd.to_datetime(data['datetime'][i]).hour if data['datetime'] is not None and i < len(data['datetime']) else i,
                     'utci': utci_val,
                     'mrt': mrt_val
                 }
@@ -480,8 +416,8 @@ def quick_utci_test(epw_file: str, mrt_results: Dict[str, Any]) -> Tuple[UTCICal
     # Create UTCI calculator using reader module
     utci_calc = UTCICalculator(epw_file)
     
-    # Compute UTCI
-    utci_results = utci_calc.compute_utci_batch(mrt_results)
+    # Compute UTCI with progress bar
+    utci_results = utci_calc.compute_utci(mrt_results, show_progress=True)
     
     # Print summary
     summary = utci_calc.summary_statistics(utci_results)
@@ -557,10 +493,11 @@ def integrated_mrt_utci_workflow(model_file: str,
     utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data)
     
     # Compute UTCI
-    utci_results = utci_calc.compute_utci_batch(
+    utci_results = utci_calc.compute_utci(
         mrt_results=mrt_results,
         analysis_period=analysis_period,
-        target_hours=target_hours
+        target_hours=target_hours,
+        show_progress=True
     )
     
     # Print summary

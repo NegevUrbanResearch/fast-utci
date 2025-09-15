@@ -11,6 +11,8 @@ from typing import List, Union, Optional, Tuple
 from dataclasses import dataclass
 import warnings
 
+from .config import DEFAULT_RAY_MAX_DISTANCE
+
 
 @dataclass
 class MeshContext:
@@ -25,8 +27,7 @@ class MeshContext:
             _ = self.mesh.ray
             self.has_bvh = True
         except Exception as e:
-            warnings.warn(f"Could not build BVH acceleration: {e}. "
-                         "Ray intersections will be slower.")
+            warnings.warn(f"BVH acceleration unavailable: {e}. Using slower ray intersections.")
             self.has_bvh = False
 
 
@@ -60,8 +61,7 @@ def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> Mesh
         else:
             warnings.warn(f"Unsupported mesh source type: {type(source)}")
     
-    if not meshes:
-        raise ValueError("No valid meshes found in sources")
+    assert meshes, "No valid meshes found in sources"
     
     # Combine all meshes
     if len(meshes) == 1:
@@ -75,7 +75,7 @@ def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> Mesh
 def ray_mesh_intersections(origins: np.ndarray,
                           directions: np.ndarray,
                           mesh_context: MeshContext,
-                          max_distance: float = 1000.0) -> np.ndarray:
+                          max_distance: float = DEFAULT_RAY_MAX_DISTANCE) -> np.ndarray:
     """
     Test ray-mesh intersections for occlusion detection.
     
@@ -91,11 +91,8 @@ def ray_mesh_intersections(origins: np.ndarray,
     origins = np.asarray(origins)
     directions = np.asarray(directions)
     
-    if origins.shape[0] != directions.shape[0]:
-        raise ValueError("Origins and directions must have same number of rays")
-    
-    if origins.shape[1] != 3 or directions.shape[1] != 3:
-        raise ValueError("Origins and directions must be 3D")
+    assert origins.shape[0] == directions.shape[0], "Origins and directions must have same number of rays"
+    assert origins.shape[1] == 3 and directions.shape[1] == 3, "Origins and directions must be 3D"
     
     try:
         # Use trimesh ray intersection
@@ -124,7 +121,7 @@ def batch_ray_intersections(origins: np.ndarray,
                            directions: np.ndarray,
                            mesh_context: MeshContext,
                            batch_size: int = 10000,
-                           max_distance: float = 1000.0) -> np.ndarray:
+                           max_distance: float = DEFAULT_RAY_MAX_DISTANCE) -> np.ndarray:
     """
     Perform ray intersections in batches to manage memory usage.
     
@@ -139,16 +136,22 @@ def batch_ray_intersections(origins: np.ndarray,
         Boolean array of shape (n_rays,) indicating if ray hit mesh
     """
     n_rays = len(origins)
+    
+    # For small batches, process all at once
+    if n_rays <= batch_size:
+        return ray_mesh_intersections(origins, directions, mesh_context, max_distance)
+    
+    # Process in batches
     hit_results = np.zeros(n_rays, dtype=bool)
     
     for start_idx in range(0, n_rays, batch_size):
         end_idx = min(start_idx + batch_size, n_rays)
         
-        batch_origins = origins[start_idx:end_idx]
-        batch_directions = directions[start_idx:end_idx]
-        
         batch_hits = ray_mesh_intersections(
-            batch_origins, batch_directions, mesh_context, max_distance
+            origins[start_idx:end_idx], 
+            directions[start_idx:end_idx], 
+            mesh_context, 
+            max_distance
         )
         
         hit_results[start_idx:end_idx] = batch_hits

@@ -19,16 +19,12 @@ from .mesh import load_context_meshes, MeshContext
 from .exposure import compute_exposure, compute_exposure_batch, ExposureResult
 from .solarcal import compute_mrt_solarcal, create_solar_body_parameters, SolarCalResult
 from .grid import AnalysisGrid, create_grid_from_surface, create_rectangular_grid, load_surface_and_create_grid
-from .period import AnalysisPeriod, filter_weather_data, filter_arrays_by_period, create_validation_period_filter
+from .period import AnalysisPeriod, filter_weather_data, filter_arrays_by_period
+from .config import MRTConfig, DEFAULT_CONFIG
 
 # Import ladybug for location and EPW handling
-try:
-    from ladybug.location import Location
-    from ladybug.epw import EPW
-    LADYBUG_AVAILABLE = True
-except ImportError:
-    warnings.warn("ladybug-core not available. Some functionality will be limited.")
-    LADYBUG_AVAILABLE = False
+from ladybug.location import Location
+from ladybug.epw import EPW
 
 
 class MRTCalculator:
@@ -45,52 +41,38 @@ class MRTCalculator:
     
     def __init__(self, 
                  context_meshes: List[Union[str, Any]] = None,
-                 location: Optional[Any] = None,
-                 north_degrees: float = 0.0,
-                 ground_reflectance: float = 0.25,
-                 body_params: Optional[Any] = None,
-                 cpu_count: Optional[int] = None):
+                 location: Optional[Location] = None,
+                 config: Optional[MRTConfig] = None):
         """
         Initialize MRT calculator with context and parameters.
         
         Args:
             context_meshes: List of mesh file paths or trimesh objects for occlusion
             location: Ladybug Location object (lat, lon, timezone)
-            north_degrees: North angle in degrees (0 = Y+ is north)
-            ground_reflectance: Ground reflectance factor (0-1)
-            body_params: Solar body parameters (absorptivity, emissivity)
-            cpu_count: Number of CPU cores for parallel processing
+            config: MRTConfig object with all parameters
         """
-        self.north_degrees = north_degrees
-        self.ground_reflectance = ground_reflectance
-        self.cpu_count = cpu_count or max(1, mp.cpu_count() - 1)
+        self.config = config or DEFAULT_CONFIG
         
         # Load context geometry
         self.mesh_context = None
         if context_meshes:
-            try:
-                self.mesh_context = load_context_meshes(context_meshes)
-                print(f"Loaded context geometry: {len(self.mesh_context.mesh.faces)} faces, "
-                      f"BVH acceleration: {self.mesh_context.has_bvh}")
-            except Exception as e:
-                warnings.warn(f"Failed to load context meshes: {e}")
+            self.mesh_context = load_context_meshes(context_meshes)
+            print(f"Loaded context geometry: {len(self.mesh_context.mesh.faces)} faces, "
+                  f"BVH acceleration: {self.mesh_context.has_bvh}")
         
         # Set location
         self.location = location
         
         # Create body parameters
-        self.body_params = body_params
-        if self.body_params is None:
-            self.body_params = create_solar_body_parameters()
+        self.body_params = create_solar_body_parameters(
+            self.config.absorptivity, self.config.emissivity
+        )
         
         # Cache for solar data
         self._sun_data_cache = {}
     
     def set_location_from_epw(self, epw_file: Union[str, Path]):
         """Set location from EPW file."""
-        if not LADYBUG_AVAILABLE:
-            raise RuntimeError("ladybug-core required for EPW location parsing")
-            
         epw = EPW(str(epw_file))
         self.location = epw.location
         print(f"Location set from EPW: {self.location}")
@@ -108,14 +90,13 @@ class MRTCalculator:
         Returns:
             SunData object with sun vectors and timing
         """
-        if self.location is None:
-            raise ValueError("Location must be set before computing sun data")
+        assert self.location is not None, "Location must be set before computing sun data"
         
         # Create cache key
         cache_key = (
             str(analysis_period) if analysis_period else "full_year",
             str(target_hours) if target_hours else "all_hours",
-            self.north_degrees
+            self.config.north_degrees
         )
         
         if cache_key in self._sun_data_cache:
@@ -131,7 +112,7 @@ class MRTCalculator:
         sun_data = get_sun_vectors(
             self.location, 
             analysis_period=period_tuple,
-            north_degrees=self.north_degrees
+            north_degrees=self.config.north_degrees
         )
         
         # Apply hour filter if specified
@@ -148,8 +129,6 @@ class MRTCalculator:
     
     def compute_exposure(self, 
                         positions: np.ndarray,
-                        pt_count: int = 1,
-                        height: float = 1.8,
                         analysis_period: Optional[AnalysisPeriod] = None,
                         target_hours: Optional[List[int]] = None,
                         n_workers: Optional[int] = None) -> List[ExposureResult]:
@@ -158,10 +137,9 @@ class MRTCalculator:
         
         Args:
             positions: Shape (n_positions, 3) analysis positions
-            pt_count: Number of sample points per human vertical
-            height: Human height in meters
             analysis_period: Optional time period filter
             target_hours: Optional hour filter
+            n_workers: Optional number of workers for parallel processing
             
         Returns:
             List of ExposureResult objects
@@ -178,10 +156,10 @@ class MRTCalculator:
             positions=positions,
             sun_data=sun_data,
             mesh_context=self.mesh_context,
-            pt_count=pt_count,
-            height=height,
-            show_progress=True,
-            n_workers=n_workers or self.cpu_count
+            pt_count=self.config.pt_count,
+            height=self.config.human_height,
+            show_progress=self.config.show_progress,
+            n_workers=n_workers or self.config.n_workers
         )
         
         return results
@@ -267,7 +245,7 @@ class MRTCalculator:
                     sky_exposure=exposure.sky_exposure,
                     location=self.location,
                     datetimes=filtered_datetimes,
-                    ground_reflectance=self.ground_reflectance,
+                    ground_reflectance=self.config.ground_reflectance,
                     solar_body_par=self.body_params
                 )
             
@@ -310,7 +288,7 @@ class MRTCalculator:
             air_temp_coll,
             exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,  # Use first exposure value
             exposure.sky_exposure,
-            self.ground_reflectance,
+            self.config.ground_reflectance,
             self.body_params
         )
         
@@ -346,74 +324,23 @@ class MRTCalculator:
             long_dmrt=long_dmrt_filtered
         )
     
-    def run_grid(self, 
-                surface_or_mesh: Union[str, Any, AnalysisGrid],
-                grid_size: float,
-                offset: float = 0.0,
-                pt_count: int = 1,
-                height: float = 1.8,
-                analysis_period: Optional[AnalysisPeriod] = None,
-                target_hours: Optional[List[int]] = None) -> Dict[str, Any]:
-        """
-        Run MRT analysis on a grid of points from surface.
-        
-        Args:
-            surface_or_mesh: Surface file path, mesh object, or AnalysisGrid
-            grid_size: Grid spacing in meters
-            offset: Offset distance from surface
-            pt_count: Sample points per human vertical
-            height: Human height in meters
-            analysis_period: Optional time period filter
-            target_hours: Optional hour filter
-            
-        Returns:
-            Dictionary with per-position MRT results
-        """
-        # Create or use analysis grid
-        if isinstance(surface_or_mesh, AnalysisGrid):
-            grid = surface_or_mesh
-        elif isinstance(surface_or_mesh, str):
-            grid = load_surface_and_create_grid(surface_or_mesh, grid_size, offset)
-        else:
-            raise ValueError("surface_or_mesh must be file path, mesh object, or AnalysisGrid")
-        
-        print(f"Generated analysis grid: {len(grid.points)} points, grid_size={grid_size}")
-        
-        # Compute exposure for all grid points
-        exposure_results = self.compute_exposure(
-            positions=grid.points,
-            pt_count=pt_count,
-            height=height,
-            analysis_period=analysis_period,
-            target_hours=target_hours
-        )
-        
-        # Load EPW data for MRT calculation
-        if self.location is None:
-            raise ValueError("Location must be set for MRT calculation")
-        
-        # For now, require user to provide EPW data separately
-        # This could be enhanced to auto-load from a default EPW file
-        raise NotImplementedError("run_grid requires EPW data - use compute_mrt separately")
     
     def to_csv(self, 
               results: Dict[str, Any],
-              timeseries_path: str,
-              summary_path: Optional[str] = None,
+              csv_path: str,
               grasshopper_format: bool = False) -> None:
         """
-        Export MRT results to CSV files.
+        Export MRT results to CSV file.
         
         Args:
             results: Results dictionary from compute_mrt
-            timeseries_path: Path for time series CSV file
-            summary_path: Optional path for summary CSV file
+            csv_path: Path for CSV file
             grasshopper_format: If True, use Grasshopper-compatible format for validation
         """
         if grasshopper_format:
-            self._export_grasshopper_csv(results, timeseries_path)
+            self._export_grasshopper_csv(results, csv_path)
         else:
-            self._export_standard_csv(results, timeseries_path, summary_path)
+            self._export_standard_csv(results, csv_path)
     
     def _export_grasshopper_csv(self, results: Dict[str, Any], csv_path: str):
         """Export in Grasshopper validation format."""
@@ -447,86 +374,36 @@ class MRTCalculator:
         df.to_csv(csv_path, index=False)
         print(f"Exported Grasshopper format CSV: {csv_path}")
     
-    def _export_standard_csv(self, results: Dict[str, Any], 
-                           timeseries_path: str, summary_path: Optional[str]):
+    def _export_standard_csv(self, results: Dict[str, Any], csv_path: str):
         """Export in standard detailed format."""
-        # Time series data
-        ts_rows = []
-        summary_rows = []
+        rows = []
         
         for pos_key, pos_data in results.items():
             position = pos_data['position']
-            datetimes = pos_data['datetimes']
             mrt_values = pos_data['mrt']
             fract_exp = pos_data['fract_body_exp']
             sky_exposure = pos_data['sky_exposure']
             
-            # Summary statistics
-            summary_rows.append({
-                'position_id': pos_key,
-                'x': position[0],
-                'y': position[1], 
-                'z': position[2],
-                'sky_exposure': sky_exposure,
-                'mean_mrt': np.mean(mrt_values),
-                'min_mrt': np.min(mrt_values),
-                'max_mrt': np.max(mrt_values),
-                'std_mrt': np.std(mrt_values)
-            })
-            
-            # Time series data
-            for i, (dt, mrt, fexp) in enumerate(zip(datetimes, mrt_values, fract_exp)):
-                ts_rows.append({
+            # Create rows for each timestep
+            for i, (mrt, fexp) in enumerate(zip(mrt_values, fract_exp)):
+                rows.append({
                     'position_id': pos_key,
-                    'datetime': dt,
-                    'hour': dt.hour,
+                    'x': position[0],
+                    'y': position[1], 
+                    'z': position[2],
+                    'hour': i,  # Simplified - no datetime handling
                     'mrt': mrt,
                     'fract_body_exp': fexp,
+                    'sky_exposure': sky_exposure,
                     'short_erf': pos_data['short_erf'][i],
                     'long_erf': pos_data['long_erf'][i],
                     'short_dmrt': pos_data['short_dmrt'][i],
                     'long_dmrt': pos_data['long_dmrt'][i]
                 })
         
-        # Export time series
-        ts_df = pd.DataFrame(ts_rows)
-        ts_df.to_csv(timeseries_path, index=False)
-        print(f"Exported time series CSV: {timeseries_path}")
-        
-        # Export summary if requested
-        if summary_path:
-            summary_df = pd.DataFrame(summary_rows)
-            summary_df.to_csv(summary_path, index=False)
-            print(f"Exported summary CSV: {summary_path}")
+        # Export to CSV
+        df = pd.DataFrame(rows)
+        df.to_csv(csv_path, index=False, encoding=self.config.csv_encoding)
+        print(f"Exported CSV: {csv_path}")
 
 
-def quick_validation_test(epw_file: str, 
-                         context_mesh_file: str,
-                         grid_size: float = 10.0,
-                         target_hours: List[int] = [13]) -> MRTCalculator:
-    """
-    Quick test function for validating against Grasshopper data.
-    
-    Args:
-        epw_file: Path to EPW weather file
-        context_mesh_file: Path to context geometry file
-        grid_size: Grid spacing for analysis
-        target_hours: Hours to analyze (default [13] for 1-2 PM)
-        
-    Returns:
-        Configured MRTCalculator instance
-    """
-    # Create calculator
-    calc = MRTCalculator(context_meshes=[context_mesh_file])
-    calc.set_location_from_epw(epw_file)
-    
-    # Get validation period (August 15th, hour 13)
-    analysis_period, _ = create_validation_period_filter()
-    
-    print(f"Quick validation test setup complete:")
-    print(f"  EPW: {epw_file}")
-    print(f"  Context: {context_mesh_file}")
-    print(f"  Period: August 15th, hours {target_hours}")
-    print(f"  Grid size: {grid_size}")
-    
-    return calc

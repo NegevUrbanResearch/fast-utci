@@ -52,17 +52,13 @@ def main():
         print("STEP 2: COMPUTING MRT (PARALLEL)")
         print("="*40)
         
-        from MRT.mrt_calculator import MRTCalculator
-        from MRT.period import create_validation_period_filter
-        from MRT.grid import create_rectangular_grid
+        from MRT import MRTCalculator, create_validation_period_filter, create_rectangular_grid
         
         # Create MRT calculator with context geometry
         mrt_calc = MRTCalculator(context_meshes=[model])
         mrt_calc.set_location_from_epw(epw_file)
         
         # Create simplified analysis grid that approximates Grasshopper approach
-        import numpy as np
-        from MRT.grid import create_rectangular_grid
         
         grid_size = 10.0  # meters - smaller spacing for ~4000 points (match Grasshopper's 4158)
         
@@ -95,7 +91,7 @@ def main():
         # Get analysis period (August 15th, hours 13-14)
         analysis_period, target_hours = create_validation_period_filter()
         print(f"📅 Analysis period: August 15th")
-        print(f"⏰ Target hours: {target_hours} (now includes both 13 and 14)")
+        print(f"⏰ Target hours: {target_hours}")
         
         # Compute exposure (this uses parallel processing automatically)
         print("🔍 Computing exposure with parallel processing...")
@@ -128,52 +124,28 @@ def main():
         
         # Compute UTCI
         print("🌡️  Computing UTCI from MRT and weather data...")
-        utci_results = utci_calc.compute_utci_batch(
+        utci_results = utci_calc.compute_utci(
             mrt_results=mrt_results,
             analysis_period=analysis_period,
-            target_hours=target_hours
+            target_hours=target_hours,
+            show_progress=True
         )
         
         # Get summary statistics
-        try:
-            summary = utci_calc.summary_statistics(utci_results)
-            
-            print("📊 UTCI Results Summary:")
-            print(f"  Total points: {summary['total_points']}")
-            print(f"  UTCI range: {summary['utci_stats']['min']:.1f} to {summary['utci_stats']['max']:.1f} °C")
-            print(f"  Mean UTCI: {summary['utci_stats']['mean']:.1f} °C")
-            print(f"  Comfort assessment: {summary['comfort_assessment']}")
-        except Exception as e:
-            print(f"📊 UTCI Results Summary (with errors):")
-            print(f"  Error in summary: {e}")
-            print(f"  UTCI results keys: {list(utci_results.keys())}")
-            if utci_results:
-                sample_key = list(utci_results.keys())[0]
-                print(f"  Sample result keys: {list(utci_results[sample_key].keys())}")
-                sample_utci = utci_results[sample_key]['utci']
-                print(f"  Sample UTCI: {sample_utci}")
-                print(f"  Total positions: {len(utci_results)}")
-            
-            # Create a simplified summary
-            summary = {'comfort_assessment': 'Error in detailed analysis'}
+        # UTCI results ready for export
+        summary = {'comfort_assessment': 'Analysis complete'}
         
-        # Step 4: Compare with Grasshopper validation
-        print("\n" + "="*40)
-        print("STEP 4: GRASSHOPPER COMPARISON")
-        print("="*40)
-        
+        # Compare with Grasshopper validation
         from viewer import UTCIHeatmapViewer
         viewer = UTCIHeatmapViewer()
         
         print("📊 Creating comparison with Grasshopper validation data...")
         
-        # Debug: Show first few positions that will be visualized
+        # Prepare positions for visualization
         first_utci_positions = []
         for i, (pos_key, data) in enumerate(list(utci_results.items())[:3]):
             pos = data['position']
-            utci_val = data['utci'][0] if len(data['utci']) > 0 else 'N/A'
             first_utci_positions.append(pos)
-            print(f"🎨 Visualizing position {i+1}: {pos} -> UTCI: {utci_val}")
         
         comparison_fig = viewer.compare_with_grasshopper(
             model_mesh=model,
@@ -185,23 +157,17 @@ def main():
         # Save the comparison as HTML file
         comparison_filename = f"utci_comparison_grid_{grid_size}m.html"
         comparison_fig.write_html(comparison_filename)
-        print(f"💾 Comparison visualization saved as: {comparison_filename}")
+        print(f"💾 Comparison saved: {comparison_filename}")
         
         # Auto-open in browser
         import webbrowser
         import os
         file_path = os.path.abspath(comparison_filename)
         webbrowser.open(f"file://{file_path}")
-        print(f"🖥️  Opening {comparison_filename} in your browser...")
         
-        # Step 6: Export results
-        print("\n" + "="*40)
-        print("STEP 6: EXPORTING RESULTS")
-        print("="*40)
-        
-        # Export UTCI results to CSV
+        # Export results
         utci_output_path = f"utci_results_grid_{grid_size}m.csv"
-        print(f"💾 Exporting UTCI results to: {utci_output_path}")
+        print(f"💾 Exporting results to: {utci_output_path}")
         utci_calc.to_csv(
             utci_results=utci_results,
             csv_path=utci_output_path,
@@ -209,31 +175,22 @@ def main():
             include_comfort_categories=True
         )
         
-        # Print final summary
-        print("\n" + "="*60)
-        print("🎉 WORKFLOW COMPLETE! SUMMARY:")
-        print("="*60)
-        print(f"✅ Parallel MRT calculation: {len(mrt_results)} positions")
-        # Always use simple summary to avoid errors
-        summary = {'total_points': len(utci_results), 'utci_stats': {'min': 38.4, 'max': 38.4}}
-        comfort_summary = {'comfort_distribution': {'percentages': {'very_hot': 100.0}}, 'comfort_assessment': 'Very hot conditions'}
+        # Calculate actual UTCI statistics from results
+        all_utci_values = []
+        for pos_key, data in utci_results.items():
+            if isinstance(data.get('utci'), (list, np.ndarray)):
+                all_utci_values.extend(data['utci'])
+            elif isinstance(data.get('utci'), (int, float)):
+                all_utci_values.append(data['utci'])
         
-        print(f"✅ UTCI thermal comfort analysis: {len(utci_results)} data points")
-        print(f"✅ Grasshopper validation comparison: {comparison_filename}")
-        print(f"✅ Results exported: {utci_output_path}")
+        all_utci_values = np.array(all_utci_values)
+        utci_min, utci_max = np.min(all_utci_values), np.max(all_utci_values)
+        utci_mean = np.mean(all_utci_values)
         
-        print(f"\n🌡️  UTCI Range: {summary['utci_stats']['min']:.1f} to {summary['utci_stats']['max']:.1f} °C")
-        print(f"🎯 Comfort Distribution:")
-        for category, percentage in comfort_summary['comfort_distribution']['percentages'].items():
-            if percentage > 0:
-                print(f"   {category}: {percentage:.1f}%")
-        
-        print(f"\n🏆 Overall Assessment: {comfort_summary['comfort_assessment']}")
-        
-        print("\n" + "="*60)
-        print("The complete UTCI analysis workflow is now operational!")
-        print("You can compare these results with your Grasshopper heatmap.")
-        print("="*60)
+        # Print clean summary
+        print(f"\n🎉 COMPLETE: {len(utci_results)} positions analyzed")
+        print(f"🌡️  UTCI Range: {utci_min:.1f} to {utci_max:.1f} °C (mean: {utci_mean:.1f} °C)")
+        print(f"💾 Results: {utci_output_path} | Comparison: {comparison_filename}")
         
         return 0
         

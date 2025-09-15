@@ -1,18 +1,7 @@
-"""
-MRT Calculator for fast-utci
-
-A modular, high-performance Mean Radiant Temperature calculator that matches
-Grasshopper/Ladybug OutdoorSolarMRT results while being optimized for speed.
-
-This package provides:
-- Fast ray-based occlusion testing for sun and sky exposure
-- SolarCal-based MRT calculations using ladybug-comfort
-- Grid generation for analysis surfaces
-- Parallel processing for performance
-- Progress tracking for long-running calculations
-"""
-
 from .mrt_calculator import MRTCalculator
+from .config import MRTConfig, DEFAULT_CONFIG
+from .grid import create_rectangular_grid, AnalysisGrid
+from .period import AnalysisPeriod, create_analysis_period, create_validation_period_filter
 
 __version__ = "0.1.0"
-__all__ = ["MRTCalculator"]
+__all__ = ["MRTCalculator", "MRTConfig", "DEFAULT_CONFIG", "create_rectangular_grid", "AnalysisGrid", "AnalysisPeriod", "create_analysis_period", "create_validation_period_filter"]

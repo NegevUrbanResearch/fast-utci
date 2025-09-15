@@ -17,11 +17,10 @@ pythermalcomfort
 # MRT Calculator - Radiance integration
 honeybee-radiance  # For Radiance simulations and MRT calculations
 ladybug-comfort # For OutdoorSolarCal and SolarBodyParameter
-joblib  # Parallel processing for MRT calculations
 
 # Progress tracking and performance
-tqdm>=4.60.0  # Progress bars
-psutil>=5.8.0  # System monitoring
+tqdm  # Progress bars
+psutil  # System monitoring
 
 # Optional dependencies for enhanced functionality
 # These may be needed for specific features
