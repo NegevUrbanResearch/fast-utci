@@ -1,5 +1,6 @@
 # Core dependencies for fast-utci
 trimesh
+fast_simplification
 ladybug-core
 numpy
 pandas
