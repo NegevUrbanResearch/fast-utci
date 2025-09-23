@@ -6,8 +6,10 @@ trimesh>=4.0.0
 pygltflib>=1.16.0
 
 # MRT and Thermal Comfort Calculations
-ladybug-tools>=1.50.0
+lbt-ladybug
 pythermalcomfort>=2.7.0
+pyembree
+embreex
 
 # Visualization
 plotly>=5.17.0
@@ -28,6 +30,7 @@ scikit-learn>=1.3.0
 memory-profiler>=0.61.0
 psutil>=5.9.0
 line-profiler>=4.1.0
+tqdm
 
 # API and Web Framework
 fastapi>=0.104.0

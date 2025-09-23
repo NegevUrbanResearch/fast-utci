@@ -1,6 +1,6 @@
 # Environments
 .env
-.venv
+.venv*
 __pycache__
-.cursor
 cache
+.cache

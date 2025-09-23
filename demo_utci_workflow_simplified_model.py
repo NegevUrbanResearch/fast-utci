@@ -10,6 +10,7 @@ This script demonstrates the full pipeline:
 """
 
 from pathlib import Path
+import time
 import numpy as np
 from typing import Tuple, List, Optional
 import pandas as pd
@@ -294,7 +295,10 @@ def main():
         print("="*40)
         
         from enhanced_model_reader import read_project_data_enhanced
+        t0 = time.perf_counter()
         enhanced_model, weather_df, epw_data = read_project_data_enhanced(model_file, epw_file)
+        t1 = time.perf_counter()
+        print(f"⏱️  Load time: {(t1-t0):.2f}s")
         model = enhanced_model.get_combined_mesh()  # Get combined mesh for MRT calculations
         
         print(f"📊 Enhanced model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
@@ -363,11 +367,15 @@ def main():
         
         # Create MRT calculator with context geometry
         mrt_calc = MRTCalculator(context_meshes=[model])
+        # Report intersector backend if available
+        if getattr(mrt_calc, 'mesh_context', None) is not None:
+            backend = getattr(mrt_calc.mesh_context, 'backend_name', 'unknown')
+            print(f"🧭 Ray intersector backend: {backend}")
         mrt_calc.set_location_from_epw(epw_file)
         
         # Create analysis grid using exact model bounds (no buffer)
         
-        grid_size = 50.0  # meters - larger spacing for faster testing
+        grid_size = 10.0  # meters - larger spacing for faster testing
         
         print(f"🏗️  Generating grid using exact model bounds (no buffer)")
         print(f"📐 Grid size: {grid_size}m")
@@ -410,11 +418,14 @@ def main():
             print("🔍 Computing exposure with parallel processing...")
         
         try:
+            t2 = time.perf_counter()
             exposure_results = mrt_calc.compute_exposure(
                 positions=grid.points,
                 analysis_period=analysis_period,
                 target_hours=target_hours
             )
+            t3 = time.perf_counter()
+            print(f"⏱️  Exposure compute time: {(t3-t2):.2f}s")
             
             # Monitor memory after exposure calculation
             print("💾 Memory after exposure calculation:")
@@ -426,12 +437,15 @@ def main():
             else:
                 print("🌡️  Computing MRT...")
             
+            t4 = time.perf_counter()
             mrt_results = mrt_calc.compute_mrt(
                 epw_data=epw_data,
                 exposure_results=exposure_results,
                 analysis_period=analysis_period,
                 target_hours=target_hours
             )
+            t5 = time.perf_counter()
+            print(f"⏱️  MRT compute time: {(t5-t4):.2f}s")
             
             # Clean up exposure results to free memory
             del exposure_results

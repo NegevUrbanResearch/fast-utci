@@ -12,7 +12,7 @@ from pathlib import Path
 import warnings
 
 # Import our reader module for consistent data handling
-from reader import read_weather_data, read_project_data
+from enhanced_model_reader import read_weather_data, read_project_data
 
 # Import pythermalcomfort for UTCI calculations
 try:

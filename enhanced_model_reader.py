@@ -7,6 +7,7 @@ material information and layer structure for better visualization.
 
 from pathlib import Path
 from typing import Tuple, Union, List, Dict, Any, Optional
+import pandas as pd
 import trimesh
 import numpy as np
 from collections import defaultdict
@@ -465,8 +466,6 @@ def read_project_data_enhanced(model_path: Union[str, Path],
     Returns:
         Tuple of (enhanced_model, weather_df, epw_object)
     """
-    from reader import read_weather_data
-    
     enhanced_model = read_enhanced_model(model_path)
     weather_df = read_weather_data(weather_path)
     
@@ -475,6 +474,42 @@ def read_project_data_enhanced(model_path: Union[str, Path],
     epw = EPW(str(weather_path))
     
     return enhanced_model, weather_df, epw
+
+
+def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
+    """
+    Read EPW weather file and extract UTCI inputs as DataFrame.
+    """
+    file_path = Path(file_path)
+    assert file_path.exists(), f"Weather file not found: {file_path}"
+
+    from ladybug.epw import EPW
+    epw = EPW(str(file_path))
+
+    data = {
+        'datetime': epw.dry_bulb_temperature.datetimes,
+        'air_temp': epw.dry_bulb_temperature.values,
+        'wind_speed': epw.wind_speed.values,
+        'relative_humidity': epw.relative_humidity.values,
+        'global_horizontal_radiation': epw.global_horizontal_radiation.values,
+        'direct_normal_radiation': epw.direct_normal_radiation.values,
+        'diffuse_horizontal_radiation': epw.diffuse_horizontal_radiation.values,
+        'horizontal_infrared_radiation_intensity': epw.horizontal_infrared_radiation_intensity.values,
+        'surface_temp': epw.dry_bulb_temperature.values
+    }
+
+    return pd.DataFrame(data)
+
+
+def read_project_data(model_path: Union[str, Path], 
+                      weather_path: Union[str, Path]) -> Tuple[trimesh.Trimesh, pd.DataFrame, 'EPW']:
+    """
+    Compatibility wrapper matching reader.read_project_data signature.
+    Returns combined trimesh mesh, weather DataFrame, and EPW.
+    """
+    enhanced_model, weather_df, epw = read_project_data_enhanced(model_path, weather_path)
+    combined_mesh = enhanced_model.get_combined_mesh()
+    return combined_mesh, weather_df, epw
 
 
 # Example usage

@@ -112,6 +112,9 @@ class EnhancedUTCIViewer:
                 yaxis_title='Y (m)',
                 zaxis_title='Z (m)',
                 aspectmode='data',
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=False),
+                zaxis=dict(showgrid=False),
                 camera=dict(
                     eye=dict(x=1.5, y=1.5, z=1.0)
                 )
@@ -370,7 +373,7 @@ class EnhancedUTCIViewer:
                 cmin=colorscale_bounds[0],
                 cmax=colorscale_bounds[1],
                 symbol='square',  # Use square markers
-                line=dict(width=1, color='rgba(0,0,0,0.3)'),
+                line=dict(width=0),
                 showscale=True,  # Show colorbar for this layer
                 colorbar=dict(
                     title=dict(text="UTCI (°C)", side="right"),
@@ -390,7 +393,8 @@ class EnhancedUTCIViewer:
         
         # LAYER 2: Interpolation Surface - HIDDEN BY DEFAULT
         # Create interpolation grid with higher resolution for better coverage
-        grid_resolution = 50  # Increased for better edge coverage
+        # Adaptive resolution for smoother interpolation while keeping perf reasonable
+        grid_resolution = int(min(300, max(50, np.sqrt(len(filtered_positions)) * 2)))
         x_grid = np.linspace(x_min, x_max, grid_resolution)
         y_grid = np.linspace(y_min, y_max, grid_resolution)
         X, Y = np.meshgrid(x_grid, y_grid)
@@ -441,7 +445,7 @@ class EnhancedUTCIViewer:
             surfacecolor=Z_utci,
             cmin=colorscale_bounds[0],
             cmax=colorscale_bounds[1],
-            opacity=0.6,  # More transparent to avoid obscuring model
+            opacity=0.7,  # Slightly higher for readability
             hovertext=hover_text_interp,
             hovertemplate='%{hovertext}<extra></extra>',
                 colorbar=dict(

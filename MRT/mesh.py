@@ -6,6 +6,7 @@ in MRT exposure computation.
 """
 
 import numpy as np
+import os
 import trimesh
 from typing import List, Union, Optional, Tuple
 from dataclasses import dataclass
@@ -19,16 +20,44 @@ class MeshContext:
     """Container for context geometry with acceleration structures."""
     mesh: trimesh.Trimesh
     has_bvh: bool = False
+    backend_name: str = "unknown"
+    ray_intersector: any = None
     
     def __post_init__(self):
-        """Initialize BVH acceleration if possible."""
+        """Initialize ray intersector with optional Embree and fallbacks.
+
+        Selection order:
+        1) Env override FAST_UTCI_INTERSECTOR=embree|trimesh
+        2) Auto: try Embree (pyembree) then fallback to trimesh ray_triangle
+        """
+        choice = os.getenv("FAST_UTCI_INTERSECTOR", "auto").lower()
+
+        # Helper to set state
+        def _set_intersector(intersector, name: str, has_bvh: bool):
+            self.ray_intersector = intersector
+            self.backend_name = name
+            self.has_bvh = has_bvh
+
+        # Try explicit Embree
+        if choice in ("embree", "auto"):
+            try:
+                from trimesh.ray.ray_pyembree import RayMeshIntersector as _EmbreeIntersector
+                _set_intersector(_EmbreeIntersector(self.mesh), "embree", True)
+                print("Ray intersector: embree (pyembree)")
+                return
+            except Exception:
+                if choice == "embree":
+                    warnings.warn("Requested Embree intersector but pyembree is not available; falling back to trimesh ray_triangle.")
+                # fall through to trimesh fallback
+
+        # Fallback to pure trimesh ray_triangle
         try:
-            # Try to build BVH for fast ray queries
-            _ = self.mesh.ray
-            self.has_bvh = True
+            from trimesh.ray.ray_triangle import RayMeshIntersector as _TriIntersector
+            _set_intersector(_TriIntersector(self.mesh), "trimesh", True)
+            print("Ray intersector: trimesh ray_triangle")
         except Exception as e:
-            warnings.warn(f"BVH acceleration unavailable: {e}. Using slower ray intersections.")
-            self.has_bvh = False
+            warnings.warn(f"BVH acceleration unavailable: {e}. Using no-hit fallback.")
+            _set_intersector(None, "none", False)
 
 
 def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> MeshContext:
@@ -95,8 +124,9 @@ def ray_mesh_intersections(origins: np.ndarray,
     assert origins.shape[1] == 3 and directions.shape[1] == 3, "Origins and directions must be 3D"
     
     try:
-        # Use trimesh ray intersection
-        locations, ray_indices, face_indices = mesh_context.mesh.ray.intersects_location(
+        # Use selected ray intersector (embree or trimesh)
+        intersector = mesh_context.ray_intersector if mesh_context and mesh_context.ray_intersector is not None else mesh_context.mesh.ray
+        locations, ray_indices, face_indices = intersector.intersects_location(
             ray_origins=origins,
             ray_directions=directions,
             multiple_hits=False  # Only need first hit for occlusion
