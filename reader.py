@@ -20,12 +20,25 @@ def read_model(file_path: Union[str, Path]) -> trimesh.Trimesh:
     
     Handles both simple meshes and complex scenes by combining all geometry
     into a single mesh suitable for MRT calculations.
+    
+    Also handles binary GLTF files (GLB format) that have .gltf extension.
     """
     file_path = Path(file_path)
     assert file_path.exists(), f"Model file not found: {file_path}"
     assert file_path.suffix.lower() in SUPPORTED_MODEL_FORMATS, f"Unsupported format: {file_path.suffix}"
     
-    loaded = trimesh.load(str(file_path))
+    # Check if .gltf file is actually binary GLB format
+    file_type = None
+    if file_path.suffix.lower() == '.gltf':
+        # Read first 4 bytes to check for GLB magic number
+        with open(file_path, 'rb') as f:
+            magic = f.read(4)
+            if magic == b'glTF':
+                # This is actually a binary GLB file with .gltf extension
+                file_type = 'glb'
+                print(f"🔧 Detected binary GLB file with .gltf extension: {file_path.name}")
+    
+    loaded = trimesh.load(str(file_path), file_type=file_type)
     
     if isinstance(loaded, trimesh.Trimesh):
         return loaded

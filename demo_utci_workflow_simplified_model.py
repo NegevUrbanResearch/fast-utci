@@ -15,6 +15,7 @@ from typing import Tuple, List, Optional
 import pandas as pd
 import psutil
 import gc
+from ladybug_utci_colors import create_ladybug_utci_colorscale
 
 def get_user_analysis_choice():
     """Get user choice for analysis type."""
@@ -31,6 +32,26 @@ def get_user_analysis_choice():
             return "single_hour"
         elif choice == "2":
             return "full_day"
+        else:
+            print("❌ Invalid choice. Please enter 1 or 2.")
+
+
+def get_user_simplification_choice():
+    """Get user choice for model simplification."""
+    print("\n" + "="*50)
+    print("MODEL SIMPLIFICATION")
+    print("="*50)
+    print("Model simplification can speed up calculations but may reduce accuracy.")
+    print("1. Use original model (recommended for accuracy)")
+    print("2. Simplify model to 70% (faster calculations)")
+    print("="*50)
+    
+    while True:
+        choice = input("Enter your choice (1 or 2): ").strip()
+        if choice == "1":
+            return False  # No simplification
+        elif choice == "2":
+            return True   # Simplify to 70%
         else:
             print("❌ Invalid choice. Please enter 1 or 2.")
 
@@ -157,13 +178,13 @@ def create_analysis_period_and_hours(analysis_mode: str, target_hour: Optional[i
     return analysis_period, target_hours
 
 
-def create_visualization(analysis_mode: str, model, utci_results: dict, validation_csv: str, grid_size: float) -> str:
+def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict, validation_csv: str, grid_size: float, simplify_model: bool = False) -> str:
     """
     Create appropriate visualization based on analysis mode.
     
     Args:
         analysis_mode: "single_hour" or "full_day"
-        model: 3D model mesh
+        enhanced_model: EnhancedModel with layer information
         utci_results: UTCI calculation results
         validation_csv: Path to validation CSV
         grid_size: Grid spacing for filename
@@ -171,36 +192,43 @@ def create_visualization(analysis_mode: str, model, utci_results: dict, validati
     Returns:
         Filename of created visualization
     """
-    from viewer import UTCIHeatmapViewer
+    from enhanced_viewer import EnhancedUTCIViewer
     
-    viewer = UTCIHeatmapViewer()
+    viewer = EnhancedUTCIViewer()
     
     if analysis_mode == "single_hour":
         # Single hour visualization (existing functionality)
         print("📊 Creating single hour comparison with Grasshopper validation data...")
         
-        comparison_fig = viewer.compare_with_grasshopper(
-            model_mesh=model,
+        comparison_fig = viewer.visualize_enhanced_utci_heatmap(
+            enhanced_model=enhanced_model,
             utci_results=utci_results,
-            grasshopper_csv=validation_csv,
-            title="UTCI Results: Python (70% Simplified Model) vs Grasshopper Validation - Single Hour"
+            title="UTCI Results: Enhanced Model vs Grasshopper Validation - Single Hour",
+            analysis_type="single_hour",
+            validation_csv=validation_csv
         )
         
         # Save the comparison as HTML file
-        comparison_filename = f"utci_comparison_grid_{grid_size}m_simplified_70pct_single_hour.html"
+        if simplify_model:
+            comparison_filename = f"utci_comparison_grid_{grid_size}m_simplified_70pct_single_hour.html"
+        else:
+            comparison_filename = f"utci_comparison_grid_{grid_size}m_original_single_hour.html"
         
     else:  # full_day
         # Full day animated visualization
         print("📊 Creating animated 24-hour UTCI visualization...")
         
-        comparison_fig = create_animated_utci_visualization(
-            model_mesh=model,
+        comparison_fig = viewer.create_animated_enhanced_visualization(
+            enhanced_model=enhanced_model,
             utci_results=utci_results,
-            title="UTCI Results: 24-Hour Analysis - Python (70% Simplified Model)"
+            title="UTCI Results: 24-Hour Analysis - Enhanced Model"
         )
         
         # Save the animated visualization as HTML file
-        comparison_filename = f"utci_comparison_grid_{grid_size}m_simplified_70pct_24hour_animated.html"
+        if simplify_model:
+            comparison_filename = f"utci_comparison_grid_{grid_size}m_simplified_70pct_24hour_animated.html"
+        else:
+            comparison_filename = f"utci_comparison_grid_{grid_size}m_original_24hour_animated.html"
     
     comparison_fig.write_html(comparison_filename)
     print(f"💾 Visualization saved: {comparison_filename}")
@@ -208,254 +236,7 @@ def create_visualization(analysis_mode: str, model, utci_results: dict, validati
     return comparison_filename
 
 
-def create_animated_utci_visualization(model_mesh, utci_results: dict, title: str = "24-Hour UTCI Analysis"):
-    """
-    Create animated UTCI visualization with time slider for 24-hour results.
-    
-    Args:
-        model_mesh: 3D model mesh
-        utci_results: UTCI results dictionary
-        title: Plot title
-        
-    Returns:
-        Plotly figure with animation
-    """
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    import numpy as np
-    
-    # Create figure
-    fig = go.Figure()
-    
-    # Add 3D model (static background)
-    if model_mesh is not None:
-        fig.add_trace(go.Mesh3d(
-            x=model_mesh.vertices[:, 0],
-            y=model_mesh.vertices[:, 1],
-            z=model_mesh.vertices[:, 2],
-            i=model_mesh.faces[:, 0],
-            j=model_mesh.faces[:, 1],
-            k=model_mesh.faces[:, 2],
-            opacity=0.6,
-            color='darkslategray',
-            name='Building/Context',
-            showlegend=False,
-            lighting=dict(
-                ambient=0.4,
-                diffuse=1.0,
-                specular=0.2,
-                roughness=0.1,
-                fresnel=0.2
-            ),
-            lightposition=dict(x=100, y=200, z=300)
-        ))
-    
-    # Extract UTCI data by hour using datetime when available for robust mapping
-    utci_data_by_hour = {}
-    hours_seen = set()
-    
-    for pos_key, data in utci_results.items():
-        position = np.asarray(data['position'])
-        utci_vals = data['utci']
-        datetimes = data.get('datetime', None)
-        
-        if isinstance(utci_vals, (list, np.ndarray)) and len(utci_vals) > 0:
-            for idx, utci_val in enumerate(utci_vals):
-                # Determine hour label
-                hour = None
-                try:
-                    if datetimes is not None and idx < len(datetimes) and datetimes[idx] is not None:
-                        # pandas Timestamp or datetime64 -> extract hour
-                        hour = int(pd.to_datetime(datetimes[idx]).hour)
-                    else:
-                        hour = idx  # fallback to sequence index
-                except Exception:
-                    hour = idx
-                
-                hours_seen.add(hour)
-                if hour not in utci_data_by_hour:
-                    utci_data_by_hour[hour] = {'positions': [], 'utci_values': []}
-                
-                # Extract numeric UTCI value
-                try:
-                    if hasattr(utci_val, 'utci'):
-                        numeric_utci = float(utci_val.utci)
-                    elif isinstance(utci_val, dict) and 'utci' in utci_val:
-                        numeric_utci = float(utci_val['utci'])
-                    else:
-                        numeric_utci = float(utci_val)
-                    if not np.isnan(numeric_utci):
-                        utci_data_by_hour[hour]['positions'].append(position)
-                        utci_data_by_hour[hour]['utci_values'].append(numeric_utci)
-                except (ValueError, TypeError, AttributeError):
-                    continue
-    
-    # Create frames for animation
-    frames = []
-    available_hours = sorted(list(hours_seen)) if len(hours_seen) > 0 else list(range(24))
-    
-    for hour in available_hours:
-        if hour in utci_data_by_hour and len(utci_data_by_hour[hour]['positions']) > 0:
-            positions = np.array(utci_data_by_hour[hour]['positions'])
-            utci_values = np.array(utci_data_by_hour[hour]['utci_values'])
-            
-            # Create hover text
-            hover_text = [
-                f"Hour: {hour:02d}:00<br>"
-                f"Position: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})<br>"
-                f"UTCI: {utci:.1f}°C"
-                for pos, utci in zip(positions, utci_values)
-            ]
-            
-            frame_data = [
-                go.Scatter3d(
-                    x=positions[:, 0],
-                    y=positions[:, 1],
-                    z=positions[:, 2],
-                    mode='markers',
-                    marker=dict(
-                        size=10,
-                        symbol='square',
-                        color=utci_values,
-                        colorscale='RdYlBu_r',
-                        showscale=False,
-                        line=dict(width=2, color='darkgray'),
-                        opacity=0.9
-                    ),
-                    text=hover_text,
-                    hovertemplate='%{text}<extra></extra>',
-                    name=f'Hour {hour:02d}:00',
-                    showlegend=False
-                )
-            ]
-            
-            frame = go.Frame(
-                data=frame_data,
-                traces=[1],  # update the second trace (index 1) which is the UTCI scatter; keep mesh (index 0)
-                name=f"frame_{hour}"
-            )
-            frames.append(frame)
-    
-    fig.frames = frames
-    
-    # Add initial scatter for the first available hour so colorbar shows
-    initial_hour = available_hours[0] if len(available_hours) > 0 else 0
-    if initial_hour in utci_data_by_hour and len(utci_data_by_hour[initial_hour]['positions']) > 0:
-        init_positions = np.array(utci_data_by_hour[initial_hour]['positions'])
-        init_utci = np.array(utci_data_by_hour[initial_hour]['utci_values'])
-        init_hover = [
-            f"Hour: {initial_hour:02d}:00<br>"
-            f"Position: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})<br>"
-            f"UTCI: {val:.1f}°C" for pos, val in zip(init_positions, init_utci)
-        ]
-        fig.add_trace(go.Scatter3d(
-            x=init_positions[:, 0],
-            y=init_positions[:, 1],
-            z=init_positions[:, 2],
-            mode='markers',
-            marker=dict(
-                size=10,
-                symbol='square',
-                color=init_utci,
-                colorscale='RdYlBu_r',
-                colorbar=dict(title="UTCI (°C)"),
-                showscale=True,
-                line=dict(width=2, color='darkgray'),
-                opacity=0.9
-            ),
-            text=init_hover,
-            hovertemplate='%{text}<extra></extra>',
-            name=f'Hour {initial_hour:02d}:00',
-            showlegend=False
-        ))
-    
-    # Add animation controls
-    fig.update_layout(
-        title=title,
-        scene=dict(
-            xaxis_title='X (m)',
-            yaxis_title='Y (m)',
-            zaxis_title='Z (m)',
-            aspectmode='data'
-        ),
-        width=1200,
-        height=800,
-        updatemenus=[
-            {
-                'type': 'buttons',
-                'showactive': True,
-                'buttons': [
-                    {
-                        'label': '▶️ Play',
-                        'method': 'animate',
-                        'args': [
-                            None,
-                            {
-                                'frame': {'duration': 800, 'redraw': True},
-                                'fromcurrent': True,
-                                'transition': {'duration': 200, 'easing': 'linear'}
-                            }
-                        ]
-                    },
-                    {
-                        'label': '⏸️ Pause',
-                        'method': 'animate',
-                        'args': [
-                            [[None]],
-                            {
-                                'frame': {'duration': 0, 'redraw': False},
-                                'mode': 'immediate',
-                                'transition': {'duration': 0}
-                            }
-                        ]
-                    }
-                ],
-                'x': 0.05,
-                'y': 0.05
-            }
-        ],
-        sliders=[
-            {
-                'active': 0,
-                'yanchor': 'top',
-                'xanchor': 'left',
-                'currentvalue': {
-                    'prefix': 'Hour: ',
-                    'visible': True,
-                    'xanchor': 'right'
-                },
-                'pad': {'b': 10, 't': 50},
-                'len': 0.9,
-                'x': 0.1,
-                'y': 0,
-                'steps': [
-                    {
-                        'args': [
-                            [f"frame_{hour}"],
-                            {
-                                'frame': {'duration': 0, 'redraw': True},
-                                'mode': 'immediate',
-                                'transition': {'duration': 0}
-                            }
-                        ],
-                        'label': f'{hour:02d}:00',
-                        'method': 'animate'
-                    }
-                    for hour in available_hours
-                ]
-            }
-        ]
-    )
-    
-    # Set a sensible camera so model and grid are visible
-    fig.update_layout(
-        scene_camera=dict(eye=dict(x=1.6, y=1.6, z=1.2))
-    )
-
-    # Hide legend (to avoid accidental toggling of the animated trace) but keep colorbar
-    fig.update_layout(showlegend=False)
-    
-    return fig
+# Removed old animated visualization function - now using enhanced_viewer
 
 
 def main():
@@ -465,8 +246,9 @@ def main():
     print("FAST-UTCI COMPLETE WORKFLOW DEMONSTRATION")
     print("=" * 60)
     
-    # Get user choice for analysis type
+    # Get user choices for analysis type and model simplification
     analysis_mode = get_user_analysis_choice()
+    simplify_model = get_user_simplification_choice()
     
     if analysis_mode == "single_hour":
         target_hour = get_single_hour_input()
@@ -475,14 +257,24 @@ def main():
         print("✅ Selected: Full day analysis (24 hours)")
         target_hour = None
     
+    if simplify_model:
+        print("✅ Selected: Model simplification to 70%")
+    else:
+        print("✅ Selected: Use original model (no simplification)")
+    
     # Validate analysis mode
     if not validate_analysis_mode(analysis_mode, target_hour):
         return 1
     
     # File paths
-    model_file = "data/rec_model_no_curve.glb"
+    model_file = "data/100_35164.gltf"
     epw_file = "data/ISR_Beer.Sheva.401900_MSI.epw" 
-    validation_csv = "data/15th_Aug_MRT.csv"
+    
+    # Set validation CSV based on analysis mode
+    if analysis_mode == "single_hour":
+        validation_csv = "data/15th_aug_13_14_MRT.csv"
+    else:  # full_day
+        validation_csv = "data/15th_aug_mrt.csv"
     
     # Check if files exist
     for file_path, name in [(model_file, "3D model"), (epw_file, "EPW weather"), (validation_csv, "validation CSV")]:
@@ -501,20 +293,62 @@ def main():
         print("STEP 1: LOADING PROJECT DATA")
         print("="*40)
         
-        from reader import read_project_data
-        model, weather_df, epw_data = read_project_data(model_file, epw_file)
+        from enhanced_model_reader import read_project_data_enhanced
+        enhanced_model, weather_df, epw_data = read_project_data_enhanced(model_file, epw_file)
+        model = enhanced_model.get_combined_mesh()  # Get combined mesh for MRT calculations
         
-        print(f"📊 Original model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
+        print(f"📊 Enhanced model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
         
-        # Simplify model to 70% for performance testing
-        print("🔧 Simplifying model to 70% for performance comparison...")
-        import trimesh
-        target_faces = int(len(model.faces) * 0.7)
-        model = model.simplify_quadric_decimation(face_count=target_faces)
-        print(f"📊 Simplified model: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
-        original_faces = len(model.faces) / 0.7  # Calculate original face count
-        speedup = original_faces / len(model.faces)
-        print(f"⚡ Expected ray casting speedup: ~{speedup:.1f}x faster")
+        # Display layer information (consolidated)
+        layer_info = enhanced_model.get_layer_info()
+        layer_counts = {}
+        for info in layer_info:
+            layer_type = info['display_name']
+            if layer_type not in layer_counts:
+                layer_counts[layer_type] = {'count': 0, 'vertices': 0, 'faces': 0}
+            layer_counts[layer_type]['count'] += 1
+            layer_counts[layer_type]['vertices'] += info['vertices']
+            layer_counts[layer_type]['faces'] += info['faces']
+        
+        print(f"🏗️  Model layers ({len(layer_info)} total):")
+        for layer_type, counts in layer_counts.items():
+            print(f"  - {layer_type}: {counts['count']} objects, {counts['vertices']:,} vertices, {counts['faces']:,} faces")
+        
+        # Display height information for each layer type
+        print(f"📏 Height analysis:")
+        height_stats = {}
+        for info in layer_info:
+            layer_type = info['display_name']
+            if layer_type not in height_stats:
+                height_stats[layer_type] = {'min_z': float('inf'), 'max_z': float('-inf'), 'count': 0}
+            
+            # Get mesh bounds for this layer
+            layer_obj = enhanced_model.get_layer_by_name(info['name'])
+            if layer_obj:
+                mesh = layer_obj.mesh
+                bounds = mesh.bounds
+                min_z, max_z = bounds[0][2], bounds[1][2]
+                height_stats[layer_type]['min_z'] = min(height_stats[layer_type]['min_z'], min_z)
+                height_stats[layer_type]['max_z'] = max(height_stats[layer_type]['max_z'], max_z)
+                height_stats[layer_type]['count'] += 1
+        
+        for layer_type, stats in height_stats.items():
+            if stats['count'] > 0:
+                height_range = stats['max_z'] - stats['min_z']
+                print(f"  - {layer_type}: {stats['min_z']:.1f}m to {stats['max_z']:.1f}m (range: {height_range:.1f}m)")
+        
+        # Apply model simplification if requested
+        if simplify_model:
+            print("🔧 Simplifying model to 70% for performance comparison...")
+            import trimesh
+            target_faces = int(len(model.faces) * 0.7)
+            model = model.simplify_quadric_decimation(face_count=target_faces)
+            print(f"📊 Simplified model: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
+            original_faces = len(model.faces) / 0.7  # Calculate original face count
+            speedup = original_faces / len(model.faces)
+            print(f"⚡ Expected ray casting speedup: ~{speedup:.1f}x faster")
+        else:
+            print("✅ Using original model without simplification")
         print(f"🌤️  Weather loaded: {len(weather_df):,} hours")
         
         # Monitor memory usage
@@ -531,17 +365,19 @@ def main():
         mrt_calc = MRTCalculator(context_meshes=[model])
         mrt_calc.set_location_from_epw(epw_file)
         
-        # Create simplified analysis grid that approximates Grasshopper approach
+        # Create analysis grid using exact model bounds (no buffer)
         
-        grid_size = 10.0  # meters - smaller spacing for ~4000 points (match Grasshopper's 4158)
+        grid_size = 50.0  # meters - larger spacing for faster testing
         
-        print(f"🏗️  Generating simplified grid (Grasshopper-aligned spacing)")
+        print(f"🏗️  Generating grid using exact model bounds (no buffer)")
         print(f"📐 Grid size: {grid_size}m")
         
-        # Use exact user-specified bounds (adjusted to avoid edge artifacts)
-        # Top left: (-4078.54, -1048.031), Bottom right: (-5069.535, -627)
-        bounds_min = np.array([-5069.535, -1048.031])  # x_min, y_min
-        bounds_max = np.array([-4078.54, -635.0])      # x_max, y_max (adjusted to -635 to avoid edge line)
+        # Use exact model bounds as specified by user
+        # Model bounds: x: -2470.81 to -1479.529, y: -619.8652 to -196.4804
+        bounds_min = np.array([-2470.81, -619.8652])  # x_min, y_min
+        bounds_max = np.array([-1479.529, -196.4804])  # x_max, y_max
+        
+        print(f"📊 Using exact model bounds: X=[{bounds_min[0]:.1f}, {bounds_max[0]:.1f}], Y=[{bounds_min[1]:.1f}, {bounds_max[1]:.1f}]")
         
         # Create ground-level grid at human height using exact bounds
         grid = create_rectangular_grid(
@@ -551,8 +387,9 @@ def main():
             z_height=1.5  # Human height for pedestrian analysis
         )
         
-        print(f"🎯 User-specified bounds: [{bounds_min[0]:.1f}, {bounds_min[1]:.1f}] to [{bounds_max[0]:.1f}, {bounds_max[1]:.1f}]")
-        print(f"📏 Grid area: {(bounds_max[0] - bounds_min[0]):.1f}m × {(bounds_max[1] - bounds_min[1]):.1f}m")
+        print(f"🎯 Analysis bounds: [{bounds_min[0]:.1f}, {bounds_min[1]:.1f}] to [{bounds_max[0]:.1f}, {bounds_max[1]:.1f}]")
+        print(f"📏 Grid area: {(bounds_max[0] - bounds_min[0]):.1f}m × {(bounds_max[1] - bounds_min[1]):.1f}m (exact model bounds)")
+        print(f"🏢 Model coverage: 100% of grid area (no buffer)")
         
         print(f"🔢 Grid generated: {len(grid.points)} points at {grid_size}m spacing")
         
@@ -645,10 +482,11 @@ def main():
         # Create visualization based on analysis mode
         comparison_filename = create_visualization(
             analysis_mode=analysis_mode,
-            model=model,
+            enhanced_model=enhanced_model,
             utci_results=utci_results,
             validation_csv=validation_csv,
-            grid_size=grid_size
+            grid_size=grid_size,
+            simplify_model=simplify_model
         )
         
         # Auto-open in browser
@@ -659,10 +497,16 @@ def main():
         
         # Export results with appropriate filename
         if analysis_mode == "single_hour":
-            utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_hour_{target_hour:02d}.csv"
+            if simplify_model:
+                utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_hour_{target_hour:02d}.csv"
+            else:
+                utci_output_path = f"utci_results_grid_{grid_size}m_original_hour_{target_hour:02d}.csv"
             print(f"💾 Exporting single hour results to: {utci_output_path}")
         else:
-            utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_24hour.csv"
+            if simplify_model:
+                utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_24hour.csv"
+            else:
+                utci_output_path = f"utci_results_grid_{grid_size}m_original_24hour.csv"
             print(f"💾 Exporting 24-hour results to: {utci_output_path}")
         
         utci_calc.to_csv(

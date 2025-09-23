@@ -15,6 +15,9 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from pathlib import Path
 # Import will be done in main() function
 
+# Import our Ladybug UTCI color implementation
+from ladybug_utci_colors import LadybugUTCIColors, create_ladybug_utci_colorscale
+
 
 class ModelViewer:
     """Class for visualizing 3D models and weather data."""
@@ -377,34 +380,20 @@ class UTCIHeatmapViewer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # UTCI thermal comfort color scale
-        self.utci_comfort_scale = {
-            'extreme_cold': {'range': (-float('inf'), -40), 'color': '#0000FF', 'label': 'Extreme Cold'},
-            'very_cold': {'range': (-40, -27), 'color': '#4169E1', 'label': 'Very Cold'},
-            'cold': {'range': (-27, -13), 'color': '#87CEEB', 'label': 'Cold'},
-            'cool': {'range': (-13, 9), 'color': '#98FB98', 'label': 'Cool'},
-            'comfortable': {'range': (9, 26), 'color': '#00FF00', 'label': 'Comfortable'},
-            'warm': {'range': (26, 32), 'color': '#FFD700', 'label': 'Warm'},
-            'hot': {'range': (32, 38), 'color': '#FF8C00', 'label': 'Hot'},
-            'very_hot': {'range': (38, 46), 'color': '#FF4500', 'label': 'Very Hot'},
-            'extreme_hot': {'range': (46, float('inf')), 'color': '#8B0000', 'label': 'Extreme Hot'}
-        }
+        # Initialize Ladybug UTCI color scale
+        self.utci_colors = LadybugUTCIColors()
+        
+        # Create static colorscale for consistent visualization
+        self.static_colorscale = create_ladybug_utci_colorscale()
+        self.colorscale_bounds = self.utci_colors.get_colorscale_bounds()
     
     def get_utci_color(self, utci_value: float) -> str:
-        """Get color for UTCI value based on thermal comfort category."""
-        for category, data in self.utci_comfort_scale.items():
-            min_val, max_val = data['range']
-            if min_val <= utci_value < max_val:
-                return data['color']
-        return '#808080'  # Gray for undefined
+        """Get color for UTCI value based on Ladybug thermal comfort category."""
+        return self.utci_colors.get_utci_color(utci_value)
     
     def get_utci_category(self, utci_value: float) -> str:
         """Get thermal comfort category for UTCI value."""
-        for category, data in self.utci_comfort_scale.items():
-            min_val, max_val = data['range']
-            if min_val <= utci_value < max_val:
-                return data['label']
-        return 'Unknown'
+        return self.utci_colors.get_utci_abbrev(utci_value)
     
     def visualize_utci_heatmap(self, 
                               model_mesh,
@@ -518,10 +507,20 @@ class UTCIHeatmapViewer:
             mode='markers',
             marker=dict(
                 size=point_size * 2,  # Larger for better visibility
-                color=colors,
+                color=utci_values,  # Use UTCI values directly for colorscale
+                colorscale=self.static_colorscale,  # Use static Ladybug colorscale
+                cmin=self.colorscale_bounds[0],  # Set static bounds
+                cmax=self.colorscale_bounds[1],
                 symbol='square',  # Square instead of circle
                 line=dict(width=2, color='darkgray'),  # Thicker border
-                opacity=0.9  # More opaque
+                opacity=0.9,  # More opaque
+                colorbar=dict(
+                    title="UTCI (°C)",
+                    titleside="right",
+                    tickmode="linear",
+                    tick0=self.colorscale_bounds[0],
+                    dtick=10
+                )
             ),
             text=hover_text,
             hovertemplate='%{text}<extra></extra>',
@@ -541,7 +540,10 @@ class UTCIHeatmapViewer:
             x_offset = np.max(positions[:, 0]) + 20
             z_base = np.min(positions[:, 2])
             
-            for i, (category, data) in enumerate(self.utci_comfort_scale.items()):
+            # Get Ladybug legend data
+            legend_data = self.utci_colors.create_legend_data()
+            
+            for i, data in enumerate(legend_data):
                 legend_x.append(x_offset)
                 legend_y.append(0)
                 legend_z.append(z_base + i * 5)
@@ -562,11 +564,11 @@ class UTCIHeatmapViewer:
                     color=legend_colors,
                     line=dict(width=2, color='black')
                 ),
-                text=[data['label'] for data in self.utci_comfort_scale.values()],
+                text=[data['abbrev'] for data in legend_data],
                 textposition='middle right',
                 hovertext=legend_text,
                 hovertemplate='%{hovertext}<extra></extra>',
-                name='Comfort Scale',
+                name='Ladybug UTCI Scale',
                 showlegend=False
             ))
         

@@ -131,9 +131,9 @@ def create_rectangular_grid(bounds_min: np.ndarray,
     else:
         z_coord = z_height
     
-    # Create grid coordinates
-    x_coords = np.arange(bounds_min[0], bounds_max[0] + grid_size/2, grid_size)
-    y_coords = np.arange(bounds_min[1], bounds_max[1] + grid_size/2, grid_size)
+    # Create grid coordinates - ensure we cover the full bounds
+    x_coords = np.arange(bounds_min[0], bounds_max[0] + grid_size, grid_size)
+    y_coords = np.arange(bounds_min[1], bounds_max[1] + grid_size, grid_size)
     
     # Create meshgrid
     X, Y = np.meshgrid(x_coords, y_coords)

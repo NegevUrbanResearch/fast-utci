@@ -1,28 +1,63 @@
-# Core dependencies for fast-utci
-trimesh
-fast_simplification
-ladybug-core
-numpy
-pandas
+# Core dependencies for MRT raycasting performance optimization
+# Python 3.11+ required
 
-# Visualization dependencies
-matplotlib
-plotly
+# 3D Model Handling
+trimesh>=4.0.0
+pygltflib>=1.16.0
 
-# Scientific computing
-scipy
+# MRT and Thermal Comfort Calculations
+ladybug-tools>=1.50.0
+pythermalcomfort>=2.7.0
 
-# UTCI calculation dependencies
-pythermalcomfort
+# Visualization
+plotly>=5.17.0
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
 
-# MRT Calculator - Radiance integration
-honeybee-radiance  # For Radiance simulations and MRT calculations
-ladybug-comfort # For OutdoorSolarCal and SolarBodyParameter
+# GPU Acceleration (optional)
+cupy-cuda12x>=12.0.0  # For CUDA 12.x
+# cupy-cuda11x>=11.0.0  # Alternative for CUDA 11.x
 
-# Progress tracking and performance
-tqdm  # Progress bars
-psutil  # System monitoring
+# Scientific Computing
+numpy>=1.24.0
+scipy>=1.11.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
 
-# Optional dependencies for enhanced functionality
-# These may be needed for specific features
-# open3d>=0.13.0  # Uncomment if using Open3D for advanced 3D processing
+# Performance and Profiling
+memory-profiler>=0.61.0
+psutil>=5.9.0
+line-profiler>=4.1.0
+
+# API and Web Framework
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+pytest-benchmark>=4.0.0
+
+# Code Quality
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.7.0
+isort>=5.12.0
+
+# Documentation
+mkdocs>=1.5.0
+mkdocs-material>=9.4.0
+
+# Development Tools
+jupyter>=1.0.0
+ipywidgets>=8.1.0
+
+# File Handling
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+
+# HTTP Client
+httpx>=0.25.0
+aiofiles>=23.2.0
