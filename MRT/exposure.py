@@ -14,6 +14,7 @@ import warnings
 from .solar import SunData, get_tregenza_dome_vectors
 from .mesh import MeshContext, batch_ray_intersections
 from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, DEFAULT_BATCH_SIZE
+import os
 
 # Global cache for sky vectors (computed once, reused across all positions)
 _sky_vectors_cache = None
@@ -144,6 +145,11 @@ def compute_solar_exposure(sample_points: np.ndarray,
     Returns:
         Array of shape (n_hours,) with fraction exposed per hour (0-1)
     """
+    # Allow opt-in vectorized pathway via environment (non-breaking default)
+    use_vectorized = os.getenv("FAST_UTCI_VECTORIZED_SOLAR", "0").lower() in ("1", "true", "yes", "on")
+    if use_vectorized:
+        return _compute_solar_exposure_vectorized(sample_points, sun_data, mesh_context, show_progress)
+
     n_hours = len(sun_data.sun_vectors)
     n_points = len(sample_points)
     fract_body_exp = np.zeros(n_hours)
@@ -182,6 +188,72 @@ def compute_solar_exposure(sample_points: np.ndarray,
             visible_points = np.sum(~hits)
             fract_body_exp[hour_idx] = visible_points / n_points
     
+    return fract_body_exp
+def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
+                                      sun_data: SunData,
+                                      mesh_context: Optional[MeshContext],
+                                      show_progress: bool) -> np.ndarray:
+    """
+    Vectorized solar exposure across multiple hours to reduce Python overhead
+    and improve Embree throughput by using larger ray batches.
+    """
+    n_hours = len(sun_data.sun_vectors)
+    n_points = len(sample_points)
+    fract_body_exp = np.zeros(n_hours)
+
+    # Quick exits
+    if mesh_context is None:
+        # Full exposure for all sun-up hours; zeros otherwise
+        sun_up = np.asarray(sun_data.is_sun_up, dtype=bool)
+        fract_body_exp[sun_up] = 1.0
+        return fract_body_exp
+
+    # Indices where sun is up
+    sun_up_indices = np.flatnonzero(sun_data.is_sun_up)
+    if sun_up_indices.size == 0:
+        return fract_body_exp
+
+    # Choose a reasonable hour batch size to control memory usage
+    # Each hour batch allocates (batch_hours * n_points) rays
+    # Start with ~8 hours per batch, adjust if very large n_points
+    base_hours_per_batch = 8
+    if n_points > 500:
+        base_hours_per_batch = 4
+    if n_points > 2000:
+        base_hours_per_batch = 2
+
+    hour_batches = np.array_split(sun_up_indices, max(1, int(np.ceil(len(sun_up_indices) / base_hours_per_batch))))
+
+    batch_iter = hour_batches
+    if show_progress:
+        batch_iter = tqdm(hour_batches, desc="Computing solar exposure (vect)", unit="batches")
+
+    for hour_batch in batch_iter:
+        if len(hour_batch) == 0:
+            continue
+
+        # Directions: for each hour in batch, we need n_points rays towards -sun_vector
+        batch_vectors = sun_data.sun_vectors[hour_batch]
+        # Create all origins and directions for this batch
+        # Origins: repeat sample_points for each hour
+        all_origins = np.tile(sample_points, (len(hour_batch), 1))
+        # Directions: for each hour vector, repeat it n_points times
+        all_directions = np.repeat(-batch_vectors, n_points, axis=0)
+
+        optimal_batch_size = _get_optimal_batch_size(len(all_origins), "solar")
+        hits = batch_ray_intersections(
+            origins=all_origins,
+            directions=all_directions,
+            mesh_context=mesh_context,
+            batch_size=optimal_batch_size
+        )
+
+        # Reshape to [hours_in_batch, n_points]
+        hits_reshaped = hits.reshape(len(hour_batch), n_points)
+        # Fraction of points NOT occluded
+        visible_frac = 1.0 - np.mean(hits_reshaped, axis=1)
+        fract_body_exp[hour_batch] = visible_frac
+
     return fract_body_exp
 
 
@@ -438,10 +510,55 @@ def _compute_exposure_chunk(args):
     """Worker function for parallel processing of position chunks."""
     chunk_positions, sun_data, mesh_context, pt_count, height, _ = args
     n_positions = len(chunk_positions)
-    
-    # Pre-allocate results list for better performance
+
+    # Fast path: when pt_count==1 and env toggle is on, batch solar rays across positions per hour
+    use_batch_positions = os.getenv("FAST_UTCI_BATCH_POSITIONS", "0").lower() in ("1", "true", "yes", "on")
+    if use_batch_positions and pt_count == 1 and mesh_context is not None:
+        # Prepare once
+        positions = np.asarray(chunk_positions)
+        # Create sample points: one per position at mid-height
+        sample_points = positions.copy()
+        sample_points[:, 2] = positions[:, 2] + height / 2.0
+
+        # Compute solar exposure across positions by batching per hour
+        n_hours = len(sun_data.sun_vectors)
+        fract_body_exp_all = np.zeros((n_positions, n_hours))
+
+        # For each hour, shoot one ray per position
+        sun_up = np.asarray(sun_data.is_sun_up, dtype=bool)
+        sun_up_indices = np.flatnonzero(sun_up)
+        for hour_idx in sun_up_indices:
+            sun_vec = sun_data.sun_vectors[hour_idx]
+            ray_dirs = np.empty((n_positions, 3), dtype=np.float64)
+            ray_dirs[:] = -sun_vec
+            # Batch intersections in big chunks
+            optimal_batch_size = _get_optimal_batch_size(n_positions, "solar")
+            hits = batch_ray_intersections(
+                origins=sample_points,
+                directions=ray_dirs,
+                mesh_context=mesh_context,
+                batch_size=optimal_batch_size
+            )
+            # Visible if no hit
+            fract_body_exp_all[:, hour_idx] = (~hits).astype(float)
+
+        # Sky exposure per position (still per position; could be batched further later)
+        results = [None] * n_positions
+        for i in range(n_positions):
+            pos = positions[i]
+            # One sample point array of shape (1,3)
+            sp = np.array([[pos[0], pos[1], pos[2] + height / 2.0]], dtype=np.float64)
+            sky = compute_sky_exposure(sp, mesh_context, show_progress=False)
+            results[i] = ExposureResult(
+                fract_body_exp=fract_body_exp_all[i],
+                sky_exposure=sky,
+                position=pos,
+                sample_points=sp
+            )
+        return results
+
+    # Default path: per-position processing
     results = [None] * n_positions
-    
     for i, position in enumerate(chunk_positions):
         result = compute_exposure(
             position=position,
@@ -449,8 +566,8 @@ def _compute_exposure_chunk(args):
             mesh_context=mesh_context,
             pt_count=pt_count,
             height=height,
-            show_progress=False  # No progress bars in worker processes
+            show_progress=False
         )
         results[i] = result
-    
+
     return results

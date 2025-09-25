@@ -9,9 +9,21 @@ This script demonstrates the full pipeline:
 5. Compare with Grasshopper validation data
 """
 
+# =============================================================================
+# CONFIGURATION - Easy to modify settings
+# =============================================================================
+
+# Grid spacing for analysis points (in meters)
+# Smaller values = more detailed analysis but slower computation
+# Larger values = faster computation but less detail
+GRID_SIZE = 2.0  # meters
+
+# =============================================================================
+
 from pathlib import Path
 import time
 import numpy as np
+import os
 from typing import Tuple, List, Optional
 import pandas as pd
 import psutil
@@ -179,7 +191,7 @@ def create_analysis_period_and_hours(analysis_mode: str, target_hour: Optional[i
     return analysis_period, target_hours
 
 
-def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict, validation_csv: str, grid_size: float, simplify_model: bool = False) -> str:
+def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict, validation_csv: str, grid_size: float, simplify_model: bool = False, target_hours: List[int] = None) -> str:
     """
     Create appropriate visualization based on analysis mode.
     
@@ -189,6 +201,8 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
         utci_results: UTCI calculation results
         validation_csv: Path to validation CSV
         grid_size: Grid spacing for filename
+        simplify_model: Whether model was simplified
+        target_hours: List of hours for full day analysis
         
     Returns:
         Filename of created visualization
@@ -198,7 +212,7 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
     viewer = EnhancedUTCIViewer()
     
     if analysis_mode == "single_hour":
-        # Single hour visualization (existing functionality)
+        # Single hour visualization
         print("📊 Creating single hour comparison with Grasshopper validation data...")
         
         comparison_fig = viewer.visualize_enhanced_utci_heatmap(
@@ -216,13 +230,16 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
             comparison_filename = f"utci_comparison_grid_{grid_size}m_original_single_hour.html"
         
     else:  # full_day
-        # Full day animated visualization
-        print("📊 Creating animated 24-hour UTCI visualization...")
+        # Full day animated visualization with same detailed view as single hour
+        print("📊 Creating animated 24-hour UTCI visualization with detailed view...")
         
-        comparison_fig = viewer.create_animated_enhanced_visualization(
+        comparison_fig = viewer.visualize_enhanced_utci_heatmap(
             enhanced_model=enhanced_model,
             utci_results=utci_results,
-            title="UTCI Results: 24-Hour Analysis - Enhanced Model"
+            title="UTCI Results: 24-Hour Analysis - Enhanced Model with Time Controls",
+            analysis_type="full_day",
+            validation_csv=validation_csv,
+            target_hours=target_hours
         )
         
         # Save the animated visualization as HTML file
@@ -246,6 +263,11 @@ def main():
     print("=" * 60)
     print("FAST-UTCI COMPLETE WORKFLOW DEMONSTRATION")
     print("=" * 60)
+    # Optional performance flags notice for easier benchmarking
+    if os.getenv("FAST_UTCI_VECTORIZED_SOLAR"):
+        print("⚙️  Using vectorized solar exposure path (FAST_UTCI_VECTORIZED_SOLAR)")
+    if os.getenv("FAST_UTCI_INTERSECTOR"):
+        print(f"⚙️  Ray intersector backend: {os.getenv('FAST_UTCI_INTERSECTOR')}")
     
     # Get user choices for analysis type and model simplification
     analysis_mode = get_user_analysis_choice()
@@ -263,12 +285,40 @@ def main():
     else:
         print("✅ Selected: Use original model (no simplification)")
     
+    # Apply default performance flags for full-day runs (honor existing env overrides)
+    if analysis_mode == "full_day":
+        # Enable vectorized solar batching
+        os.environ.setdefault("FAST_UTCI_VECTORIZED_SOLAR", "1")
+        # Enable vectorized UTCI inside workers
+        os.environ.setdefault("FAST_UTCI_VECTORIZED_UTCI", "1")
+        # Prefer Embree backend and low quality suitable for occlusion queries
+        os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
+        os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "low")
+        os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
+        # Use fast boolean occlusion path when available
+        os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1")
+        # Batch across positions when pt_count==1 (safe, only engages in that case)
+        os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
+        # Reduce per-position payload in UTCI worker to cut serialization cost
+        os.environ.setdefault("FAST_UTCI_INCLUDE_WEATHER_IN_RESULTS", "0")
+        os.environ.setdefault("FAST_UTCI_INCLUDE_DATETIME_IN_RESULTS", "0")
+        print("⚡ Optimizations enabled for full day: vectorized solar, Embree(low), intersects_any, batch positions")
+    else:
+        # Single-hour defaults: enable Embree + intersects_any; enable position batching (pt_count==1)
+        os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
+        os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "low")
+        os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
+        os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1")
+        os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
+        # Do not set FAST_UTCI_VECTORIZED_SOLAR by default for single hour
+        print("⚡ Optimizations enabled for single hour: Embree(low), intersects_any, batch positions")
+
     # Validate analysis mode
     if not validate_analysis_mode(analysis_mode, target_hour):
         return 1
     
     # File paths
-    model_file = "data/100_35164.gltf"
+    model_file = "data/3D_Models/100.gltf"
     epw_file = "data/ISR_Beer.Sheva.401900_MSI.epw" 
     
     # Set validation CSV based on analysis mode
@@ -296,7 +346,7 @@ def main():
         
         from enhanced_model_reader import read_project_data_enhanced
         t0 = time.perf_counter()
-        enhanced_model, weather_df, epw_data = read_project_data_enhanced(model_file, epw_file)
+        enhanced_model, weather_df, epw_data = read_project_data_enhanced(model_file, epw_file, verbose=False)
         t1 = time.perf_counter()
         print(f"⏱️  Load time: {(t1-t0):.2f}s")
         model = enhanced_model.get_combined_mesh()  # Get combined mesh for MRT calculations
@@ -317,29 +367,6 @@ def main():
         print(f"🏗️  Model layers ({len(layer_info)} total):")
         for layer_type, counts in layer_counts.items():
             print(f"  - {layer_type}: {counts['count']} objects, {counts['vertices']:,} vertices, {counts['faces']:,} faces")
-        
-        # Display height information for each layer type
-        print(f"📏 Height analysis:")
-        height_stats = {}
-        for info in layer_info:
-            layer_type = info['display_name']
-            if layer_type not in height_stats:
-                height_stats[layer_type] = {'min_z': float('inf'), 'max_z': float('-inf'), 'count': 0}
-            
-            # Get mesh bounds for this layer
-            layer_obj = enhanced_model.get_layer_by_name(info['name'])
-            if layer_obj:
-                mesh = layer_obj.mesh
-                bounds = mesh.bounds
-                min_z, max_z = bounds[0][2], bounds[1][2]
-                height_stats[layer_type]['min_z'] = min(height_stats[layer_type]['min_z'], min_z)
-                height_stats[layer_type]['max_z'] = max(height_stats[layer_type]['max_z'], max_z)
-                height_stats[layer_type]['count'] += 1
-        
-        for layer_type, stats in height_stats.items():
-            if stats['count'] > 0:
-                height_range = stats['max_z'] - stats['min_z']
-                print(f"  - {layer_type}: {stats['min_z']:.1f}m to {stats['max_z']:.1f}m (range: {height_range:.1f}m)")
         
         # Apply model simplification if requested
         if simplify_model:
@@ -375,7 +402,7 @@ def main():
         
         # Create analysis grid using exact model bounds (no buffer)
         
-        grid_size = 10.0  # meters - larger spacing for faster testing
+        grid_size = GRID_SIZE  # Use configured grid size
         
         print(f"🏗️  Generating grid using exact model bounds (no buffer)")
         print(f"📐 Grid size: {grid_size}m")
@@ -401,10 +428,9 @@ def main():
         
         print(f"🔢 Grid generated: {len(grid.points)} points at {grid_size}m spacing")
         
-        # Debug: Show grid extent and first few actual positions
+        # Show grid extent (simplified)
         points = np.array(grid.points)
         print(f"🔍 Grid extent: X=[{points[:,0].min():.1f}, {points[:,0].max():.1f}], Y=[{points[:,1].min():.1f}, {points[:,1].max():.1f}], Z={points[0,2]:.1f}")
-        print(f"📍 First 3 computed positions: {points[:3].tolist()}")
         
         # Create analysis period and target hours based on user choice
         analysis_period, target_hours = create_analysis_period_and_hours(analysis_mode, target_hour)
@@ -500,12 +526,12 @@ def main():
             utci_results=utci_results,
             validation_csv=validation_csv,
             grid_size=grid_size,
-            simplify_model=simplify_model
+            simplify_model=simplify_model,
+            target_hours=target_hours
         )
         
         # Auto-open in browser
         import webbrowser
-        import os
         file_path = os.path.abspath(comparison_filename)
         webbrowser.open(f"file://{file_path}")
         

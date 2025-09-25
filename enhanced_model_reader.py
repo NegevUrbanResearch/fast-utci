@@ -114,7 +114,7 @@ class EnhancedModel:
         return info
 
 
-def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str) -> List[trimesh.Trimesh]:
+def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str, verbose: bool = False) -> List[trimesh.Trimesh]:
     """
     Extract road lines from a base mesh by analyzing material groups and face clusters.
     
@@ -130,14 +130,15 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
     try:
         # Since base meshes are truly flat, roads must be embedded as different materials
         # Check if mesh has material information
-        if hasattr(base_mesh, 'visual') and hasattr(base_mesh.visual, 'material'):
+        if verbose and hasattr(base_mesh, 'visual') and hasattr(base_mesh.visual, 'material'):
             print(f"🔍 {mesh_name} has material info: {base_mesh.visual.material}")
         
         # Check for face groups (different materials)
         if hasattr(base_mesh, 'visual') and hasattr(base_mesh.visual, 'face_materials'):
             face_materials = base_mesh.visual.face_materials
             unique_materials = np.unique(face_materials)
-            print(f"🔍 {mesh_name} has {len(unique_materials)} different materials: {unique_materials}")
+            if verbose:
+                print(f"🔍 {mesh_name} has {len(unique_materials)} different materials: {unique_materials}")
             
             # Extract faces with different materials as potential road lines
             for material_id in unique_materials:
@@ -146,7 +147,8 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
                     if len(road_faces) > 0:
                         road_mesh = trimesh.Trimesh(vertices=base_mesh.vertices, faces=road_faces)
                         road_lines.append(road_mesh)
-                        print(f"🛣️ Extracted {len(road_faces)} faces with material {material_id}")
+                        if verbose:
+                            print(f"🛣️ Extracted {len(road_faces)} faces with material {material_id}")
         
         # Alternative: Analyze face connectivity to find linear patterns
         if not road_lines:
@@ -181,7 +183,7 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
                     # If it's elongated and reasonably sized, consider it a road
                     if aspect_ratio > 5.0 and 10 < cluster_mesh.area < 1000:
                         road_lines.append(cluster_mesh)
-                        print(f"🛣️ Extracted linear cluster {cluster_id}: {len(cluster_faces)} faces, aspect ratio {aspect_ratio:.1f}")
+                        # Note: This debug output is controlled by the calling function's verbose parameter
     
     except Exception as e:
         print(f"⚠️ Error extracting road lines from {mesh_name}: {e}")
@@ -189,7 +191,7 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
     return road_lines
 
 
-def detect_material_type(mesh_name: str, mesh_bounds: np.ndarray, mesh_volume: float, mesh_area: float = None, debug: bool = True, base_z_level: float = None, geom: trimesh.Trimesh = None) -> str:
+def detect_material_type(mesh_name: str, mesh_bounds: np.ndarray, mesh_volume: float, mesh_area: float = None, debug: bool = False, base_z_level: float = None, geom: trimesh.Trimesh = None) -> str:
     """
     Detect material type based on mesh properties.
     
@@ -281,7 +283,7 @@ def detect_material_type(mesh_name: str, mesh_bounds: np.ndarray, mesh_volume: f
     return 'vegetation'  # Default fallback to vegetation
 
 
-def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
+def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> EnhancedModel:
     """
     Read a 3D model file and return an enhanced model with layer information.
     
@@ -322,7 +324,8 @@ def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
         
     elif isinstance(loaded, trimesh.Scene):
         # Scene with multiple geometries
-        print(f"🔍 Analyzing {len(loaded.geometry)} geometries:")
+        if verbose:
+            print(f"🔍 Analyzing {len(loaded.geometry)} geometries:")
         
         # First pass: analyze all meshes to understand the structure
         mesh_info = []
@@ -347,52 +350,53 @@ def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
         # Sort by area to identify the largest meshes (likely base)
         mesh_info.sort(key=lambda x: x['area_xy'], reverse=True)
         
-        print("📊 Largest meshes (potential base elements):")
-        for i, info in enumerate(mesh_info[:10]):  # Top 10 largest
-            print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
-        
-        print("📊 Smallest meshes (potential trees/roads):")
-        for i, info in enumerate(mesh_info[-10:]):  # Bottom 10 smallest
-            print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
-        
-        # Analyze mesh shapes more thoroughly
-        print("📏 Detailed mesh shape analysis:")
-        
-        # Group meshes by size ranges to understand the structure
-        tiny_meshes = [info for info in mesh_info if info['area_xy'] < 1.0]
-        small_meshes = [info for info in mesh_info if 1.0 <= info['area_xy'] < 10.0]
-        medium_meshes = [info for info in mesh_info if 10.0 <= info['area_xy'] < 100.0]
-        large_meshes = [info for info in mesh_info if info['area_xy'] >= 100.0]
-        
-        print(f"📊 Mesh size distribution:")
-        print(f"  - Tiny (<1m²): {len(tiny_meshes)} meshes")
-        print(f"  - Small (1-10m²): {len(small_meshes)} meshes") 
-        print(f"  - Medium (10-100m²): {len(medium_meshes)} meshes")
-        print(f"  - Large (≥100m²): {len(large_meshes)} meshes")
-        
-        # Analyze vertex density for different size ranges
-        print(f"🔍 Vertex density analysis:")
-        for size_range, meshes in [("Tiny", tiny_meshes[:5]), ("Small", small_meshes[:5]), ("Medium", medium_meshes[:5])]:
-            if meshes:
-                print(f"  {size_range} meshes:")
-                for i, info in enumerate(meshes):
+        if verbose:
+            print("📊 Largest meshes (potential base elements):")
+            for i, info in enumerate(mesh_info[:10]):  # Top 10 largest
+                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+            
+            print("📊 Smallest meshes (potential trees/roads):")
+            for i, info in enumerate(mesh_info[-10:]):  # Bottom 10 smallest
+                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+            
+            # Analyze mesh shapes more thoroughly
+            print("📏 Detailed mesh shape analysis:")
+            
+            # Group meshes by size ranges to understand the structure
+            tiny_meshes = [info for info in mesh_info if info['area_xy'] < 1.0]
+            small_meshes = [info for info in mesh_info if 1.0 <= info['area_xy'] < 10.0]
+            medium_meshes = [info for info in mesh_info if 10.0 <= info['area_xy'] < 100.0]
+            large_meshes = [info for info in mesh_info if info['area_xy'] >= 100.0]
+            
+            print(f"📊 Mesh size distribution:")
+            print(f"  - Tiny (<1m²): {len(tiny_meshes)} meshes")
+            print(f"  - Small (1-10m²): {len(small_meshes)} meshes") 
+            print(f"  - Medium (10-100m²): {len(medium_meshes)} meshes")
+            print(f"  - Large (≥100m²): {len(large_meshes)} meshes")
+            
+            # Analyze vertex density for different size ranges
+            print(f"🔍 Vertex density analysis:")
+            for size_range, meshes in [("Tiny", tiny_meshes[:5]), ("Small", small_meshes[:5]), ("Medium", medium_meshes[:5])]:
+                if meshes:
+                    print(f"  {size_range} meshes:")
+                    for i, info in enumerate(meshes):
+                        aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
+                        print(f"    {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+            
+            # Look for potential road lines (linear elements)
+            potential_roads = []
+            for info in mesh_info:
+                if info['area_xy'] > 0:
                     aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-                    print(f"    {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
-        
-        # Look for potential road lines (linear elements)
-        potential_roads = []
-        for info in mesh_info:
-            if info['area_xy'] > 0:
+                    # Look for elements that might be road lines
+                    if (info['area_xy'] < 50 and aspect_ratio > 3 and 
+                        info['height'] > 0.01 and info['height'] < 1.0):  # Some height but not too tall
+                        potential_roads.append(info)
+            
+            print(f"🛣️ Potential road lines: {len(potential_roads)}")
+            for i, info in enumerate(potential_roads[:10]):  # Top 10
                 aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-                # Look for elements that might be road lines
-                if (info['area_xy'] < 50 and aspect_ratio > 3 and 
-                    info['height'] > 0.01 and info['height'] < 1.0):  # Some height but not too tall
-                    potential_roads.append(info)
-        
-        print(f"🛣️ Potential road lines: {len(potential_roads)}")
-        for i, info in enumerate(potential_roads[:10]):  # Top 10
-            aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-            print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
         
         # Second pass: classify meshes and extract embedded road lines
         for geom_name, geom in loaded.geometry.items():
@@ -408,9 +412,10 @@ def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
                 
                 # If this is a base mesh, try to extract embedded road lines
                 if material_type == 'base':
-                    road_lines = extract_road_lines_from_base_mesh(geom, geom_name)
+                    road_lines = extract_road_lines_from_base_mesh(geom, geom_name, verbose=verbose)
                     if road_lines:
-                        print(f"🛣️ Extracted {len(road_lines)} road line segments from {geom_name}")
+                        if verbose:
+                            print(f"🛣️ Extracted {len(road_lines)} road line segments from {geom_name}")
                         # Add road line segments as separate layers
                         for i, road_line in enumerate(road_lines):
                             # Validate the road mesh before adding
@@ -418,7 +423,8 @@ def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
                                 road_layer = ModelLayer(f"{geom_name}_road_{i}", road_line, 'road')
                                 layers.append(road_layer)
                             else:
-                                print(f"⚠️ Invalid road mesh created from {geom_name}_road_{i}")
+                                if verbose:
+                                    print(f"⚠️ Invalid road mesh created from {geom_name}_road_{i}")
                 
                 layer = ModelLayer(geom_name, geom, material_type)
                 layers.append(layer)
@@ -455,7 +461,8 @@ def read_enhanced_model(file_path: Union[str, Path]) -> EnhancedModel:
 
 
 def read_project_data_enhanced(model_path: Union[str, Path], 
-                              weather_path: Union[str, Path]) -> Tuple[EnhancedModel, 'pd.DataFrame', 'EPW']:
+                              weather_path: Union[str, Path], 
+                              verbose: bool = False) -> Tuple[EnhancedModel, pd.DataFrame, Any]:
     """
     Read model and weather data with enhanced model support.
     
@@ -466,7 +473,7 @@ def read_project_data_enhanced(model_path: Union[str, Path],
     Returns:
         Tuple of (enhanced_model, weather_df, epw_object)
     """
-    enhanced_model = read_enhanced_model(model_path)
+    enhanced_model = read_enhanced_model(model_path, verbose=verbose)
     weather_df = read_weather_data(weather_path)
     
     # Also return the original EPW object
@@ -502,12 +509,13 @@ def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
 
 
 def read_project_data(model_path: Union[str, Path], 
-                      weather_path: Union[str, Path]) -> Tuple[trimesh.Trimesh, pd.DataFrame, 'EPW']:
+                      weather_path: Union[str, Path], 
+                      verbose: bool = False) -> Tuple[trimesh.Trimesh, pd.DataFrame, Any]:
     """
     Compatibility wrapper matching reader.read_project_data signature.
     Returns combined trimesh mesh, weather DataFrame, and EPW.
     """
-    enhanced_model, weather_df, epw = read_project_data_enhanced(model_path, weather_path)
+    enhanced_model, weather_df, epw = read_project_data_enhanced(model_path, weather_path, verbose=verbose)
     combined_mesh = enhanced_model.get_combined_mesh()
     return combined_mesh, weather_df, epw
 

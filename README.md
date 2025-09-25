@@ -4,7 +4,16 @@
 
 For the UTCI calculations, we use the UTCI calculator from [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort). UTCI calculations take as inputs the Mean Radiant Temp, Air Temp, Wind Speed, and Relative Humidity. We will also use [Ladybug Tools](https://github.com/ladybug-tools) for other calculations that come up such as retrieving the angle of the sun
 
-For calulating the Mean Radiant Temperature at a given point or mesh edge, we need to conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3d objects modeled. To do these calculations, we will use [Radiance](https://www.radiance-online.org/download-install).
+For calulating the Mean Radiant Temperature at a given point or mesh edge, we need to conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3d objects modeled. To do these calculations, we use Embree-accelerated ray tests via trimesh (pyembree) for occlusion and visibility, and may use [Radiance](https://www.radiance-online.org/download-install) where applicable.
+## Performance toggles
+
+You can enable additional performance features via environment variables (non-breaking defaults):
+
+- FAST_UTCI_VECTORIZED_SOLAR=1 — enable vectorized solar exposure batching
+- FAST_UTCI_INTERSECTOR=embree|trimesh — select ray intersector backend
+- FAST_UTCI_EMBREE_QUALITY=low|medium|high — tune Embree quality (if supported)
+- FAST_UTCI_EMBREE_BUILD_BVH=true|false — pre-build BVH (if supported)
+- FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16 — hint packet size (if supported)
 
 Air Temp, Wind Speed, and Relative Humidity are all stored in the .epw weather files.
 

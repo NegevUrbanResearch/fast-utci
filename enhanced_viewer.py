@@ -45,7 +45,9 @@ class EnhancedUTCIViewer:
                                       show_comfort_legend: bool = True,
                                       point_size: int = 8,
                                       analysis_type: str = "single_hour",
-                                      validation_csv: str = None) -> go.Figure:
+                                      validation_csv: str = None,
+                                      target_hours: List[int] = None,
+                                      interpolation_resolution: int = None) -> go.Figure:
         """
         Create enhanced 3D visualization of UTCI heatmap with layer support.
         
@@ -57,13 +59,27 @@ class EnhancedUTCIViewer:
             show_utci_points: Whether to show UTCI data points
             show_comfort_legend: Whether to show thermal comfort legend
             point_size: Size of UTCI data points
-            analysis_type: "single_hour" for dynamic colorscale, "full_day" for static
+            analysis_type: "single_hour" for static view, "full_day" for animated view
             validation_csv: Path to validation CSV for comparison table
+            target_hours: List of hours for animation (required for full_day analysis)
+            interpolation_resolution: Resolution for interpolation surface (None = auto based on analysis_type)
             
         Returns:
-            Plotly figure with enhanced 3D UTCI heatmap
+            Plotly figure with enhanced 3D UTCI heatmap (static or animated)
         """
         fig = go.Figure()
+        
+        # Set default interpolation resolution based on analysis type
+        if interpolation_resolution is None:
+            if analysis_type == "single_hour":
+                # High resolution for single hour (current behavior)
+                interpolation_resolution = 300
+            else:  # full_day
+                # Reduced resolution for full day to manage file size
+                interpolation_resolution = 75  # 75x75 = 5,625 points instead of 300x300 = 90,000
+            print(f"🔧 Auto-setting interpolation resolution: {interpolation_resolution}x{interpolation_resolution} for {analysis_type} analysis")
+        else:
+            print(f"🔧 Using custom interpolation resolution: {interpolation_resolution}x{interpolation_resolution}")
         
         # Determine colorscale and bounds based on analysis type
         if analysis_type == "single_hour":
@@ -79,18 +95,29 @@ class EnhancedUTCIViewer:
             colorscale_bounds = (utci_min, utci_max)  # Use actual data range for maximum contrast
             print(f"🎨 Using dynamic colorscale for single hour: full spectrum mapped to data range {utci_min:.1f}°C to {utci_max:.1f}°C")
         else:
-            # Static colorscale for full day analysis
-            colorscale = self.static_colorscale
-            colorscale_bounds = self.colorscale_bounds
-            print(f"🎨 Using static colorscale for full day: {colorscale_bounds[0]:.1f}°C to {colorscale_bounds[1]:.1f}°C")
+            # Dynamic colorscale for full day analysis too - use actual data range for better visualization
+            all_utci_values = []
+            for pos_key, pos_data in utci_results.items():
+                if 'utci' in pos_data:
+                    all_utci_values.extend(pos_data['utci'])
+            utci_values = np.array(all_utci_values)
+            utci_min, utci_max = float(np.min(utci_values)), float(np.max(utci_values))
+            colorscale = self.utci_colors.create_dynamic_colorscale(utci_min, utci_max)
+            colorscale_bounds = (utci_min, utci_max)  # Use actual data range for maximum contrast
+            print(f"🎨 Using dynamic colorscale for full day: full spectrum mapped to data range {utci_min:.1f}°C to {utci_max:.1f}°C")
         
-        # Add model layers if requested
+        # Add model layers if requested (static for both analysis types)
         if show_model_layers:
             self._add_model_layers(fig, enhanced_model)
         
-        # Add UTCI data points if requested
-        if show_utci_points:
-            self._add_utci_points(fig, utci_results, point_size, enhanced_model, colorscale, colorscale_bounds)
+        # Handle different analysis types
+        if analysis_type == "full_day" and target_hours:
+            # Full day analysis with animation
+            self._add_animated_utci_data(fig, utci_results, point_size, enhanced_model, colorscale, colorscale_bounds, target_hours, interpolation_resolution)
+        else:
+            # Single hour analysis (static)
+            if show_utci_points:
+                self._add_utci_points(fig, utci_results, point_size, enhanced_model, colorscale, colorscale_bounds, interpolation_resolution)
         
         # Add comfort legend if requested
         if show_comfort_legend:
@@ -132,6 +159,396 @@ class EnhancedUTCIViewer:
         )
         
         return fig
+    
+    def _add_animated_utci_data(self, fig: go.Figure, utci_results: Dict[str, Any], point_size: int, enhanced_model: EnhancedModel, colorscale, colorscale_bounds, target_hours: List[int], interpolation_resolution: int, show_model_layers: bool = True):
+        """Add animated UTCI data with same detailed view as single hour analysis."""
+        # Extract UTCI data by hour
+        utci_data_by_hour = {}
+        hours_seen = set()
+        
+        for pos_key, data in utci_results.items():
+            position = np.asarray(data['position'])
+            utci_vals = data['utci']
+            datetimes = data.get('datetime', None)
+            
+            if isinstance(utci_vals, (list, np.ndarray)) and len(utci_vals) > 0:
+                for idx, utci_val in enumerate(utci_vals):
+                    # Determine hour label
+                    hour = None
+                    try:
+                        if datetimes is not None and idx < len(datetimes) and datetimes[idx] is not None:
+                            hour = int(pd.to_datetime(datetimes[idx]).hour)
+                        else:
+                            hour = target_hours[idx] if idx < len(target_hours) else idx
+                    except Exception:
+                        hour = target_hours[idx] if idx < len(target_hours) else idx
+                    
+                    hours_seen.add(hour)
+                    if hour not in utci_data_by_hour:
+                        utci_data_by_hour[hour] = {'positions': [], 'utci_values': [], 'mrt_values': []}
+                    
+                    # Extract numeric UTCI value
+                    try:
+                        if hasattr(utci_val, 'utci'):
+                            numeric_utci = float(utci_val.utci)
+                        elif isinstance(utci_val, dict) and 'utci' in utci_val:
+                            numeric_utci = float(utci_val['utci'])
+                        else:
+                            numeric_utci = float(utci_val)
+                        
+                        # Extract MRT value
+                        mrt_vals = data.get('mrt', [])
+                        mrt_val = mrt_vals[idx] if idx < len(mrt_vals) else 0
+                        
+                        if not np.isnan(numeric_utci):
+                            utci_data_by_hour[hour]['positions'].append(position)
+                            utci_data_by_hour[hour]['utci_values'].append(numeric_utci)
+                            utci_data_by_hour[hour]['mrt_values'].append(mrt_val)
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+        
+        # Create frames for animation
+        frames = []
+        available_hours = sorted(list(hours_seen)) if len(hours_seen) > 0 else target_hours
+        base_z_level = -10.0  # Lower Z level to ensure UTCI is below model geometry
+        
+        # Count model layers to determine trace index
+        # We need to count consolidated traces, not individual layers
+        # Model layers are consolidated by material type: Trees, Roads, Buildings, Base = 4 traces
+        num_model_traces = 4  # Trees, Roads, Buildings, Base
+        
+        for hour in available_hours:
+            if hour in utci_data_by_hour and len(utci_data_by_hour[hour]['positions']) > 0:
+                positions = np.array(utci_data_by_hour[hour]['positions'])
+                utci_values = np.array(utci_data_by_hour[hour]['utci_values'])
+                mrt_values = np.array(utci_data_by_hour[hour]['mrt_values'])
+                
+                # Create hover text for square grid points
+                hover_text = [
+                    f"Hour: {hour:02d}:00<br>"
+                    f"Position: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})<br>"
+                    f"UTCI: {utci:.1f}°C<br>"
+                    f"MRT: {mrt:.1f}°C"
+                    for pos, utci, mrt in zip(positions, utci_values, mrt_values)
+                ]
+                
+                # Use base layer bounds for proper alignment (same as static visualization)
+                base_bounds = enhanced_model.get_bounds_for_layer_type('base')
+                if base_bounds is not None:
+                    x_min, y_min = base_bounds[0][:2]  # Use X,Y from base bounds
+                    x_max, y_max = base_bounds[1][:2]
+                else:
+                    # Fallback to UTCI data bounds
+                    x_min, x_max = positions[:, 0].min(), positions[:, 0].max()
+                    y_min, y_max = positions[:, 1].min(), positions[:, 1].max()
+                
+                # Filter points to match bounds
+                valid_indices = []
+                for i, pos in enumerate(positions):
+                    if (x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max):
+                        valid_indices.append(i)
+                
+                if len(valid_indices) == 0:
+                    continue
+                
+                # Filter data to only include points within bounds
+                filtered_positions = positions[valid_indices]
+                filtered_utci_values = utci_values[valid_indices]
+                filtered_hover_text = [hover_text[i] for i in valid_indices]
+                
+                frame_data = [
+                    # Square grid layer
+                    go.Scatter3d(
+                        x=filtered_positions[:, 0],
+                        y=filtered_positions[:, 1],
+                        z=np.full(len(filtered_positions), base_z_level),
+                        mode='markers',
+                        marker=dict(
+                            size=point_size,
+                            color=filtered_utci_values,
+                            colorscale=colorscale,
+                            cmin=colorscale_bounds[0],
+                            cmax=colorscale_bounds[1],
+                            symbol='square',
+                            line=dict(width=0),
+                            showscale=True,
+                            colorbar=dict(
+                                title=dict(text="UTCI (°C)", side="right"),
+                                tickmode="array",
+                                tickvals=[colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10 for i in range(11)],
+                                ticktext=[f"{colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10:.1f}" for i in range(11)]
+                            )
+                        ),
+                        hovertext=filtered_hover_text,
+                        hovertemplate='%{hovertext}<extra></extra>',
+                        name='UTCI Square Grid',
+                        showlegend=True
+                    )
+                ]
+                
+                # Add interpolation surface for this hour
+                grid_resolution = interpolation_resolution
+                x_grid = np.linspace(x_min, x_max, grid_resolution)
+                y_grid = np.linspace(y_min, y_max, grid_resolution)
+                X, Y = np.meshgrid(x_grid, y_grid)
+                
+                # Interpolate UTCI values to grid
+                from scipy.interpolate import griddata
+                Z_utci = griddata(
+                    (filtered_positions[:, 0], filtered_positions[:, 1]), 
+                    filtered_utci_values, 
+                    (X, Y), 
+                    method='linear',
+                    fill_value=np.nan
+                )
+                
+                # Fill any remaining NaN values at edges
+                if np.any(np.isnan(Z_utci)):
+                    valid_mask = ~np.isnan(Z_utci)
+                    if np.any(valid_mask):
+                        Z_utci_filled = griddata(
+                            (X[valid_mask], Y[valid_mask]), 
+                            Z_utci[valid_mask], 
+                            (X, Y), 
+                            method='nearest'
+                        )
+                        Z_utci = np.where(np.isnan(Z_utci), Z_utci_filled, Z_utci)
+                
+                Z_flat = np.full_like(X, base_z_level)
+                
+                # Create hover text for interpolation
+                hover_text_interp = np.empty_like(Z_utci, dtype=object)
+                for i in range(Z_utci.shape[0]):
+                    for j in range(Z_utci.shape[1]):
+                        utci_val = Z_utci[i, j]
+                        if not np.isnan(utci_val):
+                            category = self.utci_colors.get_utci_label(utci_val)
+                            hover_text_interp[i, j] = f"<b>Hour: {hour:02d}:00</b><br><b>UTCI: {utci_val:.1f}°C</b><br>Category: {category}"
+                        else:
+                            hover_text_interp[i, j] = f"Hour: {hour:02d}:00<br>No data"
+                
+                frame_data.append(go.Surface(
+                    x=X, y=Y, z=Z_flat,
+                    colorscale=colorscale,
+                    surfacecolor=Z_utci,
+                    cmin=colorscale_bounds[0],
+                    cmax=colorscale_bounds[1],
+                    opacity=0.7,
+                    hovertext=hover_text_interp,
+                    hovertemplate='%{hovertext}<extra></extra>',
+                        name='UTCI Interpolation',
+                        showlegend=True,
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text="UTCI (°C)", side="right"),
+                            tickmode="array",
+                            tickvals=[colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10 for i in range(11)],
+                            ticktext=[f"{colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10:.1f}" for i in range(11)]
+                        )
+                ))
+                
+                frame = go.Frame(
+                    data=frame_data,
+                    traces=[num_model_traces, num_model_traces + 1],  # Update UTCI traces
+                    name=f"frame_{hour}",
+                    layout=dict(
+                        # Preserve visibility state for UTCI traces
+                        annotations=[],
+                        shapes=[]
+                    )
+                )
+                frames.append(frame)
+        
+        fig.frames = frames
+        
+        # Add initial UTCI data for the first available hour
+        initial_hour = available_hours[0] if len(available_hours) > 0 else 0
+        if initial_hour in utci_data_by_hour and len(utci_data_by_hour[initial_hour]['positions']) > 0:
+            init_positions = np.array(utci_data_by_hour[initial_hour]['positions'])
+            init_utci = np.array(utci_data_by_hour[initial_hour]['utci_values'])
+            init_mrt = np.array(utci_data_by_hour[initial_hour]['mrt_values'])
+            
+            # Use base layer bounds for proper alignment
+            base_bounds = enhanced_model.get_bounds_for_layer_type('base')
+            if base_bounds is not None:
+                x_min, y_min = base_bounds[0][:2]
+                x_max, y_max = base_bounds[1][:2]
+            else:
+                x_min, x_max = init_positions[:, 0].min(), init_positions[:, 0].max()
+                y_min, y_max = init_positions[:, 1].min(), init_positions[:, 1].max()
+            
+            # Filter initial points to match bounds
+            valid_indices = []
+            for i, pos in enumerate(init_positions):
+                if (x_min <= pos[0] <= x_max and y_min <= pos[1] <= y_max):
+                    valid_indices.append(i)
+            
+            if len(valid_indices) > 0:
+                filtered_init_positions = init_positions[valid_indices]
+                filtered_init_utci = init_utci[valid_indices]
+                filtered_init_mrt = init_mrt[valid_indices]
+                
+                init_hover = [
+                    f"Hour: {initial_hour:02d}:00<br>"
+                    f"Position: ({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})<br>"
+                    f"UTCI: {val:.1f}°C<br>"
+                    f"MRT: {mrt:.1f}°C"
+                    for pos, val, mrt in zip(filtered_init_positions, filtered_init_utci, filtered_init_mrt)
+                ]
+                
+                # Add initial square grid
+                fig.add_trace(go.Scatter3d(
+                    x=filtered_init_positions[:, 0],
+                    y=filtered_init_positions[:, 1],
+                    z=np.full(len(filtered_init_positions), base_z_level),
+                    mode='markers',
+                    marker=dict(
+                        size=point_size,
+                        color=filtered_init_utci,
+                        colorscale=colorscale,
+                        cmin=colorscale_bounds[0],
+                        cmax=colorscale_bounds[1],
+                        symbol='square',
+                        line=dict(width=0),
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text="UTCI (°C)", side="right"),
+                            tickmode="array",
+                            tickvals=[colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10 for i in range(11)],
+                            ticktext=[f"{colorscale_bounds[0] + i * (colorscale_bounds[1] - colorscale_bounds[0]) / 10:.1f}" for i in range(11)]
+                        )
+                    ),
+                    hovertext=init_hover,
+                    hovertemplate='%{hovertext}<extra></extra>',
+                    name='UTCI Square Grid',
+                    showlegend=True,
+                    visible=True
+                ))
+                
+                # Add initial interpolation surface
+                grid_resolution = interpolation_resolution
+                x_grid = np.linspace(x_min, x_max, grid_resolution)
+                y_grid = np.linspace(y_min, y_max, grid_resolution)
+                X, Y = np.meshgrid(x_grid, y_grid)
+                
+                from scipy.interpolate import griddata
+                Z_utci = griddata(
+                    (filtered_init_positions[:, 0], filtered_init_positions[:, 1]), 
+                    filtered_init_utci, 
+                    (X, Y), 
+                    method='linear',
+                    fill_value=np.nan
+                )
+                
+                # Fill any remaining NaN values at edges
+                if np.any(np.isnan(Z_utci)):
+                    valid_mask = ~np.isnan(Z_utci)
+                    if np.any(valid_mask):
+                        Z_utci_filled = griddata(
+                            (X[valid_mask], Y[valid_mask]), 
+                            Z_utci[valid_mask], 
+                            (X, Y), 
+                            method='nearest'
+                        )
+                        Z_utci = np.where(np.isnan(Z_utci), Z_utci_filled, Z_utci)
+                
+                Z_flat = np.full_like(X, base_z_level)
+                
+                # Create hover text for initial interpolation
+                hover_text_interp = np.empty_like(Z_utci, dtype=object)
+                for i in range(Z_utci.shape[0]):
+                    for j in range(Z_utci.shape[1]):
+                        utci_val = Z_utci[i, j]
+                        if not np.isnan(utci_val):
+                            category = self.utci_colors.get_utci_label(utci_val)
+                            hover_text_interp[i, j] = f"<b>Hour: {initial_hour:02d}:00</b><br><b>UTCI: {utci_val:.1f}°C</b><br>Category: {category}"
+                        else:
+                            hover_text_interp[i, j] = f"Hour: {initial_hour:02d}:00<br>No data"
+                
+                fig.add_trace(go.Surface(
+                    x=X, y=Y, z=Z_flat,
+                    colorscale=colorscale,
+                    surfacecolor=Z_utci,
+                    cmin=colorscale_bounds[0],
+                    cmax=colorscale_bounds[1],
+                    opacity=0.7,
+                    hovertext=hover_text_interp,
+                    hovertemplate='%{hovertext}<extra></extra>',
+                    name='UTCI Interpolation',
+                    showlegend=True,
+                    showscale=False,
+                    visible='legendonly'
+                ))
+        
+        
+        # Add animation controls
+        fig.update_layout(
+            updatemenus=[
+                {
+                    'type': 'buttons',
+                    'showactive': True,
+                    'buttons': [
+                        {
+                            'label': '▶️ Play',
+                            'method': 'animate',
+                            'args': [
+                                None,
+                                {
+                                    'frame': {'duration': 800, 'redraw': True},
+                                    'fromcurrent': True,
+                                    'transition': {'duration': 200, 'easing': 'linear'}
+                                }
+                            ]
+                        },
+                        {
+                            'label': '⏸️ Pause',
+                            'method': 'animate',
+                            'args': [
+                                [[None]],
+                                {
+                                    'frame': {'duration': 0, 'redraw': False},
+                                    'mode': 'immediate',
+                                    'transition': {'duration': 0}
+                                }
+                            ]
+                        }
+                    ],
+                    'x': 0.05,
+                    'y': 0.05
+                }
+            ],
+            sliders=[
+                {
+                    'active': 0,
+                    'yanchor': 'top',
+                    'xanchor': 'left',
+                    'currentvalue': {
+                        'prefix': 'Hour: ',
+                        'visible': True,
+                        'xanchor': 'right'
+                    },
+                    'pad': {'b': 10, 't': 50},
+                    'len': 0.9,
+                    'x': 0.1,
+                    'y': 0,
+                    'steps': [
+                        {
+                            'args': [
+                                [f"frame_{hour}"],
+                                {
+                                    'frame': {'duration': 0, 'redraw': True},
+                                    'mode': 'immediate',
+                                    'transition': {'duration': 0}
+                                }
+                            ],
+                            'label': f'{hour:02d}:00',
+                            'method': 'animate'
+                        }
+                        for hour in available_hours
+                    ]
+                }
+            ]
+        )
     
     def _add_model_layers(self, fig: go.Figure, enhanced_model: EnhancedModel):
         """Add consolidated model layers to the figure with different colors."""
@@ -240,7 +657,7 @@ class EnhancedUTCIViewer:
         z_coords = vertices[:, 2]
         return float(np.max(z_coords) - np.min(z_coords))
     
-    def _add_utci_points(self, fig: go.Figure, utci_results: Dict[str, Any], point_size: int, enhanced_model=None, colorscale=None, colorscale_bounds=None):
+    def _add_utci_points(self, fig: go.Figure, utci_results: Dict[str, Any], point_size: int, enhanced_model=None, colorscale=None, colorscale_bounds=None, interpolation_resolution: int = 300):
         """Add UTCI data points to the figure with both square grid and interpolation layers."""
         # Extract UTCI data points
         positions = []
@@ -392,9 +809,8 @@ class EnhancedUTCIViewer:
         print(f"🔲 Square grid: {len(filtered_positions)} discrete points with square markers")
         
         # LAYER 2: Interpolation Surface - HIDDEN BY DEFAULT
-        # Create interpolation grid with higher resolution for better coverage
-        # Adaptive resolution for smoother interpolation while keeping perf reasonable
-        grid_resolution = int(min(300, max(50, np.sqrt(len(filtered_positions)) * 2)))
+        # Create interpolation grid with specified resolution
+        grid_resolution = interpolation_resolution
         x_grid = np.linspace(x_min, x_max, grid_resolution)
         y_grid = np.linspace(y_min, y_max, grid_resolution)
         X, Y = np.meshgrid(x_grid, y_grid)

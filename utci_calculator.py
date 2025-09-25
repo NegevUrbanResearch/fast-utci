@@ -8,6 +8,7 @@ using pythermalcomfort, following the architecture described in README.md.
 import numpy as np
 import pandas as pd
 from typing import List, Union, Optional, Dict, Any, Tuple
+import os
 from pathlib import Path
 import warnings
 
@@ -124,7 +125,8 @@ class UTCICalculator:
                      mrt_results: Dict[str, Any],
                      analysis_period: Optional[Any] = None,
                      target_hours: Optional[List[int]] = None,
-                     show_progress: bool = False) -> Dict[str, Any]:
+                     show_progress: bool = False,
+                     n_workers: Optional[int] = None) -> Dict[str, Any]:
         """
         Compute UTCI from MRT results and weather data.
         
@@ -133,6 +135,7 @@ class UTCICalculator:
             analysis_period: Optional time period filter
             target_hours: Optional hour filter (0-23)
             show_progress: Whether to show progress bar
+            n_workers: Number of parallel workers (default: CPU count - 1)
             
         Returns:
             Dictionary with UTCI results per position
@@ -145,25 +148,28 @@ class UTCICalculator:
         
         # Prepare weather data once
         weather_filtered = self._prepare_weather_data(analysis_period, target_hours)
-        
-        # Set up iteration with optional progress bar
-        if show_progress:
-            try:
-                from tqdm import tqdm
-                pos_iter = tqdm(mrt_results.items(), desc="Computing UTCI", unit="pos")
-            except ImportError:
-                pos_iter = mrt_results.items()
+
+        # Optional optimized numpy views for hot path
+        use_vectorized = os.getenv("FAST_UTCI_VECTORIZED_UTCI", "1").lower() in ("1", "true", "yes", "on")
+        if use_vectorized:
+            self._weather_np = {
+                'air_temp': weather_filtered['air_temp'].to_numpy(copy=False),
+                'wind_speed': weather_filtered['wind_speed'].to_numpy(copy=False),
+                'relative_humidity': weather_filtered['relative_humidity'].to_numpy(copy=False),
+                'datetime': weather_filtered['datetime'].to_numpy(copy=False) if 'datetime' in weather_filtered.columns else None
+            }
         else:
-            pos_iter = mrt_results.items()
+            self._weather_np = None
         
-        utci_results = {}
+        # Use parallel processing for UTCI calculations
+        n_positions = len(mrt_results)
         
-        for pos_key, mrt_data in pos_iter:
-            utci_results[pos_key] = self._calculate_utci_for_position(
-                mrt_data, weather_filtered
-            )
+        # Use serial processing for small datasets
+        if n_positions < 50:
+            return self._compute_utci_serial(mrt_results, weather_filtered, show_progress)
         
-        return utci_results
+        # Use parallel processing for larger datasets
+        return self._compute_utci_parallel(mrt_results, weather_filtered, show_progress, n_workers)
     
     def _prepare_weather_data(self, 
                              analysis_period: Optional[Any], 
@@ -198,22 +204,143 @@ class UTCICalculator:
         
         return df.reset_index(drop=True)
     
+    def _compute_utci_serial(self, mrt_results, weather_filtered, show_progress):
+        """Serial UTCI computation for small datasets."""
+        utci_results = {}
+        
+        # Set up iteration with optional progress bar
+        if show_progress:
+            try:
+                from tqdm import tqdm
+                pos_iter = tqdm(mrt_results.items(), desc="Computing UTCI (serial)", unit="pos")
+            except ImportError:
+                pos_iter = mrt_results.items()
+        else:
+            pos_iter = mrt_results.items()
+        
+        for pos_key, mrt_data in pos_iter:
+            utci_results[pos_key] = self._calculate_utci_for_position(mrt_data, weather_filtered)
+        
+        return utci_results
+    
+    def _compute_utci_parallel(self, mrt_results, weather_filtered, show_progress, n_workers):
+        """Parallel UTCI computation for larger datasets."""
+        import multiprocessing as mp
+        from multiprocessing import Pool
+        import time
+        
+        n_positions = len(mrt_results)
+        
+        if n_workers is None:
+            n_workers = max(1, mp.cpu_count() - 1)
+        
+        # Convert mrt_results to list of (key, data) tuples for chunking
+        mrt_items = list(mrt_results.items())
+        
+        # Create chunks with improved load balancing
+        positions_per_worker = n_positions // n_workers
+        extra_positions = n_positions % n_workers
+        
+        chunks = []
+        start_idx = 0
+        for worker_id in range(n_workers):
+            chunk_size = positions_per_worker + (1 if worker_id < extra_positions else 0)
+            end_idx = start_idx + chunk_size
+            
+            if start_idx < n_positions:
+                chunks.append(mrt_items[start_idx:end_idx])
+                start_idx = end_idx
+        
+        print(f"Processing {n_positions} UTCI calculations with {n_workers} workers in {len(chunks)} chunks")
+        
+        # Process chunks in parallel. Prefer numpy dict if available to reduce pickling cost.
+        shared_weather = self._weather_np if getattr(self, '_weather_np', None) is not None else weather_filtered
+        chunk_args = [(chunk, shared_weather) for chunk in chunks]
+        
+        with Pool(processes=n_workers) as pool:
+            start_time = time.time()
+            
+            if show_progress:
+                from tqdm import tqdm
+                with tqdm(total=n_positions, desc="Computing UTCI (parallel)", unit="pos", 
+                         mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
+                    
+                    utci_results = {}
+                    for chunk_results in pool.imap(_compute_utci_chunk, chunk_args):
+                        utci_results.update(chunk_results)
+                        pbar.update(len(chunk_results))
+                        
+                        # Update description with time estimate
+                        elapsed = time.time() - start_time
+                        if elapsed > 0:
+                            rate = pbar.n / elapsed
+                            eta = (n_positions - pbar.n) / rate if rate > 0 else 0
+                            pbar.set_description(f"Computing UTCI (parallel) ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
+            else:
+                # No progress bar - use simple processing
+                chunk_results_list = pool.map(_compute_utci_chunk, chunk_args)
+                utci_results = {}
+                for chunk_results in chunk_results_list:
+                    utci_results.update(chunk_results)
+        
+        return utci_results
+    
     def _calculate_utci_for_position(self, mrt_data: Dict[str, Any], weather_filtered: pd.DataFrame) -> Dict[str, Any]:
         """Calculate UTCI for a single position."""
         mrt_values = mrt_data['mrt']
         position = mrt_data['position']
         n_hours = len(mrt_values)
         
-        # Get corresponding weather data
+        # Optimized path: use numpy arrays and vectorized pythermalcomfort if enabled
+        if getattr(self, '_weather_np', None) is not None:
+            air = self._weather_np['air_temp']
+            wind = self._weather_np['wind_speed']
+            rh = self._weather_np['relative_humidity']
+            dts = self._weather_np.get('datetime')
+
+            # Slice needed hours, pad by repeating last if short
+            length = min(n_hours, air.shape[0])
+            air_slice = air[:length]
+            wind_slice = wind[:length]
+            rh_slice = rh[:length]
+            if length < n_hours:
+                pad_n = n_hours - length
+                air_slice = np.concatenate([air_slice, np.repeat(air_slice[-1], pad_n)])
+                wind_slice = np.concatenate([wind_slice, np.repeat(wind_slice[-1], pad_n)])
+                rh_slice = np.concatenate([rh_slice, np.repeat(rh_slice[-1], pad_n)])
+
+            # Call vectorized utci; pythermalcomfort.utci accepts numpy arrays
+            try:
+                utci_vals = utci(tdb=air_slice, tr=np.asarray(mrt_values), v=wind_slice, rh=rh_slice)
+                # Normalize return to numpy array of floats
+                if hasattr(utci_vals, 'utci'):
+                    utci_array = np.asarray(utci_vals.utci, dtype=float)
+                elif isinstance(utci_vals, dict) and 'utci' in utci_vals:
+                    utci_array = np.asarray(utci_vals['utci'], dtype=float)
+                else:
+                    utci_array = np.asarray(utci_vals, dtype=float)
+            except Exception as e:
+                warnings.warn(f"Vectorized UTCI calculation failed; falling back to loop: {e}")
+                utci_array = None
+
+            if utci_array is not None:
+                return {
+                    'position': position,
+                    'utci': utci_array,
+                    'mrt': mrt_values,
+                    'air_temp': air_slice,
+                    'wind_speed': wind_slice,
+                    'relative_humidity': rh_slice,
+                    'datetime': dts[:n_hours] if dts is not None and dts.shape[0] >= n_hours else (dts if dts is not None else None)
+                }
+
+        # Fallback: original per-hour loop using DataFrame
         weather_subset = weather_filtered.iloc[:min(n_hours, len(weather_filtered))].copy()
-        
-        # Handle length mismatch by padding with last values
         if len(weather_subset) < n_hours:
             last_weather = weather_subset.iloc[-1:] if len(weather_subset) > 0 else weather_filtered.iloc[:1]
             while len(weather_subset) < n_hours:
                 weather_subset = pd.concat([weather_subset, last_weather], ignore_index=True)
-        
-        # Calculate UTCI for each hour
+
         utci_values = []
         for i in range(n_hours):
             try:
@@ -510,3 +637,108 @@ def integrated_mrt_utci_workflow(model_file: str,
     print(f"Comfort distribution: {summary['comfort_distribution']}")
     
     return mrt_results, utci_results
+
+
+def _compute_utci_chunk(args):
+    """Worker function for parallel processing of UTCI calculation chunks.
+
+    Accepts either a pandas DataFrame or a dict of numpy arrays for weather.
+    Uses vectorized UTCI computation when arrays are provided.
+    """
+    chunk_data, weather_input = args
+    
+    # Determine input type
+    is_np = isinstance(weather_input, dict)
+    
+    results = {}
+    
+    for pos_key, mrt_data in chunk_data:
+        mrt_values = np.asarray(mrt_data['mrt'])
+        position = mrt_data['position']
+        n_hours = len(mrt_values)
+        
+        if is_np:
+            air = weather_input['air_temp']
+            wind = weather_input['wind_speed']
+            rh = weather_input['relative_humidity']
+            dts = weather_input.get('datetime')
+            length = min(n_hours, air.shape[0])
+            air_slice = air[:length]
+            wind_slice = wind[:length]
+            rh_slice = rh[:length]
+            if length < n_hours and length > 0:
+                pad_n = n_hours - length
+                air_slice = np.concatenate([air_slice, np.repeat(air_slice[-1], pad_n)])
+                wind_slice = np.concatenate([wind_slice, np.repeat(wind_slice[-1], pad_n)])
+                rh_slice = np.concatenate([rh_slice, np.repeat(rh_slice[-1], pad_n)])
+            elif length == 0:
+                air_slice = np.zeros(n_hours)
+                wind_slice = np.zeros(n_hours)
+                rh_slice = np.zeros(n_hours)
+            # Vectorized UTCI call
+            try:
+                from pythermalcomfort.models import utci
+                utci_vals = utci(tdb=air_slice, tr=mrt_values, v=wind_slice, rh=rh_slice)
+                if hasattr(utci_vals, 'utci'):
+                    utci_array = np.asarray(utci_vals.utci, dtype=float)
+                elif isinstance(utci_vals, dict) and 'utci' in utci_vals:
+                    utci_array = np.asarray(utci_vals['utci'], dtype=float)
+                else:
+                    utci_array = np.asarray(utci_vals, dtype=float)
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Vectorized UTCI failed in worker; falling back to loop: {e}")
+                utci_array = None
+        else:
+            # DataFrame path
+            weather_filtered = weather_input
+            weather_subset = weather_filtered.iloc[:min(n_hours, len(weather_filtered))].copy()
+            if len(weather_subset) < n_hours:
+                last_weather = weather_subset.iloc[-1:] if len(weather_subset) > 0 else weather_filtered.iloc[:1]
+                while len(weather_subset) < n_hours:
+                    weather_subset = pd.concat([weather_subset, last_weather], ignore_index=True)
+            utci_vals = []
+            for i in range(n_hours):
+                try:
+                    from pythermalcomfort.models import utci
+                    res = utci(
+                        tdb=weather_subset.iloc[i]['air_temp'],
+                        tr=mrt_values[i],
+                        v=weather_subset.iloc[i]['wind_speed'],
+                        rh=weather_subset.iloc[i]['relative_humidity']
+                    )
+                    if hasattr(res, 'utci'):
+                        utci_vals.append(float(res.utci))
+                    elif isinstance(res, dict) and 'utci' in res:
+                        utci_vals.append(float(res['utci']))
+                    else:
+                        utci_vals.append(float(res))
+                except Exception:
+                    utci_vals.append(np.nan)
+            utci_array = np.asarray(utci_vals, dtype=float)
+            air_slice = weather_subset['air_temp'].to_numpy()
+            wind_slice = weather_subset['wind_speed'].to_numpy()
+            rh_slice = weather_subset['relative_humidity'].to_numpy()
+            dts = weather_subset['datetime'].to_numpy() if 'datetime' in weather_subset.columns else None
+        
+        # Control payload via env flags while keeping keys for compatibility
+        include_weather = os.getenv("FAST_UTCI_INCLUDE_WEATHER_IN_RESULTS", "1").lower() in ("1", "true", "yes", "on")
+        include_datetime = os.getenv("FAST_UTCI_INCLUDE_DATETIME_IN_RESULTS", "1").lower() in ("1", "true", "yes", "on")
+        
+        result_entry = {
+            'position': position,
+            'utci': utci_array if utci_array is not None else np.full(n_hours, np.nan),
+            'mrt': mrt_values
+        }
+        if include_weather:
+            result_entry['air_temp'] = air_slice
+            result_entry['wind_speed'] = wind_slice
+            result_entry['relative_humidity'] = rh_slice
+        if include_datetime:
+            result_entry['datetime'] = dts[:n_hours] if dts is not None and getattr(dts, 'shape', [0])[0] >= n_hours else (dts if dts is not None else None)
+        else:
+            result_entry['datetime'] = None
+        
+        results[pos_key] = result_entry
+    
+    return results

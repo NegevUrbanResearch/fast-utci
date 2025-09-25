@@ -31,6 +31,18 @@ def run_automated_workflow():
     print("=" * 50)
     
     try:
+        # Optional performance toggles via environment variables
+        # Enable vectorized solar exposure by setting FAST_UTCI_VECTORIZED_SOLAR=1
+        if os.getenv("FAST_UTCI_VECTORIZED_SOLAR"):
+            print(f"⚙️  Vectorized solar exposure enabled (FAST_UTCI_VECTORIZED_SOLAR={os.getenv('FAST_UTCI_VECTORIZED_SOLAR')})")
+        # Embree tuning can be applied via:
+        # FAST_UTCI_INTERSECTOR=embree|trimesh
+        # FAST_UTCI_EMBREE_QUALITY=low|medium|high
+        # FAST_UTCI_EMBREE_BUILD_BVH=true|false
+        # FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16
+        if os.getenv("FAST_UTCI_INTERSECTOR") or os.getenv("FAST_UTCI_EMBREE_QUALITY"):
+            print("⚙️  Embree tuning via environment is active.")
+
         # Import the main workflow function
         from demo_utci_workflow_simplified_model import main
         

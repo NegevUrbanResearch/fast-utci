@@ -32,6 +32,14 @@ class MRTConfig:
     batch_size: int = 10000  # Ray intersection batch size
     ray_max_distance: float = 1000.0  # Maximum ray distance for intersection testing
     show_progress: bool = True  # Show progress bars during calculations
+
+    # Embree tuning (applied when backend supports)
+    embree_quality: str = "auto"  # "auto" | "low" | "medium" | "high"
+    embree_build_bvh: bool = True  # Pre-build acceleration structure when possible
+    embree_ray_packet_size: int = 0  # 0 = auto; otherwise typical values: 4, 8, 16
+
+    # Vectorization
+    enable_vectorized_solar: bool = False  # Non-breaking default; can be overridden via env
     
     # SolarCal parameters
     sky_exposure: float = 1.0  # Default sky exposure fraction (0-1)
@@ -58,6 +66,10 @@ DEFAULT_N_WORKERS = DEFAULT_CONFIG.n_workers
 DEFAULT_BATCH_SIZE = DEFAULT_CONFIG.batch_size
 DEFAULT_RAY_MAX_DISTANCE = DEFAULT_CONFIG.ray_max_distance
 DEFAULT_SHOW_PROGRESS = DEFAULT_CONFIG.show_progress
+DEFAULT_EMBREE_QUALITY = DEFAULT_CONFIG.embree_quality
+DEFAULT_EMBREE_BUILD_BVH = DEFAULT_CONFIG.embree_build_bvh
+DEFAULT_EMBREE_PACKET_SIZE = DEFAULT_CONFIG.embree_ray_packet_size
+DEFAULT_ENABLE_VECTORIZED_SOLAR = DEFAULT_CONFIG.enable_vectorized_solar
 DEFAULT_SKY_EXPOSURE = DEFAULT_CONFIG.sky_exposure
 DEFAULT_FRACT_BODY_EXP = DEFAULT_CONFIG.fract_body_exp
 CSV_ENCODING = DEFAULT_CONFIG.csv_encoding

@@ -13,6 +13,11 @@ from dataclasses import dataclass
 import warnings
 
 from .config import DEFAULT_RAY_MAX_DISTANCE
+from .config import (
+    DEFAULT_EMBREE_QUALITY,
+    DEFAULT_EMBREE_BUILD_BVH,
+    DEFAULT_EMBREE_PACKET_SIZE,
+)
 
 
 @dataclass
@@ -31,6 +36,14 @@ class MeshContext:
         2) Auto: try Embree (pyembree) then fallback to trimesh ray_triangle
         """
         choice = os.getenv("FAST_UTCI_INTERSECTOR", "auto").lower()
+        embree_quality = os.getenv("FAST_UTCI_EMBREE_QUALITY", DEFAULT_EMBREE_QUALITY)
+        embree_build_bvh_env = os.getenv("FAST_UTCI_EMBREE_BUILD_BVH", str(DEFAULT_EMBREE_BUILD_BVH)).lower()
+        embree_build_bvh = embree_build_bvh_env in ("1", "true", "yes", "on")
+        embree_packet_env = os.getenv("FAST_UTCI_EMBREE_PACKET_SIZE", str(DEFAULT_EMBREE_PACKET_SIZE))
+        try:
+            embree_packet_size = int(embree_packet_env)
+        except Exception:
+            embree_packet_size = 0
 
         # Helper to set state
         def _set_intersector(intersector, name: str, has_bvh: bool):
@@ -42,7 +55,31 @@ class MeshContext:
         if choice in ("embree", "auto"):
             try:
                 from trimesh.ray.ray_pyembree import RayMeshIntersector as _EmbreeIntersector
-                _set_intersector(_EmbreeIntersector(self.mesh), "embree", True)
+                intersector = _EmbreeIntersector(self.mesh)
+
+                # Optional: try to apply tuning knobs if exposed by trimesh/pyembree
+                try:
+                    if hasattr(intersector, "set_quality") and embree_quality and embree_quality != "auto":
+                        intersector.set_quality(embree_quality)
+                except Exception:
+                    pass
+
+                # Build BVH if supported
+                try:
+                    if embree_build_bvh and hasattr(intersector, "build_embree"):
+                        intersector.build_embree()
+                except Exception:
+                    pass
+
+                # Packet size hint (may be ignored if not supported)
+                if embree_packet_size in (4, 8, 16):
+                    try:
+                        if hasattr(intersector, "set_packet_size"):
+                            intersector.set_packet_size(embree_packet_size)
+                    except Exception:
+                        pass
+
+                _set_intersector(intersector, "embree", True)
                 print("Ray intersector: embree (pyembree)")
                 return
             except Exception:
@@ -126,21 +163,32 @@ def ray_mesh_intersections(origins: np.ndarray,
     try:
         # Use selected ray intersector (embree or trimesh)
         intersector = mesh_context.ray_intersector if mesh_context and mesh_context.ray_intersector is not None else mesh_context.mesh.ray
-        locations, ray_indices, face_indices = intersector.intersects_location(
-            ray_origins=origins,
-            ray_directions=directions,
-            multiple_hits=False  # Only need first hit for occlusion
-        )
-        
-        # Create boolean mask for hits
-        hit_mask = np.zeros(len(origins), dtype=bool)
-        if len(ray_indices) > 0:
-            # Check distances for hits within max_distance
-            hit_distances = np.linalg.norm(locations - origins[ray_indices], axis=1)
-            valid_hits = hit_distances <= max_distance
-            hit_mask[ray_indices[valid_hits]] = True
+        use_any = os.getenv("FAST_UTCI_INTERSECTS_ANY", "0").lower() in ("1", "true", "yes", "on")
+
+        if use_any and hasattr(intersector, "intersects_any"):
+            # Fast boolean occlusion check; ignores hit locations
+            any_hits = intersector.intersects_any(
+                ray_origins=origins,
+                ray_directions=directions
+            )
+            # If max_distance is set, we conservatively return any_hits (no distance filter)
+            return np.asarray(any_hits, dtype=bool)
+        else:
+            locations, ray_indices, face_indices = intersector.intersects_location(
+                ray_origins=origins,
+                ray_directions=directions,
+                multiple_hits=False  # Only need first hit for occlusion
+            )
             
-        return hit_mask
+            # Create boolean mask for hits
+            hit_mask = np.zeros(len(origins), dtype=bool)
+            if len(ray_indices) > 0:
+                # Check distances for hits within max_distance
+                hit_distances = np.linalg.norm(locations - origins[ray_indices], axis=1)
+                valid_hits = hit_distances <= max_distance
+                hit_mask[ray_indices[valid_hits]] = True
+                
+            return hit_mask
         
     except Exception as e:
         warnings.warn(f"Ray intersection failed: {e}. Returning no hits.")

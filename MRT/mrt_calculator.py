@@ -168,7 +168,8 @@ class MRTCalculator:
                    epw_data: Any,
                    exposure_results: List[ExposureResult],
                    analysis_period: Optional[AnalysisPeriod] = None,
-                   target_hours: Optional[List[int]] = None) -> Dict[str, Any]:
+                   target_hours: Optional[List[int]] = None,
+                   n_workers: Optional[int] = None) -> Dict[str, Any]:
         """
         Compute MRT using SolarCal for given exposure results.
         
@@ -177,6 +178,7 @@ class MRTCalculator:
             exposure_results: List of ExposureResult objects from compute_exposure
             analysis_period: Optional time period filter
             target_hours: Optional hour filter
+            n_workers: Number of parallel workers (default: CPU count - 1)
             
         Returns:
             Dictionary with MRT results per position
@@ -209,59 +211,21 @@ class MRTCalculator:
             weather_arrays, datetimes, analysis_period, target_hours
         )
         
-        # Compute MRT for each position
-        results = {}
+        # Use parallel processing for MRT calculations
+        n_positions = len(exposure_results)
         
-        for i, exposure in enumerate(tqdm(exposure_results, desc="Computing MRT", unit="pos")):
-            # Ensure exposure arrays match filtered weather length
-            if len(exposure.fract_body_exp) != len(filtered_datetimes):
-                warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
-                            f"doesn't match weather data length ({len(filtered_datetimes)})")
-                # Truncate or pad as needed
-                min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
-                fract_exp = exposure.fract_body_exp[:min_len]
-                if len(filtered_datetimes) > min_len:
-                    # Pad weather data
-                    for key in filtered_weather:
-                        filtered_weather[key] = filtered_weather[key][:min_len]
-                    filtered_datetimes = filtered_datetimes[:min_len]
-            else:
-                fract_exp = exposure.fract_body_exp
-            
-            # Compute SolarCal MRT using EPW data collections for proper filtering
-            if hasattr(epw_data, 'dry_bulb_temperature'):
-                # Use EPW object directly for proper data collection handling
-                mrt_result = self._compute_mrt_from_epw(
-                    epw_data, exposure, analysis_period, target_hours
-                )
-            else:
-                # Fallback for DataFrame input
-                mrt_result = compute_mrt_solarcal(
-                    air_temperature=filtered_weather['air_temp'],
-                    direct_normal_rad=filtered_weather['dir_norm_rad'],
-                    diffuse_horizontal_rad=filtered_weather['diff_horiz_rad'],
-                    horizontal_infrared_rad=filtered_weather['horiz_ir_rad'],
-                    fract_body_exp=fract_exp,
-                    sky_exposure=exposure.sky_exposure,
-                    location=self.location,
-                    datetimes=filtered_datetimes,
-                    ground_reflectance=self.config.ground_reflectance,
-                    solar_body_par=self.body_params
-                )
-            
-            results[f'position_{i}'] = {
-                'position': exposure.position,
-                'mrt': mrt_result.mrt,
-                'short_erf': mrt_result.short_erf,
-                'long_erf': mrt_result.long_erf,
-                'short_dmrt': mrt_result.short_dmrt,
-                'long_dmrt': mrt_result.long_dmrt,
-                'fract_body_exp': fract_exp,
-                'sky_exposure': exposure.sky_exposure,
-                'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]  # Placeholder for EPW case
-            }
+        # Use serial processing for small datasets
+        if n_positions < 50:
+            return self._compute_mrt_serial(
+                exposure_results, epw_data, filtered_weather, filtered_datetimes, 
+                analysis_period, target_hours
+            )
         
-        return results
+        # Use parallel processing for larger datasets
+        return self._compute_mrt_parallel(
+            exposure_results, epw_data, filtered_weather, filtered_datetimes,
+            analysis_period, target_hours, n_workers, show_progress=True
+        )
     
     def _compute_mrt_from_epw(self, epw_data, exposure, analysis_period, target_hours):
         """Compute MRT using EPW data collections for proper Grasshopper-like filtering."""
@@ -323,6 +287,134 @@ class MRTCalculator:
             short_dmrt=short_dmrt_filtered,
             long_dmrt=long_dmrt_filtered
         )
+    
+    def _compute_mrt_serial(self, exposure_results, epw_data, filtered_weather, 
+                           filtered_datetimes, analysis_period, target_hours):
+        """Serial MRT computation for small datasets."""
+        results = {}
+        
+        for i, exposure in enumerate(tqdm(exposure_results, desc="Computing MRT (serial)", unit="pos")):
+            result = self._compute_single_mrt(
+                i, exposure, epw_data, filtered_weather, filtered_datetimes,
+                analysis_period, target_hours
+            )
+            results[f'position_{i}'] = result
+        
+        return results
+    
+    def _compute_mrt_parallel(self, exposure_results, epw_data, filtered_weather,
+                             filtered_datetimes, analysis_period, target_hours, n_workers, show_progress=True):
+        """Parallel MRT computation for larger datasets."""
+        import multiprocessing as mp
+        from multiprocessing import Pool
+        import time
+        
+        n_positions = len(exposure_results)
+        
+        if n_workers is None:
+            n_workers = max(1, mp.cpu_count() - 1)
+        
+        # Create chunks with improved load balancing
+        positions_per_worker = n_positions // n_workers
+        extra_positions = n_positions % n_workers
+        
+        chunks = []
+        start_idx = 0
+        for worker_id in range(n_workers):
+            chunk_size = positions_per_worker + (1 if worker_id < extra_positions else 0)
+            end_idx = start_idx + chunk_size
+            
+            if start_idx < n_positions:
+                chunk_data = []
+                for i in range(start_idx, end_idx):
+                    chunk_data.append((i, exposure_results[i]))
+                chunks.append(chunk_data)
+                start_idx = end_idx
+        
+        print(f"Processing {n_positions} MRT calculations with {n_workers} workers in {len(chunks)} chunks")
+        
+        # Process chunks in parallel
+        chunk_args = [(chunk, epw_data, filtered_weather, filtered_datetimes, 
+                      analysis_period, target_hours, self.location, self.config, self.body_params) 
+                     for chunk in chunks]
+        
+        with Pool(processes=n_workers) as pool:
+            start_time = time.time()
+            
+            if show_progress:
+                with tqdm(total=n_positions, desc="Computing MRT (parallel)", unit="pos", 
+                         mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
+                    
+                    results = {}
+                    for chunk_results in pool.imap(_compute_mrt_chunk, chunk_args):
+                        results.update(chunk_results)
+                        pbar.update(len(chunk_results))
+                        
+                        # Update description with time estimate
+                        elapsed = time.time() - start_time
+                        if elapsed > 0:
+                            rate = pbar.n / elapsed
+                            eta = (n_positions - pbar.n) / rate if rate > 0 else 0
+                            pbar.set_description(f"Computing MRT (parallel) ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
+            else:
+                # No progress bar - use simple processing
+                chunk_results_list = pool.map(_compute_mrt_chunk, chunk_args)
+                results = {}
+                for chunk_results in chunk_results_list:
+                    results.update(chunk_results)
+        
+        return results
+    
+    def _compute_single_mrt(self, i, exposure, epw_data, filtered_weather, 
+                           filtered_datetimes, analysis_period, target_hours):
+        """Compute MRT for a single position."""
+        # Ensure exposure arrays match filtered weather length
+        if len(exposure.fract_body_exp) != len(filtered_datetimes):
+            warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
+                        f"doesn't match weather data length ({len(filtered_datetimes)})")
+            # Truncate or pad as needed
+            min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
+            fract_exp = exposure.fract_body_exp[:min_len]
+            if len(filtered_datetimes) > min_len:
+                # Pad weather data
+                for key in filtered_weather:
+                    filtered_weather[key] = filtered_weather[key][:min_len]
+                filtered_datetimes = filtered_datetimes[:min_len]
+        else:
+            fract_exp = exposure.fract_body_exp
+        
+        # Compute SolarCal MRT using EPW data collections for proper filtering
+        if hasattr(epw_data, 'dry_bulb_temperature'):
+            # Use EPW object directly for proper data collection handling
+            mrt_result = self._compute_mrt_from_epw(
+                epw_data, exposure, analysis_period, target_hours
+            )
+        else:
+            # Fallback for DataFrame input
+            mrt_result = compute_mrt_solarcal(
+                air_temperature=filtered_weather['air_temp'],
+                direct_normal_rad=filtered_weather['dir_norm_rad'],
+                diffuse_horizontal_rad=filtered_weather['diff_horiz_rad'],
+                horizontal_infrared_rad=filtered_weather['horiz_ir_rad'],
+                fract_body_exp=fract_exp,
+                sky_exposure=exposure.sky_exposure,
+                location=self.location,
+                datetimes=filtered_datetimes,
+                ground_reflectance=self.config.ground_reflectance,
+                solar_body_par=self.body_params
+            )
+        
+        return {
+            'position': exposure.position,
+            'mrt': mrt_result.mrt,
+            'short_erf': mrt_result.short_erf,
+            'long_erf': mrt_result.long_erf,
+            'short_dmrt': mrt_result.short_dmrt,
+            'long_dmrt': mrt_result.long_dmrt,
+            'fract_body_exp': fract_exp,
+            'sky_exposure': exposure.sky_exposure,
+            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]  # Placeholder for EPW case
+        }
     
     
     def to_csv(self, 
@@ -405,5 +497,117 @@ class MRTCalculator:
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, index=False, encoding=self.config.csv_encoding)
         print(f"Exported CSV: {csv_path}")
+
+
+def _compute_mrt_chunk(args):
+    """Worker function for parallel processing of MRT calculation chunks."""
+    chunk_data, epw_data, filtered_weather, filtered_datetimes, analysis_period, target_hours, location, config, body_params = args
+    
+    results = {}
+    
+    for i, exposure in chunk_data:
+        # Ensure exposure arrays match filtered weather length
+        if len(exposure.fract_body_exp) != len(filtered_datetimes):
+            import warnings
+            warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
+                        f"doesn't match weather data length ({len(filtered_datetimes)})")
+            # Truncate or pad as needed
+            min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
+            fract_exp = exposure.fract_body_exp[:min_len]
+            if len(filtered_datetimes) > min_len:
+                # Pad weather data
+                for key in filtered_weather:
+                    filtered_weather[key] = filtered_weather[key][:min_len]
+                filtered_datetimes = filtered_datetimes[:min_len]
+        else:
+            fract_exp = exposure.fract_body_exp
+        
+        # Compute SolarCal MRT using EPW data collections for proper filtering
+        if hasattr(epw_data, 'dry_bulb_temperature'):
+            # Use EPW object directly for proper data collection handling
+            from ladybug_comfort.collection.solarcal import OutdoorSolarCal
+            from ladybug.analysisperiod import AnalysisPeriod
+            
+            # Create analysis period for the day
+            day_period = AnalysisPeriod(8, 15, 0, 8, 15, 23)
+            
+            # Filter EPW collections to the day
+            air_temp_coll = epw_data.dry_bulb_temperature.filter_by_analysis_period(day_period)
+            dir_norm_coll = epw_data.direct_normal_radiation.filter_by_analysis_period(day_period)
+            diff_horiz_coll = epw_data.diffuse_horizontal_radiation.filter_by_analysis_period(day_period)
+            horiz_ir_coll = epw_data.horizontal_infrared_radiation_intensity.filter_by_analysis_period(day_period)
+            
+            # Create OutdoorSolarCal
+            solar_cal = OutdoorSolarCal(
+                epw_data.location,
+                dir_norm_coll,
+                diff_horiz_coll,
+                horiz_ir_coll,
+                air_temp_coll,
+                exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,
+                exposure.sky_exposure,
+                config.ground_reflectance,
+                body_params
+            )
+            
+            # Extract results and filter to target hours
+            mrt_values = np.array(solar_cal.mean_radiant_temperature.values)
+            short_erf_values = np.array(solar_cal.shortwave_effective_radiant_field.values)
+            long_erf_values = np.array(solar_cal.longwave_effective_radiant_field.values)
+            short_dmrt_values = np.array(solar_cal.shortwave_mrt_delta.values)
+            long_dmrt_values = np.array(solar_cal.longwave_mrt_delta.values)
+            
+            # Filter to target hours if specified
+            if target_hours:
+                hour_indices = target_hours
+                mrt_filtered = mrt_values[hour_indices]
+                short_erf_filtered = short_erf_values[hour_indices]
+                long_erf_filtered = long_erf_values[hour_indices]
+                short_dmrt_filtered = short_dmrt_values[hour_indices]
+                long_dmrt_filtered = long_dmrt_values[hour_indices]
+            else:
+                mrt_filtered = mrt_values
+                short_erf_filtered = short_erf_values
+                long_erf_filtered = long_erf_values
+                short_dmrt_filtered = short_dmrt_values
+                long_dmrt_filtered = long_dmrt_values
+            
+            from .solarcal import SolarCalResult
+            mrt_result = SolarCalResult(
+                mrt=mrt_filtered,
+                short_erf=short_erf_filtered,
+                long_erf=long_erf_filtered,
+                short_dmrt=short_dmrt_filtered,
+                long_dmrt=long_dmrt_filtered
+            )
+        else:
+            # Fallback for DataFrame input
+            from .solarcal import compute_mrt_solarcal
+            mrt_result = compute_mrt_solarcal(
+                air_temperature=filtered_weather['air_temp'],
+                direct_normal_rad=filtered_weather['dir_norm_rad'],
+                diffuse_horizontal_rad=filtered_weather['diff_horiz_rad'],
+                horizontal_infrared_rad=filtered_weather['horiz_ir_rad'],
+                fract_body_exp=fract_exp,
+                sky_exposure=exposure.sky_exposure,
+                location=location,
+                datetimes=filtered_datetimes,
+                ground_reflectance=config.ground_reflectance,
+                solar_body_par=body_params
+            )
+        
+        results[f'position_{i}'] = {
+            'position': exposure.position,
+            'mrt': mrt_result.mrt,
+            'short_erf': mrt_result.short_erf,
+            'long_erf': mrt_result.long_erf,
+            'short_dmrt': mrt_result.short_dmrt,
+            'long_dmrt': mrt_result.long_dmrt,
+            'fract_body_exp': fract_exp,
+            'sky_exposure': exposure.sky_exposure,
+            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]
+        }
+    
+    return results
 
 
