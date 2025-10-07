@@ -76,11 +76,8 @@ Read and parse 3D models (GLTF/GLB) and EPW weather files.
 ### `fast_utci.viewer`
 Enhanced 3D visualization with UTCI heatmaps using Plotly.
 
-## Data Files
-
-Air Temp, Wind Speed, and Relative Humidity are stored in EPW weather files located in `data/weather/`.
 
 ## Requirements
 
-- Python >= 3.11
+- Python 3.11
 - See `pyproject.toml` for full dependency list

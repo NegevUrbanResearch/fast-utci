@@ -148,7 +148,7 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
                         road_mesh = trimesh.Trimesh(vertices=base_mesh.vertices, faces=road_faces)
                         road_lines.append(road_mesh)
                         if verbose:
-                            print(f"🛣️ Extracted {len(road_faces)} faces with material {material_id}")
+                            print(f"[ROAD] Extracted {len(road_faces)} faces with material {material_id}")
         
         # Alternative: Analyze face connectivity to find linear patterns
         if not road_lines:
@@ -186,7 +186,7 @@ def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str
                         # Note: This debug output is controlled by the calling function's verbose parameter
     
     except Exception as e:
-        print(f"⚠️ Error extracting road lines from {mesh_name}: {e}")
+        print(f"[WARN] Error extracting road lines from {mesh_name}: {e}")
     
     return road_lines
 
@@ -304,7 +304,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
             magic = f.read(4)
             if magic == b'glTF':
                 file_type = 'glb'
-                print(f"🔧 Detected binary GLB file with .gltf extension: {file_path.name}")
+                print(f"[DETECT] Detected binary GLB file with .gltf extension: {file_path.name}")
     
     loaded = trimesh.load(str(file_path), file_type=file_type)
     
@@ -351,11 +351,11 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
         mesh_info.sort(key=lambda x: x['area_xy'], reverse=True)
         
         if verbose:
-            print("📊 Largest meshes (potential base elements):")
+            print("[INFO] Largest meshes (potential base elements):")
             for i, info in enumerate(mesh_info[:10]):  # Top 10 largest
                 print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
             
-            print("📊 Smallest meshes (potential trees/roads):")
+            print("[INFO] Smallest meshes (potential trees/roads):")
             for i, info in enumerate(mesh_info[-10:]):  # Bottom 10 smallest
                 print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
             
@@ -368,7 +368,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
             medium_meshes = [info for info in mesh_info if 10.0 <= info['area_xy'] < 100.0]
             large_meshes = [info for info in mesh_info if info['area_xy'] >= 100.0]
             
-            print(f"📊 Mesh size distribution:")
+            print(f"[INFO] Mesh size distribution:")
             print(f"  - Tiny (<1m²): {len(tiny_meshes)} meshes")
             print(f"  - Small (1-10m²): {len(small_meshes)} meshes") 
             print(f"  - Medium (10-100m²): {len(medium_meshes)} meshes")
@@ -393,7 +393,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
                         info['height'] > 0.01 and info['height'] < 1.0):  # Some height but not too tall
                         potential_roads.append(info)
             
-            print(f"🛣️ Potential road lines: {len(potential_roads)}")
+            print(f"[ROAD] Potential road lines: {len(potential_roads)}")
             for i, info in enumerate(potential_roads[:10]):  # Top 10
                 aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
                 print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
@@ -415,7 +415,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
                     road_lines = extract_road_lines_from_base_mesh(geom, geom_name, verbose=verbose)
                     if road_lines:
                         if verbose:
-                            print(f"🛣️ Extracted {len(road_lines)} road line segments from {geom_name}")
+                            print(f"[ROAD] Extracted {len(road_lines)} road line segments from {geom_name}")
                         # Add road line segments as separate layers
                         for i, road_line in enumerate(road_lines):
                             # Validate the road mesh before adding
@@ -424,7 +424,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
                                 layers.append(road_layer)
                             else:
                                 if verbose:
-                                    print(f"⚠️ Invalid road mesh created from {geom_name}_road_{i}")
+                                    print(f"[WARN] Invalid road mesh created from {geom_name}_road_{i}")
                 
                 layer = ModelLayer(geom_name, geom, material_type)
                 layers.append(layer)
@@ -434,7 +434,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
     else:
         raise ValueError(f"Unsupported object type: {type(loaded)}")
     
-    print(f"📊 Loaded model with {len(layers)} layers")
+    print(f"[INFO] Loaded model with {len(layers)} layers")
     
     # Group layers by type for cleaner output
     layer_counts = {}
@@ -455,7 +455,7 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
     for layer_type, info in layer_counts.items():
         print(f"  - {layer_type}: {info['count']} objects, {info['vertices']:,} vertices, {info['faces']:,} faces")
     
-    print(f"📊 Total: {total_vertices:,} vertices, {total_faces:,} faces")
+    print(f"[INFO] Total: {total_vertices:,} vertices, {total_faces:,} faces")
     
     return EnhancedModel(layers)
 
@@ -530,7 +530,7 @@ if __name__ == "__main__":
         
         # Get combined mesh for MRT calculations
         combined_mesh = enhanced_model.get_combined_mesh()
-        print(f"📊 Combined mesh: {len(combined_mesh.vertices):,} vertices, {len(combined_mesh.faces):,} faces")
+        print(f"[INFO] Combined mesh: {len(combined_mesh.vertices):,} vertices, {len(combined_mesh.faces):,} faces")
         
     except Exception as e:
         print(f"Error: {e}")

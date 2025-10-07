@@ -6,7 +6,7 @@ from weather data and exposure fractions.
 """
 
 import numpy as np
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
 import warnings
 
@@ -56,7 +56,7 @@ def compute_mrt_solarcal(air_temperature: np.ndarray,
                         fract_body_exp: np.ndarray,
                         sky_exposure: float,
                         location: Location,
-                        datetimes: Any,
+                        datetimes: Union[List, Any],
                         ground_reflectance: float = 0.25,
                         solar_body_par: Optional[SolarCalParameter] = None) -> SolarCalResult:
     """
@@ -96,7 +96,7 @@ class SolarCalWrapper:
     
     def compute_mrt(self, air_temperature: np.ndarray, direct_normal_rad: np.ndarray,
                    diffuse_horizontal_rad: np.ndarray, horizontal_infrared_rad: np.ndarray,
-                   fract_body_exp: np.ndarray, sky_exposure: float, datetimes: Any) -> SolarCalResult:
+                   fract_body_exp: np.ndarray, sky_exposure: float, datetimes: Union[List, Any]) -> SolarCalResult:
         """Compute MRT with simplified collection handling."""
         
         # Create analysis period header
@@ -142,5 +142,71 @@ class SolarCalWrapper:
             short_dmrt=np.array(solar_cal.shortwave_mrt_delta.values),
             long_dmrt=np.array(solar_cal.longwave_mrt_delta.values)
         )
+
+
+# Collection factory functions to reduce boilerplate
+
+def create_temperature_collection(data: np.ndarray, 
+                                  location: Location,
+                                  analysis_period: AnalysisPeriod,
+                                  datetimes: Optional[Any] = None):
+    """
+    Create temperature data collection.
+    
+    Args:
+        data: Temperature values (°C)
+        location: Ladybug Location
+        analysis_period: Analysis period for header
+        datetimes: Optional datetime objects for discontinuous collection
+        
+    Returns:
+        Hourly temperature collection
+    """
+    header = Header(Temperature(), 'C', analysis_period, {'location': location})
+    
+    if datetimes is not None:
+        return HourlyDiscontinuousCollection(header, data, datetimes)
+    else:
+        return HourlyContinuousCollection(header, data)
+
+
+def create_flux_collection(data: np.ndarray,
+                           location: Location,
+                           analysis_period: AnalysisPeriod,
+                           datetimes: Optional[Any] = None):
+    """
+    Create energy flux data collection.
+    
+    Args:
+        data: Flux values (W/m²)
+        location: Ladybug Location
+        analysis_period: Analysis period for header
+        datetimes: Optional datetime objects for discontinuous collection
+        
+    Returns:
+        Hourly flux collection
+    """
+    header = Header(EnergyFlux(), 'W/m2', analysis_period, {'location': location})
+    
+    if datetimes is not None:
+        return HourlyDiscontinuousCollection(header, data, datetimes)
+    else:
+        return HourlyContinuousCollection(header, data)
+
+
+def create_fraction_collection(data: np.ndarray,
+                               location: Location):
+    """
+    Create fraction data collection.
+    
+    Args:
+        data: Fraction values (0-1)
+        location: Ladybug Location
+        
+    Returns:
+        Hourly fraction collection (continuous)
+    """
+    header = Header(Fraction(), 'fraction', location)
+    return HourlyContinuousCollection(header, data)
 
 

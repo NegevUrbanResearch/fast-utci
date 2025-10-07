@@ -10,76 +10,15 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from tqdm import tqdm
 import warnings
+import logging
 
-from .solar import SunData, get_tregenza_dome_vectors
+from .solar import SunData
 from .mesh import MeshContext, batch_ray_intersections
-from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, DEFAULT_BATCH_SIZE
-import os
+from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, get_env_config
+from .cache import get_cached_sky_vectors
+from .performance import get_optimal_batch_size
 
-# Global cache for sky vectors (computed once, reused across all positions)
-_sky_vectors_cache = None
-_sky_weights_cache = None
-
-def _get_cached_sky_vectors():
-    """Get cached sky vectors, computing them once if needed."""
-    global _sky_vectors_cache, _sky_weights_cache
-    if _sky_vectors_cache is None:
-        _sky_vectors_cache, _sky_weights_cache = get_tregenza_dome_vectors()
-        # Ensure optimal memory layout for better cache performance
-        _sky_vectors_cache = np.ascontiguousarray(_sky_vectors_cache, dtype=np.float64)
-        _sky_weights_cache = np.ascontiguousarray(_sky_weights_cache, dtype=np.float64)
-    return _sky_vectors_cache, _sky_weights_cache
-
-def _get_optimal_batch_size(n_rays: int, ray_type: str = "mixed") -> int:
-    """
-    Calculate optimal batch size based on ray count, type, and available memory.
-    
-    Args:
-        n_rays: Number of rays to process
-        ray_type: Type of rays ("sky", "solar", or "mixed")
-        
-    Returns:
-        Optimal batch size that balances performance and memory safety
-    """
-    import psutil
-    
-    # Base batch sizes optimized for different ray types
-    if ray_type == "sky":
-        # Sky rays: typically 145 rays per position, can use larger batches
-        base_batch_size = 20000
-    elif ray_type == "solar":
-        # Solar rays: typically 1 ray per position, use smaller batches
-        base_batch_size = 5000
-    else:
-        # Mixed or unknown: use default
-        base_batch_size = DEFAULT_BATCH_SIZE
-    
-    try:
-        # Get available memory (in bytes)
-        available_memory = psutil.virtual_memory().available
-        
-        # Estimate memory needed per ray (origins + directions + results)
-        # 3 floats for origin + 3 floats for direction + 1 bool for result = 7 * 8 bytes
-        memory_per_ray = 7 * 8  # 56 bytes per ray
-        
-        # Use 25% of available memory for ray processing (more generous than before)
-        max_memory_for_rays = available_memory * 0.25
-        
-        # Calculate maximum safe batch size
-        max_safe_batch = int(max_memory_for_rays / memory_per_ray)
-        
-        # Use the smaller of: base_batch_size, max_safe_batch, or n_rays
-        optimal_batch_size = min(base_batch_size, max_safe_batch, n_rays)
-        
-        # Ensure minimum batch size for efficiency
-        min_batch_size = 100 if ray_type == "solar" else 500
-        optimal_batch_size = max(min_batch_size, optimal_batch_size)
-        
-        return optimal_batch_size
-        
-    except Exception:
-        # Fallback to conservative batch size if memory detection fails
-        return min(base_batch_size, n_rays, 5000)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -146,8 +85,8 @@ def compute_solar_exposure(sample_points: np.ndarray,
         Array of shape (n_hours,) with fraction exposed per hour (0-1)
     """
     # Allow opt-in vectorized pathway via environment (non-breaking default)
-    use_vectorized = os.getenv("FAST_UTCI_VECTORIZED_SOLAR", "0").lower() in ("1", "true", "yes", "on")
-    if use_vectorized:
+    env_config = get_env_config()
+    if env_config.vectorized_solar:
         return _compute_solar_exposure_vectorized(sample_points, sun_data, mesh_context, show_progress)
 
     n_hours = len(sun_data.sun_vectors)
@@ -176,7 +115,7 @@ def compute_solar_exposure(sample_points: np.ndarray,
             ray_directions[:] = -sun_vector  # Broadcast -sun_vector to all rows
             
             # Test ray intersections with optimized batch sizing
-            optimal_batch_size = _get_optimal_batch_size(n_points, "solar")
+            optimal_batch_size = get_optimal_batch_size(n_points, "solar")
             hits = batch_ray_intersections(
                 origins=sample_points,
                 directions=ray_directions,
@@ -240,7 +179,7 @@ def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
         # Directions: for each hour vector, repeat it n_points times
         all_directions = np.repeat(-batch_vectors, n_points, axis=0)
 
-        optimal_batch_size = _get_optimal_batch_size(len(all_origins), "solar")
+        optimal_batch_size = get_optimal_batch_size(len(all_origins), "solar")
         hits = batch_ray_intersections(
             origins=all_origins,
             directions=all_directions,
@@ -278,7 +217,7 @@ def compute_sky_exposure(sample_points: np.ndarray,
         return 1.0
     
     # Get cached Tregenza dome vectors and weights (computed once globally)
-    sky_vectors, sky_weights = _get_cached_sky_vectors()
+    sky_vectors, sky_weights = get_cached_sky_vectors()
     n_sky_patches = len(sky_vectors)
     
     # Pre-allocate arrays for better performance
@@ -300,7 +239,7 @@ def compute_sky_exposure(sample_points: np.ndarray,
         
         # Test intersections (sky_vectors are already pre-computed)
         # Test intersections with sky patches using optimized batch sizing
-        optimal_batch_size = _get_optimal_batch_size(n_sky_patches, "sky")
+        optimal_batch_size = get_optimal_batch_size(n_sky_patches, "sky")
         hits = batch_ray_intersections(
             origins=ray_origins,
             directions=sky_vectors,
@@ -465,9 +404,9 @@ def _compute_exposure_parallel(positions: np.ndarray,
         
         if start_idx < n_positions:
             chunks.append(sorted_positions[start_idx:end_idx])
-            start_idx = end_idx
+        start_idx = end_idx
     
-    print(f"Processing {n_positions} positions with {n_workers} workers in {len(chunks)} chunks")
+    logger.info(f"Processing {n_positions} positions with {n_workers} workers in {len(chunks)} chunks")
     
     # Process chunks in parallel
     if show_progress:
@@ -512,8 +451,8 @@ def _compute_exposure_chunk(args):
     n_positions = len(chunk_positions)
 
     # Fast path: when pt_count==1 and env toggle is on, batch solar rays across positions per hour
-    use_batch_positions = os.getenv("FAST_UTCI_BATCH_POSITIONS", "0").lower() in ("1", "true", "yes", "on")
-    if use_batch_positions and pt_count == 1 and mesh_context is not None:
+    env_config = get_env_config()
+    if env_config.batch_positions and pt_count == 1 and mesh_context is not None:
         # Prepare once
         positions = np.asarray(chunk_positions)
         # Create sample points: one per position at mid-height
@@ -532,7 +471,7 @@ def _compute_exposure_chunk(args):
             ray_dirs = np.empty((n_positions, 3), dtype=np.float64)
             ray_dirs[:] = -sun_vec
             # Batch intersections in big chunks
-            optimal_batch_size = _get_optimal_batch_size(n_positions, "solar")
+            optimal_batch_size = get_optimal_batch_size(n_positions, "solar")
             hits = batch_ray_intersections(
                 origins=sample_points,
                 directions=ray_dirs,

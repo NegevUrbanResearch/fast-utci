@@ -46,7 +46,7 @@ def get_user_analysis_choice():
         elif choice == "2":
             return "full_day"
         else:
-            print("❌ Invalid choice. Please enter 1 or 2.")
+            print("[ERROR] Invalid choice. Please enter 1 or 2.")
 
 
 def get_user_simplification_choice():
@@ -66,7 +66,7 @@ def get_user_simplification_choice():
         elif choice == "2":
             return True   # Simplify to 70%
         else:
-            print("❌ Invalid choice. Please enter 1 or 2.")
+            print("[ERROR] Invalid choice. Please enter 1 or 2.")
 
 
 def get_single_hour_input():
@@ -89,9 +89,9 @@ def get_single_hour_input():
             if 0 <= hour <= 23:
                 return hour
             else:
-                print("❌ Hour must be between 0 and 23.")
+                print("[ERROR] Hour must be between 0 and 23.")
         except ValueError:
-            print("❌ Please enter a valid number between 0 and 23.")
+            print("[ERROR] Please enter a valid number between 0 and 23.")
 
 
 def monitor_memory_usage():
@@ -100,7 +100,7 @@ def monitor_memory_usage():
         process = psutil.Process()
         memory_info = process.memory_info()
         memory_mb = memory_info.rss / 1024 / 1024
-        print(f"💾 Memory usage: {memory_mb:.1f} MB")
+        print(f"[SAVE] Memory usage: {memory_mb:.1f} MB")
         return memory_mb
     except Exception:
         return 0
@@ -123,12 +123,12 @@ def validate_analysis_mode(analysis_mode: str, target_hour: Optional[int] = None
         True if analysis mode is valid
     """
     if analysis_mode not in ["single_hour", "full_day"]:
-        print(f"❌ Invalid analysis mode: {analysis_mode}")
+        print(f"[ERROR] Invalid analysis mode: {analysis_mode}")
         return False
     
     if analysis_mode == "single_hour" and target_hour is not None:
         if not (0 <= target_hour <= 23):
-            print(f"❌ Invalid target hour: {target_hour}. Must be 0-23.")
+            print(f"[ERROR] Invalid target hour: {target_hour}. Must be 0-23.")
             return False
     
     # Check available memory for full day analysis
@@ -136,15 +136,15 @@ def validate_analysis_mode(analysis_mode: str, target_hour: Optional[int] = None
         try:
             available_memory_gb = psutil.virtual_memory().available / (1024**3)
             if available_memory_gb < 2.0:  # Less than 2GB available
-                print(f"⚠️  Warning: Low available memory ({available_memory_gb:.1f} GB)")
+                print(f"[WARN]  Warning: Low available memory ({available_memory_gb:.1f} GB)")
                 print("   Full day analysis may be slow or fail. Consider closing other applications.")
                 
                 response = input("Continue anyway? (y/N): ").strip().lower()
                 if response not in ['y', 'yes']:
-                    print("❌ Analysis cancelled by user.")
+                    print("[ERROR] Analysis cancelled by user.")
                     return False
         except Exception:
-            print("⚠️  Could not check available memory.")
+            print("[WARN]  Could not check available memory.")
     
     return True
 
@@ -213,7 +213,7 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
     
     if analysis_mode == "single_hour":
         # Single hour visualization
-        print("📊 Creating single hour comparison with Grasshopper validation data...")
+        print("[INFO] Creating single hour comparison with Grasshopper validation data...")
         
         comparison_fig = viewer.visualize_enhanced_utci_heatmap(
             enhanced_model=enhanced_model,
@@ -231,7 +231,7 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
         
     else:  # full_day
         # Full day animated visualization with same detailed view as single hour
-        print("📊 Creating animated 24-hour UTCI visualization with detailed view...")
+        print("[INFO] Creating animated 24-hour UTCI visualization with detailed view...")
         
         comparison_fig = viewer.visualize_enhanced_utci_heatmap(
             enhanced_model=enhanced_model,
@@ -249,7 +249,7 @@ def create_visualization(analysis_mode: str, enhanced_model, utci_results: dict,
             comparison_filename = f"utci_comparison_grid_{grid_size}m_original_24hour_animated.html"
     
     comparison_fig.write_html(comparison_filename)
-    print(f"💾 Visualization saved: {comparison_filename}")
+    print(f"[SAVE] Visualization saved: {comparison_filename}")
     
     return comparison_filename
 
@@ -265,9 +265,9 @@ def main():
     print("=" * 60)
     # Optional performance flags notice for easier benchmarking
     if os.getenv("FAST_UTCI_VECTORIZED_SOLAR"):
-        print("⚙️  Using vectorized solar exposure path (FAST_UTCI_VECTORIZED_SOLAR)")
+        print("[CONFIG]  Using vectorized solar exposure path (FAST_UTCI_VECTORIZED_SOLAR)")
     if os.getenv("FAST_UTCI_INTERSECTOR"):
-        print(f"⚙️  Ray intersector backend: {os.getenv('FAST_UTCI_INTERSECTOR')}")
+        print(f"[CONFIG]  Ray intersector backend: {os.getenv('FAST_UTCI_INTERSECTOR')}")
     
     # Get user choices for analysis type and model simplification
     analysis_mode = get_user_analysis_choice()
@@ -275,15 +275,15 @@ def main():
     
     if analysis_mode == "single_hour":
         target_hour = get_single_hour_input()
-        print(f"✅ Selected: Single hour analysis for hour {target_hour:02d}:00")
+        print(f"[OK] Selected: Single hour analysis for hour {target_hour:02d}:00")
     else:
-        print("✅ Selected: Full day analysis (24 hours)")
+        print("[OK] Selected: Full day analysis (24 hours)")
         target_hour = None
     
     if simplify_model:
-        print("✅ Selected: Model simplification to 70%")
+        print("[OK] Selected: Model simplification to 70%")
     else:
-        print("✅ Selected: Use original model (no simplification)")
+        print("[OK] Selected: Use original model (no simplification)")
     
     # Apply default performance flags for full-day runs (honor existing env overrides)
     if analysis_mode == "full_day":
@@ -302,7 +302,7 @@ def main():
         # Reduce per-position payload in UTCI worker to cut serialization cost
         os.environ.setdefault("FAST_UTCI_INCLUDE_WEATHER_IN_RESULTS", "0")
         os.environ.setdefault("FAST_UTCI_INCLUDE_DATETIME_IN_RESULTS", "0")
-        print("⚡ Optimizations enabled for full day: vectorized solar, Embree(low), intersects_any, batch positions")
+        print("[PERF] Optimizations enabled for full day: vectorized solar, Embree(low), intersects_any, batch positions")
     else:
         # Single-hour defaults: enable Embree + intersects_any; enable position batching (pt_count==1)
         os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
@@ -311,7 +311,7 @@ def main():
         os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1")
         os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
         # Do not set FAST_UTCI_VECTORIZED_SOLAR by default for single hour
-        print("⚡ Optimizations enabled for single hour: Embree(low), intersects_any, batch positions")
+        print("[PERF] Optimizations enabled for single hour: Embree(low), intersects_any, batch positions")
 
     # Validate analysis mode
     if not validate_analysis_mode(analysis_mode, target_hour):
@@ -330,10 +330,10 @@ def main():
     # Check if files exist
     for file_path, name in [(model_file, "3D model"), (epw_file, "EPW weather"), (validation_csv, "validation CSV")]:
         if not Path(file_path).exists():
-            print(f"❌ {name} file not found: {file_path}")
+            print(f"[ERROR] {name} file not found: {file_path}")
             return 1
     
-    print(f"✅ All required files found")
+    print(f"[OK] All required files found")
     print(f"  Model: {model_file}")
     print(f"  Weather: {epw_file}")
     print(f"  Validation: {validation_csv}")
@@ -348,10 +348,10 @@ def main():
         t0 = time.perf_counter()
         enhanced_model, weather_df, epw_data = read_project_data_enhanced(model_file, epw_file, verbose=False)
         t1 = time.perf_counter()
-        print(f"⏱️  Load time: {(t1-t0):.2f}s")
+        print(f"[TIME]  Load time: {(t1-t0):.2f}s")
         model = enhanced_model.get_combined_mesh()  # Get combined mesh for MRT calculations
         
-        print(f"📊 Enhanced model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
+        print(f"[INFO] Enhanced model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
         
         # Display layer information (consolidated)
         layer_info = enhanced_model.get_layer_info()
@@ -364,7 +364,7 @@ def main():
             layer_counts[layer_type]['vertices'] += info['vertices']
             layer_counts[layer_type]['faces'] += info['faces']
         
-        print(f"🏗️  Model layers ({len(layer_info)} total):")
+        print(f"[BUILD]  Model layers ({len(layer_info)} total):")
         for layer_type, counts in layer_counts.items():
             print(f"  - {layer_type}: {counts['count']} objects, {counts['vertices']:,} vertices, {counts['faces']:,} faces")
         
@@ -374,13 +374,13 @@ def main():
             import trimesh
             target_faces = int(len(model.faces) * 0.7)
             model = model.simplify_quadric_decimation(face_count=target_faces)
-            print(f"📊 Simplified model: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
+            print(f"[INFO] Simplified model: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
             original_faces = len(model.faces) / 0.7  # Calculate original face count
             speedup = original_faces / len(model.faces)
-            print(f"⚡ Expected ray casting speedup: ~{speedup:.1f}x faster")
+            print(f"[PERF] Expected ray casting speedup: ~{speedup:.1f}x faster")
         else:
-            print("✅ Using original model without simplification")
-        print(f"🌤️  Weather loaded: {len(weather_df):,} hours")
+            print("[OK] Using original model without simplification")
+        print(f"[WEATHER]  Weather loaded: {len(weather_df):,} hours")
         
         # Monitor memory usage
         monitor_memory_usage()
@@ -397,22 +397,22 @@ def main():
         # Report intersector backend if available
         if getattr(mrt_calc, 'mesh_context', None) is not None:
             backend = getattr(mrt_calc.mesh_context, 'backend_name', 'unknown')
-            print(f"🧭 Ray intersector backend: {backend}")
+            print(f"[BACKEND] Ray intersector backend: {backend}")
         mrt_calc.set_location_from_epw(epw_file)
         
         # Create analysis grid using exact model bounds (no buffer)
         
         grid_size = GRID_SIZE  # Use configured grid size
         
-        print(f"🏗️  Generating grid using exact model bounds (no buffer)")
-        print(f"📐 Grid size: {grid_size}m")
+        print(f"[BUILD]  Generating grid using exact model bounds (no buffer)")
+        print(f"[GRID] Grid size: {grid_size}m")
         
         # Use exact model bounds as specified by user
         # Model bounds: x: -2470.81 to -1479.529, y: -619.8652 to -196.4804
         bounds_min = np.array([-2470.81, -619.8652])  # x_min, y_min
         bounds_max = np.array([-1479.529, -196.4804])  # x_max, y_max
         
-        print(f"📊 Using exact model bounds: X=[{bounds_min[0]:.1f}, {bounds_max[0]:.1f}], Y=[{bounds_min[1]:.1f}, {bounds_max[1]:.1f}]")
+        print(f"[INFO] Using exact model bounds: X=[{bounds_min[0]:.1f}, {bounds_max[0]:.1f}], Y=[{bounds_min[1]:.1f}, {bounds_max[1]:.1f}]")
         
         # Create ground-level grid at human height using exact bounds
         grid = create_rectangular_grid(
@@ -422,26 +422,26 @@ def main():
             z_height=1.5  # Human height for pedestrian analysis
         )
         
-        print(f"🎯 Analysis bounds: [{bounds_min[0]:.1f}, {bounds_min[1]:.1f}] to [{bounds_max[0]:.1f}, {bounds_max[1]:.1f}]")
-        print(f"📏 Grid area: {(bounds_max[0] - bounds_min[0]):.1f}m × {(bounds_max[1] - bounds_min[1]):.1f}m (exact model bounds)")
-        print(f"🏢 Model coverage: 100% of grid area (no buffer)")
+        print(f"[TARGET] Analysis bounds: [{bounds_min[0]:.1f}, {bounds_min[1]:.1f}] to [{bounds_max[0]:.1f}, {bounds_max[1]:.1f}]")
+        print(f"[DIMS] Grid area: {(bounds_max[0] - bounds_min[0]):.1f}m × {(bounds_max[1] - bounds_min[1]):.1f}m (exact model bounds)")
+        print(f"[MODEL] Model coverage: 100% of grid area (no buffer)")
         
         print(f"🔢 Grid generated: {len(grid.points)} points at {grid_size}m spacing")
         
         # Show grid extent (simplified)
         points = np.array(grid.points)
-        print(f"🔍 Grid extent: X=[{points[:,0].min():.1f}, {points[:,0].max():.1f}], Y=[{points[:,1].min():.1f}, {points[:,1].max():.1f}], Z={points[0,2]:.1f}")
+        print(f"[PROCESS] Grid extent: X=[{points[:,0].min():.1f}, {points[:,0].max():.1f}], Y=[{points[:,1].min():.1f}, {points[:,1].max():.1f}], Z={points[0,2]:.1f}")
         
         # Create analysis period and target hours based on user choice
         analysis_period, target_hours = create_analysis_period_and_hours(analysis_mode, target_hour)
         
         # Compute exposure (this uses parallel processing automatically)
         if analysis_mode == "full_day":
-            print("🔍 Computing exposure for all 24 hours with parallel processing...")
-            print(f"📊 Processing {len(grid.points):,} positions × {len(target_hours)} hours = {len(grid.points) * len(target_hours):,} calculations")
-            print("⏱️  This may take several minutes for full day analysis...")
+            print("[PROCESS] Computing exposure for all 24 hours with parallel processing...")
+            print(f"[INFO] Processing {len(grid.points):,} positions × {len(target_hours)} hours = {len(grid.points) * len(target_hours):,} calculations")
+            print("[TIME]  This may take several minutes for full day analysis...")
         else:
-            print("🔍 Computing exposure with parallel processing...")
+            print("[PROCESS] Computing exposure with parallel processing...")
         
         try:
             t2 = time.perf_counter()
@@ -451,17 +451,17 @@ def main():
                 target_hours=target_hours
             )
             t3 = time.perf_counter()
-            print(f"⏱️  Exposure compute time: {(t3-t2):.2f}s")
+            print(f"[TIME]  Exposure compute time: {(t3-t2):.2f}s")
             
             # Monitor memory after exposure calculation
-            print("💾 Memory after exposure calculation:")
+            print("[SAVE] Memory after exposure calculation:")
             monitor_memory_usage()
             
             # Compute MRT
             if analysis_mode == "full_day":
-                print("🌡️  Computing MRT for all 24 hours...")
+                print("[CALC]  Computing MRT for all 24 hours...")
             else:
-                print("🌡️  Computing MRT...")
+                print("[CALC]  Computing MRT...")
             
             t4 = time.perf_counter()
             mrt_results = mrt_calc.compute_mrt(
@@ -471,17 +471,17 @@ def main():
                 target_hours=target_hours
             )
             t5 = time.perf_counter()
-            print(f"⏱️  MRT compute time: {(t5-t4):.2f}s")
+            print(f"[TIME]  MRT compute time: {(t5-t4):.2f}s")
             
             # Clean up exposure results to free memory
             del exposure_results
             cleanup_memory()
             
         except Exception as e:
-            print(f"❌ Error in MRT calculation: {e}")
+            print(f"[ERROR] Error in MRT calculation: {e}")
             raise
         
-        print(f"✅ MRT computed for {len(mrt_results)} positions")
+        print(f"[OK] MRT computed for {len(mrt_results)} positions")
         
         # Step 3: Compute UTCI
         print("\n" + "="*40)
@@ -495,9 +495,9 @@ def main():
         
         # Compute UTCI
         if analysis_mode == "full_day":
-            print("🌡️  Computing UTCI for all 24 hours from MRT and weather data...")
+            print("[CALC]  Computing UTCI for all 24 hours from MRT and weather data...")
         else:
-            print("🌡️  Computing UTCI from MRT and weather data...")
+            print("[CALC]  Computing UTCI from MRT and weather data...")
         
         try:
             utci_results = utci_calc.compute_utci(
@@ -508,11 +508,11 @@ def main():
             )
             
             # Monitor memory after UTCI calculation
-            print("💾 Memory after UTCI calculation:")
+            print("[SAVE] Memory after UTCI calculation:")
             monitor_memory_usage()
             
         except Exception as e:
-            print(f"❌ Error in UTCI calculation: {e}")
+            print(f"[ERROR] Error in UTCI calculation: {e}")
             raise
         
         # Get summary statistics
@@ -541,13 +541,13 @@ def main():
                 utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_hour_{target_hour:02d}.csv"
             else:
                 utci_output_path = f"utci_results_grid_{grid_size}m_original_hour_{target_hour:02d}.csv"
-            print(f"💾 Exporting single hour results to: {utci_output_path}")
+            print(f"[SAVE] Exporting single hour results to: {utci_output_path}")
         else:
             if simplify_model:
                 utci_output_path = f"utci_results_grid_{grid_size}m_simplified_70pct_24hour.csv"
             else:
                 utci_output_path = f"utci_results_grid_{grid_size}m_original_24hour.csv"
-            print(f"💾 Exporting 24-hour results to: {utci_output_path}")
+            print(f"[SAVE] Exporting 24-hour results to: {utci_output_path}")
         
         utci_calc.to_csv(
             utci_results=utci_results,
@@ -574,8 +574,8 @@ def main():
         else:
             print(f"\n🎉 COMPLETE: {len(utci_results)} positions analyzed for 24 hours")
         
-        print(f"🌡️  UTCI Range: {utci_min:.1f} to {utci_max:.1f} °C (mean: {utci_mean:.1f} °C)")
-        print(f"💾 Results: {utci_output_path} | Visualization: {comparison_filename}")
+        print(f"[CALC]  UTCI Range: {utci_min:.1f} to {utci_max:.1f} °C (mean: {utci_mean:.1f} °C)")
+        print(f"[SAVE] Results: {utci_output_path} | Visualization: {comparison_filename}")
         
         if analysis_mode == "full_day":
             print(f"🎬 Animated visualization with time slider available in: {comparison_filename}")
@@ -583,7 +583,7 @@ def main():
         return 0
         
     except Exception as e:
-        print(f"\n❌ Error in workflow: {e}")
+        print(f"\n[ERROR] Error in workflow: {e}")
         import traceback
         traceback.print_exc()
         return 1

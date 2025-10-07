@@ -3,6 +3,24 @@ Main MRT Calculator class for fast-utci.
 
 Orchestrates weather data processing, exposure calculations, and SolarCal MRT
 computation to match Grasshopper OutdoorSolarMRT results with optimized performance.
+
+Basic usage:
+    from fast_utci.mrt import MRTCalculator
+    from ladybug.epw import EPW
+    
+    # Initialize with context geometry
+    calculator = MRTCalculator(context_meshes=['building.obj'])
+    
+    # Load weather data and set location
+    epw = EPW('weather.epw')
+    calculator.set_location_from_epw('weather.epw')
+    
+    # Compute exposure and MRT for grid points
+    exposure = calculator.compute_exposure(grid_points)
+    results = calculator.compute_mrt(epw, exposure)
+    
+    # Export results
+    calculator.to_csv(results, 'output.csv')
 """
 
 import numpy as np
@@ -13,6 +31,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 from tqdm import tqdm
+import logging
 
 from .solar import get_sun_vectors, filter_hours_by_local_time, SunData
 from .mesh import load_context_meshes, MeshContext
@@ -25,6 +44,85 @@ from .config import MRTConfig, DEFAULT_CONFIG
 # Import ladybug for location and EPW handling
 from ladybug.location import Location
 from ladybug.epw import EPW
+
+logger = logging.getLogger(__name__)
+
+
+def _create_solarcal_from_epw(epw_data: Any, 
+                               exposure: ExposureResult,
+                               analysis_period: Optional[AnalysisPeriod],
+                               target_hours: Optional[List[int]],
+                               ground_reflectance: float,
+                               body_params: Any) -> SolarCalResult:
+    """
+    Shared EPW to SolarCal computation logic.
+    
+    Args:
+        epw_data: EPW object with weather data collections
+        exposure: ExposureResult with solar and sky exposure
+        analysis_period: Optional analysis period filter
+        target_hours: Optional hour filter
+        ground_reflectance: Ground reflectance factor
+        body_params: SolarCalParameter object
+        
+    Returns:
+        SolarCalResult with MRT and component values
+    """
+    from ladybug_comfort.collection.solarcal import OutdoorSolarCal
+    from ladybug.analysisperiod import AnalysisPeriod as LBAnalysisPeriod
+    
+    # Create analysis period for the day
+    # TODO: Make this dynamic based on actual data dates
+    day_period = LBAnalysisPeriod(8, 15, 0, 8, 15, 23)
+    
+    # Filter EPW collections to the day
+    air_temp_coll = epw_data.dry_bulb_temperature.filter_by_analysis_period(day_period)
+    dir_norm_coll = epw_data.direct_normal_radiation.filter_by_analysis_period(day_period)
+    diff_horiz_coll = epw_data.diffuse_horizontal_radiation.filter_by_analysis_period(day_period)
+    horiz_ir_coll = epw_data.horizontal_infrared_radiation_intensity.filter_by_analysis_period(day_period)
+    
+    # Create OutdoorSolarCal
+    solar_cal = OutdoorSolarCal(
+        epw_data.location,
+        dir_norm_coll,
+        diff_horiz_coll,
+        horiz_ir_coll,
+        air_temp_coll,
+        exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,
+        exposure.sky_exposure,
+        ground_reflectance,
+        body_params
+    )
+    
+    # Extract results
+    mrt_values = np.array(solar_cal.mean_radiant_temperature.values)
+    short_erf_values = np.array(solar_cal.shortwave_effective_radiant_field.values)
+    long_erf_values = np.array(solar_cal.longwave_effective_radiant_field.values)
+    short_dmrt_values = np.array(solar_cal.shortwave_mrt_delta.values)
+    long_dmrt_values = np.array(solar_cal.longwave_mrt_delta.values)
+    
+    # Filter to target hours if specified
+    if target_hours:
+        hour_indices = target_hours
+        mrt_filtered = mrt_values[hour_indices]
+        short_erf_filtered = short_erf_values[hour_indices]
+        long_erf_filtered = long_erf_values[hour_indices]
+        short_dmrt_filtered = short_dmrt_values[hour_indices]
+        long_dmrt_filtered = long_dmrt_values[hour_indices]
+    else:
+        mrt_filtered = mrt_values
+        short_erf_filtered = short_erf_values
+        long_erf_filtered = long_erf_values
+        short_dmrt_filtered = short_dmrt_values
+        long_dmrt_filtered = long_dmrt_values
+    
+    return SolarCalResult(
+        mrt=mrt_filtered,
+        short_erf=short_erf_filtered,
+        long_erf=long_erf_filtered,
+        short_dmrt=short_dmrt_filtered,
+        long_dmrt=long_dmrt_filtered
+    )
 
 
 class MRTCalculator:
@@ -57,8 +155,8 @@ class MRTCalculator:
         self.mesh_context = None
         if context_meshes:
             self.mesh_context = load_context_meshes(context_meshes)
-            print(f"Loaded context geometry: {len(self.mesh_context.mesh.faces)} faces, "
-                  f"BVH acceleration: {self.mesh_context.has_bvh}")
+            logger.info(f"Loaded context geometry: {len(self.mesh_context.mesh.faces)} faces, "
+                        f"BVH acceleration: {self.mesh_context.has_bvh}")
         
         # Set location
         self.location = location
@@ -75,7 +173,7 @@ class MRTCalculator:
         """Set location from EPW file."""
         epw = EPW(str(epw_file))
         self.location = epw.location
-        print(f"Location set from EPW: {self.location}")
+        logger.info(f"Location set from EPW: {self.location}")
     
     def get_sun_data(self, 
                     analysis_period: Optional[AnalysisPeriod] = None,
@@ -122,8 +220,8 @@ class MRTCalculator:
         # Cache result
         self._sun_data_cache[cache_key] = sun_data
         
-        print(f"Computed sun data: {len(sun_data.solar_times)} hours, "
-              f"{np.sum(sun_data.is_sun_up)} sun-up hours")
+        logger.info(f"Computed sun data: {len(sun_data.solar_times)} hours, "
+                    f"{np.sum(sun_data.is_sun_up)} sun-up hours")
         
         return sun_data
     
@@ -229,63 +327,9 @@ class MRTCalculator:
     
     def _compute_mrt_from_epw(self, epw_data, exposure, analysis_period, target_hours):
         """Compute MRT using EPW data collections for proper Grasshopper-like filtering."""
-        from ladybug_comfort.collection.solarcal import OutdoorSolarCal
-        from ladybug.analysisperiod import AnalysisPeriod
-        
-        # Create analysis period for the day
-        first_dt = exposure.fract_body_exp  # We need to get the datetime somehow
-        # For now, use August 15th as our test case
-        day_period = AnalysisPeriod(8, 15, 0, 8, 15, 23)
-        
-        # Filter EPW collections to the day
-        air_temp_coll = epw_data.dry_bulb_temperature.filter_by_analysis_period(day_period)
-        dir_norm_coll = epw_data.direct_normal_radiation.filter_by_analysis_period(day_period)
-        diff_horiz_coll = epw_data.diffuse_horizontal_radiation.filter_by_analysis_period(day_period)
-        horiz_ir_coll = epw_data.horizontal_infrared_radiation_intensity.filter_by_analysis_period(day_period)
-        
-        # Create OutdoorSolarCal
-        solar_cal = OutdoorSolarCal(
-            epw_data.location,
-            dir_norm_coll,
-            diff_horiz_coll,
-            horiz_ir_coll,
-            air_temp_coll,
-            exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,  # Use first exposure value
-            exposure.sky_exposure,
-            self.config.ground_reflectance,
-            self.body_params
-        )
-        
-        # Extract results and filter to target hours
-        mrt_values = np.array(solar_cal.mean_radiant_temperature.values)
-        short_erf_values = np.array(solar_cal.shortwave_effective_radiant_field.values)
-        long_erf_values = np.array(solar_cal.longwave_effective_radiant_field.values)
-        short_dmrt_values = np.array(solar_cal.shortwave_mrt_delta.values)
-        long_dmrt_values = np.array(solar_cal.longwave_mrt_delta.values)
-        
-        # Filter to target hours if specified
-        if target_hours:
-            # Extract only the target hours (e.g., hour 13)
-            hour_indices = target_hours
-            mrt_filtered = mrt_values[hour_indices]
-            short_erf_filtered = short_erf_values[hour_indices]
-            long_erf_filtered = long_erf_values[hour_indices]
-            short_dmrt_filtered = short_dmrt_values[hour_indices]
-            long_dmrt_filtered = long_dmrt_values[hour_indices]
-        else:
-            mrt_filtered = mrt_values
-            short_erf_filtered = short_erf_values
-            long_erf_filtered = long_erf_values
-            short_dmrt_filtered = short_dmrt_values
-            long_dmrt_filtered = long_dmrt_values
-        
-        from .solarcal import SolarCalResult
-        return SolarCalResult(
-            mrt=mrt_filtered,
-            short_erf=short_erf_filtered,
-            long_erf=long_erf_filtered,
-            short_dmrt=short_dmrt_filtered,
-            long_dmrt=long_dmrt_filtered
+        return _create_solarcal_from_epw(
+            epw_data, exposure, analysis_period, target_hours,
+            self.config.ground_reflectance, self.body_params
         )
     
     def _compute_mrt_serial(self, exposure_results, epw_data, filtered_weather, 
@@ -331,7 +375,7 @@ class MRTCalculator:
                 chunks.append(chunk_data)
                 start_idx = end_idx
         
-        print(f"Processing {n_positions} MRT calculations with {n_workers} workers in {len(chunks)} chunks")
+        logger.info(f"Processing {n_positions} MRT calculations with {n_workers} workers in {len(chunks)} chunks")
         
         # Process chunks in parallel
         chunk_args = [(chunk, epw_data, filtered_weather, filtered_datetimes, 
@@ -464,7 +508,7 @@ class MRTCalculator:
         # Create DataFrame and export
         df = pd.DataFrame(rows, columns=['pixel10*10', 'mrt 0', 'mrt 1', 'utci', 'color'])
         df.to_csv(csv_path, index=False)
-        print(f"Exported Grasshopper format CSV: {csv_path}")
+        logger.info(f"Exported Grasshopper format CSV: {csv_path}")
     
     def _export_standard_csv(self, results: Dict[str, Any], csv_path: str):
         """Export in standard detailed format."""
@@ -496,7 +540,7 @@ class MRTCalculator:
         # Export to CSV
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, index=False, encoding=self.config.csv_encoding)
-        print(f"Exported CSV: {csv_path}")
+        logger.info(f"Exported CSV: {csv_path}")
 
 
 def _compute_mrt_chunk(args):
@@ -525,60 +569,9 @@ def _compute_mrt_chunk(args):
         # Compute SolarCal MRT using EPW data collections for proper filtering
         if hasattr(epw_data, 'dry_bulb_temperature'):
             # Use EPW object directly for proper data collection handling
-            from ladybug_comfort.collection.solarcal import OutdoorSolarCal
-            from ladybug.analysisperiod import AnalysisPeriod
-            
-            # Create analysis period for the day
-            day_period = AnalysisPeriod(8, 15, 0, 8, 15, 23)
-            
-            # Filter EPW collections to the day
-            air_temp_coll = epw_data.dry_bulb_temperature.filter_by_analysis_period(day_period)
-            dir_norm_coll = epw_data.direct_normal_radiation.filter_by_analysis_period(day_period)
-            diff_horiz_coll = epw_data.diffuse_horizontal_radiation.filter_by_analysis_period(day_period)
-            horiz_ir_coll = epw_data.horizontal_infrared_radiation_intensity.filter_by_analysis_period(day_period)
-            
-            # Create OutdoorSolarCal
-            solar_cal = OutdoorSolarCal(
-                epw_data.location,
-                dir_norm_coll,
-                diff_horiz_coll,
-                horiz_ir_coll,
-                air_temp_coll,
-                exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,
-                exposure.sky_exposure,
-                config.ground_reflectance,
-                body_params
-            )
-            
-            # Extract results and filter to target hours
-            mrt_values = np.array(solar_cal.mean_radiant_temperature.values)
-            short_erf_values = np.array(solar_cal.shortwave_effective_radiant_field.values)
-            long_erf_values = np.array(solar_cal.longwave_effective_radiant_field.values)
-            short_dmrt_values = np.array(solar_cal.shortwave_mrt_delta.values)
-            long_dmrt_values = np.array(solar_cal.longwave_mrt_delta.values)
-            
-            # Filter to target hours if specified
-            if target_hours:
-                hour_indices = target_hours
-                mrt_filtered = mrt_values[hour_indices]
-                short_erf_filtered = short_erf_values[hour_indices]
-                long_erf_filtered = long_erf_values[hour_indices]
-                short_dmrt_filtered = short_dmrt_values[hour_indices]
-                long_dmrt_filtered = long_dmrt_values[hour_indices]
-            else:
-                mrt_filtered = mrt_values
-                short_erf_filtered = short_erf_values
-                long_erf_filtered = long_erf_values
-                short_dmrt_filtered = short_dmrt_values
-                long_dmrt_filtered = long_dmrt_values
-            
-            from .solarcal import SolarCalResult
-            mrt_result = SolarCalResult(
-                mrt=mrt_filtered,
-                short_erf=short_erf_filtered,
-                long_erf=long_erf_filtered,
-                short_dmrt=short_dmrt_filtered,
-                long_dmrt=long_dmrt_filtered
+            mrt_result = _create_solarcal_from_epw(
+                epw_data, exposure, analysis_period, target_hours,
+                config.ground_reflectance, body_params
             )
         else:
             # Fallback for DataFrame input

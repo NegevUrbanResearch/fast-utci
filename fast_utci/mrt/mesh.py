@@ -6,18 +6,16 @@ in MRT exposure computation.
 """
 
 import numpy as np
-import os
 import trimesh
-from typing import List, Union, Optional, Tuple
+from typing import List, Union, Optional, Tuple, Any
 from dataclasses import dataclass
 import warnings
+import logging
 
-from .config import DEFAULT_RAY_MAX_DISTANCE
-from .config import (
-    DEFAULT_EMBREE_QUALITY,
-    DEFAULT_EMBREE_BUILD_BVH,
-    DEFAULT_EMBREE_PACKET_SIZE,
-)
+from .config import DEFAULT_RAY_MAX_DISTANCE, get_env_config
+from .adapters import create_intersector_strategy
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,75 +24,32 @@ class MeshContext:
     mesh: trimesh.Trimesh
     has_bvh: bool = False
     backend_name: str = "unknown"
-    ray_intersector: any = None
+    ray_intersector: Optional[Any] = None
     
     def __post_init__(self):
-        """Initialize ray intersector with optional Embree and fallbacks.
-
-        Selection order:
-        1) Env override FAST_UTCI_INTERSECTOR=embree|trimesh
-        2) Auto: try Embree (pyembree) then fallback to trimesh ray_triangle
-        """
-        choice = os.getenv("FAST_UTCI_INTERSECTOR", "auto").lower()
-        embree_quality = os.getenv("FAST_UTCI_EMBREE_QUALITY", DEFAULT_EMBREE_QUALITY)
-        embree_build_bvh_env = os.getenv("FAST_UTCI_EMBREE_BUILD_BVH", str(DEFAULT_EMBREE_BUILD_BVH)).lower()
-        embree_build_bvh = embree_build_bvh_env in ("1", "true", "yes", "on")
-        embree_packet_env = os.getenv("FAST_UTCI_EMBREE_PACKET_SIZE", str(DEFAULT_EMBREE_PACKET_SIZE))
+        """Initialize ray intersector using strategy pattern."""
+        env_config = get_env_config()
+        
         try:
-            embree_packet_size = int(embree_packet_env)
-        except Exception:
-            embree_packet_size = 0
-
-        # Helper to set state
-        def _set_intersector(intersector, name: str, has_bvh: bool):
-            self.ray_intersector = intersector
-            self.backend_name = name
-            self.has_bvh = has_bvh
-
-        # Try explicit Embree
-        if choice in ("embree", "auto"):
-            try:
-                from trimesh.ray.ray_pyembree import RayMeshIntersector as _EmbreeIntersector
-                intersector = _EmbreeIntersector(self.mesh)
-
-                # Optional: try to apply tuning knobs if exposed by trimesh/pyembree
-                try:
-                    if hasattr(intersector, "set_quality") and embree_quality and embree_quality != "auto":
-                        intersector.set_quality(embree_quality)
-                except Exception:
-                    pass
-
-                # Build BVH if supported
-                try:
-                    if embree_build_bvh and hasattr(intersector, "build_embree"):
-                        intersector.build_embree()
-                except Exception:
-                    pass
-
-                # Packet size hint (may be ignored if not supported)
-                if embree_packet_size in (4, 8, 16):
-                    try:
-                        if hasattr(intersector, "set_packet_size"):
-                            intersector.set_packet_size(embree_packet_size)
-                    except Exception:
-                        pass
-
-                _set_intersector(intersector, "embree", True)
-                print("Ray intersector: embree (pyembree)")
-                return
-            except Exception:
-                if choice == "embree":
-                    warnings.warn("Requested Embree intersector but pyembree is not available; falling back to trimesh ray_triangle.")
-                # fall through to trimesh fallback
-
-        # Fallback to pure trimesh ray_triangle
-        try:
-            from trimesh.ray.ray_triangle import RayMeshIntersector as _TriIntersector
-            _set_intersector(_TriIntersector(self.mesh), "trimesh", True)
-            print("Ray intersector: trimesh ray_triangle")
+            strategy = create_intersector_strategy(
+                self.mesh,
+                intersector_choice=env_config.intersector,
+                embree_quality=env_config.embree_quality,
+                embree_build_bvh=env_config.embree_build_bvh,
+                embree_packet_size=env_config.embree_packet_size
+            )
+            
+            self.ray_intersector = strategy.get_intersector()
+            self.backend_name = strategy.get_name()
+            self.has_bvh = strategy.get_intersector() is not None
+            
+            logger.info(f"Ray intersector: {self.backend_name}")
+            
         except Exception as e:
-            warnings.warn(f"BVH acceleration unavailable: {e}. Using no-hit fallback.")
-            _set_intersector(None, "none", False)
+            warnings.warn(f"Intersector initialization failed: {e}")
+            self.ray_intersector = None
+            self.backend_name = "none"
+            self.has_bvh = False
 
 
 def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> MeshContext:
@@ -163,9 +118,9 @@ def ray_mesh_intersections(origins: np.ndarray,
     try:
         # Use selected ray intersector (embree or trimesh)
         intersector = mesh_context.ray_intersector if mesh_context and mesh_context.ray_intersector is not None else mesh_context.mesh.ray
-        use_any = os.getenv("FAST_UTCI_INTERSECTS_ANY", "0").lower() in ("1", "true", "yes", "on")
+        env_config = get_env_config()
 
-        if use_any and hasattr(intersector, "intersects_any"):
+        if env_config.intersects_any and hasattr(intersector, "intersects_any"):
             # Fast boolean occlusion check; ignores hit locations
             any_hits = intersector.intersects_any(
                 ray_origins=origins,
@@ -249,7 +204,7 @@ def test_mesh_context():
     
     hits = ray_mesh_intersections(origins, directions, mesh_context)
     
-    print(f"Test mesh context: BVH={mesh_context.has_bvh}, Hit={hits[0]}")
+    logger.debug(f"Test mesh context: BVH={mesh_context.has_bvh}, Hit={hits[0]}")
     return hits[0]  # Should be True
 
 

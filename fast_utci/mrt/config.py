@@ -7,6 +7,7 @@ All parameters have sensible defaults but can be easily modified.
 
 from dataclasses import dataclass
 from typing import Optional
+import os
 
 
 @dataclass
@@ -74,6 +75,82 @@ DEFAULT_SKY_EXPOSURE = DEFAULT_CONFIG.sky_exposure
 DEFAULT_FRACT_BODY_EXP = DEFAULT_CONFIG.fract_body_exp
 CSV_ENCODING = DEFAULT_CONFIG.csv_encoding
 CSV_INDEX = DEFAULT_CONFIG.csv_index
+
+
+@dataclass
+class EnvironmentConfig:
+    """
+    Environment variable configuration for MRT calculations.
+    
+    Centralizes all environment variable reading with validation, type conversion,
+    and documentation. Provides a single source of truth for all env-based settings.
+    """
+    
+    # Performance optimizations
+    vectorized_solar: bool = False  # FAST_UTCI_VECTORIZED_SOLAR
+    batch_positions: bool = False  # FAST_UTCI_BATCH_POSITIONS
+    
+    # Ray intersector settings
+    intersector: str = "auto"  # FAST_UTCI_INTERSECTOR: auto|embree|trimesh
+    intersects_any: bool = False  # FAST_UTCI_INTERSECTS_ANY
+    
+    # Embree-specific settings
+    embree_quality: str = "auto"  # FAST_UTCI_EMBREE_QUALITY: auto|low|medium|high
+    embree_build_bvh: bool = True  # FAST_UTCI_EMBREE_BUILD_BVH
+    embree_packet_size: int = 0  # FAST_UTCI_EMBREE_PACKET_SIZE: 0=auto, 4|8|16
+    
+    @classmethod
+    def from_environment(cls) -> 'EnvironmentConfig':
+        """Create EnvironmentConfig from environment variables."""
+        def get_bool(key: str, default: bool) -> bool:
+            """Parse boolean environment variable."""
+            value = os.getenv(key, "").lower()
+            if value in ("1", "true", "yes", "on"):
+                return True
+            elif value in ("0", "false", "no", "off", ""):
+                return default
+            return default
+        
+        def get_int(key: str, default: int) -> int:
+            """Parse integer environment variable."""
+            try:
+                return int(os.getenv(key, str(default)))
+            except ValueError:
+                return default
+        
+        def get_str(key: str, default: str) -> str:
+            """Parse string environment variable."""
+            return os.getenv(key, default)
+        
+        return cls(
+            vectorized_solar=get_bool("FAST_UTCI_VECTORIZED_SOLAR", False),
+            batch_positions=get_bool("FAST_UTCI_BATCH_POSITIONS", False),
+            intersector=get_str("FAST_UTCI_INTERSECTOR", "auto"),
+            intersects_any=get_bool("FAST_UTCI_INTERSECTS_ANY", False),
+            embree_quality=get_str("FAST_UTCI_EMBREE_QUALITY", "auto"),
+            embree_build_bvh=get_bool("FAST_UTCI_EMBREE_BUILD_BVH", True),
+            embree_packet_size=get_int("FAST_UTCI_EMBREE_PACKET_SIZE", 0),
+        )
+
+
+# Global environment config instance
+_env_config: Optional[EnvironmentConfig] = None
+
+
+def get_env_config() -> EnvironmentConfig:
+    """
+    Get the global environment configuration.
+    
+    Lazily creates and caches the configuration on first access.
+    
+    Returns:
+        EnvironmentConfig instance with current environment settings
+    """
+    global _env_config
+    if _env_config is None:
+        _env_config = EnvironmentConfig.from_environment()
+    return _env_config
+
 
 # Validation/testing parameters (keep for backward compatibility)
 VALIDATION_ANALYSIS_PERIOD = {

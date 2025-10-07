@@ -15,6 +15,8 @@ Computes Mean Radiant Temperature (MRT) for outdoor thermal comfort analysis. Th
 
 All modules are located in `fast_utci/mrt/`:
 
+### Core Modules
+
 | Module | Purpose |
 |--------|---------|
 | `mrt_calculator.py` | Main orchestrator - coordinates everything |
@@ -24,7 +26,17 @@ All modules are located in `fast_utci/mrt/`:
 | `solarcal.py` | Compute MRT using Ladybug SolarCal |
 | `mesh.py` | Handle context geometry (buildings, trees) |
 | `period.py` | Filter data to specific time periods |
-| `config.py` | Centralized parameters |
+| `config.py` | Centralized parameters and configuration |
+
+### Utility Modules (New)
+
+| Module | Purpose |
+|--------|---------|
+| `exceptions.py` | Custom exception hierarchy for better error handling |
+| `cache.py` | Thread-safe cache management for expensive computations |
+| `performance.py` | Performance optimization utilities (batch sizing, memory) |
+| `adapters.py` | Weather data and ray intersector adapters/strategies |
+| `parallel_utils.py` | Reusable parallel processing patterns |
 
 ## Quick Start
 
@@ -75,11 +87,42 @@ calc.to_csv(mrt_results, 'mrt_results.csv')
 
 ## Configuration
 
+### Basic Parameters
+
 Key parameters in `config.py`:
 - `DEFAULT_HUMAN_HEIGHT`: 1.8m (person height)
 - `DEFAULT_GRID_SIZE`: 10.0m (analysis spacing)
 - `DEFAULT_BATCH_SIZE`: 10000 (ray processing batch)
 - `DEFAULT_N_WORKERS`: Auto (parallel processing)
+
+### Environment Variables
+
+Control performance optimizations via environment variables:
+
+```python
+# Ray intersection backend
+FAST_UTCI_INTERSECTOR=auto|embree|trimesh
+
+# Embree-specific settings
+FAST_UTCI_EMBREE_QUALITY=auto|low|medium|high
+FAST_UTCI_EMBREE_BUILD_BVH=true|false
+FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16
+FAST_UTCI_INTERSECTS_ANY=true|false
+
+# Performance optimizations
+FAST_UTCI_VECTORIZED_SOLAR=true|false
+FAST_UTCI_BATCH_POSITIONS=true|false
+```
+
+All environment variables are centralized in `EnvironmentConfig` for type-safe access:
+
+```python
+from fast_utci.mrt import get_env_config
+
+env = get_env_config()
+print(f"Using intersector: {env.intersector}")
+print(f"Vectorized solar: {env.vectorized_solar}")
+```
 
 ## Validation
 
@@ -88,9 +131,97 @@ Validates against Grasshopper OutdoorSolarMRT:
 - **Context**: Building geometry for shading
 - **Output**: CSV format compatible with GH validation
 
+## Advanced Features
+
+### Custom Weather Data Adapters
+
+Create adapters for different weather data sources:
+
+```python
+from fast_utci.mrt import create_weather_adapter, EPWAdapter, DataFrameAdapter
+
+# Automatically detects EPW or DataFrame
+adapter = create_weather_adapter(weather_data)
+
+# Or use specific adapters
+epw_adapter = EPWAdapter(epw_object)
+df_adapter = DataFrameAdapter(weather_df)
+
+# All adapters provide consistent interface
+temperature = adapter.get_temperature()
+radiation = adapter.get_direct_radiation()
+```
+
+### Performance Optimization
+
+Fine-tune performance for your hardware:
+
+```python
+from fast_utci.mrt import PerformanceOptimizer
+
+optimizer = PerformanceOptimizer(
+    memory_fraction=0.3,  # Use 30% of available RAM
+    min_solar_batch=100,
+    min_sky_batch=500
+)
+
+batch_size = optimizer.calculate_batch_size(n_rays=10000, ray_type="solar")
+```
+
+### Cache Management
+
+Control global caches for testing or memory management:
+
+```python
+from fast_utci.mrt import CacheManager
+
+cache = CacheManager.get_instance()
+
+# Get cached sky vectors (computed once, reused everywhere)
+sky_vectors, sky_weights = cache.get_sky_vectors()
+
+# Clear cache when needed (e.g., testing)
+cache.clear()
+```
+
+### Custom Intersector Strategies
+
+Extend with custom ray intersection backends:
+
+```python
+from fast_utci.mrt.adapters import RayIntersectorStrategy
+
+class CustomIntersectorStrategy(RayIntersectorStrategy):
+    def initialize(self) -> bool:
+        # Your custom initialization
+        return True
+```
+
+### Parallel Processing Utilities
+
+Reuse parallel processing patterns:
+
+```python
+from fast_utci.mrt.parallel_utils import ParallelProcessor, SpatialChunkStrategy
+
+processor = ParallelProcessor(n_workers=8, show_progress=True)
+
+def process_chunk(chunk_data):
+    # Your processing logic
+    return results
+
+results = processor.process_chunks(
+    data=positions,
+    worker_fn=process_chunk,
+    chunk_strategy=SpatialChunkStrategy(),
+    description="Processing positions"
+)
+```
+
 ## Dependencies
 
 - ladybug-core (solar calculations)
 - ladybug-comfort (SolarCal)
 - trimesh (3D geometry + BVH)
 - numpy, pandas (data processing)
+- psutil (memory optimization, optional)

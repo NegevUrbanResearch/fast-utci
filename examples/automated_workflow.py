@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 def run_automated_workflow():
     """Run the UTCI workflow with automated default settings."""
     
-    print("🚀 Starting Automated UTCI Workflow")
+    print("Starting Automated UTCI Workflow")
     print("=" * 50)
     print("Settings:")
     print("  - Analysis: Single hour at 13:00")
@@ -34,14 +34,14 @@ def run_automated_workflow():
         # Optional performance toggles via environment variables
         # Enable vectorized solar exposure by setting FAST_UTCI_VECTORIZED_SOLAR=1
         if os.getenv("FAST_UTCI_VECTORIZED_SOLAR"):
-            print(f"⚙️  Vectorized solar exposure enabled (FAST_UTCI_VECTORIZED_SOLAR={os.getenv('FAST_UTCI_VECTORIZED_SOLAR')})")
+            print(f"[CONFIG] Vectorized solar exposure enabled (FAST_UTCI_VECTORIZED_SOLAR={os.getenv('FAST_UTCI_VECTORIZED_SOLAR')})")
         # Embree tuning can be applied via:
         # FAST_UTCI_INTERSECTOR=embree|trimesh
         # FAST_UTCI_EMBREE_QUALITY=low|medium|high
         # FAST_UTCI_EMBREE_BUILD_BVH=true|false
         # FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16
         if os.getenv("FAST_UTCI_INTERSECTOR") or os.getenv("FAST_UTCI_EMBREE_QUALITY"):
-            print("⚙️  Embree tuning via environment is active.")
+            print("[CONFIG] Embree tuning via environment is active.")
 
         # Import the main workflow function
         import demo_workflow
@@ -51,19 +51,19 @@ def run_automated_workflow():
         
         # Mock the user input functions to return default values
         def mock_get_user_analysis_choice():
-            print("📊 Analysis Mode: Single hour (automated)")
+            print("[AUTO] Analysis Mode: Single hour (automated)")
             return "single_hour"
         
         def mock_get_user_simplification_choice():
-            print("🏗️ Model Simplification: No (automated)")
+            print("[AUTO] Model Simplification: No (automated)")
             return False
         
         def mock_get_user_grid_choice():
-            print("📐 Grid Size: 10m (automated)")
+            print("[AUTO] Grid Size: 10m (automated)")
             return 10.0
         
         def mock_get_single_hour_input():
-            print("🕐 Analysis Hour: 13:00 (automated)")
+            print("[AUTO] Analysis Hour: 13:00 (automated)")
             return 13
         
         # Replace the interactive functions with our mocks
@@ -75,13 +75,13 @@ def run_automated_workflow():
         # Run the main workflow
         result = demo_workflow.main()
         
-        print("\n✅ Automated workflow completed successfully!")
-        print(f"📁 Output files generated in current directory")
+        print("\n[SUCCESS] Automated workflow completed successfully!")
+        print(f"[OUTPUT] Files generated in current directory")
         
         return result
         
     except Exception as e:
-        print(f"\n❌ Error in automated workflow: {e}")
+        print(f"\n[ERROR] Error in automated workflow: {e}")
         import traceback
         traceback.print_exc()
         return None
