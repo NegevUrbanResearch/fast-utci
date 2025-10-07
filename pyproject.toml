@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fast-utci"
+version = "0.1.0"
+description = "Rapidly compute 2D UTCI maps from 3D models"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Nur"}
+]
+
+dependencies = [
+    # 3D geometry and mesh handling
+    "trimesh>=4.0.0",
+    "numpy>=1.24.0",
+    
+    # Thermal comfort calculations
+    "lbt-ladybug",
+    "pythermalcomfort>=2.7.0",
+    
+    # Data handling
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",  # Excel support for pandas
+    "xlsxwriter>=3.1.0",  # Excel export for pandas
+    
+    # Visualization
+    "plotly>=5.17.0",
+    
+    # Performance (optional ray tracing acceleration)
+    "pyembree",
+    "embreex",
+    
+    # Utilities
+    "tqdm",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-benchmark>=4.0.0",
+    
+    # Code quality
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.7.0",
+    "isort>=5.12.0",
+]
+
+gpu = [
+    # GPU acceleration (optional)
+    "cupy-cuda12x>=12.0.0",
+]
+
+profile = [
+    # Performance profiling tools
+    "memory-profiler>=0.61.0",
+    "line-profiler>=4.1.0",
+]
+
+docs = [
+    # Documentation
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+]
+
+notebook = [
+    # Jupyter notebook support
+    "jupyter>=1.0.0",
+    "ipywidgets>=8.1.0",
+]
+
+all = [
+    "fast-utci[dev,gpu,profile,docs,notebook]",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fast_utci*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+

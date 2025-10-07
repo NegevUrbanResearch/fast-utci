@@ -1,30 +1,86 @@
 # fast-utci
 
-**fast-utci** is a Python tool designed to rapidly compute 2D Universal Thermal Climate Index (UTCI) maps from 3D models.
+**fast-utci** is a Python package designed to rapidly compute 2D Universal Thermal Climate Index (UTCI) maps from 3D models.
 
-For the UTCI calculations, we use the UTCI calculator from [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort). UTCI calculations take as inputs the Mean Radiant Temp, Air Temp, Wind Speed, and Relative Humidity. We will also use [Ladybug Tools](https://github.com/ladybug-tools) for other calculations that come up such as retrieving the angle of the sun
+For the UTCI calculations, we use the UTCI calculator from [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort). UTCI calculations take as inputs the Mean Radiant Temp, Air Temp, Wind Speed, and Relative Humidity. We also use [Ladybug Tools](https://github.com/ladybug-tools) for other calculations such as retrieving the angle of the sun.
 
-For calulating the Mean Radiant Temperature at a given point or mesh edge, we need to conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3d objects modeled. To do these calculations, we use Embree-accelerated ray tests via trimesh (pyembree) for occlusion and visibility, and may use [Radiance](https://www.radiance-online.org/download-install) where applicable.
-## Performance toggles
+For calculating the Mean Radiant Temperature at a given point or mesh edge, we conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3D objects modeled. We use Embree-accelerated ray tests via trimesh (pyembree) for occlusion and visibility.
 
-You can enable additional performance features via environment variables (non-breaking defaults):
+## Installation
 
-- FAST_UTCI_VECTORIZED_SOLAR=1 — enable vectorized solar exposure batching
-- FAST_UTCI_INTERSECTOR=embree|trimesh — select ray intersector backend
-- FAST_UTCI_EMBREE_QUALITY=low|medium|high — tune Embree quality (if supported)
-- FAST_UTCI_EMBREE_BUILD_BVH=true|false — pre-build BVH (if supported)
-- FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16 — hint packet size (if supported)
+```bash
+# Clone the repository
+git clone <repository-url>
+cd fast-utci
 
-Air Temp, Wind Speed, and Relative Humidity are all stored in the .epw weather files.
+# Install core dependencies
+pip install -e .
 
-**Proposed project structure:**
+# Or install with optional dependencies:
+pip install -e .[dev]      # Development tools (testing, linting)
+pip install -e .[gpu]       # GPU acceleration
+pip install -e .[profile]   # Performance profiling
+pip install -e .[all]       # Everything
+```
 
-`reader.py`: A script to read and parse the 3D model (glb or gltf) using trimesh library and EPW file inputs with ladybug-core.
+## Quick Start
 
-`mrt_calculator.py`: A module that contains functions for setting up and running Radiance simulations to compute the MRT. It could use honeybee-radiance which requires Radiance simulation engine.
+### Running Example Scripts
 
-`utci_calculator.py`: A module that uses either pythermalcomfort or ladybug-comfort to run the final UTCI calculation for each set of inputs.
+```bash
+# Interactive demo workflow
+python examples/demo_workflow.py
 
-`output.py`: A script for writing the results to a file (CSV) and generating visualizations (PNG or HTML).
+# Automated workflow with default settings
+python examples/automated_workflow.py
+```
 
-`main.py`: Script that orchestrates the entire process. It will handle calling APIs for pulling new weather data or 3D files and automating this pipeline in production.
+
+## Project Structure
+
+```
+fast-utci/
+├── fast_utci/              # Main package
+│   ├── mrt/                # MRT calculation modules
+│   │   ├── mrt_calculator.py
+│   │   ├── solar.py
+│   │   ├── exposure.py
+│   │   └── ...
+│   ├── utci_calculator.py  # UTCI calculations
+│   ├── model_reader.py     # 3D model and EPW reading
+│   ├── viewer.py           # 3D visualization
+│   └── colors.py           # UTCI color scales
+├── examples/               # Example scripts
+│   ├── demo_workflow.py
+│   └── automated_workflow.py
+├── data/                   # Data files
+│   ├── 3d_models/          # GLTF/GLB files
+│   ├── weather/            # EPW weather files
+│   └── validation/         # Validation data
+├── tests/                  # Test suite (TBD)
+├── docs/                   # Documentation
+└── pyproject.toml          # Package configuration
+```
+
+## Modules
+
+### `fast_utci.mrt`
+Core MRT calculation functionality with parallel processing support.
+
+### `fast_utci.utci_calculator`
+UTCI calculation from MRT results and weather data using pythermalcomfort.
+
+### `fast_utci.model_reader`
+Read and parse 3D models (GLTF/GLB) and EPW weather files.
+
+### `fast_utci.viewer`
+Enhanced 3D visualization with UTCI heatmaps using Plotly.
+
+## Data Files
+
+Air Temp, Wind Speed, and Relative Humidity are stored in EPW weather files located in `data/weather/`.
+
+## Requirements
+
+- Python >= 3.11
+- See `pyproject.toml` for full dependency list
