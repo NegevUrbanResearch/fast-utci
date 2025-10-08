@@ -1,0 +1,40 @@
+{
+  "analyses": [
+    {
+      "id": "20250815_grid_2m_fullday",
+      "title": "2025-08-15 - Full Day (2m grid)",
+      "type": "full_day",
+      "date": "2025-08-15",
+      "grid_size": 2,
+      "description": "Full day analysis for 2025-08-15 with 2m grid spacing.",
+      "positions": 0,
+      "runtime_seconds": 145.67495909996796,
+      "utci_min": 0,
+      "utci_max": 0,
+      "utci_mean": 0,
+      "model_file": "data/3d_models/100.gltf",
+      "epw_file": "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+      "analysis_period": "",
+      "target_hours": []
+    },
+    {
+      "id": "20250815_grid_2m_single_h13",
+      "title": "2025-08-15 - 13:00 (2m grid)",
+      "type": "single_hour",
+      "date": "2025-08-15",
+      "grid_size": 2,
+      "description": "Single hour analysis for 2025-08-15 at 13:00 with 2m grid spacing.",
+      "positions": 0,
+      "runtime_seconds": 183.99883940001018,
+      "utci_min": 0,
+      "utci_max": 0,
+      "utci_mean": 0,
+      "model_file": "data/3d_models/100.gltf",
+      "epw_file": "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+      "analysis_period": "",
+      "target_hours": [],
+      "hour": 13
+    }
+  ],
+  "last_updated": "2025-10-08T11:02:03.535542"
+}

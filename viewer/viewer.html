@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UTCI Viewer - Fast-UTCI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            background: #f0f0f0;
+        }
+        
+        #viewer-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        .button {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .button:hover {
+            background: #1976D2;
+        }
+        
+        #screenshot-btn {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+        }
+        
+        #back-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+        }
+    </style>
+    <link rel="stylesheet" href="css/viewer.css">
+</head>
+<body>
+    <div id="viewer-container"></div>
+    
+    <!-- Navigation button -->
+    <button id="back-btn" class="button" onclick="window.location.href='index.html'">
+        ← Back to Analyses
+    </button>
+    
+    <!-- Screenshot button -->
+    <button id="screenshot-btn" class="button" onclick="takeScreenshot()">
+        📷 Screenshot
+    </button>
+    
+    <!-- Layer Controls Panel -->
+    <div id="layer-controls" class="panel">
+        <div style="font-weight: bold; margin-bottom: 10px; font-size: 13px;">Model Layers</div>
+        <div class="layer-controls">
+            <div class="layer-item" data-layer="building" data-visible="true">
+                <div class="layer-color buildings"></div>
+                <div class="layer-label">Buildings</div>
+            </div>
+            <div class="layer-item" data-layer="road" data-visible="false">
+                <div class="layer-color roads"></div>
+                <div class="layer-label">Roads</div>
+            </div>
+            <div class="layer-item" data-layer="vegetation" data-visible="true">
+                <div class="layer-color vegetation"></div>
+                <div class="layer-label">Vegetation</div>
+            </div>
+            <div class="layer-item" data-layer="base" data-visible="false">
+                <div class="layer-color base"></div>
+                <div class="layer-label">Base</div>
+            </div>
+            <div class="layer-item active" data-layer="utci" data-visible="true">
+                <div class="layer-color utci"></div>
+                <div class="layer-label">UTCI Data</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Import maps for ES modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    
+    <!-- Main application script -->
+    <script type="module">
+        import { initFromURL } from './js/ViewerApp.js';
+        
+        // Initialize viewer when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            initFromURL();
+        });
+        
+        // Screenshot function - save to clipboard with fallback to download
+        window.takeScreenshot = function() {
+            const canvas = document.querySelector('canvas');
+            if (!canvas) {
+                alert('Canvas not found');
+                return;
+            }
+            
+            // Convert canvas to blob and copy to clipboard
+            canvas.toBlob((blob) => {
+                if (blob && navigator.clipboard && window.ClipboardItem) {
+                    // Try to copy to clipboard first
+                    navigator.clipboard.write([
+                        new ClipboardItem({
+                            'image/png': blob
+                        })
+                    ]).then(() => {
+                        console.log('[SCREENSHOT] Image copied to clipboard!');
+                        // Show brief success feedback
+                        const btn = document.getElementById('screenshot-btn');
+                        const originalText = btn.innerHTML;
+                        btn.innerHTML = '✅ Copied!';
+                        setTimeout(() => {
+                            btn.innerHTML = originalText;
+                        }, 1500);
+                    }).catch(err => {
+                        console.warn('[SCREENSHOT] Clipboard failed, falling back to download:', err);
+                        downloadScreenshot(blob);
+                    });
+                } else {
+                    console.log('[SCREENSHOT] Clipboard API not available, downloading...');
+                    downloadScreenshot(blob);
+                }
+            }, 'image/png');
+        };
+        
+        // Fallback download function
+        function downloadScreenshot(blob) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `utci_screenshot_${new Date().getTime()}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

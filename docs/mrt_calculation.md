@@ -28,7 +28,7 @@ All modules are located in `fast_utci/mrt/`:
 | `period.py` | Filter data to specific time periods |
 | `config.py` | Centralized parameters and configuration |
 
-### Utility Modules (New)
+### Utility Modules
 
 | Module | Purpose |
 |--------|---------|

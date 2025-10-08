@@ -1,0 +1,377 @@
+"""
+Export UTCI analysis results to optimized binary format for web viewer.
+
+This script converts UTCI results from demo_workflow.py into:
+1. Binary data files (.bin) for fast loading
+2. JSON metadata files with analysis information
+
+Binary format:
+- Single hour: [num_positions][positions: x,y,z][utci_values]
+- Full day: [num_positions, num_hours][positions: x,y,z][utci_h0...h23]
+"""
+
+import struct
+import json
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+
+
+def generate_analysis_id(
+    date: str,
+    grid_size: float,
+    analysis_type: str,
+    hour: Optional[int] = None
+) -> str:
+    """
+    Generate descriptive analysis ID for filename.
+    
+    Args:
+        date: Date string in format YYYYMMDD (e.g., "20250815")
+        grid_size: Grid spacing in meters (e.g., 2.0)
+        analysis_type: "single_hour" or "full_day"
+        hour: Hour of day (0-23) for single hour analysis
+        
+    Returns:
+        Analysis ID string (e.g., "20250815_grid_2m_single_h13")
+    """
+    grid_str = f"grid_{grid_size:.0f}m" if grid_size == int(grid_size) else f"grid_{grid_size}m"
+    
+    if analysis_type == "single_hour" and hour is not None:
+        return f"{date}_{grid_str}_single_h{hour:02d}"
+    else:
+        return f"{date}_{grid_str}_fullday"
+
+
+def extract_date_from_period(analysis_period: Any) -> str:
+    """
+    Extract date string from analysis period.
+    
+    Args:
+        analysis_period: Ladybug AnalysisPeriod object
+        
+    Returns:
+        Date string in YYYYMMDD format
+    """
+    if hasattr(analysis_period, 'start_month') and hasattr(analysis_period, 'start_day'):
+        # Assume current year or 2025 as default
+        year = 2025
+        month = analysis_period.start_month
+        day = analysis_period.start_day
+        return f"{year}{month:02d}{day:02d}"
+    return "20250815"  # Default fallback
+
+
+def export_binary_single_hour(
+    utci_results: Dict[str, Any],
+    output_path: Path
+) -> None:
+    """
+    Export single hour UTCI data to binary format.
+    
+    Binary structure:
+        [4 bytes: num_positions]
+        [num_positions × 12 bytes: positions as float32 x,y,z]
+        [num_positions × 4 bytes: utci values as float32]
+    
+    Args:
+        utci_results: UTCI results dictionary
+        output_path: Path to output .bin file
+    """
+    # Extract positions and UTCI values
+    positions = []
+    utci_values = []
+    
+    for pos_key in sorted(utci_results.keys()):
+        data = utci_results[pos_key]
+        pos = data['position']
+        utci = data['utci']
+        
+        # For single hour, utci should be a single value or list with one element
+        if isinstance(utci, (list, np.ndarray)):
+            utci_val = float(utci[0])
+        else:
+            utci_val = float(utci)
+        
+        positions.append([float(pos[0]), float(pos[1]), float(pos[2])])
+        utci_values.append(utci_val)
+    
+    num_positions = len(positions)
+    
+    # Write binary file
+    with open(output_path, 'wb') as f:
+        # Header: num_positions (uint32)
+        f.write(struct.pack('I', num_positions))
+        
+        # Positions: flatten and write as float32
+        positions_flat = np.array(positions, dtype=np.float32).flatten()
+        f.write(positions_flat.tobytes())
+        
+        # UTCI values: write as float32
+        utci_array = np.array(utci_values, dtype=np.float32)
+        f.write(utci_array.tobytes())
+    
+    file_size_kb = output_path.stat().st_size / 1024
+    print(f"[SAVE] Binary data: {output_path.name} ({file_size_kb:.1f} KB)")
+
+
+def export_binary_full_day(
+    utci_results: Dict[str, Any],
+    output_path: Path,
+    num_hours: int = 24
+) -> None:
+    """
+    Export full day UTCI data to binary format.
+    
+    Binary structure:
+        [8 bytes: num_positions (uint32), num_hours (uint32)]
+        [num_positions × 12 bytes: positions as float32 x,y,z]
+        [num_positions × 4 bytes: utci values hour 0 as float32]
+        [num_positions × 4 bytes: utci values hour 1 as float32]
+        ...
+        [num_positions × 4 bytes: utci values hour 23 as float32]
+    
+    Args:
+        utci_results: UTCI results dictionary
+        output_path: Path to output .bin file
+        num_hours: Number of hours (default 24)
+    """
+    # Extract positions and UTCI values organized by hour
+    sorted_keys = sorted(utci_results.keys())
+    num_positions = len(sorted_keys)
+    
+    positions = []
+    utci_by_hour = [[] for _ in range(num_hours)]
+    
+    for pos_key in sorted_keys:
+        data = utci_results[pos_key]
+        pos = data['position']
+        utci_vals = data['utci']
+        
+        positions.append([float(pos[0]), float(pos[1]), float(pos[2])])
+        
+        # Organize UTCI values by hour
+        if isinstance(utci_vals, (list, np.ndarray)):
+            for hour_idx, utci_val in enumerate(utci_vals[:num_hours]):
+                utci_by_hour[hour_idx].append(float(utci_val))
+        else:
+            # Single value - replicate for all hours
+            for hour_idx in range(num_hours):
+                utci_by_hour[hour_idx].append(float(utci_vals))
+    
+    # Write binary file
+    with open(output_path, 'wb') as f:
+        # Header: num_positions, num_hours (uint32, uint32)
+        f.write(struct.pack('II', num_positions, num_hours))
+        
+        # Positions: write once (float32)
+        positions_flat = np.array(positions, dtype=np.float32).flatten()
+        f.write(positions_flat.tobytes())
+        
+        # UTCI values: write hour by hour (float32)
+        for hour_idx in range(num_hours):
+            utci_array = np.array(utci_by_hour[hour_idx], dtype=np.float32)
+            f.write(utci_array.tobytes())
+    
+    file_size_kb = output_path.stat().st_size / 1024
+    file_size_mb = file_size_kb / 1024
+    print(f"[SAVE] Binary data: {output_path.name} ({file_size_mb:.2f} MB)")
+
+
+def export_metadata_json(
+    utci_results: Dict[str, Any],
+    analysis_id: str,
+    analysis_type: str,
+    grid_size: float,
+    date_str: str,
+    hours: List[int],
+    model_file: str,
+    epw_file: str,
+    runtime_seconds: float,
+    output_path: Path
+) -> None:
+    """
+    Export analysis metadata to JSON.
+    
+    Args:
+        utci_results: UTCI results dictionary
+        analysis_id: Analysis identifier
+        analysis_type: "single_hour" or "full_day"
+        grid_size: Grid spacing in meters
+        date_str: Date string (YYYYMMDD)
+        hours: List of hours analyzed
+        model_file: Path to 3D model file
+        epw_file: Path to EPW weather file
+        runtime_seconds: Total computation time
+        output_path: Path to output .json file
+    """
+    # Calculate statistics
+    all_utci = []
+    all_positions = []
+    
+    for pos_key, data in utci_results.items():
+        pos = data['position']
+        all_positions.append(pos)
+        
+        utci_vals = data['utci']
+        if isinstance(utci_vals, (list, np.ndarray)):
+            all_utci.extend(utci_vals)
+        else:
+            all_utci.append(utci_vals)
+    
+    all_utci = np.array(all_utci)
+    all_positions = np.array(all_positions)
+    
+    # Create metadata dictionary
+    metadata = {
+        "analysis_id": analysis_id,
+        "date": date_str,
+        "grid_size": float(grid_size),
+        "analysis_type": analysis_type,
+        "hours": hours,
+        "bounds": {
+            "x_min": float(all_positions[:, 0].min()),
+            "x_max": float(all_positions[:, 0].max()),
+            "y_min": float(all_positions[:, 1].min()),
+            "y_max": float(all_positions[:, 1].max()),
+            "z": float(all_positions[0, 2])
+        },
+        "utci_range": {
+            "min": float(np.min(all_utci)),
+            "max": float(np.max(all_utci)),
+            "mean": float(np.mean(all_utci))
+        },
+        "num_positions": len(utci_results),
+        "model_file": str(model_file),
+        "epw_file": str(epw_file),
+        "generation_date": datetime.now().isoformat(),
+        "runtime_seconds": float(runtime_seconds)
+    }
+    
+    # Write JSON
+    with open(output_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"[SAVE] Metadata: {output_path.name}")
+
+
+def export_utci_for_viewer(
+    utci_results: Dict[str, Any],
+    analysis_type: str,
+    grid_size: float,
+    model_file: str,
+    epw_file: str,
+    runtime_seconds: float,
+    analysis_period: Optional[Any] = None,
+    target_hours: Optional[List[int]] = None,
+    output_dir: str = "data/analyses"
+) -> tuple[str, str]:
+    """
+    Export UTCI results to optimized binary format for web viewer.
+    
+    Args:
+        utci_results: UTCI results from UTCICalculator.compute_utci()
+        analysis_type: "single_hour" or "full_day"
+        grid_size: Grid spacing in meters
+        model_file: Path to 3D model file
+        epw_file: Path to EPW weather file
+        runtime_seconds: Total computation time in seconds
+        analysis_period: Optional Ladybug AnalysisPeriod object
+        target_hours: Optional list of target hours
+        output_dir: Output directory for exported files
+        
+    Returns:
+        Tuple of (binary_path, metadata_path)
+    """
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Extract date from analysis period
+    date_str = extract_date_from_period(analysis_period) if analysis_period else "20250815"
+    
+    # Determine hours
+    if target_hours is None:
+        if analysis_type == "single_hour":
+            # Try to extract hour from first result
+            first_data = next(iter(utci_results.values()))
+            if 'datetime' in first_data and first_data['datetime'] is not None:
+                import pandas as pd
+                hours = [pd.to_datetime(first_data['datetime'][0]).hour]
+            else:
+                hours = [13]  # Default
+        else:
+            hours = list(range(24))
+    else:
+        hours = target_hours
+    
+    # Generate analysis ID
+    hour_single = hours[0] if analysis_type == "single_hour" else None
+    analysis_id = generate_analysis_id(date_str, grid_size, analysis_type, hour_single)
+    
+    # Export binary data
+    binary_filename = f"{analysis_id}.bin"
+    binary_path = output_path / binary_filename
+    
+    if analysis_type == "single_hour":
+        export_binary_single_hour(utci_results, binary_path)
+    else:
+        export_binary_full_day(utci_results, binary_path, num_hours=len(hours))
+    
+    # Export metadata
+    metadata_filename = f"{analysis_id}.json"
+    metadata_path = output_path / metadata_filename
+    
+    export_metadata_json(
+        utci_results=utci_results,
+        analysis_id=analysis_id,
+        analysis_type=analysis_type,
+        grid_size=grid_size,
+        date_str=date_str,
+        hours=hours,
+        model_file=model_file,
+        epw_file=epw_file,
+        runtime_seconds=runtime_seconds,
+        output_path=metadata_path
+    )
+    
+    print(f"[OK] Exported analysis: {analysis_id}")
+    print(f"  Binary: {binary_path}")
+    print(f"  Metadata: {metadata_path}")
+    
+    # Update manifest to include this analysis
+    try:
+        import sys
+        # Add scripts directory to path to import generate_manifest
+        scripts_dir = Path(__file__).parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        
+        from generate_manifest import generate_manifest
+        generate_manifest()
+        print(f"  Manifest updated with new analysis")
+    except Exception as e:
+        print(f"  [WARN] Could not update manifest: {e}")
+    
+    return str(binary_path), str(metadata_path)
+
+
+if __name__ == "__main__":
+    print("Export for Viewer - Usage Example")
+    print("=" * 50)
+    print("Import this module in demo_workflow.py:")
+    print()
+    print("  from export_for_viewer import export_utci_for_viewer")
+    print()
+    print("  # After computing UTCI")
+    print("  export_utci_for_viewer(")
+    print("      utci_results=utci_results,")
+    print("      analysis_type=analysis_mode,")
+    print("      grid_size=GRID_SIZE,")
+    print("      model_file=model_file,")
+    print("      epw_file=epw_file,")
+    print("      runtime_seconds=total_time,")
+    print("      analysis_period=analysis_period,")
+    print("      target_hours=target_hours")
+    print("  )")

@@ -1,0 +1,49 @@
+{
+  "analysis_id": "20250815_grid_2m_fullday",
+  "date": "20250815",
+  "grid_size": 2.0,
+  "analysis_type": "full_day",
+  "hours": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "bounds": {
+    "x_min": -2470.81,
+    "x_max": -1480.81,
+    "y_min": -619.8652,
+    "y_max": -197.86519999999996,
+    "z": 1.5
+  },
+  "utci_range": {
+    "min": 14.6,
+    "max": 37.5,
+    "mean": 26.92937002307771
+  },
+  "num_positions": 105152,
+  "model_file": "data/3d_models/100.gltf",
+  "epw_file": "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+  "generation_date": "2025-10-08T11:02:03.531543",
+  "runtime_seconds": 145.67495909996796
+}

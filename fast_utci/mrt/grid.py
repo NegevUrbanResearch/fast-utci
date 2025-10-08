@@ -131,9 +131,13 @@ def create_rectangular_grid(bounds_min: np.ndarray,
     else:
         z_coord = z_height
     
-    # Create grid coordinates - ensure we cover the full bounds
-    x_coords = np.arange(bounds_min[0], bounds_max[0] + grid_size, grid_size)
-    y_coords = np.arange(bounds_min[1], bounds_max[1] + grid_size, grid_size)
+    # Create grid coordinates within the specified bounds
+    # np.arange stops BEFORE the stop value, which naturally keeps points within bounds
+    # Old bug: adding + grid_size created extra points beyond bounds_max
+    # Now: add small epsilon (1e-9) to include points exactly at bounds_max
+    epsilon = 1e-9
+    x_coords = np.arange(bounds_min[0], bounds_max[0] + epsilon, grid_size)
+    y_coords = np.arange(bounds_min[1], bounds_max[1] + epsilon, grid_size)
     
     # Create meshgrid
     X, Y = np.meshgrid(x_coords, y_coords)
