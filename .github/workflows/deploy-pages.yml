@@ -28,10 +28,18 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
       
+      - name: Prepare deployment directory
+        run: |
+          mkdir -p _site
+          cp .nojekyll _site/
+          cp index.html _site/
+          cp -r viewer _site/
+          cp -r data _site/
+      
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './viewer'
+          path: './_site'
       
       - name: Deploy to GitHub Pages
         id: deployment
