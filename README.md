@@ -6,6 +6,10 @@ For the UTCI calculations, we use the UTCI calculator from [pythermalcomfort](ht
 
 For calculating the Mean Radiant Temperature at a given point or mesh edge, we conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3D objects modeled. We use Embree-accelerated ray tests via trimesh (pyembree) for occlusion and visibility.
 
+### Web Viewer
+
+View live thermal comfort analysis: **[https://negevurbanresearch.github.io/fast-utci/](3D UTCI Viewer)**
+
 ## Installation
 
 ```bash
@@ -34,10 +38,6 @@ python quick_analysis.py
 # Interactive workflow with full options (choose single hour or full day)
 python run_analysis.py
 ```
-
-### Web Viewer
-
-View live thermal comfort analysis: **[https://negevurbanresearch.github.io/fast-utci/](https://negevurbanresearch.github.io/fast-utci/)**
 
 Run locally:
 ```bash
