@@ -28,11 +28,21 @@ pip install -e .[all]       # Everything
 ### Running Example Scripts
 
 ```bash
-# Interactive demo workflow
-python examples/demo_workflow.py
+# Quick automated workflow with default settings (single hour at 13:00)
+python quick_analysis.py
 
-# Automated workflow with default settings
-python examples/automated_workflow.py
+# Interactive workflow with full options (choose single hour or full day)
+python run_analysis.py
+```
+
+### Web Viewer
+
+View live thermal comfort analysis: **[https://negevurbanresearch.github.io/fast-utci/](https://negevurbanresearch.github.io/fast-utci/)**
+
+Run locally:
+```bash
+python -m http.server 8000
+# Open http://localhost:8000/viewer/
 ```
 
 
@@ -50,15 +60,23 @@ fast-utci/
 │   ├── model_reader.py     # 3D model and EPW reading
 │   ├── viewer.py           # 3D visualization
 │   └── colors.py           # UTCI color scales
-├── examples/               # Example scripts
-│   ├── demo_workflow.py
-│   └── automated_workflow.py
+├── scripts/                # Utility scripts
+│   ├── export_for_viewer.py
+│   ├── generate_manifest.py
+│   └── ...
+├── viewer/                 # Web-based 3D viewer
+│   ├── index.html          # Analysis selector
+│   ├── viewer.html         # Main viewer
+│   └── js/                 # Viewer components
 ├── data/                   # Data files
 │   ├── 3d_models/          # GLTF/GLB files
 │   ├── weather/            # EPW weather files
+│   ├── analyses/           # Generated analysis results
 │   └── validation/         # Validation data
-├── tests/                  # Test suite (TBD)
 ├── docs/                   # Documentation
+├── tests/                  # Test suite (TBD)
+├── quick_analysis.py       # Quick analysis script
+├── run_analysis.py         # Interactive analysis script
 └── pyproject.toml          # Package configuration
 ```
 

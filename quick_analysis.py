@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
 # Default settings
 ANALYSIS_MODE = "single_hour"
 TARGET_HOUR = 13
-GRID_SIZE = 2.0
+GRID_SIZE = 1.0
 
 def main():
     """Run quick UTCI analysis with defaults."""

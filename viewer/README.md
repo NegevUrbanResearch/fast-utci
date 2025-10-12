@@ -16,7 +16,11 @@ A performant Three.js-based 3D viewer for UTCI (Universal Thermal Climate Index)
 
 1. **Generate Analysis Data**:
    ```bash
-   python examples/demo_workflow.py
+   # Quick automated analysis (single hour at 13:00)
+   python quick_analysis.py
+   
+   # OR interactive analysis with full options
+   python run_analysis.py
    ```
    This will create binary data files in `data/analyses/`
 
@@ -33,7 +37,7 @@ A performant Three.js-based 3D viewer for UTCI (Universal Thermal Climate Index)
 
 ### Data Pipeline
 ```
-demo_workflow.py → export_for_viewer.py → Binary files (.bin + .json)
+quick_analysis.py/run_analysis.py → scripts/export_for_viewer.py → Binary files (.bin + .json)
 ```
 
 ### File Structure
