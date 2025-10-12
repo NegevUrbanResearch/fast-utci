@@ -8,7 +8,7 @@ For calculating the Mean Radiant Temperature at a given point or mesh edge, we c
 
 ### Web Viewer
 
-View live thermal comfort analysis: **[https://negevurbanresearch.github.io/fast-utci/](3D UTCI Viewer)**
+View live thermal comfort analysis: **[3D UTCI Viewer](https://negevurbanresearch.github.io/fast-utci/)**
 
 ## Installation
 
