@@ -311,7 +311,7 @@ class UTCICalculator:
 
             # Call vectorized utci; pythermalcomfort.utci accepts numpy arrays
             try:
-                utci_vals = utci(tdb=air_slice, tr=np.asarray(mrt_values), v=wind_slice, rh=rh_slice)
+                utci_vals = utci(tdb=air_slice, tr=np.asarray(mrt_values), v=wind_slice, rh=rh_slice, round_output=False)
                 # Normalize return to numpy array of floats
                 if hasattr(utci_vals, 'utci'):
                     utci_array = np.asarray(utci_vals.utci, dtype=float)
@@ -348,7 +348,8 @@ class UTCICalculator:
                     tdb=weather_subset.iloc[i]['air_temp'],
                     tr=mrt_values[i],
                     v=weather_subset.iloc[i]['wind_speed'],
-                    rh=weather_subset.iloc[i]['relative_humidity']
+                    rh=weather_subset.iloc[i]['relative_humidity'],
+                    round_output=False
                 )
                 utci_values.append(self._extract_utci_value(utci_result))
             except Exception as e:
@@ -678,7 +679,7 @@ def _compute_utci_chunk(args):
             # Vectorized UTCI call
             try:
                 from pythermalcomfort.models import utci
-                utci_vals = utci(tdb=air_slice, tr=mrt_values, v=wind_slice, rh=rh_slice)
+                utci_vals = utci(tdb=air_slice, tr=mrt_values, v=wind_slice, rh=rh_slice, round_output=False)
                 if hasattr(utci_vals, 'utci'):
                     utci_array = np.asarray(utci_vals.utci, dtype=float)
                 elif isinstance(utci_vals, dict) and 'utci' in utci_vals:
@@ -705,7 +706,8 @@ def _compute_utci_chunk(args):
                         tdb=weather_subset.iloc[i]['air_temp'],
                         tr=mrt_values[i],
                         v=weather_subset.iloc[i]['wind_speed'],
-                        rh=weather_subset.iloc[i]['relative_humidity']
+                        rh=weather_subset.iloc[i]['relative_humidity'],
+                        round_output=False
                     )
                     if hasattr(res, 'utci'):
                         utci_vals.append(float(res.utci))

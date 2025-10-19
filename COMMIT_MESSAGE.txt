@@ -1,0 +1,22 @@
+Fix inverted sun rays, exposure time series, and UTCI rounding
+
+Three critical fixes for MRT/UTCI calculation:
+
+1. Inverted sun ray direction (exposure.py)
+   - Changed ray_dir from -sun_vector to sun_vector (TO sun, not away)
+   - Was causing discrete 3-5°C edge artifacts by inverting occlusion tests
+   
+2. Scalar fract_body_exp bug (mrt_calculator.py)
+   - Pass HourlyContinuousCollection instead of single value to OutdoorSolarCal
+   - Restores temporal variation in solar exposure
+
+3. UTCI precision loss (utci_calculator.py)
+   - Added round_output=False to pythermalcomfort.utci() calls
+   - Prevents artificial quantization (15 → 2,300+ unique values/hour)
+
+Also adjusted grid bounds (2m west, 1m other edges) to avoid mesh boundary 
+precision issues, and made analysis date configurable.
+
+Results: Discrete edges eliminated, smooth gradients, better validation alignment.
+Added design rules document: rules/mrt_thermal_comfort_design_rules.mdc
+

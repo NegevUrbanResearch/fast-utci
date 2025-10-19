@@ -112,7 +112,7 @@ def compute_solar_exposure(sample_points: np.ndarray,
         else:
             # Pre-allocate ray directions array (more efficient than np.tile)
             ray_directions = np.empty((n_points, 3), dtype=np.float64)
-            ray_directions[:] = -sun_vector  # Broadcast -sun_vector to all rows
+            ray_directions[:] = sun_vector  # Ray FROM position TO sun (matches Grasshopper sun_vector_reversed)
             
             # Test ray intersections with optimized batch sizing
             optimal_batch_size = get_optimal_batch_size(n_points, "solar")
@@ -171,13 +171,13 @@ def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
         if len(hour_batch) == 0:
             continue
 
-        # Directions: for each hour in batch, we need n_points rays towards -sun_vector
+        # Directions: for each hour in batch, we need n_points rays towards sun
         batch_vectors = sun_data.sun_vectors[hour_batch]
         # Create all origins and directions for this batch
         # Origins: repeat sample_points for each hour
         all_origins = np.tile(sample_points, (len(hour_batch), 1))
-        # Directions: for each hour vector, repeat it n_points times
-        all_directions = np.repeat(-batch_vectors, n_points, axis=0)
+        # Directions: for each hour vector, repeat it n_points times (FROM position TO sun)
+        all_directions = np.repeat(batch_vectors, n_points, axis=0)
 
         optimal_batch_size = get_optimal_batch_size(len(all_origins), "solar")
         hits = batch_ray_intersections(
@@ -469,7 +469,7 @@ def _compute_exposure_chunk(args):
         for hour_idx in sun_up_indices:
             sun_vec = sun_data.sun_vectors[hour_idx]
             ray_dirs = np.empty((n_positions, 3), dtype=np.float64)
-            ray_dirs[:] = -sun_vec
+            ray_dirs[:] = sun_vec  # Ray FROM position TO sun
             # Batch intersections in big chunks
             optimal_batch_size = get_optimal_batch_size(n_positions, "solar")
             hits = batch_ray_intersections(

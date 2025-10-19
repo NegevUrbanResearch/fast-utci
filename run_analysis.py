@@ -31,6 +31,10 @@ from export_for_viewer import export_utci_for_viewer
 # Default grid spacing (can be modified)
 DEFAULT_GRID_SIZE = 2.0  # meters
 
+# Default analysis date
+DEFAULT_MONTH = 8
+DEFAULT_DAY = 15
+
 
 def get_analysis_mode():
     """Get user choice for analysis type."""
@@ -76,6 +80,32 @@ def get_single_hour():
             print("[ERROR] Please enter a valid number.")
 
 
+def get_analysis_date():
+    """Get analysis date input."""
+    print("\n" + "="*60)
+    print("ANALYSIS DATE SELECTION")
+    print("="*60)
+    print(f"Enter the date to analyze:")
+    
+    while True:
+        try:
+            month_input = input(f"Month (1-12, or press Enter for {DEFAULT_MONTH}): ").strip()
+            month = int(month_input) if month_input else DEFAULT_MONTH
+            if not 1 <= month <= 12:
+                print("[ERROR] Month must be between 1 and 12.")
+                continue
+                
+            day_input = input(f"Day (1-31, or press Enter for {DEFAULT_DAY}): ").strip()
+            day = int(day_input) if day_input else DEFAULT_DAY
+            if not 1 <= day <= 31:
+                print("[ERROR] Day must be between 1 and 31.")
+                continue
+            
+            return month, day
+        except ValueError:
+            print("[ERROR] Please enter valid numbers.")
+
+
 def main():
     """Run the UTCI analysis workflow."""
     
@@ -92,6 +122,10 @@ def main():
     else:
         print("\n[OK] Selected: Full day analysis (24 hours)")
         target_hour = None
+    
+    # Get analysis date
+    analysis_month, analysis_day = get_analysis_date()
+    print(f"\n[OK] Analysis date: Month {analysis_month}, Day {analysis_day}")
     
     # Configure performance optimizations
     if analysis_mode == "full_day":
@@ -155,10 +189,13 @@ def main():
         mrt_calc.set_location_from_epw(epw_file)
         
         # Create analysis grid
+        # NOTE: Bounds are inset from original edges to avoid mesh boundary issues
+        # Original bounds were: X: -2470.81 to -1479.529, Y: -619.8652 to -196.4804
+        # Grid positions too close to mesh boundaries cause ray intersection failures
+        # West edge needs 2m inset due to buildings at x=-2470.81
         grid_size = DEFAULT_GRID_SIZE
-        # Trimmed to building coverage (buildings end at x=-1487, trim to x=-1490 with 3m safety margin)
-        bounds_min = np.array([-2470.81, -619.8652])
-        bounds_max = np.array([-1490.0, -196.4804])  # Trimmed to avoid areas without building coverage
+        bounds_min = np.array([-2468.81, -618.8652])  # 2m west / 1m south inset
+        bounds_max = np.array([-1480.529, -197.4804])  # 1m east / 1m north inset
         
         grid = create_rectangular_grid(
             bounds_min=bounds_min,
@@ -172,15 +209,15 @@ def main():
         # Create analysis period
         if analysis_mode == "single_hour":
             analysis_period = create_analysis_period(
-                start_month=8, start_day=15,
-                end_month=8, end_day=15,
+                start_month=analysis_month, start_day=analysis_day,
+                end_month=analysis_month, end_day=analysis_day,
                 start_hour=target_hour, end_hour=target_hour
             )
             target_hours = [target_hour]
         else:
             analysis_period = create_analysis_period(
-                start_month=8, start_day=15,
-                end_month=8, end_day=15,
+                start_month=analysis_month, start_day=analysis_day,
+                end_month=analysis_month, end_day=analysis_day,
                 start_hour=0, end_hour=23
             )
             target_hours = list(range(24))

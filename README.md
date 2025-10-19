@@ -92,7 +92,7 @@ UTCI calculation from MRT results and weather data using pythermalcomfort.
 Read and parse 3D models (GLTF/GLB) and EPW weather files.
 
 ### `fast_utci.viewer`
-Enhanced 3D visualization with UTCI heatmaps using Plotly.
+Enhanced 3D visualization with UTCI heatmaps using three.js
 
 
 ## Requirements

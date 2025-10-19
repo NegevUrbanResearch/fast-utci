@@ -70,10 +70,23 @@ def _create_solarcal_from_epw(epw_data: Any,
     """
     from ladybug_comfort.collection.solarcal import OutdoorSolarCal
     from ladybug.analysisperiod import AnalysisPeriod as LBAnalysisPeriod
+    from ladybug.datacollection import HourlyContinuousCollection
+    from ladybug.header import Header
+    from ladybug.datatype.fraction import Fraction
     
-    # Create analysis period for the day
-    # TODO: Make this dynamic based on actual data dates
-    day_period = LBAnalysisPeriod(8, 15, 0, 8, 15, 23)
+    # Use provided analysis_period or fallback to August 15
+    if analysis_period:
+        day_period = LBAnalysisPeriod(
+            analysis_period.start_month,
+            analysis_period.start_day,
+            analysis_period.start_hour,
+            analysis_period.end_month,
+            analysis_period.end_day,
+            analysis_period.end_hour
+        )
+    else:
+        # Fallback to August 15 if no period provided
+        day_period = LBAnalysisPeriod(8, 15, 0, 8, 15, 23)
     
     # Filter EPW collections to the day
     air_temp_coll = epw_data.dry_bulb_temperature.filter_by_analysis_period(day_period)
@@ -81,14 +94,31 @@ def _create_solarcal_from_epw(epw_data: Any,
     diff_horiz_coll = epw_data.diffuse_horizontal_radiation.filter_by_analysis_period(day_period)
     horiz_ir_coll = epw_data.horizontal_infrared_radiation_intensity.filter_by_analysis_period(day_period)
     
-    # Create OutdoorSolarCal
+    # Validate exposure array length matches filtered weather data
+    expected_hours = len(air_temp_coll.values)
+    if len(exposure.fract_body_exp) != expected_hours:
+        raise ValueError(
+            f"Exposure array length ({len(exposure.fract_body_exp)}) "
+            f"doesn't match analysis period ({expected_hours} hours). "
+            f"Period: {day_period}"
+        )
+    
+    # Verify the collection is created correctly
+    assert len(exposure.fract_body_exp) == len(air_temp_coll.values), \
+        f"Length mismatch: exposure={len(exposure.fract_body_exp)}, weather={len(air_temp_coll.values)}"
+    
+    # Create HourlyContinuousCollection for time-varying solar exposure
+    fract_header = Header(Fraction(), 'fraction', day_period, {'location': epw_data.location})
+    fract_body_exp_coll = HourlyContinuousCollection(fract_header, exposure.fract_body_exp)
+    
+    # Create OutdoorSolarCal with proper time-varying exposure
     solar_cal = OutdoorSolarCal(
         epw_data.location,
         dir_norm_coll,
         diff_horiz_coll,
         horiz_ir_coll,
         air_temp_coll,
-        exposure.fract_body_exp[0] if len(exposure.fract_body_exp) > 0 else 1.0,
+        fract_body_exp_coll,  # Time-varying exposure (was: scalar bug)
         exposure.sky_exposure,
         ground_reflectance,
         body_params

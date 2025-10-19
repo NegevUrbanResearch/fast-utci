@@ -1,0 +1,172 @@
+---
+alwaysApply: false
+description: # MRT & Thermal Comfort Analysis Design Rules
+---
+# MRT & Thermal Comfort Analysis Design Rules
+
+## Ray Direction Conventions
+
+**Rule:** For solar occlusion testing, rays must point FROM analysis position TO sun.
+
+**Context:**
+- Ladybug defines TWO sun vectors:
+  - `sun.sun_vector`: FROM sun TO ground (downward, for lighting calculations)
+  - `sun.sun_vector_reversed`: FROM ground TO sun (upward, for occlusion testing)
+- Grasshopper's "Human to Sky Relation" uses `sun_vector_reversed`
+- Our vectors are calculated to point TO sun (matching `sun_vector_reversed`)
+- **Never negate sun vectors** for occlusion - this inverts the test
+
+**Why it matters:**
+- Incorrect ray direction causes positions to be marked as exposed when shaded
+- Creates discrete temperature artifacts at grid boundaries where rays hit wrong geometry
+- Different hours show artifacts on different edges (based on sun position)
+
+## Time-Varying Parameters
+
+**Rule:** Always use time-varying data collections for hourly parameters in Ladybug/comfort libraries.
+
+**Affected parameters:**
+- `fract_body_exp`: Solar exposure fraction (varies hourly)
+- `OutdoorSolarCal` accepts both scalar and `HourlyContinuousCollection`
+
+**Implementation:**
+```python
+from ladybug.datacollection import HourlyContinuousCollection
+from ladybug.header import Header
+from ladybug.datatype.fraction import Fraction
+
+# Create time-varying collection
+header = Header(Fraction(), 'fraction', analysis_period, {'location': location})
+fract_coll = HourlyContinuousCollection(header, exposure_values_array)
+
+# Pass to OutdoorSolarCal
+solar_cal = OutdoorSolarCal(..., fract_coll, ...)
+```
+
+**Why it matters:**
+- Passing a scalar uses that value for ALL hours
+- Loses temporal variation in solar exposure
+- MRT becomes identical across hours when it should vary
+
+
+## Library Default Parameters
+
+**Rule:** Explicitly specify precision and rounding parameters when using thermal comfort libraries.
+
+**Example: pythermalcomfort.utci()**
+```python
+# Default behavior (implicit rounding)
+utci_vals = utci(tdb=air, tr=mrt, v=wind, rh=rh)  # rounds to 1 decimal
+
+# Correct for analysis (full precision)
+utci_vals = utci(tdb=air, tr=mrt, v=wind, rh=rh, round_output=False)
+```
+
+**Why it matters:**
+- Default `round_output=True` rounds to 1 decimal place
+- Reduces thousands of unique values to ~15 per hour
+- Creates artificial temperature banding
+- Acceptable for final display, NOT for intermediate calculations
+
+---
+
+## Grid Positioning and Mesh Boundaries
+
+**Rule:** Analysis grids must have safety margins from mesh boundaries (1-2m minimum).
+
+**Implementation:**
+```python
+# Get mesh bounds
+mesh_bounds_min = mesh.bounds[0]
+mesh_bounds_max = mesh.bounds[1]
+
+# Apply safety insets
+SAFETY_MARGIN = 1.0  # meters (use 2m if buildings touch boundary)
+grid_min = mesh_bounds_min + SAFETY_MARGIN
+grid_max = mesh_bounds_max - SAFETY_MARGIN
+```
+
+**Why it matters:**
+- Floating-point precision issues occur at exact mesh boundaries
+- Ray origins too close to surfaces cause unreliable intersections
+- Rays can pass through gaps in non-watertight meshes at boundaries
+- Different geometry extends to different boundaries (check buildings, roads, base separately)
+
+**Asymmetric margins:**
+- Check each boundary independently for geometry proximity
+- West edge may need 2m if buildings touch boundary
+- Interior edges may need only 1m
+
+## Validation Strategy
+
+**Rule:** Use spatial pattern analysis to identify systematic errors.
+
+**Key observations that led to bug discovery:**
+1. **Directional patterns** - "Edges on W/S/E show artifacts but NOT north"
+   - Indicated sun-direction-dependent bug
+   - Led to discovering inverted ray direction
+
+2. **Coordinate alignment hypothesis** - "UTCI layer is offset from base layer"
+   - User's spatial intuition was correct
+   - Grid positions were exactly ON mesh boundaries
+
+3. **Consistent magnitude** - "Same discrete jump across entire column"
+   - Indicated systematic calculation error, not random noise
+   - All positions in edge column had identical incorrect exposure
+
+**Diagnostic approach:**
+- Check edge vs interior column differences
+- Analyze pattern by sun position (azimuth/altitude)
+- Test individual ray intersections manually
+- Compare exposure values between adjacent positions
+
+## Sun Position and Coordinate Systems
+
+**Rule:** Understand Ladybug's coordinate conventions for sun positions.
+
+**Coordinate system:**
+- X-axis: East (positive east, negative west)
+- Y-axis: North (positive north, negative south)
+- Z-axis: Up (positive up, negative down)
+
+**Azimuth convention:**
+- 0° = North
+- 90° = East  
+- 180° = South
+- 270° = West
+
+**Sun vector conversion:**
+```python
+# From altitude/azimuth to Cartesian
+x = sin(azimuth) * cos(altitude)  # East component
+y = cos(azimuth) * cos(altitude)  # North component
+z = sin(altitude)                  # Up component
+```
+
+**Why it matters:**
+- Must match Grasshopper/Ladybug convention exactly
+- Small errors in vector calculation propagate to all occlusion tests
+- Verify against Ladybug's built-in sun.sun_vector_reversed
+
+## Testing and Validation Workflow
+
+**Rule:** Test edge cases and boundary conditions explicitly.
+
+**Critical test cases:**
+1. Grid edge positions (all four edges: N/S/E/W)
+2. Positions near building walls
+3. Fully exposed vs fully shaded positions
+4. Hours with low sun angles (6-9, 18)
+5. Midday high sun (12-13)
+
+**Verification steps:**
+- Compare adjacent positions (should have smooth gradients)
+- Check if exposure values are physically plausible
+- Verify sun vector direction matches expected sun position
+- Test manual ray intersection against batch processing
+
+**Red flags:**
+- Constant values across spatial columns/rows
+- Large discrete jumps (>2°C) between adjacent positions
+- Edge patterns that correlate with sun direction
+- MRT values that don't vary with time for same position

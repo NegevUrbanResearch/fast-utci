@@ -30,20 +30,20 @@
     23
   ],
   "bounds": {
-    "x_min": -2470.81,
+    "x_min": -2468.81,
     "x_max": -1480.81,
-    "y_min": -619.8652,
-    "y_max": -197.86519999999996,
+    "y_min": -618.8652,
+    "y_max": -198.86519999999996,
     "z": 1.5
   },
   "utci_range": {
-    "min": 14.6,
-    "max": 37.5,
-    "mean": 26.92937002307771
+    "min": 14.612186235356512,
+    "max": 40.79985514815466,
+    "mean": 28.190427449566524
   },
-  "num_positions": 105152,
+  "num_positions": 104445,
   "model_file": "data/3d_models/100.gltf",
   "epw_file": "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
-  "generation_date": "2025-10-08T11:02:03.531543",
-  "runtime_seconds": 145.67495909996796
+  "generation_date": "2025-10-20T01:02:37.251234",
+  "runtime_seconds": 192.67960819997825
 }
