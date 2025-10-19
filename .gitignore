@@ -1,10 +1,16 @@
-# Python
+# Python cache files
 __pycache__/
+*.pyc
+*.pyo
+
+# Python build artifacts
+build/
 *.egg-info/
 *.egg
 
 # Virtual environments
 .venv*
+venv/
 
 # IDE
 .playwright-mcp
@@ -16,3 +22,7 @@ cache/
 # Documentation
 docs/_build/
 site/
+# Analysis outputs (ignore general CSV files, keep analysis results)
+*.csv
+!data/analyses/*.json
+!data/analyses/manifest.jso
