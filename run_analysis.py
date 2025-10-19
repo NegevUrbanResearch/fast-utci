@@ -156,8 +156,9 @@ def main():
         
         # Create analysis grid
         grid_size = DEFAULT_GRID_SIZE
+        # Trimmed to building coverage (buildings end at x=-1487, trim to x=-1490 with 3m safety margin)
         bounds_min = np.array([-2470.81, -619.8652])
-        bounds_max = np.array([-1479.529, -196.4804])
+        bounds_max = np.array([-1490.0, -196.4804])  # Trimmed to avoid areas without building coverage
         
         grid = create_rectangular_grid(
             bounds_min=bounds_min,

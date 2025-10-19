@@ -30,8 +30,8 @@ dependencies = [
     "plotly>=5.17.0",
     
     # Performance (optional ray tracing acceleration)
-    "pyembree",
     "embreex",
+    "pyembree",
     
     # Utilities
     "tqdm",

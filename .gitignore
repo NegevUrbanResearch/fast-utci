@@ -12,6 +12,7 @@ __pycache__/
 # Project specific
 cache/
 .cache/
+*.csv
 
 # Documentation
 docs/_build/
