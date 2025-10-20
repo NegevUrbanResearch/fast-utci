@@ -39,7 +39,7 @@ def main():
 
     # Performance optimizations
     os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
-    os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "medium")
+    os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "high")
     os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
     os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "0")
     os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
@@ -58,7 +58,7 @@ def main():
         from fast_utci.model_reader import read_project_data_enhanced
         from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
         from fast_utci.utci_calculator import UTCICalculator
-        from export_for_viewer import export_utci_for_viewer
+        from export_for_viewer import export_utci_for_viewer  # pyright: ignore[reportMissingImports]
 
         t_start = time.perf_counter()
 
