@@ -20,68 +20,17 @@ export async function loadValidationData(validationPath = '../data/validation/gr
 }
 
 /**
- * Calculate Mean Absolute Error (MAE)
- * @param {Float32Array} values1 - First array of values
- * @param {Float32Array} values2 - Second array of values
- * @returns {number} MAE value
+ * Calculate statistics differences between two datasets
+ * @param {object} stats1 - Statistics object with min, max, mean
+ * @param {object} stats2 - Statistics object with min, max, mean
+ * @returns {object} Differences between statistics
  */
-function calculateMAE(values1, values2) {
-    const minLength = Math.min(values1.length, values2.length);
-    let sum = 0;
-    let count = 0;
-    
-    for (let i = 0; i < minLength; i++) {
-        if (!isNaN(values1[i]) && !isNaN(values2[i]) && 
-            isFinite(values1[i]) && isFinite(values2[i])) {
-            sum += Math.abs(values1[i] - values2[i]);
-            count++;
-        }
-    }
-    
-    return count > 0 ? sum / count : 0;
-}
-
-/**
- * Calculate Root Mean Square Error (RMSE)
- * @param {Float32Array} values1 - First array of values
- * @param {Float32Array} values2 - Second array of values
- * @returns {number} RMSE value
- */
-function calculateRMSE(values1, values2) {
-    const minLength = Math.min(values1.length, values2.length);
-    let sum = 0;
-    let count = 0;
-    
-    for (let i = 0; i < minLength; i++) {
-        if (!isNaN(values1[i]) && !isNaN(values2[i]) && 
-            isFinite(values1[i]) && isFinite(values2[i])) {
-            const diff = values1[i] - values2[i];
-            sum += diff * diff;
-            count++;
-        }
-    }
-    
-    return count > 0 ? Math.sqrt(sum / count) : 0;
-}
-
-/**
- * Calculate maximum deviation
- * @param {Float32Array} values1 - First array of values
- * @param {Float32Array} values2 - Second array of values
- * @returns {number} Maximum absolute difference
- */
-function calculateMaxDeviation(values1, values2) {
-    const minLength = Math.min(values1.length, values2.length);
-    let maxDev = 0;
-    
-    for (let i = 0; i < minLength; i++) {
-        if (!isNaN(values1[i]) && !isNaN(values2[i]) && 
-            isFinite(values1[i]) && isFinite(values2[i])) {
-            maxDev = Math.max(maxDev, Math.abs(values1[i] - values2[i]));
-        }
-    }
-    
-    return maxDev;
+function calculateStatisticsDifferences(stats1, stats2) {
+    return {
+        minDiff: stats1.min - stats2.min,
+        maxDiff: stats1.max - stats2.max,
+        meanDiff: stats1.mean - stats2.mean
+    };
 }
 
 /**
@@ -230,19 +179,19 @@ export function compareWithValidation(analysis, validation, hourIndex = 0) {
     const analysisStats = calculateStatistics(analysisValues); // Use original for display
     const validationStats = calculateStatistics(validationValues); // Use original for display
     
-    // Calculate comparison metrics using matched data
-    const mae = calculateMAE(matchedAnalysisValues, matchedValidationValues);
-    const rmse = calculateRMSE(matchedAnalysisValues, matchedValidationValues);
-    const maxDev = calculateMaxDeviation(matchedAnalysisValues, matchedValidationValues);
+    // Calculate statistics differences
+    const statsDiff = calculateStatisticsDifferences(analysisStats, validationStats);
+    
+    // Calculate correlation using matched data
     const correlation = calculateCorrelation(matchedAnalysisValues, matchedValidationValues);
     
     return {
         analysis: analysisStats,
         validation: validationStats,
         comparison: {
-            mae,
-            rmse,
-            maxDeviation: maxDev,
+            minDiff: statsDiff.minDiff,
+            maxDiff: statsDiff.maxDiff,
+            meanDiff: statsDiff.meanDiff,
             correlation
         }
     };
@@ -301,10 +250,10 @@ export function createAnalyticsPanel(metadata, comparisonStats = null) {
                 Mean: ${comparisonStats.validation.mean.toFixed(1)}°C
             </div>
             <div style="margin-bottom: 8px;">
-                <strong>Accuracy Metrics:</strong><br>
-                MAE: ${comparisonStats.comparison.mae.toFixed(2)}°C<br>
-                RMSE: ${comparisonStats.comparison.rmse.toFixed(2)}°C<br>
-                Max Dev: ${comparisonStats.comparison.maxDeviation.toFixed(2)}°C<br>
+                <strong>Comparison Metrics:</strong><br>
+                Min Diff: ${comparisonStats.comparison.minDiff >= 0 ? '+' : ''}${comparisonStats.comparison.minDiff.toFixed(2)}°C<br>
+                Max Diff: ${comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}${comparisonStats.comparison.maxDiff.toFixed(2)}°C<br>
+                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C<br>
                 Correlation: ${comparisonStats.comparison.correlation.toFixed(3)}
             </div>
         `;
@@ -376,10 +325,10 @@ export function updateAnalyticsPanel(comparisonStats, analysisStats = null) {
         const metricsSection = comparisonSection.nextElementSibling;
         if (metricsSection) {
             metricsSection.innerHTML = `
-                <strong>Accuracy Metrics:</strong><br>
-                MAE: ${comparisonStats.comparison.mae.toFixed(2)}°C<br>
-                RMSE: ${comparisonStats.comparison.rmse.toFixed(2)}°C<br>
-                Max Dev: ${comparisonStats.comparison.maxDeviation.toFixed(2)}°C<br>
+                <strong>Comparison Metrics:</strong><br>
+                Min Diff: ${comparisonStats.comparison.minDiff >= 0 ? '+' : ''}${comparisonStats.comparison.minDiff.toFixed(2)}°C<br>
+                Max Diff: ${comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}${comparisonStats.comparison.maxDiff.toFixed(2)}°C<br>
+                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C<br>
                 Correlation: ${comparisonStats.comparison.correlation.toFixed(3)}
             `;
         }
