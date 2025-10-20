@@ -1,15 +1,16 @@
 """
-Interactive UTCI Analysis with Web Viewer Export
+Interactive Full Day UTCI Analysis with Web Viewer Export
 
 This script provides an interactive workflow to:
 1. Load 3D model and weather data
 2. Compute MRT using parallel processing
-3. Compute UTCI thermal comfort
-4. Generate Plotly visualization (legacy)
-5. Export optimized data for web viewer
+3. Compute UTCI thermal comfort for full day (24 hours)
+4. Export optimized data for web viewer
 
 Usage:
     python run_analysis.py
+    
+To programmatically run analysis with custom parameters, import run_analysis_core().
 """
 
 from pathlib import Path
@@ -17,15 +18,12 @@ import time
 import numpy as np
 import os
 import sys
-from typing import Tuple, List, Optional
-import pandas as pd
-import psutil
+from typing import Tuple, Dict, Any, Optional
 import gc
 
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
 
-from fast_utci.colors import create_ladybug_utci_colorscale
 from export_for_viewer import export_utci_for_viewer
 
 # Default grid spacing (can be modified)
@@ -36,51 +34,7 @@ DEFAULT_MONTH = 8
 DEFAULT_DAY = 15
 
 
-def get_analysis_mode():
-    """Get user choice for analysis type."""
-    print("\n" + "="*60)
-    print("ANALYSIS MODE SELECTION")
-    print("="*60)
-    print("1. Single Hour Analysis")
-    print("2. Full Day Analysis (24 hours)")
-    print("="*60)
-    
-    while True:
-        choice = input("Enter your choice (1 or 2): ").strip()
-        if choice == "1":
-            return "single_hour"
-        elif choice == "2":
-            return "full_day"
-        else:
-            print("[ERROR] Invalid choice. Please enter 1 or 2.")
-
-
-def get_single_hour():
-    """Get hour input for single hour analysis."""
-    print("\n" + "="*60)
-    print("SINGLE HOUR SELECTION")
-    print("="*60)
-    print("Enter the hour to analyze (0-23):")
-    print("  0 = Midnight (00:00-01:00)")
-    print("  12 = Noon (12:00-13:00)")
-    print("  13 = 1 PM (13:00-14:00) - Default")
-    print("  23 = 11 PM (23:00-24:00)")
-    
-    while True:
-        try:
-            hour_input = input("Hour (0-23, or press Enter for 13): ").strip()
-            if hour_input == "":
-                return 13
-            hour = int(hour_input)
-            if 0 <= hour <= 23:
-                return hour
-            else:
-                print("[ERROR] Hour must be between 0 and 23.")
-        except ValueError:
-            print("[ERROR] Please enter a valid number.")
-
-
-def get_analysis_date():
+def get_analysis_date() -> Tuple[int, int]:
     """Get analysis date input."""
     print("\n" + "="*60)
     print("ANALYSIS DATE SELECTION")
@@ -106,63 +60,65 @@ def get_analysis_date():
             print("[ERROR] Please enter valid numbers.")
 
 
-def main():
-    """Run the UTCI analysis workflow."""
+def run_analysis_core(
+    month: int = DEFAULT_MONTH,
+    day: int = DEFAULT_DAY,
+    grid_size: float = DEFAULT_GRID_SIZE,
+    model_file: str = "data/3d_models/100.gltf",
+    epw_file: str = "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+    embree_quality: str = "low",
+    intersects_any: bool = True,
+    export_csv: bool = False,
+    verbose: bool = True
+) -> Dict[str, Any]:
+    """
+    Run full day UTCI analysis with specified parameters.
     
-    print("="*60)
-    print("FAST-UTCI ANALYSIS WITH WEB VIEWER EXPORT")
-    print("="*60)
-    
-    # Get analysis mode
-    analysis_mode = get_analysis_mode()
-    
-    if analysis_mode == "single_hour":
-        target_hour = get_single_hour()
-        print(f"\n[OK] Selected: Single hour analysis for hour {target_hour:02d}:00")
-    else:
-        print("\n[OK] Selected: Full day analysis (24 hours)")
-        target_hour = None
-    
-    # Get analysis date
-    analysis_month, analysis_day = get_analysis_date()
-    print(f"\n[OK] Analysis date: Month {analysis_month}, Day {analysis_day}")
+    Args:
+        month: Analysis month (1-12)
+        day: Analysis day (1-31)
+        grid_size: Grid spacing in meters
+        model_file: Path to 3D model file
+        epw_file: Path to EPW weather file
+        embree_quality: Embree ray tracing quality ('low', 'medium', 'high')
+        intersects_any: Use optimized intersection mode
+        export_csv: Export results to CSV file (default: False)
+        verbose: Print detailed progress messages
+        
+    Returns:
+        Dictionary containing analysis results and metadata
+    """
+    if verbose:
+        print("="*60)
+        print("FAST-UTCI FULL DAY ANALYSIS")
+        print("="*60)
+        print(f"Date: Month {month}, Day {day}")
+        print(f"Grid: {grid_size}m spacing")
+        print(f"Embree: {embree_quality} quality, intersects_any={intersects_any}")
     
     # Configure performance optimizations
-    if analysis_mode == "full_day":
-        os.environ.setdefault("FAST_UTCI_VECTORIZED_SOLAR", "1")
-        os.environ.setdefault("FAST_UTCI_VECTORIZED_UTCI", "1")
-        os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
-        os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "low")
-        os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
-        os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1")
-        os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
-        print("[PERF] Optimizations enabled for full day analysis")
-    else:
-        os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
-        os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", "low")
-        os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
-        os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1")
-        os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
-        print("[PERF] Optimizations enabled for single hour analysis")
-    
-    # File paths
-    model_file = "data/3d_models/100.gltf"
-    epw_file = "data/weather/ISR_Beer.Sheva.401900_MSI.epw"
-    validation_csv = "data/validation/15th_Aug_MRT.csv"
+    os.environ.setdefault("FAST_UTCI_VECTORIZED_SOLAR", "1")
+    os.environ.setdefault("FAST_UTCI_VECTORIZED_UTCI", "1")
+    os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
+    os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", embree_quality)
+    os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
+    os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1" if intersects_any else "0")
+    os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
     
     # Check files exist
     for file_path, name in [(model_file, "3D model"), (epw_file, "EPW weather")]:
         if not Path(file_path).exists():
-            print(f"[ERROR] {name} file not found: {file_path}")
-            return 1
+            raise FileNotFoundError(f"{name} file not found: {file_path}")
     
-    print(f"[OK] Files found: model, weather")
+    if verbose:
+        print(f"[OK] Files found: model, weather")
     
     try:
         # Load data
-        print("\n" + "="*60)
-        print("STEP 1: LOADING PROJECT DATA")
-        print("="*60)
+        if verbose:
+            print("\n" + "="*60)
+            print("STEP 1: LOADING PROJECT DATA")
+            print("="*60)
         
         from fast_utci.model_reader import read_project_data_enhanced
         t0 = time.perf_counter()
@@ -172,14 +128,16 @@ def main():
         t1 = time.perf_counter()
         
         model = enhanced_model.get_combined_mesh()
-        print(f"[OK] Model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
-        print(f"[OK] Weather loaded: {len(weather_df):,} hours")
-        print(f"[TIME] Load time: {(t1-t0):.2f}s")
+        if verbose:
+            print(f"[OK] Model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
+            print(f"[OK] Weather loaded: {len(weather_df):,} hours")
+            print(f"[TIME] Load time: {(t1-t0):.2f}s")
         
         # Compute MRT
-        print("\n" + "="*60)
-        print("STEP 2: COMPUTING MRT")
-        print("="*60)
+        if verbose:
+            print("\n" + "="*60)
+            print("STEP 2: COMPUTING MRT")
+            print("="*60)
         
         from fast_utci.mrt import (
             MRTCalculator, create_rectangular_grid, create_analysis_period
@@ -193,7 +151,6 @@ def main():
         # Original bounds were: X: -2470.81 to -1479.529, Y: -619.8652 to -196.4804
         # Grid positions too close to mesh boundaries cause ray intersection failures
         # West edge needs 2m inset due to buildings at x=-2470.81
-        grid_size = DEFAULT_GRID_SIZE
         bounds_min = np.array([-2468.81, -618.8652])  # 2m west / 1m south inset
         bounds_max = np.array([-1480.529, -197.4804])  # 1m east / 1m north inset
         
@@ -204,26 +161,20 @@ def main():
             z_height=1.5
         )
         
-        print(f"[OK] Grid created: {len(grid.points)} points at {grid_size}m spacing")
+        if verbose:
+            print(f"[OK] Grid created: {len(grid.points)} points at {grid_size}m spacing")
         
-        # Create analysis period
-        if analysis_mode == "single_hour":
-            analysis_period = create_analysis_period(
-                start_month=analysis_month, start_day=analysis_day,
-                end_month=analysis_month, end_day=analysis_day,
-                start_hour=target_hour, end_hour=target_hour
-            )
-            target_hours = [target_hour]
-        else:
-            analysis_period = create_analysis_period(
-                start_month=analysis_month, start_day=analysis_day,
-                end_month=analysis_month, end_day=analysis_day,
-                start_hour=0, end_hour=23
-            )
-            target_hours = list(range(24))
+        # Create analysis period for full day (24 hours)
+        analysis_period = create_analysis_period(
+            start_month=month, start_day=day,
+            end_month=month, end_day=day,
+            start_hour=0, end_hour=23
+        )
+        target_hours = list(range(24))
         
         # Compute exposure and MRT
-        print(f"[INFO] Computing MRT for {len(grid.points)} positions...")
+        if verbose:
+            print(f"[INFO] Computing MRT for {len(grid.points)} positions...")
         t2 = time.perf_counter()
         
         exposure_results = mrt_calc.compute_exposure(
@@ -240,16 +191,18 @@ def main():
         )
         
         t3 = time.perf_counter()
-        print(f"[OK] MRT computed: {len(mrt_results)} positions")
-        print(f"[TIME] MRT time: {(t3-t2):.2f}s")
+        if verbose:
+            print(f"[OK] MRT computed: {len(mrt_results)} positions")
+            print(f"[TIME] MRT time: {(t3-t2):.2f}s")
         
         del exposure_results
         gc.collect()
         
         # Compute UTCI
-        print("\n" + "="*60)
-        print("STEP 3: COMPUTING UTCI")
-        print("="*60)
+        if verbose:
+            print("\n" + "="*60)
+            print("STEP 3: COMPUTING UTCI")
+            print("="*60)
         
         from fast_utci.utci_calculator import UTCICalculator
         
@@ -260,12 +213,13 @@ def main():
             mrt_results=mrt_results,
             analysis_period=analysis_period,
             target_hours=target_hours,
-            show_progress=True
+            show_progress=verbose
         )
         t5 = time.perf_counter()
         
-        print(f"[OK] UTCI computed")
-        print(f"[TIME] UTCI time: {(t5-t4):.2f}s")
+        if verbose:
+            print(f"[OK] UTCI computed")
+            print(f"[TIME] UTCI time: {(t5-t4):.2f}s")
         
         # Calculate statistics
         all_utci = []
@@ -279,29 +233,29 @@ def main():
         utci_min, utci_max, utci_mean = np.min(all_utci), np.max(all_utci), np.mean(all_utci)
         
         # Export results
-        print("\n" + "="*60)
-        print("STEP 4: EXPORTING RESULTS")
-        print("="*60)
+        if verbose:
+            print("\n" + "="*60)
+            print("STEP 4: EXPORTING RESULTS")
+            print("="*60)
         
-        # Export CSV
-        if analysis_mode == "single_hour":
-            csv_filename = f"utci_results_grid_{grid_size:.0f}m_hour_{target_hour:02d}.csv"
-        else:
+        # Export CSV (optional)
+        csv_filename = None
+        if export_csv:
             csv_filename = f"utci_results_grid_{grid_size:.0f}m_fullday.csv"
-        
-        utci_calc.to_csv(
-            utci_results=utci_results,
-            csv_path=csv_filename,
-            include_weather=True,
-            include_comfort_categories=True
-        )
-        print(f"[OK] CSV exported: {csv_filename}")
+            utci_calc.to_csv(
+                utci_results=utci_results,
+                csv_path=csv_filename,
+                include_weather=True,
+                include_comfort_categories=True
+            )
+            if verbose:
+                print(f"[OK] CSV exported: {csv_filename}")
         
         # Export for web viewer
         total_time = t5 - t0
         binary_path, metadata_path = export_utci_for_viewer(
             utci_results=utci_results,
-            analysis_type=analysis_mode,
+            analysis_type="full_day",
             grid_size=grid_size,
             model_file=model_file,
             epw_file=epw_file,
@@ -311,24 +265,68 @@ def main():
         )
         
         # Summary
-        print("\n" + "="*60)
-        print("ANALYSIS COMPLETE")
-        print("="*60)
-        print(f"Positions analyzed: {len(utci_results)}")
-        print(f"UTCI range: {utci_min:.1f} to {utci_max:.1f} C (mean: {utci_mean:.1f} C)")
-        print(f"Total runtime: {total_time:.1f}s")
-        print(f"\nOutput files:")
-        print(f"  - CSV: {csv_filename}")
-        print(f"  - Web viewer data: {Path(binary_path).name}")
-        print(f"  - Web viewer metadata: {Path(metadata_path).name}")
-        print(f"\nTo visualize:")
-        print(f"  1. Start HTTP server: python -m http.server 8000")
-        print(f"  2. Open: http://localhost:8000/viewer/")
+        if verbose:
+            print("\n" + "="*60)
+            print("ANALYSIS COMPLETE")
+            print("="*60)
+            print(f"Positions analyzed: {len(utci_results)}")
+            print(f"UTCI range: {utci_min:.1f} to {utci_max:.1f} C (mean: {utci_mean:.1f} C)")
+            print(f"Total runtime: {total_time:.1f}s")
+            print(f"\nOutput files:")
+            if csv_filename:
+                print(f"  - CSV: {csv_filename}")
+            print(f"  - Web viewer data: {Path(binary_path).name}")
+            print(f"  - Web viewer metadata: {Path(metadata_path).name}")
+            print(f"\nTo visualize:")
+            print(f"  1. Start HTTP server: python -m http.server 8000")
+            print(f"  2. Open: http://localhost:8000/viewer/")
         
+        return {
+            "utci_results": utci_results,
+            "csv_path": csv_filename,
+            "binary_path": binary_path,
+            "metadata_path": metadata_path,
+            "utci_min": utci_min,
+            "utci_max": utci_max,
+            "utci_mean": utci_mean,
+            "total_time": total_time,
+            "num_positions": len(utci_results),
+            "grid_size": grid_size,
+            "month": month,
+            "day": day
+        }
+        
+    except Exception as e:
+        if verbose:
+            print(f"\n[ERROR] Error in workflow: {e}")
+            import traceback
+            traceback.print_exc()
+        raise
+
+
+def main() -> int:
+    """Interactive CLI entry point for full day UTCI analysis."""
+    
+    print("="*60)
+    print("FAST-UTCI FULL DAY ANALYSIS")
+    print("="*60)
+    print("Mode: Full day analysis (24 hours)")
+    
+    # Get analysis date
+    analysis_month, analysis_day = get_analysis_date()
+    print(f"\n[OK] Analysis date: Month {analysis_month}, Day {analysis_day}")
+    
+    try:
+        # Run analysis with default settings
+        results = run_analysis_core(
+            month=analysis_month,
+            day=analysis_day,
+            verbose=True
+        )
         return 0
         
     except Exception as e:
-        print(f"\n[ERROR] Error in workflow: {e}")
+        print(f"\n[ERROR] Analysis failed: {e}")
         import traceback
         traceback.print_exc()
         return 1

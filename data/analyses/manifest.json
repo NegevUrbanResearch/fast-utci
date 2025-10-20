@@ -8,7 +8,7 @@
       "grid_size": 2,
       "description": "Full day analysis for 2025-08-15 with 2m grid spacing.",
       "positions": 0,
-      "runtime_seconds": 129.68470460001845,
+      "runtime_seconds": 140.65919149998808,
       "utci_min": 0,
       "utci_max": 0,
       "utci_mean": 0,
@@ -18,5 +18,5 @@
       "target_hours": []
     }
   ],
-  "last_updated": "2025-10-20T02:14:40.130188"
+  "last_updated": "2025-10-21T01:37:09.846314"
 }
