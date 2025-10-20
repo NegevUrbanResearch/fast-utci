@@ -6,7 +6,7 @@ material information and layer structure for better visualization.
 """
 
 from pathlib import Path
-from typing import Tuple, Union, List, Dict, Any, Optional
+from ladybug.epw import EPW
 import pandas as pd
 import trimesh
 import numpy as np
@@ -50,7 +50,7 @@ class ModelLayer:
 class EnhancedModel:
     """Enhanced model class that preserves layer information."""
     
-    def __init__(self, layers: List[ModelLayer]):
+    def __init__(self, layers: list[ModelLayer]):
         self.layers = layers
         self._combined_mesh = None
     
@@ -61,11 +61,11 @@ class EnhancedModel:
             self._combined_mesh = trimesh.util.concatenate(meshes)
         return self._combined_mesh
     
-    def get_layer_by_type(self, material_type: str) -> List[ModelLayer]:
+    def get_layer_by_type(self, material_type: str) -> list[ModelLayer]:
         """Get all layers of a specific material type."""
         return [layer for layer in self.layers if layer.material_type == material_type]
     
-    def get_layer_by_name(self, name: str) -> Optional[ModelLayer]:
+    def get_layer_by_name(self, name: str) -> ModelLayer | None:
         """Get a layer by its name."""
         for layer in self.layers:
             if layer.name == name:
@@ -76,7 +76,7 @@ class EnhancedModel:
         """Get the bounds of the combined model."""
         return self.get_combined_mesh().bounds
     
-    def get_bounds_for_layer_type(self, material_type: str) -> Optional[np.ndarray]:
+    def get_bounds_for_layer_type(self, material_type: str) -> np.ndarray | None:
         """Get the bounds for a specific layer type."""
         layers = self.get_layer_by_type(material_type)
         if not layers:
@@ -98,7 +98,7 @@ class EnhancedModel:
         """Get total number of faces across all layers."""
         return sum(len(layer.mesh.faces) for layer in self.layers)
     
-    def get_layer_info(self) -> List[Dict[str, Any]]:
+    def get_layer_info(self) -> list[dict]:
         """Get information about all layers."""
         info = []
         for layer in self.layers:
@@ -114,7 +114,7 @@ class EnhancedModel:
         return info
 
 
-def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str, verbose: bool = False) -> List[trimesh.Trimesh]:
+def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str, verbose: bool = False) -> list[trimesh.Trimesh]:
     """
     Extract road lines from a base mesh by analyzing material groups and face clusters.
     
@@ -283,7 +283,7 @@ def detect_material_type(mesh_name: str, mesh_bounds: np.ndarray, mesh_volume: f
     return 'vegetation'  # Default fallback to vegetation
 
 
-def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> EnhancedModel:
+def read_enhanced_model(file_path: str | Path, verbose: bool = False) -> EnhancedModel:
     """
     Read a 3D model file and return an enhanced model with layer information.
     
@@ -460,9 +460,9 @@ def read_enhanced_model(file_path: Union[str, Path], verbose: bool = False) -> E
     return EnhancedModel(layers)
 
 
-def read_project_data_enhanced(model_path: Union[str, Path], 
-                              weather_path: Union[str, Path], 
-                              verbose: bool = False) -> Tuple[EnhancedModel, pd.DataFrame, Any]:
+def read_project_data_enhanced(model_path: str | Path, 
+                              weather_path: str | Path, 
+                              verbose: bool = False) -> tuple[EnhancedModel, pd.DataFrame, EPW]:
     """
     Read model and weather data with enhanced model support.
     
@@ -483,7 +483,7 @@ def read_project_data_enhanced(model_path: Union[str, Path],
     return enhanced_model, weather_df, epw
 
 
-def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
+def read_weather_data(file_path: str | Path) -> pd.DataFrame:
     """
     Read EPW weather file and extract UTCI inputs as DataFrame.
     """
@@ -508,9 +508,9 @@ def read_weather_data(file_path: Union[str, Path]) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def read_project_data(model_path: Union[str, Path], 
-                      weather_path: Union[str, Path], 
-                      verbose: bool = False) -> Tuple[trimesh.Trimesh, pd.DataFrame, Any]:
+def read_project_data(model_path: str | Path, 
+                      weather_path: str | Path, 
+                      verbose: bool = False) -> tuple[trimesh.Trimesh, pd.DataFrame, EPW]:
     """
     Compatibility wrapper matching reader.read_project_data signature.
     Returns combined trimesh mesh, weather DataFrame, and EPW.
