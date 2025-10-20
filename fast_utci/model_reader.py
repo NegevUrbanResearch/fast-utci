@@ -523,7 +523,7 @@ def read_project_data(model_path: str | Path,
 # Example usage
 if __name__ == "__main__":
     # Test the enhanced model reader
-    model_path = "data/100_35164.gltf"
+    model_path = "data/3d_models/100.gltf"
     
     try:
         enhanced_model = read_enhanced_model(model_path)
