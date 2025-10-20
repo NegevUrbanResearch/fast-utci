@@ -179,6 +179,131 @@ def export_binary_full_day(
     print(f"[SAVE] Binary data: {output_path.name} ({file_size_mb:.2f} MB)")
 
 
+def _calculate_hour_statistics(
+    utci_results: Dict[str, Any],
+    hours: List[int]
+) -> List[Dict[str, float]]:
+    """
+    Calculate per-hour UTCI statistics for full day analysis.
+    
+    Args:
+        utci_results: UTCI results dictionary
+        hours: List of hours analyzed
+        
+    Returns:
+        List of dicts with hour, min, max, mean for each hour
+    """
+    num_hours = len(hours)
+    sorted_keys = sorted(utci_results.keys())
+    
+    # Organize UTCI values by hour
+    utci_by_hour = [[] for _ in range(num_hours)]
+    
+    for pos_key in sorted_keys:
+        data = utci_results[pos_key]
+        utci_vals = data['utci']
+        
+        if isinstance(utci_vals, (list, np.ndarray)):
+            for hour_idx, utci_val in enumerate(utci_vals[:num_hours]):
+                utci_by_hour[hour_idx].append(float(utci_val))
+    
+    # Calculate statistics for each hour
+    hour_stats = []
+    for hour_idx, hour in enumerate(hours):
+        if utci_by_hour[hour_idx]:
+            hour_utci = np.array(utci_by_hour[hour_idx])
+            hour_stats.append({
+                'hour': hour,
+                'min': float(np.min(hour_utci)),
+                'max': float(np.max(hour_utci)),
+                'mean': float(np.mean(hour_utci))
+            })
+    
+    return hour_stats
+
+
+def _extract_location_from_epw(epw_file: str) -> Dict[str, Any]:
+    """
+    Extract location data from EPW weather file.
+    
+    Args:
+        epw_file: Path to EPW file
+        
+    Returns:
+        Dictionary with latitude, longitude, timezone, city
+    """
+    from ladybug.epw import EPW
+    
+    epw = EPW(epw_file)
+    location = epw.location
+    
+    return {
+        'latitude': float(location.latitude),
+        'longitude': float(location.longitude),
+        'timezone': float(location.time_zone),
+        'city': str(location.city)
+    }
+
+
+def _calculate_sun_positions(
+    epw_file: str,
+    year: int,
+    month: int,
+    day: int
+) -> List[Dict[str, Any]]:
+    """
+    Calculate sun positions for all 24 hours of a specific date.
+    
+    Args:
+        epw_file: Path to EPW file
+        year: Year
+        month: Month (1-12)
+        day: Day of month
+        
+    Returns:
+        List of sun position dicts for each hour (0-23)
+    """
+    from ladybug.epw import EPW
+    from ladybug.sunpath import Sunpath
+    from ladybug.dt import DateTime
+    import math
+    
+    # Load EPW and create sunpath
+    epw = EPW(epw_file)
+    location = epw.location
+    sunpath = Sunpath.from_location(location)
+    
+    sun_positions = []
+    
+    for hour in range(24):
+        dt = DateTime(month, day, hour)
+        sun = sunpath.calculate_sun_from_date_time(dt)
+        
+        # Calculate vector pointing to sun (same as solar.py)
+        if sun.is_during_day:
+            alt_rad = math.radians(sun.altitude)
+            azi_rad = math.radians(sun.azimuth)
+            
+            # Standard spherical to Cartesian conversion
+            x = math.sin(azi_rad) * math.cos(alt_rad)  # East component
+            y = math.cos(azi_rad) * math.cos(alt_rad)  # North component  
+            z = math.sin(alt_rad)                      # Up component
+            
+            vector = [float(x), float(y), float(z)]
+        else:
+            vector = [0.0, 0.0, 0.0]
+        
+        sun_positions.append({
+            'hour': hour,
+            'altitude': float(sun.altitude),
+            'azimuth': float(sun.azimuth),
+            'is_up': bool(sun.is_during_day),
+            'vector': vector
+        })
+    
+    return sun_positions
+
+
 def export_metadata_json(
     utci_results: Dict[str, Any],
     analysis_id: str,
@@ -248,6 +373,25 @@ def export_metadata_json(
         "generation_date": datetime.now().isoformat(),
         "runtime_seconds": float(runtime_seconds)
     }
+    
+    # Add per-hour statistics for full day analysis
+    if analysis_type == "full_day":
+        metadata["hour_statistics"] = _calculate_hour_statistics(utci_results, hours)
+    
+    # Extract and add location data from EPW file
+    try:
+        metadata["location"] = _extract_location_from_epw(epw_file)
+    except Exception as e:
+        print(f"[WARN] Could not extract location from EPW: {e}")
+    
+    # Calculate and add sun positions
+    try:
+        year = int(date_str[:4]) if len(date_str) >= 4 else 2025
+        month = int(date_str[4:6]) if len(date_str) >= 6 else 8
+        day = int(date_str[6:8]) if len(date_str) >= 8 else 15
+        metadata["sun_positions"] = _calculate_sun_positions(epw_file, year, month, day)
+    except Exception as e:
+        print(f"[WARN] Could not calculate sun positions: {e}")
     
     # Write JSON
     with open(output_path, 'w') as f:

@@ -310,6 +310,18 @@ export function createAnalyticsPanel(metadata, comparisonStats = null) {
         `;
     }
     
+    // Add sun path toggle for full day analysis with sun data
+    if (metadata.analysis_type === 'full_day' && metadata.sun_positions) {
+        content += `
+            <div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #ddd;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="sun-path-toggle" style="margin-right: 8px; cursor: pointer;">
+                    <span style="font-size: 12px; font-weight: 500;">Show Sun Path</span>
+                </label>
+            </div>
+        `;
+    }
+    
     panel.innerHTML = content;
     return panel;
 }

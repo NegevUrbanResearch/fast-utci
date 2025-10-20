@@ -57,7 +57,7 @@ export function createUTCIPointCloud(analysis, model, hourIndex = 0) {
     // Swap Y and Z coordinates from data
     // Also negate Z to rotate 180 degrees horizontally to align with model
     // Add small vertical offset (0.2m) to prevent z-fighting/flickering with ground
-    const VISUAL_OFFSET = 0.2;
+    const VISUAL_OFFSET = 0.4; // Slightly increased to avoid coplanar z-fighting
     const positions = new Float32Array(data.positions.length);
     for (let i = 0; i < numPositions; i++) {
         positions[i * 3] = data.positions[i * 3] + offset.x;         // X stays X
@@ -105,6 +105,7 @@ export function createUTCIPointCloud(analysis, model, hourIndex = 0) {
     
     // Create points object
     const points = new THREE.Points(geometry, material);
+    points.renderOrder = 2; // Render after most opaque meshes
     points.name = 'UTCI_Points';
     
     console.log(`[OK] Point cloud created: ${numPositions} points for hour ${hourIndex}`);
@@ -117,8 +118,9 @@ export function createUTCIPointCloud(analysis, model, hourIndex = 0) {
  * @param {THREE.Points} pointCloud - Existing point cloud object
  * @param {object} analysis - Analysis data from UTCIDataLoader
  * @param {number} hourIndex - New hour index
+ * @param {string} colorMode - 'normalized' (full day range) or 'discrete' (per-hour range)
  */
-export function updatePointCloudColors(pointCloud, analysis, hourIndex) {
+export function updatePointCloudColors(pointCloud, analysis, hourIndex, colorMode = 'normalized') {
     const { data, metadata } = analysis;
     
     if (data.numHours === 1) {
@@ -128,8 +130,24 @@ export function updatePointCloudColors(pointCloud, analysis, hourIndex) {
     
     const numPositions = data.numPositions;
     const utciValues = data.utciByHour[hourIndex];
-    const utciMin = metadata.utci_range.min;
-    const utciMax = metadata.utci_range.max;
+    
+    // Determine range based on color mode
+    let utciMin, utciMax;
+    if (colorMode === 'normalized') {
+        // Use global range across all hours
+        utciMin = metadata.utci_range.min;
+        utciMax = metadata.utci_range.max;
+    } else {
+        // Use per-hour range for discrete coloring
+        if (metadata.hour_statistics && metadata.hour_statistics[hourIndex]) {
+            utciMin = metadata.hour_statistics[hourIndex].min;
+            utciMax = metadata.hour_statistics[hourIndex].max;
+        } else {
+            // Fallback to global range if hour stats not available
+            utciMin = metadata.utci_range.min;
+            utciMax = metadata.utci_range.max;
+        }
+    }
     
     // Get color attribute
     const colorAttribute = pointCloud.geometry.getAttribute('color');
@@ -209,9 +227,10 @@ export function createHighlightSphere(position, radius = 1.0) {
  * Create UTCI color legend as HTML with gradient bar showing actual data range
  * @param {number} utciMin - Minimum UTCI value  
  * @param {number} utciMax - Maximum UTCI value
+ * @param {string} analysisType - 'single_hour' or 'full_day'
  * @returns {HTMLElement} Legend element
  */
-export function createColorLegend(utciMin, utciMax) {
+export function createColorLegend(utciMin, utciMax, analysisType = 'single_hour') {
     const legend = document.createElement('div');
     legend.id = 'utci-legend';
     legend.style.cssText = `
@@ -224,7 +243,8 @@ export function createColorLegend(utciMin, utciMax) {
         box-shadow: 0 2px 15px rgba(0,0,0,0.3);
         font-family: Arial, sans-serif;
         font-size: 13px;
-        min-width: 200px;
+        width: auto;
+        min-width: 0;
         z-index: 100;
     `;
     
@@ -259,17 +279,34 @@ export function createColorLegend(utciMin, utciMax) {
         `;
     }
     
+    // Add switch control only for full day analysis
+    let controlHTML = '';
+    if (analysisType === 'full_day') {
+        // Shoelace switch with inline labels; graceful fallback div kept minimal
+        controlHTML = `
+            <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                <div style="font-size: 12px; color: #333;">Color Scale</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 11px; color: #555;">Full Day</span>
+                    <sl-switch id="color-mode-switch" aria-label="Color scale mode" style="--width: 42px; --height: 22px; --thumb-size: 18px;"></sl-switch>
+                    <span style="font-size: 11px; color: #555;">Per Hour</span>
+                </div>
+            </div>
+        `;
+    }
+    
     const html = `
-        <div style="font-weight: bold; margin-bottom: 12px; font-size: 15px;">UTCI Thermal Comfort</div>
-        <div style="font-size: 12px; color: #666; margin-bottom: 15px;">
+        <div style="font-weight: bold; margin-bottom: 12px; font-size: 15px;">UTCI</div>
+        <div id="legend-range-text" style="font-size: 12px; color: #666; margin-bottom: 15px;">
             Range: ${utciMin.toFixed(1)} - ${utciMax.toFixed(1)}°C
         </div>
-        <div style="position: relative; display: flex; align-items: stretch;">
+        <div style="position: relative; display: inline-flex; align-items: stretch; gap: 10px;">
             <div style="width: 35px; height: 250px; background: linear-gradient(to bottom, ${steppedGradient}); border: 2px solid #666; border-radius: 5px; box-shadow: inset 0 0 5px rgba(0,0,0,0.1);"></div>
-            <div style="position: relative; flex: 1; height: 250px; min-width: 65px;">
+            <div style="position: relative; height: 250px; width: 70px;">
                 ${labelsHTML}
             </div>
         </div>
+        ${controlHTML}
     `;
     
     legend.innerHTML = html;

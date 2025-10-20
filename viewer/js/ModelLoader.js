@@ -31,7 +31,7 @@ function createMaterialFromLayer(layer) {
     
     // Buildings use simpler, brighter MeshLambertMaterial
     if (isBuilding) {
-        return new THREE.MeshLambertMaterial({
+        const mat = new THREE.MeshLambertMaterial({
             color: new THREE.Color(layer.color),
             emissive: new THREE.Color(0xffffff),  // Self-illumination for pure white
             emissiveIntensity: 0.3,                // Boost brightness
@@ -39,10 +39,12 @@ function createMaterialFromLayer(layer) {
             transparent: false,
             depthWrite: true
         });
+        mat.polygonOffset = false; // buildings should occlude points cleanly
+        return mat;
     }
     
     // Other layers use standard material with lighting
-    return new THREE.MeshStandardMaterial({
+    const std = new THREE.MeshStandardMaterial({
         color: new THREE.Color(layer.color),
         opacity: layer.opacity,
         transparent: layer.opacity < 1.0,
@@ -51,6 +53,13 @@ function createMaterialFromLayer(layer) {
         metalness: 0.1,
         depthWrite: layer.opacity > 0.5
     });
+    // Slightly push base/ground away to avoid coplanar artifacts with UTCI overlay
+    if (layer.type === 'base') {
+        std.polygonOffset = true;
+        std.polygonOffsetFactor = 1;
+        std.polygonOffsetUnits = 1;
+    }
+    return std;
 }
 
 /**

@@ -14,6 +14,7 @@ import { createTimeControls } from './TimeController.js';
 import { loadValidationData, compareWithValidation, createAnalyticsPanel, updateAnalyticsPanel } from './Analytics.js';
 import { calculateStatistics } from './UTCIDataLoader.js';
 import { getUTCILabel } from './ColorScale.js';
+import { createSunPath, updateCurrentSunIndicator, createSunMarkerRaycaster, findClickedSunMarker } from './SunPathRenderer.js';
 
 /**
  * Main Viewer App Class
@@ -30,6 +31,10 @@ export class ViewerApp {
         this.validation = null;
         this.currentHour = 0;
         this.highlightSphere = null;
+        this.colorMode = 'normalized'; // 'normalized' or 'discrete'
+        this.sunPathGroup = null;
+        this.sunPathVisible = false;
+        this.sunTooltip = null;
         
         this.init();
     }
@@ -51,7 +56,8 @@ export class ViewerApp {
         // Create renderer
         this.renderer = new THREE.WebGLRenderer({ 
             antialias: true,
-            powerPreference: "high-performance" // Prefer performance
+            powerPreference: "high-performance", // Prefer performance
+            logarithmicDepthBuffer: true // Improve depth precision for large scenes
         });
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
@@ -243,12 +249,55 @@ export class ViewerApp {
             // Add dynamic grid based on model bounds
             this.addDynamicGrid(model, this.analysis);
             
+            // Create sun path if full day analysis and sun data available
+            if (this.analysis.metadata.analysis_type === 'full_day' && 
+                this.analysis.metadata.sun_positions) {
+                const modelBox = new THREE.Box3().setFromObject(model);
+                const modelCenter = modelBox.getCenter(new THREE.Vector3());
+                const modelSize = modelBox.getSize(new THREE.Vector3()).length();
+                
+                this.sunPathGroup = createSunPath(
+                    this.analysis.metadata, 
+                    modelCenter, 
+                    modelSize
+                );
+                this.scene.add(this.sunPathGroup);
+                
+                // Initialize with current hour highlighted
+                updateCurrentSunIndicator(this.sunPathGroup, this.currentHour);
+            }
+            
             // Add color legend
             const legend = createColorLegend(
                 this.analysis.metadata.utci_range.min,
-                this.analysis.metadata.utci_range.max
+                this.analysis.metadata.utci_range.max,
+                this.analysis.metadata.analysis_type
             );
             document.body.appendChild(legend);
+            
+            // Setup color mode switch if full day
+            if (this.analysis.metadata.analysis_type === 'full_day') {
+                const switchEl = document.getElementById('color-mode-switch');
+                if (switchEl && typeof switchEl.addEventListener === 'function') {
+                    // Initialize: checked => Per Hour (discrete), unchecked => Full Day (normalized)
+                    switchEl.checked = this.colorMode === 'discrete';
+                    switchEl.addEventListener('sl-change', () => {
+                        this.colorMode = switchEl.checked ? 'discrete' : 'normalized';
+                        updatePointCloudColors(this.pointCloud, this.analysis, this.currentHour, this.colorMode);
+                        this.updateLegendRange();
+                    });
+                } else {
+                    // Fallback: if sl-switch not available yet, listen for native change
+                    const fallback = document.getElementById('color-mode-switch');
+                    if (fallback) {
+                        fallback.addEventListener('change', () => {
+                            this.colorMode = fallback.checked ? 'discrete' : 'normalized';
+                            updatePointCloudColors(this.pointCloud, this.analysis, this.currentHour, this.colorMode);
+                            this.updateLegendRange();
+                        });
+                    }
+                }
+            }
             
             // Add time controls if full day analysis
             if (this.analysis.metadata.analysis_type === 'full_day') {
@@ -272,6 +321,15 @@ export class ViewerApp {
                 document.body.appendChild(analyticsPanel);
             }
             
+            // Setup sun path toggle
+            const sunPathToggle = document.getElementById('sun-path-toggle');
+            if (sunPathToggle && this.sunPathGroup) {
+                sunPathToggle.addEventListener('change', (e) => {
+                    this.sunPathGroup.visible = e.target.checked;
+                    this.sunPathVisible = e.target.checked;
+                });
+            }
+            
             // Hide loading indicator
             this.hideLoading();
             
@@ -293,7 +351,17 @@ export class ViewerApp {
         if (!this.pointCloud || !this.analysis) return;
         
         this.currentHour = hourIndex;
-        updatePointCloudColors(this.pointCloud, this.analysis, hourIndex);
+        updatePointCloudColors(this.pointCloud, this.analysis, hourIndex, this.colorMode);
+        
+        // Update legend if in discrete mode (both text and gradient labels)
+        if (this.colorMode === 'discrete') {
+            this.updateLegendRange();
+        }
+        
+        // Update sun path indicator
+        if (this.sunPathGroup) {
+            updateCurrentSunIndicator(this.sunPathGroup, hourIndex);
+        }
         
         // Update analytics if validation data is available
         if (this.validation) {
@@ -306,10 +374,112 @@ export class ViewerApp {
     }
     
     /**
+     * Toggle color mode between normalized and discrete
+     */
+    toggleColorMode() {
+        this.colorMode = this.colorMode === 'normalized' ? 'discrete' : 'normalized';
+        
+        // Update button label to show CURRENT state (not next state)
+        const label = document.getElementById('color-mode-label');
+        if (label) {
+            // Show what mode is NOW active
+            label.textContent = this.colorMode === 'normalized' ? 'Full Day' : 'Per Hour';
+        }
+        
+        // Update colors
+        updatePointCloudColors(this.pointCloud, this.analysis, this.currentHour, this.colorMode);
+        
+        // Update legend range display
+        this.updateLegendRange();
+    }
+    
+    /**
+     * Update legend range display based on current color mode
+     */
+    updateLegendRange() {
+        const rangeText = document.getElementById('legend-range-text');
+        if (!rangeText || !this.analysis) return;
+        
+        let min, max, modeLabel;
+        if (this.colorMode === 'normalized') {
+            min = this.analysis.metadata.utci_range.min;
+            max = this.analysis.metadata.utci_range.max;
+            modeLabel = '';
+        } else {
+            const hourStat = this.analysis.metadata.hour_statistics[this.currentHour];
+            min = hourStat.min;
+            max = hourStat.max;
+            const hour = this.analysis.metadata.hours[this.currentHour];
+            modeLabel = ` (Hour ${hour}:00)`;
+        }
+        
+        // Update range text
+        rangeText.innerHTML = `Range: ${min.toFixed(1)} - ${max.toFixed(1)}°C${modeLabel}`;
+        
+        // Update gradient scale labels
+        this.updateLegendLabels(min, max);
+    }
+    
+    /**
+     * Update legend gradient scale labels
+     */
+    updateLegendLabels(utciMin, utciMax) {
+        const legend = document.getElementById('utci-legend');
+        if (!legend) return;
+        
+        // Find all temperature label divs in the legend
+        const labelContainer = legend.querySelector('[style*="position: relative; flex: 1"]');
+        if (!labelContainer) return;
+        
+        // Clear existing labels
+        labelContainer.innerHTML = '';
+        
+        // Recreate labels with new range
+        const tempRange = utciMax - utciMin;
+        const numLabels = 6;
+        const tempStep = tempRange / (numLabels - 1);
+        
+        for (let i = 0; i < numLabels; i++) {
+            const temp = utciMax - (i * tempStep);  // Start from max (top) to min (bottom)
+            const position = (i / (numLabels - 1)) * 100;
+            
+            const labelDiv = document.createElement('div');
+            labelDiv.style.cssText = `
+                position: absolute;
+                left: 8px;
+                top: ${position}%;
+                transform: translateY(-50%);
+                font-size: 12px;
+                font-weight: 500;
+                white-space: nowrap;
+            `;
+            labelDiv.textContent = `${temp.toFixed(1)}°C`;
+            labelContainer.appendChild(labelDiv);
+        }
+    }
+    
+    /**
      * Handle mouse click for point selection
      */
     onMouseClick(event) {
-        // Click functionality disabled - using hover tooltip instead
+        // Check if sun path is visible and user clicked a marker
+        if (this.sunPathVisible && this.sunPathGroup) {
+            const mouse = this.getMousePosition(event);
+            const raycaster = createSunMarkerRaycaster(this.camera, mouse);
+            const clickedMarker = findClickedSunMarker(this.sunPathGroup, raycaster);
+            
+            if (clickedMarker) {
+                // Jump to clicked hour
+                const slider = document.getElementById('hour-slider');
+                if (slider) {
+                    slider.value = clickedMarker.hour;
+                    slider.dispatchEvent(new Event('input'));
+                }
+                return; // Consumed click
+            }
+        }
+        
+        // Click functionality disabled for UTCI points - using hover tooltip instead
         // Optional: could add different click behavior here if needed
     }
     
@@ -317,8 +487,25 @@ export class ViewerApp {
      * Handle mouse move for hover effects
      */
     onMouseMove(event) {
+        // Check sun path markers first if visible
+        if (this.sunPathVisible && this.sunPathGroup) {
+            const mouse = this.getMousePosition(event);
+            const raycaster = createSunMarkerRaycaster(this.camera, mouse);
+            const hoveredMarker = findClickedSunMarker(this.sunPathGroup, raycaster);
+            
+            if (hoveredMarker) {
+                this.showSunTooltip(hoveredMarker, event.clientX, event.clientY);
+                this.hideTooltip(); // Hide UTCI tooltip
+                return; // Don't check UTCI points
+            } else {
+                this.hideSunTooltip();
+            }
+        }
+        
+        // Check UTCI points
         if (!this.pointCloud || !this.pointCloud.visible) {
             this.hideTooltip();
+            this.hideSunTooltip();
             return;
         }
         
@@ -471,6 +658,52 @@ export class ViewerApp {
     }
     
     /**
+     * Show sun marker tooltip with sun position data
+     */
+    showSunTooltip(markerData, x, y) {
+        if (!this.sunTooltip) {
+            this.sunTooltip = document.createElement('div');
+            this.sunTooltip.id = 'sun-tooltip';
+            this.sunTooltip.style.cssText = `
+                position: fixed;
+                background: rgba(255, 150, 0, 0.95);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
+                pointer-events: none;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                line-height: 1.5;
+                display: none;
+            `;
+            document.body.appendChild(this.sunTooltip);
+        }
+        
+        const isDay = markerData.sunData.is_up;
+        this.sunTooltip.innerHTML = `
+            <strong>Hour:</strong> ${markerData.hour}:00<br>
+            <strong>Altitude:</strong> ${markerData.sunData.altitude.toFixed(1)}°<br>
+            <strong>Azimuth:</strong> ${markerData.sunData.azimuth.toFixed(1)}°<br>
+            <strong>Status:</strong> ${isDay ? '☀️ Day' : '🌙 Night'}
+        `;
+        
+        this.sunTooltip.style.left = (x + 15) + 'px';
+        this.sunTooltip.style.top = (y + 15) + 'px';
+        this.sunTooltip.style.display = 'block';
+    }
+    
+    /**
+     * Hide sun marker tooltip
+     */
+    hideSunTooltip() {
+        if (this.sunTooltip) {
+            this.sunTooltip.style.display = 'none';
+        }
+    }
+    
+    /**
      * Get normalized mouse position
      */
     getMousePosition(event) {
@@ -497,6 +730,14 @@ export class ViewerApp {
         
         console.log(`[CAMERA] Model size: ${maxDim.toFixed(1)}m, Camera distance: ${cameraDistance.toFixed(1)}m`);
         
+        // Improve depth precision: tighten near/far planes to scene scale
+        const near = Math.max(0.5, maxDim / 1000);
+        const far = Math.max(maxDim * 4, near + 10);
+        this.camera.near = near;
+        this.camera.far = far;
+        this.camera.updateProjectionMatrix();
+        console.log(`[CAMERA] Near/Far set to ${near.toFixed(3)} / ${far.toFixed(1)}`);
+
         // Position camera at an angle for better perspective
         this.camera.position.set(
             center.x + cameraDistance * 0.7, 
