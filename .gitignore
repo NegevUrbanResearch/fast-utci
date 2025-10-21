@@ -18,12 +18,16 @@ venv/
 # Project specific
 cache/
 .cache/
+
+# CSV files (ignore everywhere except validation folder)
 *.csv
+!data/validation/*.csv
 
 # Documentation
 docs/_build/
 site/
-# Analysis outputs (ignore general CSV files, keep analysis results)
-*.csv
+
+# Analysis outputs
 !data/analyses/*.json
-!data/analyses/manifest.jso
+!data/analyses/*.bin
+!data/analyses/manifest.json

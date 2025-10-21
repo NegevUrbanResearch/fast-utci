@@ -28,6 +28,7 @@ ANALYSIS_CONFIGS = [
         "day": 15,
         "grid_size": 2.0,
         "model_file": "data/3d_models/100_test.glb",
+        "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
         "embree_quality": "low",
         "intersects_any": True,
         "export_csv": False,

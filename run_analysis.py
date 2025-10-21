@@ -65,7 +65,7 @@ def run_analysis_core(
     day: int = DEFAULT_DAY,
     grid_size: float = DEFAULT_GRID_SIZE,
     model_file: str = "data/3d_models/100_test.glb",
-    epw_file: str = "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+    epw_file: str = "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
     embree_quality: str = "low",
     intersects_any: bool = True,
     export_csv: bool = False,

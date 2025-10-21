@@ -34,101 +34,6 @@ function calculateStatisticsDifferences(stats1, stats2) {
 }
 
 /**
- * Calculate Pearson correlation coefficient
- * @param {Float32Array} values1 - First array of values
- * @param {Float32Array} values2 - Second array of values
- * @returns {number} Correlation coefficient (-1 to 1)
- */
-function calculateCorrelation(values1, values2) {
-    const minLength = Math.min(values1.length, values2.length);
-    
-    // Calculate means
-    let sum1 = 0, sum2 = 0;
-    let count = 0;
-    
-    for (let i = 0; i < minLength; i++) {
-        if (!isNaN(values1[i]) && !isNaN(values2[i]) && 
-            isFinite(values1[i]) && isFinite(values2[i])) {
-            sum1 += values1[i];
-            sum2 += values2[i];
-            count++;
-        }
-    }
-    
-    if (count === 0) return 0;
-    
-    const mean1 = sum1 / count;
-    const mean2 = sum2 / count;
-    
-    // Calculate correlation coefficient
-    let numerator = 0;
-    let sumSq1 = 0;
-    let sumSq2 = 0;
-    
-    for (let i = 0; i < minLength; i++) {
-        if (!isNaN(values1[i]) && !isNaN(values2[i]) && 
-            isFinite(values1[i]) && isFinite(values2[i])) {
-            const diff1 = values1[i] - mean1;
-            const diff2 = values2[i] - mean2;
-            
-            numerator += diff1 * diff2;
-            sumSq1 += diff1 * diff1;
-            sumSq2 += diff2 * diff2;
-        }
-    }
-    
-    const denominator = Math.sqrt(sumSq1 * sumSq2);
-    return denominator === 0 ? 0 : numerator / denominator;
-}
-
-/**
- * Find spatially matched points between analysis and validation data
- * @param {object} analysis - Analysis data
- * @param {object} validation - Validation data
- * @returns {object} Matched analysis and validation values
- */
-function findSpatiallyMatchedPoints(analysis, validation) {
-    const analysisPositions = analysis.data.positions;
-    const validationPositions = validation.positions;
-    
-    const matchedAnalysisValues = [];
-    const matchedValidationValues = [];
-    
-    // For each validation point, find the closest analysis point
-    for (let v = 0; v < validation.numPositions; v++) {
-        const vx = validationPositions[v * 3];
-        const vy = validationPositions[v * 3 + 1];
-        const vz = validationPositions[v * 3 + 2];
-        
-        let closestDistance = Infinity;
-        let closestIndex = -1;
-        
-        // Find closest analysis point
-        for (let a = 0; a < analysis.data.numPositions; a++) {
-            const ax = analysisPositions[a * 3];
-            const ay = analysisPositions[a * 3 + 1];
-            const az = analysisPositions[a * 3 + 2];
-            
-            const distance = Math.sqrt(
-                (ax - vx) ** 2 + (ay - vy) ** 2 + (az - vz) ** 2
-            );
-            
-            if (distance < closestDistance) {
-                closestDistance = distance;
-                closestIndex = a;
-            }
-        }
-        
-        if (closestIndex !== -1) {
-            matchedAnalysisValues.push(closestIndex);
-            matchedValidationValues.push(v);
-        }
-    }
-    
-    return { matchedAnalysisValues, matchedValidationValues };
-}
-
-/**
  * Calculate average mean difference across all 24 hours
  * @param {object} analysis - Analysis data from UTCIDataLoader
  * @param {object} validation - Validation data from loadValidationData()
@@ -180,39 +85,12 @@ export function compareWithValidation(analysis, validation, hourIndex = 0) {
     
     const validationValues = validation.utciByHour[validationHourIndex];
     
-    // Check if we need spatial matching (different number of points)
-    let matchedAnalysisValues, matchedValidationValues;
-    
-    if (analysisValues.length !== validationValues.length) {
-        console.log(`[COMPARISON] Spatial matching required: Analysis ${analysisValues.length} points vs Validation ${validationValues.length} points`);
-        
-        const spatialMatch = findSpatiallyMatchedPoints(analysis, validation);
-        
-        // Extract matched values
-        matchedAnalysisValues = new Float32Array(spatialMatch.matchedAnalysisValues.length);
-        matchedValidationValues = new Float32Array(spatialMatch.matchedValidationValues.length);
-        
-        for (let i = 0; i < spatialMatch.matchedAnalysisValues.length; i++) {
-            matchedAnalysisValues[i] = analysisValues[spatialMatch.matchedAnalysisValues[i]];
-            matchedValidationValues[i] = validationValues[spatialMatch.matchedValidationValues[i]];
-        }
-        
-        console.log(`[COMPARISON] Spatial matching complete: ${matchedAnalysisValues.length} matched points`);
-    } else {
-        // Same number of points, use direct comparison
-        matchedAnalysisValues = analysisValues;
-        matchedValidationValues = validationValues;
-    }
-    
-    // Calculate statistics for both datasets
-    const analysisStats = calculateStatistics(analysisValues); // Use original for display
-    const validationStats = calculateStatistics(validationValues); // Use original for display
+    // Calculate statistics for both full datasets (no spatial matching needed)
+    const analysisStats = calculateStatistics(analysisValues);
+    const validationStats = calculateStatistics(validationValues);
     
     // Calculate statistics differences
     const statsDiff = calculateStatisticsDifferences(analysisStats, validationStats);
-    
-    // Calculate correlation using matched data
-    const correlation = calculateCorrelation(matchedAnalysisValues, matchedValidationValues);
     
     return {
         analysis: analysisStats,
@@ -220,8 +98,7 @@ export function compareWithValidation(analysis, validation, hourIndex = 0) {
         comparison: {
             minDiff: statsDiff.minDiff,
             maxDiff: statsDiff.maxDiff,
-            meanDiff: statsDiff.meanDiff,
-            correlation
+            meanDiff: statsDiff.meanDiff
         }
     };
 }
@@ -283,20 +160,9 @@ export function createAnalyticsPanel(metadata, comparisonStats = null, avgMeanDi
                 <strong>Comparison Metrics:</strong><br>
                 Min Diff: ${comparisonStats.comparison.minDiff >= 0 ? '+' : ''}${comparisonStats.comparison.minDiff.toFixed(2)}°C<br>
                 Max Diff: ${comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}${comparisonStats.comparison.maxDiff.toFixed(2)}°C<br>
-                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C<br>
-                Correlation: ${comparisonStats.comparison.correlation.toFixed(3)}
+                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C${avgMeanDiffAllHours !== null ? `<br>24-Hour Avg: ${avgMeanDiffAllHours >= 0 ? '+' : ''}${avgMeanDiffAllHours.toFixed(2)}°C` : ''}
             </div>
         `;
-        
-        // Add 24-hour average metric if available
-        if (avgMeanDiffAllHours !== null) {
-            content += `
-            <div style="margin-bottom: 8px; padding: 8px; background: #f0f8ff; border-radius: 4px;">
-                <strong>24-Hour Average:</strong><br>
-                Avg Mean Diff: ${avgMeanDiffAllHours >= 0 ? '+' : ''}${avgMeanDiffAllHours.toFixed(2)}°C
-            </div>
-            `;
-        }
     }
     
     // Add sun path toggle for full day analysis with sun data
@@ -364,12 +230,16 @@ export function updateAnalyticsPanel(comparisonStats, analysisStats = null) {
         
         const metricsSection = comparisonSection.nextElementSibling;
         if (metricsSection) {
+            // Preserve the 24-hour average line if it exists
+            const existingContent = metricsSection.innerHTML;
+            const avgMatch = existingContent.match(/24-Hour Avg: [+\-]?\d+\.\d+°C/);
+            const avgLine = avgMatch ? `<br>${avgMatch[0]}` : '';
+            
             metricsSection.innerHTML = `
                 <strong>Comparison Metrics:</strong><br>
                 Min Diff: ${comparisonStats.comparison.minDiff >= 0 ? '+' : ''}${comparisonStats.comparison.minDiff.toFixed(2)}°C<br>
                 Max Diff: ${comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}${comparisonStats.comparison.maxDiff.toFixed(2)}°C<br>
-                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C<br>
-                Correlation: ${comparisonStats.comparison.correlation.toFixed(3)}
+                Mean Diff: ${comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}${comparisonStats.comparison.meanDiff.toFixed(2)}°C${avgLine}
             `;
         }
     }

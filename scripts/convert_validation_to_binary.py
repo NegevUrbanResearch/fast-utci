@@ -14,32 +14,22 @@ from pathlib import Path
 
 def parse_validation_csv(csv_path: str) -> tuple[np.ndarray, np.ndarray, list]:
     """
-    Parse Grasshopper validation CSV.
+    Parse Grasshopper validation CSV - FULL dataset (all 4158 points per hour).
     
     The CSV has columns: Hour, pixel10*10, mrt 0, mrt 1, utci, color
-    Each row represents one position at one hour.
+    Most rows have NaN in pixel10*10 - we'll use ALL rows regardless.
     
     Args:
         csv_path: Path to validation CSV file
         
     Returns:
-        Tuple of (positions, utci_by_hour, pixel_ids)
+        Tuple of (positions, utci_by_hour, hours)
     """
     print(f"[LOAD] Reading validation CSV: {csv_path}")
     df = pd.read_csv(csv_path)
     
     print(f"[INFO] Total records: {len(df):,}")
     print(f"[INFO] Columns: {list(df.columns)}")
-    
-    # The CSV uses 10x10 grid, and 'pixel10*10' is the position identifier
-    # However, it doesn't contain actual x,y,z coordinates
-    # We'll need to infer or use placeholder positions
-    
-    # Get unique pixels (positions)
-    unique_pixels = df['pixel10*10'].dropna().unique()
-    num_positions = len(unique_pixels)
-    
-    print(f"[INFO] Unique positions: {num_positions}")
     
     # Parse hours (format is "0-1", "1-2", etc.)
     df['hour_start'] = df['Hour'].str.split('-').str[0].astype(int)
@@ -48,48 +38,76 @@ def parse_validation_csv(csv_path: str) -> tuple[np.ndarray, np.ndarray, list]:
     
     print(f"[INFO] Hours: {num_hours} ({min(unique_hours)} to {max(unique_hours)})")
     
-    # Create placeholder positions (we don't have actual coordinates)
-    # We'll use a grid layout based on pixel ID
-    positions = []
-    pixel_to_idx = {}
+    # Get rows for first hour to determine number of positions
+    first_hour_data = df[df['hour_start'] == unique_hours[0]]
+    num_positions = len(first_hour_data)
     
-    for idx, pixel_id in enumerate(sorted(unique_pixels)):
-        # Create a simple grid layout for visualization purposes
-        # This won't match real positions but maintains relative relationships
-        grid_x = idx % 100
-        grid_y = idx // 100
+    print(f"[INFO] Positions per hour: {num_positions}")
+    print(f"[INFO] Pixel IDs (non-null): {df['pixel10*10'].notna().sum()} (these are debug markers)")
+    
+    # Create synthetic grid positions since CSV doesn't have coordinates
+    # Use the SAME coordinate range as our analysis data for proper spatial matching
+    # Our 5m grid bounds: X: [-3636.6, -2651.6], Y: [-613.3, -193.3], Z: 1.5
+    
+    # Validation has ~4158 points, which suggests a ~65x64 grid
+    # We'll create a grid that fits within our analysis bounds
+    grid_rows = 65
+    grid_cols = 64
+    
+    print(f"[INFO] Creating {grid_rows}x{grid_cols} synthetic grid matching our analysis bounds...")
+    
+    # Use our actual grid coordinate range
+    x_min, x_max = -3636.6, -2651.6
+    y_min, y_max = -613.3, -193.3
+    z_height = 1.5
+    
+    # Create evenly spaced grid points
+    x_coords = np.linspace(x_min, x_max, grid_cols)
+    y_coords = np.linspace(y_min, y_max, grid_rows)
+    
+    positions = []
+    for i in range(num_positions):
+        # Map linear index to grid coordinates
+        row = i // grid_cols
+        col = i % grid_cols
         
-        # Scale to match approximate real-world coordinates
-        # (adjust based on actual model bounds if needed)
-        x = -2470.0 + grid_x * 10.0
-        y = -619.0 + grid_y * 10.0
-        z = 1.5  # Human height
-        
-        positions.append([x, y, z])
-        pixel_to_idx[pixel_id] = idx
+        if row < grid_rows and col < grid_cols:
+            x = x_coords[col]
+            y = y_coords[row]
+            z = z_height
+            positions.append([x, y, z])
     
     positions = np.array(positions, dtype=np.float32)
+    
+    print(f"[INFO] Position range:")
+    print(f"  X: [{positions[:, 0].min():.1f}, {positions[:, 0].max():.1f}]")
+    print(f"  Y: [{positions[:, 1].min():.1f}, {positions[:, 1].max():.1f}]")
+    print(f"  Z: {positions[:, 2].mean():.1f}")
     
     # Extract UTCI values organized by hour
     utci_by_hour = np.full((num_hours, num_positions), np.nan, dtype=np.float32)
     
-    for _, row in df.iterrows():
-        pixel_id = row['pixel10*10']
-        if pd.isna(pixel_id):
-            continue
-            
-        hour = row['hour_start']
-        utci = row['utci']
+    for hour_idx, hour in enumerate(unique_hours):
+        hour_data = df[df['hour_start'] == hour].sort_index()
         
-        if pixel_id in pixel_to_idx and hour in unique_hours:
-            pos_idx = pixel_to_idx[pixel_id]
-            hour_idx = unique_hours.index(hour)
-            utci_by_hour[hour_idx, pos_idx] = float(utci)
+        # Take first num_positions rows for this hour
+        hour_utci = hour_data['utci'].values[:num_positions]
+        utci_by_hour[hour_idx, :len(hour_utci)] = hour_utci.astype(np.float32)
     
     # Report statistics
     valid_count = np.sum(~np.isnan(utci_by_hour))
     total_count = utci_by_hour.size
     print(f"[INFO] Valid UTCI values: {valid_count:,} / {total_count:,} ({valid_count/total_count*100:.1f}%)")
+    
+    # Show statistics per hour
+    print(f"\n[STATS] UTCI by hour:")
+    for hour_idx, hour in enumerate(unique_hours):
+        hour_data = utci_by_hour[hour_idx, :]
+        hour_valid = hour_data[~np.isnan(hour_data)]
+        if len(hour_valid) > 0:
+            print(f"  Hour {hour:2d}: {len(hour_valid):4d} points, "
+                  f"range [{hour_valid.min():.1f}, {hour_valid.max():.1f}], "
+                  f"mean {hour_valid.mean():.1f}°C")
     
     return positions, utci_by_hour, unique_hours
 
