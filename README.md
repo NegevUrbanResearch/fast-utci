@@ -1,14 +1,33 @@
 # fast-utci
 
-**fast-utci** is a Python package designed to rapidly compute 2D Universal Thermal Climate Index (UTCI) maps from 3D models.
+**Rapidly compute 2D UTCI maps from 3D models**
 
-For the UTCI calculations, we use the UTCI calculator from [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort). UTCI calculations take as inputs the Mean Radiant Temp, Air Temp, Wind Speed, and Relative Humidity. We also use [Ladybug Tools](https://github.com/ladybug-tools) for other calculations such as retrieving the angle of the sun.
+This package calculates Universal Thermal Climate Index (UTCI) for outdoor thermal comfort analysis by combining physical 3D geometry with weather data.
 
-For calculating the Mean Radiant Temperature at a given point or mesh edge, we conduct raytracing to find where direct sunlight and reflected solar radiation will land depending on both the angle of the sun and the 3D objects modeled. We use Embree-accelerated ray tests via trimesh (pyembree) for occlusion and visibility.
+**Live Demo:** [3D UTCI Viewer](https://negevurbanresearch.github.io/fast-utci/)
 
-### Web Viewer
+## What is UTCI?
 
-View live thermal comfort analysis: **[3D UTCI Viewer](https://negevurbanresearch.github.io/fast-utci/)**
+UTCI (Universal Thermal Climate Index) represents how hot or cold it *feels* to a human outdoors, accounting for:
+- **Air temperature** - ambient conditions
+- **Wind speed** - convective cooling  
+- **Humidity** - evaporative cooling
+- **Mean Radiant Temperature (MRT)** - radiation from sun, sky, and surfaces
+
+UTCI values range from extreme cold (< -40°C) to extreme heat (> 46°C), with comfortable conditions between 9-26°C.
+
+## How It Works
+
+```
+3D Model + Weather → MRT (ray tracing) → UTCI (thermal comfort)
+```
+
+**Two-stage process:**
+
+1. **MRT Calculation**: Ray-trace sun/sky visibility from 3D geometry to compute Mean Radiant Temperature using [Ladybug Tools](https://github.com/ladybug-tools) SolarCal
+2. **UTCI Calculation**: Combine MRT with weather data (air temp, wind, humidity) using [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort)
+
+Uses **Embree-accelerated ray tracing** via trimesh (pyembree) for fast occlusion testing.
 
 ## Installation
 
@@ -39,19 +58,22 @@ python quick_analysis.py
 python run_analysis.py
 ```
 
-**Note**: Both scripts perform full-day (24-hour) UTCI analysis. `quick_analysis.py` is a lightweight wrapper that calls `run_analysis_core()` with predefined configurations. Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple analyses with different parameters.
+**Note**: Both scripts perform full-day (24-hour) UTCI analysis. `quick_analysis.py` is a lightweight wrapper that calls `run_analysis_core()` with predefined configurations. Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple analyses.
 
-**Output Files**:
-- Binary data (`.bin`) and metadata (`.json`) for web viewer (always generated)
-- CSV export with detailed results (optional, set `export_csv=True` in config)
+**Output**:
+- Binary (`.bin`) + metadata (`.json`) for web viewer
+- CSV export (optional, set `export_csv=True` in config)
 
 ### View Results
 
-Run locally:
 ```bash
 python -m http.server 8000
 # Open http://localhost:8000/viewer/
 ```
+
+### Using the API
+
+For programmatic access, see [`fast_utci/README.md`](fast_utci/README.md) for complete API examples.
 
 
 ## Project Structure
@@ -59,73 +81,41 @@ python -m http.server 8000
 ```
 fast-utci/
 ├── fast_utci/              # Main package
-│   ├── mrt/                # MRT calculation modules
-│   │   ├── mrt_calculator.py
-│   │   ├── solar.py
-│   │   ├── exposure.py
-│   │   ├── config.py       # MRT-specific config
-│   │   └── ...
-│   ├── utci/               # UTCI calculation modules (NEW)
-│   │   ├── calculator.py   # Main UTCICalculator
-│   │   ├── calculation.py  # Core computation logic
-│   │   ├── weather.py      # Weather data management
-│   │   ├── statistics.py   # Thermal comfort analysis
-│   │   ├── export.py       # Export functionality
-│   │   └── config.py       # UTCI-specific config
-│   ├── shared/             # Shared utilities (NEW)
-│   │   ├── config.py       # Parallel & performance config
-│   │   ├── parallel_utils.py  # Parallel processing
-│   │   └── weather.py      # Weather loading & filtering (consolidated)
-│   ├── model_reader.py     # 3D model and EPW reading
-│   ├── viewer.py           # 3D visualization
-│   └── colors.py           # UTCI color scales
-├── scripts/                # Utility scripts
-│   ├── export_for_viewer.py
-│   ├── generate_manifest.py
+│   ├── mrt/                # MRT calculation (ray tracing, solar)
+│   ├── utci/               # UTCI calculation (thermal comfort)
+│   ├── shared/             # Shared utilities (parallel, weather, config)
+│   ├── model_reader.py     # 3D model & EPW file loading
 │   └── ...
-├── viewer/                 # Web-based 3D viewer
-│   ├── index.html          # Analysis selector
-│   ├── viewer.html         # Main viewer
-│   └── js/                 # Viewer components
-├── data/                   # Data files
-│   ├── 3d_models/          # GLTF/GLB files
-│   ├── weather/            # EPW weather files
-│   ├── analyses/           # Generated analysis results
-│   └── validation/         # Validation data
-├── docs/                   # Documentation
-├── tests/                  # Test suite
-│   ├── fixtures/           # Test data and baselines
-│   └── test_*.py           # Integration tests
-├── quick_analysis.py       # Quick config-based analysis wrapper
-├── run_analysis.py         # Interactive full-day analysis script
-└── pyproject.toml          # Package configuration
+├── viewer/                 # Web-based 3D viewer (three.js)
+├── data/                   # Models, weather, analyses, validation
+├── scripts/                # Utility scripts
+├── tests/                  # Test suite with validation
+├── quick_analysis.py       # Quick automated workflow
+└── run_analysis.py         # Interactive analysis workflow
 ```
 
-## Modules
+See module READMEs for detailed structure.
 
-### `fast_utci.mrt`
-Core MRT calculation functionality with parallel processing support.
-See `fast_utci/mrt/README.md` for detailed documentation.
+## Documentation
 
-### `fast_utci.utci`
-UTCI calculation from MRT results and weather data using pythermalcomfort.
-Modular architecture with clean separation of concerns.
-See `fast_utci/utci/README.md` for detailed documentation.
+### API Documentation
 
-### `fast_utci.shared`
-Shared utilities for parallel processing, configuration, and weather data handling.
-Consolidates common functionality used by both MRT and UTCI calculators.
-See `fast_utci/shared/README.md` for detailed documentation.
+For detailed API usage and programmatic access:
+- **[`fast_utci/README.md`](fast_utci/README.md)** - Complete API guide with code examples
+- **[`fast_utci/mrt/README.md`](fast_utci/mrt/README.md)** - MRT calculation details
+- **[`fast_utci/utci/README.md`](fast_utci/utci/README.md)** - UTCI calculation details
+- **[`fast_utci/shared/README.md`](fast_utci/shared/README.md)** - Shared utilities
 
-### `fast_utci.model_reader`
-Read and parse 3D models (GLTF/GLB) and EPW weather files.
-Delegates weather loading to `fast_utci.shared.weather` for consistency.
+### Module Overview
 
-### `fast_utci.viewer`
-Enhanced 3D visualization with UTCI heatmaps using three.js
-
+- **`fast_utci.mrt`** - MRT calculation with ray tracing and parallel processing
+- **`fast_utci.utci`** - UTCI calculation using pythermalcomfort
+- **`fast_utci.shared`** - Parallel processing, weather data, and configuration
+- **`fast_utci.model_reader`** - 3D model (GLTF/GLB) and EPW file loading
+- **`fast_utci.viewer`** - 3D visualization with UTCI heatmaps (three.js)
 
 ## Requirements
 
-- Python 3.11
+- Python 3.11+
 - See `pyproject.toml` for full dependency list
+- **Recommended**: Install `pyembree` for 10-100x speedup in ray tracing
