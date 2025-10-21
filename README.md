@@ -32,12 +32,20 @@ pip install -e .[all]       # Everything
 ### Running Example Scripts
 
 ```bash
-# Quick automated workflow with default settings (single hour at 13:00)
+# Quick automated workflow with predefined parameters (full day)
 python quick_analysis.py
 
-# Interactive workflow with full options (choose single hour or full day)
+# Interactive workflow with date selection (full day analysis)
 python run_analysis.py
 ```
+
+**Note**: Both scripts perform full-day (24-hour) UTCI analysis. `quick_analysis.py` is a lightweight wrapper that calls `run_analysis_core()` with predefined configurations. Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple analyses with different parameters.
+
+**Output Files**:
+- Binary data (`.bin`) and metadata (`.json`) for web viewer (always generated)
+- CSV export with detailed results (optional, set `export_csv=True` in config)
+
+### View Results
 
 Run locally:
 ```bash
@@ -55,8 +63,19 @@ fast-utci/
 │   │   ├── mrt_calculator.py
 │   │   ├── solar.py
 │   │   ├── exposure.py
+│   │   ├── config.py       # MRT-specific config
 │   │   └── ...
-│   ├── utci_calculator.py  # UTCI calculations
+│   ├── utci/               # UTCI calculation modules (NEW)
+│   │   ├── calculator.py   # Main UTCICalculator
+│   │   ├── calculation.py  # Core computation logic
+│   │   ├── weather.py      # Weather data management
+│   │   ├── statistics.py   # Thermal comfort analysis
+│   │   ├── export.py       # Export functionality
+│   │   └── config.py       # UTCI-specific config
+│   ├── shared/             # Shared utilities (NEW)
+│   │   ├── config.py       # Parallel & performance config
+│   │   ├── parallel_utils.py  # Parallel processing
+│   │   └── weather.py      # Weather loading & filtering (consolidated)
 │   ├── model_reader.py     # 3D model and EPW reading
 │   ├── viewer.py           # 3D visualization
 │   └── colors.py           # UTCI color scales
@@ -74,9 +93,11 @@ fast-utci/
 │   ├── analyses/           # Generated analysis results
 │   └── validation/         # Validation data
 ├── docs/                   # Documentation
-├── tests/                  # Test suite (TBD)
-├── quick_analysis.py       # Quick analysis script
-├── run_analysis.py         # Interactive analysis script
+├── tests/                  # Test suite
+│   ├── fixtures/           # Test data and baselines
+│   └── test_*.py           # Integration tests
+├── quick_analysis.py       # Quick config-based analysis wrapper
+├── run_analysis.py         # Interactive full-day analysis script
 └── pyproject.toml          # Package configuration
 ```
 
@@ -84,12 +105,21 @@ fast-utci/
 
 ### `fast_utci.mrt`
 Core MRT calculation functionality with parallel processing support.
+See `fast_utci/mrt/README.md` for detailed documentation.
 
-### `fast_utci.utci_calculator`
+### `fast_utci.utci`
 UTCI calculation from MRT results and weather data using pythermalcomfort.
+Modular architecture with clean separation of concerns.
+See `fast_utci/utci/README.md` for detailed documentation.
+
+### `fast_utci.shared`
+Shared utilities for parallel processing, configuration, and weather data handling.
+Consolidates common functionality used by both MRT and UTCI calculators.
+See `fast_utci/shared/README.md` for detailed documentation.
 
 ### `fast_utci.model_reader`
 Read and parse 3D models (GLTF/GLB) and EPW weather files.
+Delegates weather loading to `fast_utci.shared.weather` for consistency.
 
 ### `fast_utci.viewer`
 Enhanced 3D visualization with UTCI heatmaps using three.js

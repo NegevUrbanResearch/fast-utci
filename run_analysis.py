@@ -36,9 +36,9 @@ DEFAULT_DAY = 15
 
 def get_analysis_date() -> Tuple[int, int]:
     """Get analysis date input."""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("ANALYSIS DATE SELECTION")
-    print("="*60)
+    print("=" * 60)
     print(f"Enter the date to analyze:")
     
     while True:
@@ -89,9 +89,9 @@ def run_analysis_core(
         Dictionary containing analysis results and metadata
     """
     if verbose:
-        print("="*60)
+        print("=" * 60)
         print("FAST-UTCI FULL DAY ANALYSIS")
-        print("="*60)
+        print("=" * 60)
         print(f"Date: Month {month}, Day {day}")
         print(f"Grid: {grid_size}m spacing")
         print(f"Embree: {embree_quality} quality, intersects_any={intersects_any}")
@@ -116,9 +116,9 @@ def run_analysis_core(
     try:
         # Load data
         if verbose:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("STEP 1: LOADING PROJECT DATA")
-            print("="*60)
+            print("=" * 60)
         
         from fast_utci.model_reader import read_project_data_enhanced
         t0 = time.perf_counter()
@@ -135,9 +135,9 @@ def run_analysis_core(
         
         # Compute MRT
         if verbose:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("STEP 2: COMPUTING MRT")
-            print("="*60)
+            print("=" * 60)
         
         from fast_utci.mrt import (
             MRTCalculator, create_rectangular_grid, create_analysis_period
@@ -175,6 +175,10 @@ def run_analysis_core(
         # Compute exposure and MRT
         if verbose:
             print(f"[INFO] Computing MRT for {len(grid.points)} positions...")
+            print(f"[INFO] Boundary averaging enabled:")
+            print(f"  Will calculate MRT at hour boundaries (N and N+1) and average UTCI")
+            print(f"  Note: Hour 23 uses same value for both boundaries (no wrap to next day)")
+        
         t2 = time.perf_counter()
         
         exposure_results = mrt_calc.compute_exposure(
@@ -200,11 +204,11 @@ def run_analysis_core(
         
         # Compute UTCI
         if verbose:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("STEP 3: COMPUTING UTCI")
-            print("="*60)
+            print("=" * 60)
         
-        from fast_utci.utci_calculator import UTCICalculator
+        from fast_utci.utci import UTCICalculator
         
         utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data)
         
@@ -221,22 +225,16 @@ def run_analysis_core(
             print(f"[OK] UTCI computed")
             print(f"[TIME] UTCI time: {(t5-t4):.2f}s")
         
-        # Calculate statistics
-        all_utci = []
-        for pos_key, data in utci_results.items():
-            if isinstance(data.get('utci'), (list, np.ndarray)):
-                all_utci.extend(data['utci'])
-            else:
-                all_utci.append(data['utci'])
-        
-        all_utci = np.array(all_utci)
-        utci_min, utci_max, utci_mean = np.min(all_utci), np.max(all_utci), np.mean(all_utci)
+        # Calculate statistics using shared utilities (NaN-safe)
+        from fast_utci.utci.statistics import calculate_utci_statistics
+        utci_stats = calculate_utci_statistics(utci_results)
+        utci_min, utci_max, utci_mean = utci_stats['min'], utci_stats['max'], utci_stats['mean']
         
         # Export results
         if verbose:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("STEP 4: EXPORTING RESULTS")
-            print("="*60)
+            print("=" * 60)
         
         # Export CSV (optional)
         csv_filename = None
@@ -266,9 +264,9 @@ def run_analysis_core(
         
         # Summary
         if verbose:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("ANALYSIS COMPLETE")
-            print("="*60)
+            print("=" * 60)
             print(f"Positions analyzed: {len(utci_results)}")
             print(f"UTCI range: {utci_min:.1f} to {utci_max:.1f} C (mean: {utci_mean:.1f} C)")
             print(f"Total runtime: {total_time:.1f}s")
@@ -307,9 +305,9 @@ def run_analysis_core(
 def main() -> int:
     """Interactive CLI entry point for full day UTCI analysis."""
     
-    print("="*60)
+    print("=" * 60)
     print("FAST-UTCI FULL DAY ANALYSIS")
-    print("="*60)
+    print("=" * 60)
     print("Mode: Full day analysis (24 hours)")
     
     # Get analysis date

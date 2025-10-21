@@ -16,10 +16,10 @@ A performant Three.js-based 3D viewer for UTCI (Universal Thermal Climate Index)
 
 1. **Generate Analysis Data**:
    ```bash
-   # Quick automated analysis (single hour at 13:00)
+   # Quick automated analysis with predefined parameters (full day)
    python quick_analysis.py
    
-   # OR interactive analysis with full options
+   # OR interactive analysis with date selection (full day)
    python run_analysis.py
    ```
    This will create binary data files in `data/analyses/`
@@ -68,13 +68,6 @@ quick_analysis.py/run_analysis.py → scripts/export_for_viewer.py → Binary fi
 ```
 
 ## Binary Data Format
-
-### Single Hour Analysis
-```
-[4 bytes: num_positions]
-[num_positions × 12 bytes: positions (x,y,z as float32)]
-[num_positions × 4 bytes: utci values (float32)]
-```
 
 ### Full Day Analysis
 ```

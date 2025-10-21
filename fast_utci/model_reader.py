@@ -473,12 +473,10 @@ def read_project_data_enhanced(model_path: str | Path,
     Returns:
         Tuple of (enhanced_model, weather_df, epw_object)
     """
-    enhanced_model = read_enhanced_model(model_path, verbose=verbose)
-    weather_df = read_weather_data(weather_path)
+    from fast_utci.shared.weather import load_weather_data
     
-    # Also return the original EPW object
-    from ladybug.epw import EPW
-    epw = EPW(str(weather_path))
+    enhanced_model = read_enhanced_model(model_path, verbose=verbose)
+    weather_df, epw = load_weather_data(weather_path)
     
     return enhanced_model, weather_df, epw
 
@@ -486,26 +484,14 @@ def read_project_data_enhanced(model_path: str | Path,
 def read_weather_data(file_path: str | Path) -> pd.DataFrame:
     """
     Read EPW weather file and extract UTCI inputs as DataFrame.
+    
+    NOTE: This function now delegates to fast_utci.shared.weather.load_weather_data()
+    for consolidation. The API remains backward compatible.
     """
-    file_path = Path(file_path)
-    assert file_path.exists(), f"Weather file not found: {file_path}"
-
-    from ladybug.epw import EPW
-    epw = EPW(str(file_path))
-
-    data = {
-        'datetime': epw.dry_bulb_temperature.datetimes,
-        'air_temp': epw.dry_bulb_temperature.values,
-        'wind_speed': epw.wind_speed.values,
-        'relative_humidity': epw.relative_humidity.values,
-        'global_horizontal_radiation': epw.global_horizontal_radiation.values,
-        'direct_normal_radiation': epw.direct_normal_radiation.values,
-        'diffuse_horizontal_radiation': epw.diffuse_horizontal_radiation.values,
-        'horizontal_infrared_radiation_intensity': epw.horizontal_infrared_radiation_intensity.values,
-        'surface_temp': epw.dry_bulb_temperature.values
-    }
-
-    return pd.DataFrame(data)
+    from fast_utci.shared.weather import load_weather_data
+    
+    weather_df, _ = load_weather_data(file_path)
+    return weather_df
 
 
 def read_project_data(model_path: str | Path, 

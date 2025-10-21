@@ -41,6 +41,9 @@ from .grid import AnalysisGrid, create_grid_from_surface, create_rectangular_gri
 from .period import AnalysisPeriod, filter_weather_data, filter_arrays_by_period
 from .config import MRTConfig, DEFAULT_CONFIG
 
+# Import parallel utilities from shared
+from fast_utci.shared import ParallelProcessor
+
 # Import ladybug for location and EPW handling
 from ladybug.location import Location
 from ladybug.epw import EPW
@@ -301,15 +304,24 @@ class MRTCalculator:
         """
         Compute MRT using SolarCal for given exposure results.
         
+        Uses boundary averaging: for each hour N, calculates:
+        - mrt0 using hour N's weather and exposure
+        - mrt1 using hour N+1's weather and exposure
+        This matches Grasshopper's OutdoorSolarMRT behavior.
+        
         Args:
             epw_data: EPW object or weather DataFrame
             exposure_results: List of ExposureResult objects from compute_exposure
+                            Should include N+1 hours for boundary averaging
             analysis_period: Optional time period filter
             target_hours: Optional hour filter
             n_workers: Number of parallel workers (default: CPU count - 1)
             
         Returns:
-            Dictionary with MRT results per position
+            Dictionary with MRT results per position, containing:
+            - 'mrt0': MRT array using hour N data
+            - 'mrt1': MRT array using hour N+1 data
+            - Other analysis results
         """
         # Extract weather data
         if hasattr(epw_data, 'dry_bulb_temperature'):
@@ -354,6 +366,24 @@ class MRTCalculator:
             exposure_results, epw_data, filtered_weather, filtered_datetimes,
             analysis_period, target_hours, n_workers, show_progress=True
         )
+    
+    @staticmethod
+    def _create_boundary_arrays(mrt_array: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Create mrt0 and mrt1 arrays for boundary averaging.
+        
+        mrt0[i] uses hour i's data, mrt1[i] uses hour i+1's data.
+        For the last hour, mrt1 duplicates the final value (no next-day wrap).
+        
+        Args:
+            mrt_array: MRT values for N hours
+            
+        Returns:
+            Tuple of (mrt0, mrt1) both with length N
+        """
+        if len(mrt_array) > 1:
+            return mrt_array, np.concatenate([mrt_array[1:], [mrt_array[-1]]])
+        return mrt_array, mrt_array
     
     def _compute_mrt_from_epw(self, epw_data, exposure, analysis_period, target_hours):
         """Compute MRT using EPW data collections for proper Grasshopper-like filtering."""
@@ -441,7 +471,13 @@ class MRTCalculator:
     
     def _compute_single_mrt(self, i, exposure, epw_data, filtered_weather, 
                            filtered_datetimes, analysis_period, target_hours):
-        """Compute MRT for a single position."""
+        """
+        Compute MRT for a single position using boundary averaging.
+        
+        Calculates MRT for N+1 hours, then creates:
+        - mrt0: MRT values using hours [0:N]
+        - mrt1: MRT values using hours [1:N+1]
+        """
         # Ensure exposure arrays match filtered weather length
         if len(exposure.fract_body_exp) != len(filtered_datetimes):
             warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
@@ -458,6 +494,7 @@ class MRTCalculator:
             fract_exp = exposure.fract_body_exp
         
         # Compute SolarCal MRT using EPW data collections for proper filtering
+        # This computes MRT for all N+1 hours
         if hasattr(epw_data, 'dry_bulb_temperature'):
             # Use EPW object directly for proper data collection handling
             mrt_result = self._compute_mrt_from_epw(
@@ -478,16 +515,22 @@ class MRTCalculator:
                 solar_body_par=self.body_params
             )
         
+        # Create boundary arrays for averaging
+        mrt0, mrt1 = self._create_boundary_arrays(mrt_result.mrt)
+        n_hours = len(mrt0)
+        
         return {
             'position': exposure.position,
-            'mrt': mrt_result.mrt,
+            'mrt0': mrt0,
+            'mrt1': mrt1,
+            'mrt': mrt0,  # Backward compatibility
             'short_erf': mrt_result.short_erf,
             'long_erf': mrt_result.long_erf,
             'short_dmrt': mrt_result.short_dmrt,
             'long_dmrt': mrt_result.long_dmrt,
-            'fract_body_exp': fract_exp,
+            'fract_body_exp': fract_exp[:n_hours],
             'sky_exposure': exposure.sky_exposure,
-            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]  # Placeholder for EPW case
+            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]
         }
     
     
@@ -619,14 +662,20 @@ def _compute_mrt_chunk(args):
                 solar_body_par=body_params
             )
         
+        # Create boundary arrays for averaging
+        mrt0, mrt1 = MRTCalculator._create_boundary_arrays(mrt_result.mrt)
+        n_hours = len(mrt0)
+        
         results[f'position_{i}'] = {
             'position': exposure.position,
-            'mrt': mrt_result.mrt,
+            'mrt0': mrt0,
+            'mrt1': mrt1,
+            'mrt': mrt0,  # Backward compatibility
             'short_erf': mrt_result.short_erf,
             'long_erf': mrt_result.long_erf,
             'short_dmrt': mrt_result.short_dmrt,
             'long_dmrt': mrt_result.long_dmrt,
-            'fract_body_exp': fract_exp,
+            'fract_body_exp': fract_exp[:n_hours],
             'sky_exposure': exposure.sky_exposure,
             'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]
         }

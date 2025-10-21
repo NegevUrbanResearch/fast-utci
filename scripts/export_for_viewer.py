@@ -179,47 +179,8 @@ def export_binary_full_day(
     print(f"[SAVE] Binary data: {output_path.name} ({file_size_mb:.2f} MB)")
 
 
-def _calculate_hour_statistics(
-    utci_results: Dict[str, Any],
-    hours: List[int]
-) -> List[Dict[str, float]]:
-    """
-    Calculate per-hour UTCI statistics for full day analysis.
-    
-    Args:
-        utci_results: UTCI results dictionary
-        hours: List of hours analyzed
-        
-    Returns:
-        List of dicts with hour, min, max, mean for each hour
-    """
-    num_hours = len(hours)
-    sorted_keys = sorted(utci_results.keys())
-    
-    # Organize UTCI values by hour
-    utci_by_hour = [[] for _ in range(num_hours)]
-    
-    for pos_key in sorted_keys:
-        data = utci_results[pos_key]
-        utci_vals = data['utci']
-        
-        if isinstance(utci_vals, (list, np.ndarray)):
-            for hour_idx, utci_val in enumerate(utci_vals[:num_hours]):
-                utci_by_hour[hour_idx].append(float(utci_val))
-    
-    # Calculate statistics for each hour
-    hour_stats = []
-    for hour_idx, hour in enumerate(hours):
-        if utci_by_hour[hour_idx]:
-            hour_utci = np.array(utci_by_hour[hour_idx])
-            hour_stats.append({
-                'hour': hour,
-                'min': float(np.min(hour_utci)),
-                'max': float(np.max(hour_utci)),
-                'mean': float(np.mean(hour_utci))
-            })
-    
-    return hour_stats
+# NOTE: _calculate_hour_statistics has been moved to fast_utci.utci.statistics
+# to avoid code duplication. Import it instead of defining it here.
 
 
 def _extract_location_from_epw(epw_file: str) -> Dict[str, Any]:
@@ -319,6 +280,9 @@ def export_metadata_json(
     """
     Export analysis metadata to JSON.
     
+    Uses shared utilities from fast_utci.utci.statistics to avoid code duplication
+    and ensure NaN-safe calculations for valid JSON output.
+    
     Args:
         utci_results: UTCI results dictionary
         analysis_id: Analysis identifier
@@ -331,22 +295,17 @@ def export_metadata_json(
         runtime_seconds: Total computation time
         output_path: Path to output .json file
     """
-    # Calculate statistics
-    all_utci = []
-    all_positions = []
+    # Import shared utilities from fast_utci.utci.statistics
+    from fast_utci.utci.statistics import (
+        extract_all_utci_values,
+        extract_positions,
+        calculate_utci_statistics,
+        calculate_hour_statistics
+    )
     
-    for pos_key, data in utci_results.items():
-        pos = data['position']
-        all_positions.append(pos)
-        
-        utci_vals = data['utci']
-        if isinstance(utci_vals, (list, np.ndarray)):
-            all_utci.extend(utci_vals)
-        else:
-            all_utci.append(utci_vals)
-    
-    all_utci = np.array(all_utci)
-    all_positions = np.array(all_positions)
+    # Use shared utilities for data extraction (NaN-safe)
+    all_utci = extract_all_utci_values(utci_results)
+    all_positions = extract_positions(utci_results)
     
     # Create metadata dictionary
     metadata = {
@@ -362,11 +321,8 @@ def export_metadata_json(
             "y_max": float(all_positions[:, 1].max()),
             "z": float(all_positions[0, 2])
         },
-        "utci_range": {
-            "min": float(np.min(all_utci)),
-            "max": float(np.max(all_utci)),
-            "mean": float(np.mean(all_utci))
-        },
+        # Use shared utility for NaN-safe statistics
+        "utci_range": calculate_utci_statistics(utci_results),
         "num_positions": len(utci_results),
         "model_file": str(model_file),
         "epw_file": str(epw_file),
@@ -374,9 +330,9 @@ def export_metadata_json(
         "runtime_seconds": float(runtime_seconds)
     }
     
-    # Add per-hour statistics for full day analysis
+    # Add per-hour statistics for full day analysis (NaN-safe)
     if analysis_type == "full_day":
-        metadata["hour_statistics"] = _calculate_hour_statistics(utci_results, hours)
+        metadata["hour_statistics"] = calculate_hour_statistics(utci_results, hours)
     
     # Extract and add location data from EPW file
     try:

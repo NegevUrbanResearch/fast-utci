@@ -1,145 +1,18 @@
 """
 Adapters and strategy patterns for MRT calculations.
 
-Provides abstraction layers for different data sources and intersection backends,
+Provides abstraction layers for different ray intersection backends,
 making the codebase more flexible, testable, and extensible.
+
+NOTE: Weather data adapters have been moved to fast_utci.shared.weather
+for consolidation across MRT and UTCI modules.
 """
 
 from __future__ import annotations
-import numpy as np
-from typing import Protocol, List, Union, Optional, Any
-from datetime import datetime
+from typing import Any
 import warnings
 
-from .exceptions import WeatherDataError, IntersectorError, ConfigurationError
-
-
-# ============================================================================
-# Weather Data Adapters
-# ============================================================================
-
-class WeatherDataSource(Protocol):
-    """Protocol for weather data sources."""
-    
-    def get_temperature(self) -> np.ndarray:
-        """Get air temperature array (°C)."""
-        ...
-    
-    def get_direct_radiation(self) -> np.ndarray:
-        """Get direct normal radiation array (W/m²)."""
-        ...
-    
-    def get_diffuse_radiation(self) -> np.ndarray:
-        """Get diffuse horizontal radiation array (W/m²)."""
-        ...
-    
-    def get_infrared_radiation(self) -> np.ndarray:
-        """Get horizontal infrared radiation array (W/m²)."""
-        ...
-    
-    def get_datetimes(self) -> List:
-        """Get datetime objects corresponding to data arrays."""
-        ...
-
-
-class EPWAdapter:
-    """Adapter for Ladybug EPW weather data."""
-    
-    def __init__(self, epw_data: Any):
-        """
-        Initialize EPW adapter.
-        
-        Args:
-            epw_data: Ladybug EPW object
-        """
-        if not hasattr(epw_data, 'dry_bulb_temperature'):
-            raise WeatherDataError("Invalid EPW object: missing dry_bulb_temperature")
-        self.epw_data = epw_data
-    
-    def get_temperature(self) -> np.ndarray:
-        """Get air temperature array."""
-        return np.array(self.epw_data.dry_bulb_temperature.values)
-    
-    def get_direct_radiation(self) -> np.ndarray:
-        """Get direct normal radiation array."""
-        return np.array(self.epw_data.direct_normal_radiation.values)
-    
-    def get_diffuse_radiation(self) -> np.ndarray:
-        """Get diffuse horizontal radiation array."""
-        return np.array(self.epw_data.diffuse_horizontal_radiation.values)
-    
-    def get_infrared_radiation(self) -> np.ndarray:
-        """Get horizontal infrared radiation array."""
-        return np.array(self.epw_data.horizontal_infrared_radiation_intensity.values)
-    
-    def get_datetimes(self) -> List:
-        """Get datetime objects."""
-        return self.epw_data.dry_bulb_temperature.datetimes
-
-
-class DataFrameAdapter:
-    """Adapter for pandas DataFrame weather data."""
-    
-    def __init__(self, df_data: Any):
-        """
-        Initialize DataFrame adapter.
-        
-        Args:
-            df_data: pandas DataFrame with weather data columns
-        """
-        required_columns = ['air_temp', 'direct_normal_radiation', 
-                           'diffuse_horizontal_radiation', 
-                           'horizontal_infrared_radiation_intensity']
-        
-        for col in required_columns:
-            if col not in df_data.columns:
-                raise WeatherDataError(f"DataFrame missing required column: {col}")
-        
-        self.df_data = df_data
-    
-    def get_temperature(self) -> np.ndarray:
-        """Get air temperature array."""
-        return self.df_data['air_temp'].values
-    
-    def get_direct_radiation(self) -> np.ndarray:
-        """Get direct normal radiation array."""
-        return self.df_data['direct_normal_radiation'].values
-    
-    def get_diffuse_radiation(self) -> np.ndarray:
-        """Get diffuse horizontal radiation array."""
-        return self.df_data['diffuse_horizontal_radiation'].values
-    
-    def get_infrared_radiation(self) -> np.ndarray:
-        """Get horizontal infrared radiation array."""
-        return self.df_data['horizontal_infrared_radiation_intensity'].values
-    
-    def get_datetimes(self) -> List:
-        """Get datetime objects."""
-        return self.df_data['datetime'].tolist()
-
-
-def create_weather_adapter(weather_data: Any) -> Union[EPWAdapter, DataFrameAdapter]:
-    """
-    Factory function to create appropriate weather data adapter.
-    
-    Args:
-        weather_data: EPW object or pandas DataFrame
-        
-    Returns:
-        Appropriate adapter instance
-        
-    Raises:
-        WeatherDataError: If data type is not recognized
-    """
-    if hasattr(weather_data, 'dry_bulb_temperature'):
-        return EPWAdapter(weather_data)
-    elif hasattr(weather_data, 'columns'):
-        return DataFrameAdapter(weather_data)
-    else:
-        raise WeatherDataError(
-            f"Unsupported weather data type: {type(weather_data)}. "
-            "Expected EPW object or pandas DataFrame."
-        )
+from .exceptions import ConfigurationError
 
 
 # ============================================================================

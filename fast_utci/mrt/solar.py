@@ -107,16 +107,21 @@ def get_tregenza_dome_vectors() -> Tuple[np.ndarray, np.ndarray]:
     """
     Get Tregenza sky dome patch vectors and weights for sky exposure calculation.
     
+    Matches Grasshopper's "LB Human to Sky Relation" component which uses
+    dome_patch_weights(1) for the weight calculation.
+    
     Returns:
         Tuple of (vectors, weights) where:
         - vectors: shape (145, 3) unit vectors pointing to sky patches
-        - weights: shape (145,) solid angle weights for each patch
+        - weights: shape (145,) patch weights (dome_patch_weights, not solid angles)
     """
     from ladybug.viewsphere import view_sphere
     
     # Get Tregenza dome vectors and weights
     tregenza_vecs = view_sphere.tregenza_dome_vectors
-    tregenza_weights = view_sphere.tregenza_solid_angles
+    # CRITICAL FIX: Use dome_patch_weights(1) to match Grasshopper, NOT tregenza_solid_angles
+    # dome_patch_weights(1) sums to 145, tregenza_solid_angles sums to 2π
+    tregenza_weights = view_sphere.dome_patch_weights(1)
     
     # Convert to numpy arrays
     vectors = np.array([[v.x, v.y, v.z] for v in tregenza_vecs])
