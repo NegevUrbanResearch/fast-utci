@@ -12,9 +12,9 @@ import numpy as np
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fast_utci.utci_calculator import UTCICalculator
+from fast_utci.utci import UTCICalculator
 from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
-from fast_utci.model_reader import read_project_data_enhanced
+from fast_utci.model_reader import read_project_data, get_combined_mesh
 
 def generate_baseline():
     """Generate baseline UTCI results for testing."""
@@ -26,10 +26,10 @@ def generate_baseline():
     
     # Load data
     print("Loading model and weather data...")
-    enhanced_model, weather_df, epw_data = read_project_data_enhanced(
+    scene, weather_df, epw_data = read_project_data(
         model_file, epw_file, verbose=False
     )
-    model = enhanced_model.get_combined_mesh()
+    model = get_combined_mesh(scene)
     
     # Create small test grid (for speed)
     print("Creating test grid...")

@@ -64,7 +64,7 @@ def run_analysis_core(
     month: int = DEFAULT_MONTH,
     day: int = DEFAULT_DAY,
     grid_size: float = DEFAULT_GRID_SIZE,
-    model_file: str = "data/3d_models/100.gltf",
+    model_file: str = "data/3d_models/100_test.glb",
     epw_file: str = "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
     embree_quality: str = "low",
     intersects_any: bool = True,
@@ -120,14 +120,14 @@ def run_analysis_core(
             print("STEP 1: LOADING PROJECT DATA")
             print("=" * 60)
         
-        from fast_utci.model_reader import read_project_data_enhanced
+        from fast_utci.model_reader import read_project_data, get_combined_mesh, get_ground_bounds
         t0 = time.perf_counter()
-        enhanced_model, weather_df, epw_data = read_project_data_enhanced(
+        scene, weather_df, epw_data = read_project_data(
             model_file, epw_file, verbose=False
         )
         t1 = time.perf_counter()
         
-        model = enhanced_model.get_combined_mesh()
+        model = get_combined_mesh(scene)
         if verbose:
             print(f"[OK] Model loaded: {len(model.vertices):,} vertices, {len(model.faces):,} faces")
             print(f"[OK] Weather loaded: {len(weather_df):,} hours")
@@ -142,24 +142,100 @@ def run_analysis_core(
         from fast_utci.mrt import (
             MRTCalculator, create_rectangular_grid, create_analysis_period
         )
+        from fast_utci.mrt.grid import AnalysisGrid
         
         mrt_calc = MRTCalculator(context_meshes=[model])
         mrt_calc.set_location_from_epw(epw_file)
         
-        # Create analysis grid
-        # NOTE: Bounds are inset from original edges to avoid mesh boundary issues
-        # Original bounds were: X: -2470.81 to -1479.529, Y: -619.8652 to -196.4804
-        # Grid positions too close to mesh boundaries cause ray intersection failures
-        # West edge needs 2m inset due to buildings at x=-2470.81
-        bounds_min = np.array([-2468.81, -618.8652])  # 2m west / 1m south inset
-        bounds_max = np.array([-1480.529, -197.4804])  # 1m east / 1m north inset
+        # Create analysis grid with dynamic bounds
+        # Strategy: Use ground bounds from scene graph or largest flat mesh
+        model_bounds = get_ground_bounds(scene)
         
+        # Assume standard orientation (XY is ground plane)
+        axis_indices = [0, 1]  # X, Y
+        vertical_axis = 2  # Z
+        
+        if verbose:
+            print(f"[INFO] Using ground bounds for grid (XY plane)")
+        
+        # For backward compatibility, still check if we need to detect orientation
+        # (in case get_ground_bounds returned full model bounds)
+        ranges = model_bounds[1] - model_bounds[0]
+        xy_area = ranges[0] * ranges[1]
+        xz_area = ranges[0] * ranges[2]
+        yz_area = ranges[1] * ranges[2]
+        
+        # Only reorient if the ground plane is clearly not XY
+        if xz_area > xy_area * 1.5 or yz_area > xy_area * 1.5:
+            # Find the largest plane (ground plane)
+            if xy_area >= xz_area and xy_area >= yz_area:
+                # Standard orientation: XY is ground, Z is vertical
+                axis_indices = [0, 1]  # X, Y
+                vertical_axis = 2  # Z
+                if verbose:
+                    print(f"[INFO] Detected XY as ground plane ({xy_area/1000:.1f}k m²)")
+            elif xz_area >= xy_area and xz_area >= yz_area:
+                # Z-up orientation: XZ is ground, Y is vertical
+                axis_indices = [0, 2]  # X, Z
+                vertical_axis = 1  # Y
+                if verbose:
+                    print(f"[INFO] Detected XZ as ground plane ({xz_area/1000:.1f}k m²) - Z-up model")
+            else:
+                # YZ is ground, X is vertical (rare)
+                axis_indices = [1, 2]  # Y, Z
+                vertical_axis = 0  # X
+                if verbose:
+                    print(f"[INFO] Detected YZ as ground plane ({yz_area/1000:.1f}k m²) - X-up model")
+        
+        # Apply insets to avoid mesh boundary issues
+        # Grid positions too close to mesh boundaries can cause ray intersection failures
+        inset_min = np.array([2.0, 1.0])  # [axis0_inset, axis1_inset] in meters
+        inset_max = np.array([1.0, 1.0])  # [axis0_inset, axis1_inset] in meters
+        
+        # Extract bounds for the detected ground plane axes
+        bounds_min = np.array([model_bounds[0][axis_indices[0]], model_bounds[0][axis_indices[1]]]) + inset_min
+        bounds_max = np.array([model_bounds[1][axis_indices[0]], model_bounds[1][axis_indices[1]]]) - inset_max
+        
+        if verbose:
+            axis_names = ['X', 'Y', 'Z']
+            print(f"[INFO] Grid bounds: {axis_names[axis_indices[0]]}=[{bounds_min[0]:.2f}, {bounds_max[0]:.2f}], "
+                  f"{axis_names[axis_indices[1]]}=[{bounds_min[1]:.2f}, {bounds_max[1]:.2f}]")
+        
+        # Create grid on the detected ground plane
+        # The grid function creates an XY grid, so we create it and then transform if needed
+        vertical_offset = 1.5
+        if 'vertical_axis' in locals():
+            z_base = model_bounds[0][vertical_axis]
+        else:
+            z_base = model_bounds[0][2]  # Default to Z axis for base layer
+        
+        # Create grid in XY space
         grid = create_rectangular_grid(
             bounds_min=bounds_min,
             bounds_max=bounds_max,
             grid_size=grid_size,
-            z_height=1.5
+            z_height=z_base + vertical_offset
         )
+        
+        # Transform grid points if not standard XY orientation
+        if 'axis_indices' in locals() and axis_indices != [0, 1]:
+            # Need to remap coordinates to match model orientation
+            points = grid.points.copy()
+            new_points = np.zeros_like(points)
+            
+            # Map the 2D grid coordinates to the correct 3D axes
+            new_points[:, axis_indices[0]] = points[:, 0]  # First grid axis
+            new_points[:, axis_indices[1]] = points[:, 1]  # Second grid axis  
+            new_points[:, vertical_axis] = points[:, 2]     # Vertical axis
+            
+            # Update grid points
+            grid = AnalysisGrid(
+                points=new_points,
+                normals=grid.normals,
+                face_areas=grid.face_areas,
+                mesh=grid.mesh,
+                grid_size=grid.grid_size
+            )
         
         if verbose:
             print(f"[OK] Grid created: {len(grid.points)} points at {grid_size}m spacing")
@@ -251,6 +327,14 @@ def run_analysis_core(
         
         # Export for web viewer
         total_time = t5 - t0
+        
+        # Determine coordinate system for viewer
+        # If using XZ plane, viewer needs to know to rotate the model
+        if 'axis_indices' in locals() and axis_indices == [0, 2]:
+            coordinate_system = "xz_ground"  # Y-up: XZ is ground, Y is vertical
+        else:
+            coordinate_system = "xy_ground"  # Z-up: XY is ground, Z is vertical (standard)
+        
         binary_path, metadata_path = export_utci_for_viewer(
             utci_results=utci_results,
             analysis_type="full_day",
@@ -259,7 +343,8 @@ def run_analysis_core(
             epw_file=epw_file,
             runtime_seconds=total_time,
             analysis_period=analysis_period,
-            target_hours=target_hours
+            target_hours=target_hours,
+            coordinate_system=coordinate_system
         )
         
         # Summary

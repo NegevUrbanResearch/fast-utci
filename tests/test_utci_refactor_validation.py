@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fast_utci.utci import UTCICalculator
 from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
-from fast_utci.model_reader import read_project_data_enhanced
+from fast_utci.model_reader import read_project_data, get_combined_mesh
 
 
 def load_baseline_reference():
@@ -34,10 +34,10 @@ def run_refactored_analysis():
     epw_file = "data/weather/ISR_Beer.Sheva.401900_MSI.epw"
     
     # Load data
-    enhanced_model, weather_df, epw_data = read_project_data_enhanced(
+    scene, weather_df, epw_data = read_project_data(
         model_file, epw_file, verbose=False
     )
-    model = enhanced_model.get_combined_mesh()
+    model = get_combined_mesh(scene)
     
     # Create same test grid
     bounds_min = np.array([-2468.81, -618.8652])

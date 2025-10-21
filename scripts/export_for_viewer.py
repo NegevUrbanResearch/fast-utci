@@ -275,7 +275,8 @@ def export_metadata_json(
     model_file: str,
     epw_file: str,
     runtime_seconds: float,
-    output_path: Path
+    output_path: Path,
+    coordinate_system: str = "xy_ground"
 ) -> None:
     """
     Export analysis metadata to JSON.
@@ -327,7 +328,8 @@ def export_metadata_json(
         "model_file": str(model_file),
         "epw_file": str(epw_file),
         "generation_date": datetime.now().isoformat(),
-        "runtime_seconds": float(runtime_seconds)
+        "runtime_seconds": float(runtime_seconds),
+        "coordinate_system": coordinate_system  # "xy_ground" or "xz_ground"
     }
     
     # Add per-hour statistics for full day analysis (NaN-safe)
@@ -365,7 +367,8 @@ def export_utci_for_viewer(
     runtime_seconds: float,
     analysis_period: Optional[Any] = None,
     target_hours: Optional[List[int]] = None,
-    output_dir: str = "data/analyses"
+    output_dir: str = "data/analyses",
+    coordinate_system: str = "xy_ground"
 ) -> tuple[str, str]:
     """
     Export UTCI results to optimized binary format for web viewer.
@@ -433,7 +436,8 @@ def export_utci_for_viewer(
         model_file=model_file,
         epw_file=epw_file,
         runtime_seconds=runtime_seconds,
-        output_path=metadata_path
+        output_path=metadata_path,
+        coordinate_system=coordinate_system
     )
     
     print(f"[OK] Exported analysis: {analysis_id}")

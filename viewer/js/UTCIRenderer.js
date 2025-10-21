@@ -17,52 +17,29 @@ import { mapUTCIToColor, LADYBUG_NUANCED_COLORS } from './ColorScale.js';
 export function createUTCIPointCloud(analysis, model, hourIndex = 0) {
     const { data, metadata } = analysis;
     const numPositions = data.numPositions;
+    const coordinateSystem = metadata.coordinate_system || 'xy_ground';
     
     // Create buffer geometry
     const geometry = new THREE.BufferGeometry();
     
     // Calculate coordinate transformation to align UTCI data with model
-    // The UTCI grid might be in a different coordinate system than the GLTF model
     const modelBox = new THREE.Box3().setFromObject(model);
     const modelCenter = new THREE.Vector3();
     modelBox.getCenter(modelCenter);
     const groundLevel = modelBox.min.y;  // Use bottom of model as ground level
     
-    // Calculate UTCI grid center from metadata bounds
-    // Note: UTCI data uses Z-up coordinate system, but Three.js uses Y-up
-    // So we need to swap Y and Z when reading bounds
-    const utciBounds = metadata.bounds;
-    const utciCenter = new THREE.Vector3(
-        (utciBounds.x_min + utciBounds.x_max) / 2,
-        utciBounds.z || 0,  // Y in Three.js = Z in UTCI data (height)
-        (utciBounds.y_min + utciBounds.y_max) / 2  // Z in Three.js = Y in UTCI data
-    );
+    console.log(`[UTCI] Coordinate system: ${coordinateSystem}`);
     
-    // Calculate offset to center UTCI grid on model
-    // Align UTCI grid to model center in X and Z, but place at ground level (Y=0)
-    
-    const offset = new THREE.Vector3(
-        modelCenter.x - utciCenter.x,
-        groundLevel - utciCenter.y,  // Place UTCI at ground level
-        modelCenter.z + utciCenter.z  // Negate for 180° rotation
-    );
-    
-    console.log(`[TRANSFORM] Model center: (${modelCenter.x.toFixed(2)}, ${modelCenter.y.toFixed(2)}, ${modelCenter.z.toFixed(2)})`);
-    console.log(`[TRANSFORM] Model ground level: ${groundLevel.toFixed(2)}`);
-    console.log(`[TRANSFORM] UTCI center (Y-up): (${utciCenter.x.toFixed(2)}, ${utciCenter.y.toFixed(2)}, ${utciCenter.z.toFixed(2)})`);
-    console.log(`[TRANSFORM] Applying offset: (${offset.x.toFixed(2)}, ${offset.y.toFixed(2)}, ${offset.z.toFixed(2)})`);
-    
-    // Create position attribute with coordinate system transformation
-    // UTCI data: X, Y, Z (Z-up) → Three.js: X, Y, Z (Y-up)
-    // Swap Y and Z coordinates from data
-    // Also negate Z to rotate 180 degrees horizontally to align with model
-    // Add small vertical offset (0.2m) to prevent z-fighting/flickering with ground
-    const VISUAL_OFFSET = 0.4; // Slightly increased to avoid coplanar z-fighting
+    // Create position attribute directly from data
+    // Small vertical offset to prevent z-fighting with ground
+    const VISUAL_OFFSET = 0.4;
     const positions = new Float32Array(data.positions.length);
+    
+    // Load positions as-is from data file
     for (let i = 0; i < numPositions; i++) {
-        positions[i * 3] = data.positions[i * 3] + offset.x;         // X stays X
-        positions[i * 3 + 1] = data.positions[i * 3 + 2] + offset.y + VISUAL_OFFSET; // Y = Z from data (height) + offset
-        positions[i * 3 + 2] = -(data.positions[i * 3 + 1]) + offset.z; // Z = -Y from data (180° rotation)
+        positions[i * 3] = data.positions[i * 3];
+        positions[i * 3 + 1] = data.positions[i * 3 + 1];
+        positions[i * 3 + 2] = data.positions[i * 3 + 2] + VISUAL_OFFSET;
     }
     
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -107,6 +84,14 @@ export function createUTCIPointCloud(analysis, model, hourIndex = 0) {
     const points = new THREE.Points(geometry, material);
     points.renderOrder = 2; // Render after most opaque meshes
     points.name = 'UTCI_Points';
+    
+    // Apply the same coordinate system transformation as the model
+    // This ensures the UTCI grid aligns with the model
+    if (coordinateSystem === 'xy_ground') {
+        // Model uses Z-up (XY ground), rotate to Y-up for Three.js
+        console.log('[TRANSFORM] Applying Z-up to Y-up rotation to UTCI points (-90° around X)');
+        points.rotation.x = -Math.PI / 2;
+    }
     
     console.log(`[OK] Point cloud created: ${numPositions} points for hour ${hourIndex}`);
     

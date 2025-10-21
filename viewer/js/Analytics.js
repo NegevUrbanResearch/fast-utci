@@ -129,6 +129,35 @@ function findSpatiallyMatchedPoints(analysis, validation) {
 }
 
 /**
+ * Calculate average mean difference across all 24 hours
+ * @param {object} analysis - Analysis data from UTCIDataLoader
+ * @param {object} validation - Validation data from loadValidationData()
+ * @returns {number} Average mean difference across all hours
+ */
+export function calculateAvgMeanDiffAllHours(analysis, validation) {
+    if (!analysis.data.utciByHour || analysis.data.numHours < 2) {
+        return null;  // Not a full day analysis
+    }
+    
+    let totalMeanDiff = 0;
+    let validHours = 0;
+    
+    for (let h = 0; h < analysis.data.numHours; h++) {
+        const analysisValues = analysis.data.utciByHour[h];
+        const validationValues = validation.utciByHour[h];
+        
+        if (analysisValues && validationValues) {
+            const analysisStats = calculateStatistics(analysisValues);
+            const validationStats = calculateStatistics(validationValues);
+            totalMeanDiff += analysisStats.mean - validationStats.mean;
+            validHours++;
+        }
+    }
+    
+    return validHours > 0 ? totalMeanDiff / validHours : null;
+}
+
+/**
  * Compare analysis with validation data using spatial matching
  * @param {object} analysis - Analysis data from UTCIDataLoader
  * @param {object} validation - Validation data from loadValidationData()
@@ -201,9 +230,10 @@ export function compareWithValidation(analysis, validation, hourIndex = 0) {
  * Create analytics panel UI
  * @param {object} metadata - Analysis metadata
  * @param {object} comparisonStats - Statistics from compareWithValidation()
+ * @param {number} avgMeanDiffAllHours - Average mean diff across all 24 hours (optional)
  * @returns {HTMLElement} Analytics panel element
  */
-export function createAnalyticsPanel(metadata, comparisonStats = null) {
+export function createAnalyticsPanel(metadata, comparisonStats = null, avgMeanDiffAllHours = null) {
     const panel = document.createElement('div');
     panel.id = 'analytics-panel';
     panel.style.cssText = `
@@ -257,6 +287,16 @@ export function createAnalyticsPanel(metadata, comparisonStats = null) {
                 Correlation: ${comparisonStats.comparison.correlation.toFixed(3)}
             </div>
         `;
+        
+        // Add 24-hour average metric if available
+        if (avgMeanDiffAllHours !== null) {
+            content += `
+            <div style="margin-bottom: 8px; padding: 8px; background: #f0f8ff; border-radius: 4px;">
+                <strong>24-Hour Average:</strong><br>
+                Avg Mean Diff: ${avgMeanDiffAllHours >= 0 ? '+' : ''}${avgMeanDiffAllHours.toFixed(2)}°C
+            </div>
+            `;
+        }
     }
     
     // Add sun path toggle for full day analysis with sun data

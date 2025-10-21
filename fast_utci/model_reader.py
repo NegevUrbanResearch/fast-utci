@@ -1,8 +1,7 @@
 """
-Enhanced Model Reader for fast-utci
+Model Reader for fast-utci
 
-This module provides enhanced 3D model reading capabilities that preserve
-material information and layer structure for better visualization.
+This module provides 3D model loading capabilities with scene graph layer extraction.
 """
 
 from pathlib import Path
@@ -10,483 +9,362 @@ from ladybug.epw import EPW
 import pandas as pd
 import trimesh
 import numpy as np
-from collections import defaultdict
-
-# Material type mapping for common building elements
-MATERIAL_TYPE_MAPPING = {
-    'building': {'color': '#2b2b2b', 'opacity': 0.9, 'name': 'Buildings'},
-                'base': {'color': '#BDC3C7', 'opacity': 0.2, 'name': 'Base'},  # Model base/ground plane - moderate transparency
-    'road': {'color': '#34495E', 'opacity': 0.7, 'name': 'Roads'},  # Actual roads on top of base
-    'street': {'color': '#2C3E50', 'opacity': 0.7, 'name': 'Streets'},  # Streets on top of base
-    'sidewalk': {'color': '#BDC3C7', 'opacity': 0.8, 'name': 'Sidewalks'},
-    'vegetation': {'color': '#27AE60', 'opacity': 0.9, 'name': 'Trees'},  # Higher opacity for visibility
-    'water': {'color': '#3498DB', 'opacity': 0.6, 'name': 'Water'},
-    'default': {'color': '#27AE60', 'opacity': 0.9, 'name': 'Trees'}  # Default to trees
-}
+import json
+import struct
 
 
-class ModelLayer:
-    """Represents a single layer/material in the 3D model."""
-    
-    def __init__(self, name: str, mesh: trimesh.Trimesh, material_type: str = 'default'):
-        self.name = name
-        self.mesh = mesh
-        self.material_type = material_type
-        self.material_info = MATERIAL_TYPE_MAPPING.get(material_type, MATERIAL_TYPE_MAPPING['default'])
-    
-    def get_color(self) -> str:
-        """Get the color for this layer."""
-        return self.material_info['color']
-    
-    def get_opacity(self) -> float:
-        """Get the opacity for this layer."""
-        return self.material_info['opacity']
-    
-    def get_display_name(self) -> str:
-        """Get the display name for this layer."""
-        return self.material_info['name']
+def _is_binary_gltf(file_path: Path) -> bool:
+    """Check if a file is a binary GLTF (GLB) file."""
+    with open(file_path, 'rb') as f:
+        magic = f.read(4)
+        return magic == b'glTF'
 
 
-class EnhancedModel:
-    """Enhanced model class that preserves layer information."""
-    
-    def __init__(self, layers: list[ModelLayer]):
-        self.layers = layers
-        self._combined_mesh = None
-    
-    def get_combined_mesh(self) -> trimesh.Trimesh:
-        """Get a combined mesh for MRT calculations."""
-        if self._combined_mesh is None:
-            meshes = [layer.mesh for layer in self.layers]
-            self._combined_mesh = trimesh.util.concatenate(meshes)
-        return self._combined_mesh
-    
-    def get_layer_by_type(self, material_type: str) -> list[ModelLayer]:
-        """Get all layers of a specific material type."""
-        return [layer for layer in self.layers if layer.material_type == material_type]
-    
-    def get_layer_by_name(self, name: str) -> ModelLayer | None:
-        """Get a layer by its name."""
-        for layer in self.layers:
-            if layer.name == name:
-                return layer
-        return None
-    
-    def get_bounds(self) -> np.ndarray:
-        """Get the bounds of the combined model."""
-        return self.get_combined_mesh().bounds
-    
-    def get_bounds_for_layer_type(self, material_type: str) -> np.ndarray | None:
-        """Get the bounds for a specific layer type."""
-        layers = self.get_layer_by_type(material_type)
-        if not layers:
-            return None
-        
-        # Combine all meshes of this type
-        meshes = [layer.mesh for layer in layers]
-        if not meshes:
-            return None
-        
-        combined_mesh = trimesh.util.concatenate(meshes)
-        return combined_mesh.bounds
-    
-    def get_vertices_count(self) -> int:
-        """Get total number of vertices across all layers."""
-        return sum(len(layer.mesh.vertices) for layer in self.layers)
-    
-    def get_faces_count(self) -> int:
-        """Get total number of faces across all layers."""
-        return sum(len(layer.mesh.faces) for layer in self.layers)
-    
-    def get_layer_info(self) -> list[dict]:
-        """Get information about all layers."""
-        info = []
-        for layer in self.layers:
-            info.append({
-                'name': layer.name,
-                'material_type': layer.material_type,
-                'display_name': layer.get_display_name(),
-                'color': layer.get_color(),
-                'opacity': layer.get_opacity(),
-                'vertices': len(layer.mesh.vertices),
-                'faces': len(layer.mesh.faces)
-            })
-        return info
-
-
-def extract_road_lines_from_base_mesh(base_mesh: trimesh.Trimesh, mesh_name: str, verbose: bool = False) -> list[trimesh.Trimesh]:
+def load_glb_safe(file_path: Path) -> trimesh.Scene:
     """
-    Extract road lines from a base mesh by analyzing material groups and face clusters.
+    Safely load a GLB file, extracting only mesh primitives and skipping
+    problematic polyline/curve data that may cause memory errors.
     
     Args:
-        base_mesh: The base mesh to analyze
-        mesh_name: Name of the mesh for debugging
+        file_path: Path to the GLB file
         
     Returns:
-        List of road line meshes extracted from the base mesh
+        trimesh.Scene with only mesh geometries
     """
-    road_lines = []
+    print(f"[INFO] Using safe GLB loader to extract meshes only...")
     
-    try:
-        # Since base meshes are truly flat, roads must be embedded as different materials
-        # Check if mesh has material information
-        if verbose and hasattr(base_mesh, 'visual') and hasattr(base_mesh.visual, 'material'):
-            print(f"🔍 {mesh_name} has material info: {base_mesh.visual.material}")
+    with open(file_path, 'rb') as f:
+        # Read GLB header
+        magic = struct.unpack('4s', f.read(4))[0]
+        if magic != b'glTF':
+            raise ValueError(f"Not a valid GLB file: {file_path}")
         
-        # Check for face groups (different materials)
-        if hasattr(base_mesh, 'visual') and hasattr(base_mesh.visual, 'face_materials'):
-            face_materials = base_mesh.visual.face_materials
-            unique_materials = np.unique(face_materials)
-            if verbose:
-                print(f"🔍 {mesh_name} has {len(unique_materials)} different materials: {unique_materials}")
-            
-            # Extract faces with different materials as potential road lines
-            for material_id in unique_materials:
-                if material_id != 0:  # Assume material 0 is the base, others might be roads
-                    road_faces = base_mesh.faces[face_materials == material_id]
-                    if len(road_faces) > 0:
-                        road_mesh = trimesh.Trimesh(vertices=base_mesh.vertices, faces=road_faces)
-                        road_lines.append(road_mesh)
-                        if verbose:
-                            print(f"[ROAD] Extracted {len(road_faces)} faces with material {material_id}")
+        version = struct.unpack('<I', f.read(4))[0]
+        length = struct.unpack('<I', f.read(4))[0]
         
-        # Alternative: Analyze face connectivity to find linear patterns
-        if not road_lines:
-            faces = base_mesh.faces
-            vertices = base_mesh.vertices
+        # Read JSON chunk
+        chunk_length = struct.unpack('<I', f.read(4))[0]
+        chunk_type = struct.unpack('4s', f.read(4))[0]
+        
+        if chunk_type != b'JSON':
+            raise ValueError(f"Expected JSON chunk, got {chunk_type}")
+        
+        json_data = json.loads(f.read(chunk_length).decode('utf-8'))
+        
+        # Read binary chunk
+        chunk_length = struct.unpack('<I', f.read(4))[0]
+        chunk_type = struct.unpack('4s', f.read(4))[0]
+        
+        if chunk_type != b'BIN\x00':
+            raise ValueError(f"Expected BIN chunk, got {chunk_type}")
+        
+        binary_data = f.read(chunk_length)
+    
+    # Extract only mesh primitives from the GLTF structure
+    meshes = []
+    buffer_views = json_data.get('bufferViews', [])
+    accessors = json_data.get('accessors', [])
+    gltf_meshes = json_data.get('meshes', [])
+    
+    print(f"[INFO] Found {len(gltf_meshes)} mesh definitions in GLB")
+    
+    def get_accessor_data(accessor_index, expected_type=None):
+        """Extract data from an accessor."""
+        accessor = accessors[accessor_index]
+        buffer_view_index = accessor.get('bufferView')
+        if buffer_view_index is None:
+            return None
             
-            # Find faces that form linear patterns (road-like shapes)
-            # Group faces by connectivity and analyze their shape
-            face_centers = np.mean(vertices[faces], axis=1)
+        buffer_view = buffer_views[buffer_view_index]
+        offset = buffer_view.get('byteOffset', 0) + accessor.get('byteOffset', 0)
+        
+        # Determine component type and size
+        component_types = {
+            5120: ('b', 1),   # BYTE
+            5121: ('B', 1),   # UNSIGNED_BYTE
+            5122: ('h', 2),   # SHORT
+            5123: ('H', 2),   # UNSIGNED_SHORT
+            5125: ('I', 4),   # UNSIGNED_INT
+            5126: ('f', 4),   # FLOAT
+        }
+        
+        comp_type, comp_size = component_types[accessor['componentType']]
+        count = accessor['count']
+        
+        # Determine number of components per element
+        type_sizes = {'SCALAR': 1, 'VEC2': 2, 'VEC3': 3, 'VEC4': 4}
+        num_components = type_sizes[accessor['type']]
+        
+        # Extract data
+        data = []
+        for i in range(count):
+            element = []
+            for j in range(num_components):
+                byte_offset = offset + (i * num_components + j) * comp_size
+                value = struct.unpack_from(comp_type, binary_data, byte_offset)[0]
+                element.append(value)
+            if num_components == 1:
+                data.append(element[0])
+            else:
+                data.append(element)
+        
+        return np.array(data)
+    
+    # Extract mesh primitives
+    mesh_index = 0
+    skipped_lines = 0
+    skipped_other = 0
+    
+    for gltf_mesh in gltf_meshes:
+        for primitive in gltf_mesh.get('primitives', []):
+            # Skip non-triangle primitives (LINES, POINTS, etc.)
+            mode = primitive.get('mode', 4)  # Default is TRIANGLES (4)
+            if mode == 1:  # LINES
+                skipped_lines += 1
+                continue
+            elif mode != 4:  # Not TRIANGLES
+                skipped_other += 1
+                continue
             
-            # Find faces that are arranged in lines (potential roads)
-            from sklearn.cluster import DBSCAN
-            
-            # Cluster face centers to find linear arrangements
-            clustering = DBSCAN(eps=10.0, min_samples=3).fit(face_centers)
-            labels = clustering.labels_
-            
-            # Analyze each cluster for linear characteristics
-            for cluster_id in np.unique(labels):
-                if cluster_id == -1:  # Skip noise
+            try:
+                # Get vertex positions
+                attributes = primitive.get('attributes', {})
+                if 'POSITION' not in attributes:
+                    continue
+                
+                vertices = get_accessor_data(attributes['POSITION'])
+                if vertices is None or len(vertices) == 0:
+                    continue
+                
+                # Get indices
+                indices_accessor = primitive.get('indices')
+                if indices_accessor is not None:
+                    indices = get_accessor_data(indices_accessor)
+                    if indices is None:
+                        continue
+                    faces = indices.reshape(-1, 3)
+                else:
+                    # No indices, assume sequential triangles
+                    num_faces = len(vertices) // 3
+                    faces = np.arange(num_faces * 3).reshape(-1, 3)
+                
+                # Create trimesh
+                try:
+                    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+                    # Check if mesh is valid (has vertices and faces)
+                    if len(mesh.vertices) > 0 and len(mesh.faces) > 0:
+                        meshes.append((f"mesh_{mesh_index}", mesh))
+                        mesh_index += 1
+                except Exception as e:
+                    if mesh_index < 10:  # Only print first 10 errors
+                        print(f"[WARN] Failed to create mesh {mesh_index}: {e}")
                     continue
                     
-                cluster_faces = faces[labels == cluster_id]
-                if len(cluster_faces) > 5:  # Need enough faces for a road
-                    # Create mesh for this cluster
-                    cluster_mesh = trimesh.Trimesh(vertices=vertices, faces=cluster_faces)
-                    
-                    # Check if it's linear (high aspect ratio)
-                    bounds_size = cluster_mesh.bounds[1] - cluster_mesh.bounds[0]
-                    aspect_ratio = max(bounds_size[0], bounds_size[1]) / min(bounds_size[0], bounds_size[1])
-                    
-                    # If it's elongated and reasonably sized, consider it a road
-                    if aspect_ratio > 5.0 and 10 < cluster_mesh.area < 1000:
-                        road_lines.append(cluster_mesh)
-                        # Note: This debug output is controlled by the calling function's verbose parameter
+            except Exception as e:
+                print(f"[WARN] Error processing primitive: {e}")
+                continue
     
-    except Exception as e:
-        print(f"[WARN] Error extracting road lines from {mesh_name}: {e}")
+    print(f"[INFO] Successfully extracted {len(meshes)} valid triangle meshes")
+    if skipped_lines > 0:
+        print(f"[INFO] Skipped {skipped_lines} LINE primitives (polylines/curves)")
+    if skipped_other > 0:
+        print(f"[INFO] Skipped {skipped_other} other non-triangle primitives")
     
-    return road_lines
+    if not meshes:
+        raise ValueError("No valid triangle meshes found in GLB file (only found non-mesh geometry like curves/lines)")
+    
+    # Create a scene from the meshes
+    geometry = {name: mesh for name, mesh in meshes}
+    scene = trimesh.Scene(geometry=geometry)
+    
+    return scene
 
 
-def detect_material_type(mesh_name: str, mesh_bounds: np.ndarray, mesh_volume: float, mesh_area: float = None, debug: bool = False, base_z_level: float = None, geom: trimesh.Trimesh = None) -> str:
+def get_layer_name_from_scene_graph(scene: trimesh.Scene, geometry_name: str) -> str:
     """
-    Detect material type based on mesh properties.
+    Extract layer name from scene graph by traversing parent nodes.
+    
+    Returns actual layer names from the GLB file like 'ground', 'roads', 'treesurface', etc.
     
     Args:
-        mesh_name: Name of the mesh
-        mesh_bounds: Bounding box of the mesh
-        mesh_volume: Volume of the mesh
-        mesh_area: Surface area of the mesh (optional)
-        debug: Whether to print debug information
-        base_z_level: Z coordinate of the base level (optional)
-        geom: The trimesh object for detailed analysis (optional)
+        scene: trimesh.Scene object
+        geometry_name: Name of the geometry to find layer for
         
     Returns:
-        Material type string
+        Layer name string, or 'unknown' if not found
     """
-    name_lower = mesh_name.lower()
+    graph = scene.graph
     
-    # Check name-based detection
-    if any(keyword in name_lower for keyword in ['building', 'wall', 'roof', 'facade']):
-        return 'building'
-    elif any(keyword in name_lower for keyword in ['road', 'street', 'highway', 'pavement']):
-        return 'road'
-    elif any(keyword in name_lower for keyword in ['sidewalk', 'footpath', 'walkway']):
-        return 'sidewalk'
-    elif any(keyword in name_lower for keyword in ['tree', 'vegetation', 'plant', 'bush']):
-        return 'vegetation'  # Combine trees and vegetation
-    elif any(keyword in name_lower for keyword in ['water', 'river', 'lake', 'pond']):
-        return 'water'
+    # Find the node containing this geometry
+    for node in graph.nodes:
+        node_data = graph.transforms.node_data.get(node, {})
+        
+        if node_data.get('geometry') == geometry_name:
+            # Found the node - traverse up to find layer parent
+            current = node
+            
+            for _ in range(20):  # Max depth to prevent infinite loops
+                parent = graph.transforms.parents.get(current)
+                if not parent:
+                    break
+                
+                # Check if parent is a layer node (meaningful name)
+                if (not parent.isdigit() and 
+                    not parent.startswith('GLTF') and 
+                    not parent.startswith('Layer_') and 
+                    parent not in ['world', 'base', 'Scene']):
+                    return parent
+                
+                current = parent
+            
+            return 'unknown'
     
-    # Check geometric properties
-    bounds_size = mesh_bounds[1] - mesh_bounds[0]
-    height = bounds_size[2]
-    area_xy = bounds_size[0] * bounds_size[1]
-    
-    # Get Z coordinates for elevation-based classification
-    min_z = mesh_bounds[0][2]
-    max_z = mesh_bounds[1][2]
-    
-    # Heuristics for material detection based on actual mesh analysis
-    # Base: truly flat, very large meshes (only the ground plane)
-    if height <= 0.001 and area_xy > 10000:  # Truly flat and very large = base only
-        if debug:
-            print(f"BASE: {mesh_name} - height: {height:.3f}m, area: {area_xy:.1f}m², volume: {mesh_volume:.3f}m³, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'base'
-    
-    # Buildings: tall structures with significant height and reasonable area
-    elif height > 2.0 and area_xy > 50:  # Tall and reasonably large = building
-        return 'building'
-    
-    # Calculate shape characteristics for linear vs blob detection
-    if area_xy > 0:
-        aspect_ratio = len(geom.vertices) / area_xy if hasattr(geom, 'vertices') else 0
-    else:
-        aspect_ratio = 0
-    
-    # Roads: ANY linear elements (high aspect ratio) should be roads, regardless of height
-    if aspect_ratio > 3.0:  # Linear elements = roads (prioritize shape over height)
-        if debug:
-            print(f"ROAD (linear): {mesh_name} - aspect_ratio: {aspect_ratio:.1f}, height: {height:.3f}m, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'road'
-    
-    # Trees: only truly elevated blob-like elements (low aspect ratio + elevated)
-    if min_z > 3.0 and aspect_ratio < 2.0:  # Only truly elevated blob elements = trees
-        if debug:
-            print(f"TREE (blob): {mesh_name} - aspect_ratio: {aspect_ratio:.1f}, height: {height:.3f}m, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'vegetation'
-    
-    # Elements just slightly above base should be roads/layout, not trees
-    elif min_z > 0.1 and min_z <= 3.0:  # Slightly above base = roads/layout elements
-        if debug:
-            print(f"ROAD (elevated): {mesh_name} - aspect_ratio: {aspect_ratio:.1f}, height: {height:.3f}m, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'road'
-    
-    # Elements at or below base level should never be trees
-    elif min_z <= 0.1:  # At or below base level = roads/layout elements
-        if debug:
-            print(f"ROAD (base-level): {mesh_name} - aspect_ratio: {aspect_ratio:.1f}, height: {height:.3f}m, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'road'
-    
-    # Small volume elements = vegetation (only if truly elevated AND blob-like)
-    elif mesh_volume < 3.0 and min_z > 3.0 and aspect_ratio < 2.0:  # Small volume AND truly elevated AND blob-like = vegetation
-        if debug:
-            print(f"TREE (small): {mesh_name} - aspect_ratio: {aspect_ratio:.1f}, height: {height:.3f}m, z: {min_z:.3f}-{max_z:.3f}m")
-        return 'vegetation'
-    # Default: if it has significant height and area, it's likely a building
-    elif height > 1.0 and area_xy > 20:
-        return 'building'
-    
-    return 'vegetation'  # Default fallback to vegetation
+    return 'not_found'
 
 
-def read_enhanced_model(file_path: str | Path, verbose: bool = False) -> EnhancedModel:
+def get_ground_bounds(scene: trimesh.Scene) -> np.ndarray:
     """
-    Read a 3D model file and return an enhanced model with layer information.
+    Get bounds of ground plane for grid generation.
+    
+    Priority:
+    1. Scene graph 'ground'/'base' layer name
+    2. Largest flat mesh (simple heuristic)
+    3. Full model bounds (fallback with warning)
     
     Args:
-        file_path: Path to the model file (.glb or .gltf)
+        scene: trimesh.Scene object
         
     Returns:
-        EnhancedModel with preserved layer information
+        Bounding box as numpy array [[x_min, y_min, z_min], [x_max, y_max, z_max]]
     """
-    file_path = Path(file_path)
-    assert file_path.exists(), f"Model file not found: {file_path}"
-    assert file_path.suffix.lower() in ['.glb', '.gltf'], f"Unsupported format: {file_path.suffix}"
-    
-    # Check if .gltf file is actually binary GLB format
-    file_type = None
-    if file_path.suffix.lower() == '.gltf':
-        with open(file_path, 'rb') as f:
-            magic = f.read(4)
-            if magic == b'glTF':
-                file_type = 'glb'
-                print(f"[DETECT] Detected binary GLB file with .gltf extension: {file_path.name}")
-    
-    loaded = trimesh.load(str(file_path), file_type=file_type)
-    
-    layers = []
-    
-    if isinstance(loaded, trimesh.Trimesh):
-        # Single mesh - create one layer
-        material_type = detect_material_type(
-            file_path.stem, 
-            loaded.bounds, 
-            loaded.volume if hasattr(loaded, 'volume') else 0,
-            loaded.area if hasattr(loaded, 'area') else None,
-            geom=loaded
-        )
-        layer = ModelLayer(file_path.stem, loaded, material_type)
-        layers.append(layer)
-        
-    elif isinstance(loaded, trimesh.Scene):
-        # Scene with multiple geometries
-        if verbose:
-            print(f"🔍 Analyzing {len(loaded.geometry)} geometries:")
-        
-        # First pass: analyze all meshes to understand the structure
-        mesh_info = []
-        for geom_name, geom in loaded.geometry.items():
-            if isinstance(geom, trimesh.Trimesh):
-                bounds = geom.bounds
-                height = bounds[1][2] - bounds[0][2]
-                area_xy = (bounds[1][0] - bounds[0][0]) * (bounds[1][1] - bounds[0][1])
-                volume = geom.volume if hasattr(geom, 'volume') else 0
-                
-                mesh_info.append({
-                    'name': geom_name,
-                    'height': height,
-                    'area_xy': area_xy,
-                    'volume': volume,
-                    'min_z': bounds[0][2],
-                    'max_z': bounds[1][2],
-                    'vertices': len(geom.vertices),
-                    'faces': len(geom.faces)
-                })
-        
-        # Sort by area to identify the largest meshes (likely base)
-        mesh_info.sort(key=lambda x: x['area_xy'], reverse=True)
-        
-        if verbose:
-            print("[INFO] Largest meshes (potential base elements):")
-            for i, info in enumerate(mesh_info[:10]):  # Top 10 largest
-                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+    # Priority 1: Scene graph layer names
+    for geom_name, geom in scene.geometry.items():
+        if not isinstance(geom, trimesh.Trimesh):
+            continue
             
-            print("[INFO] Smallest meshes (potential trees/roads):")
-            for i, info in enumerate(mesh_info[-10:]):  # Bottom 10 smallest
-                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
+        layer_name = get_layer_name_from_scene_graph(scene, geom_name)
+        if layer_name and ('ground' in layer_name.lower() or 
+                          'base' in layer_name.lower()):
+            print(f"[GRID] Using '{layer_name}' layer for bounds")
+            return geom.bounds
+    
+    # Priority 2: Largest flat mesh (simple heuristic)
+    print("[GRID] No ground layer found in scene graph, using largest flat mesh")
+    largest_area = 0
+    base_mesh = None
+    
+    for geom in scene.geometry.values():
+        if isinstance(geom, trimesh.Trimesh):
+            bounds_size = geom.bounds[1] - geom.bounds[0]
+            height = bounds_size[2]
+            area_xy = bounds_size[0] * bounds_size[1]
             
-            # Analyze mesh shapes more thoroughly
-            print("📏 Detailed mesh shape analysis:")
-            
-            # Group meshes by size ranges to understand the structure
-            tiny_meshes = [info for info in mesh_info if info['area_xy'] < 1.0]
-            small_meshes = [info for info in mesh_info if 1.0 <= info['area_xy'] < 10.0]
-            medium_meshes = [info for info in mesh_info if 10.0 <= info['area_xy'] < 100.0]
-            large_meshes = [info for info in mesh_info if info['area_xy'] >= 100.0]
-            
-            print(f"[INFO] Mesh size distribution:")
-            print(f"  - Tiny (<1m²): {len(tiny_meshes)} meshes")
-            print(f"  - Small (1-10m²): {len(small_meshes)} meshes") 
-            print(f"  - Medium (10-100m²): {len(medium_meshes)} meshes")
-            print(f"  - Large (≥100m²): {len(large_meshes)} meshes")
-            
-            # Analyze vertex density for different size ranges
-            print(f"🔍 Vertex density analysis:")
-            for size_range, meshes in [("Tiny", tiny_meshes[:5]), ("Small", small_meshes[:5]), ("Medium", medium_meshes[:5])]:
-                if meshes:
-                    print(f"  {size_range} meshes:")
-                    for i, info in enumerate(meshes):
-                        aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-                        print(f"    {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
-            
-            # Look for potential road lines (linear elements)
-            potential_roads = []
-            for info in mesh_info:
-                if info['area_xy'] > 0:
-                    aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-                    # Look for elements that might be road lines
-                    if (info['area_xy'] < 50 and aspect_ratio > 3 and 
-                        info['height'] > 0.01 and info['height'] < 1.0):  # Some height but not too tall
-                        potential_roads.append(info)
-            
-            print(f"[ROAD] Potential road lines: {len(potential_roads)}")
-            for i, info in enumerate(potential_roads[:10]):  # Top 10
-                aspect_ratio = info['vertices'] / max(info['area_xy'], 1.0)
-                print(f"  {i+1}. {info['name']}: area={info['area_xy']:.1f}m², vertices={info['vertices']}, ratio={aspect_ratio:.1f}, height={info['height']:.3f}m, z={info['min_z']:.3f}-{info['max_z']:.3f}m")
-        
-        # Second pass: classify meshes and extract embedded road lines
-        for geom_name, geom in loaded.geometry.items():
-            if isinstance(geom, trimesh.Trimesh):
-                # Detect material type based on geometry properties
-                material_type = detect_material_type(
-                    geom_name,
-                    geom.bounds,
-                    geom.volume if hasattr(geom, 'volume') else 0,
-                    geom.area if hasattr(geom, 'area') else None,
-                    geom=geom
-                )
-                
-                # If this is a base mesh, try to extract embedded road lines
-                if material_type == 'base':
-                    road_lines = extract_road_lines_from_base_mesh(geom, geom_name, verbose=verbose)
-                    if road_lines:
-                        if verbose:
-                            print(f"[ROAD] Extracted {len(road_lines)} road line segments from {geom_name}")
-                        # Add road line segments as separate layers
-                        for i, road_line in enumerate(road_lines):
-                            # Validate the road mesh before adding
-                            if hasattr(road_line, 'vertices') and len(road_line.vertices) > 0:
-                                road_layer = ModelLayer(f"{geom_name}_road_{i}", road_line, 'road')
-                                layers.append(road_layer)
-                            else:
-                                if verbose:
-                                    print(f"[WARN] Invalid road mesh created from {geom_name}_road_{i}")
-                
-                layer = ModelLayer(geom_name, geom, material_type)
-                layers.append(layer)
-        
-        assert layers, "No valid meshes found in scene"
+            # Truly flat (< 1cm thick) and large
+            if height < 0.01 and area_xy > largest_area:
+                largest_area = area_xy
+                base_mesh = geom
     
-    else:
-        raise ValueError(f"Unsupported object type: {type(loaded)}")
+    if base_mesh is not None:
+        print(f"[GRID] Found flat base mesh with area {largest_area:.1f}m²")
+        return base_mesh.bounds
     
-    print(f"[INFO] Loaded model with {len(layers)} layers")
-    
-    # Group layers by type for cleaner output
-    layer_counts = {}
-    total_vertices = 0
-    total_faces = 0
-    
-    for layer in layers:
-        layer_type = layer.get_display_name()
-        if layer_type not in layer_counts:
-            layer_counts[layer_type] = {'count': 0, 'vertices': 0, 'faces': 0}
-        layer_counts[layer_type]['count'] += 1
-        layer_counts[layer_type]['vertices'] += len(layer.mesh.vertices)
-        layer_counts[layer_type]['faces'] += len(layer.mesh.faces)
-        total_vertices += len(layer.mesh.vertices)
-        total_faces += len(layer.mesh.faces)
-    
-    # Print summary instead of individual layers
-    for layer_type, info in layer_counts.items():
-        print(f"  - {layer_type}: {info['count']} objects, {info['vertices']:,} vertices, {info['faces']:,} faces")
-    
-    print(f"[INFO] Total: {total_vertices:,} vertices, {total_faces:,} faces")
-    
-    return EnhancedModel(layers)
+    # Priority 3: Full bounds (last resort)
+    print("[WARN] Could not find ground plane, using full model bounds")
+    return scene.bounds
 
 
-def read_project_data_enhanced(model_path: str | Path, 
+def get_combined_mesh(scene: trimesh.Scene) -> trimesh.Trimesh:
+    """
+    Get combined mesh from scene for MRT calculations.
+    
+    All geometries are concatenated into a single mesh for ray tracing.
+    
+    Args:
+        scene: trimesh.Scene object
+        
+    Returns:
+        Combined trimesh.Trimesh object
+    """
+    meshes = [geom for geom in scene.geometry.values() 
+              if isinstance(geom, trimesh.Trimesh)]
+    
+    if not meshes:
+        raise ValueError("No valid triangle meshes found in scene")
+    
+    print(f"[INFO] Combining {len(meshes)} meshes for MRT calculations")
+    combined = trimesh.util.concatenate(meshes)
+    print(f"[INFO] Combined mesh: {len(combined.vertices):,} vertices, {len(combined.faces):,} faces")
+    
+    return combined
+
+
+def read_project_data(model_path: str | Path, 
                               weather_path: str | Path, 
-                              verbose: bool = False) -> tuple[EnhancedModel, pd.DataFrame, EPW]:
+                      verbose: bool = False) -> tuple[trimesh.Scene, pd.DataFrame, EPW]:
     """
-    Read model and weather data with enhanced model support.
+    Load 3D model and weather data.
     
     Args:
-        model_path: Path to the model file
-        weather_path: Path to the EPW weather file
+        model_path: Path to GLB/GLTF model file
+        weather_path: Path to EPW weather file
+        verbose: Print detailed loading information
         
     Returns:
-        Tuple of (enhanced_model, weather_df, epw_object)
+        Tuple of (scene, weather_df, epw):
+        - scene: trimesh.Scene with all geometries and scene graph
+        - weather_df: Weather DataFrame
+        - epw: EPW object
     """
     from fast_utci.shared.weather import load_weather_data
     
-    enhanced_model = read_enhanced_model(model_path, verbose=verbose)
+    file_path = Path(model_path)
+    assert file_path.exists(), f"Model file not found: {file_path}"
+    assert file_path.suffix.lower() in ['.glb', '.gltf'], f"Unsupported format: {file_path.suffix}"
+    
+    # Load model using safe GLB loader for binary files
+    if file_path.suffix.lower() == '.glb' or _is_binary_gltf(file_path):
+        scene = load_glb_safe(file_path)
+    else:
+        # Regular GLTF - use trimesh loader
+        scene = trimesh.load(
+            str(file_path),
+            process=False,
+            ignore_broken=True,
+            skip_materials=True,
+            skip_texture=True
+        )
+    
+    if verbose:
+        print(f"[INFO] Loaded model with {len(scene.geometry)} geometries")
+        
+        # Print layer info if verbose
+        layer_names = set()
+        for geom_name in scene.geometry.keys():
+            layer_name = get_layer_name_from_scene_graph(scene, geom_name)
+            if layer_name not in ['unknown', 'not_found']:
+                layer_names.add(layer_name)
+        
+        if layer_names:
+            print(f"[INFO] Scene graph layers: {', '.join(sorted(layer_names))}")
+    
+    # Load weather data
     weather_df, epw = load_weather_data(weather_path)
     
-    return enhanced_model, weather_df, epw
+    return scene, weather_df, epw
 
 
 def read_weather_data(file_path: str | Path) -> pd.DataFrame:
     """
     Read EPW weather file and extract UTCI inputs as DataFrame.
     
-    NOTE: This function now delegates to fast_utci.shared.weather.load_weather_data()
+    NOTE: This function delegates to fast_utci.shared.weather.load_weather_data()
     for consolidation. The API remains backward compatible.
+    
+    Args:
+        file_path: Path to EPW weather file
+        
+    Returns:
+        Weather DataFrame
     """
     from fast_utci.shared.weather import load_weather_data
     
@@ -494,29 +372,24 @@ def read_weather_data(file_path: str | Path) -> pd.DataFrame:
     return weather_df
 
 
-def read_project_data(model_path: str | Path, 
-                      weather_path: str | Path, 
-                      verbose: bool = False) -> tuple[trimesh.Trimesh, pd.DataFrame, EPW]:
-    """
-    Compatibility wrapper matching reader.read_project_data signature.
-    Returns combined trimesh mesh, weather DataFrame, and EPW.
-    """
-    enhanced_model, weather_df, epw = read_project_data_enhanced(model_path, weather_path, verbose=verbose)
-    combined_mesh = enhanced_model.get_combined_mesh()
-    return combined_mesh, weather_df, epw
-
-
 # Example usage
 if __name__ == "__main__":
-    # Test the enhanced model reader
-    model_path = "data/3d_models/100.gltf"
+    # Test the model reader
+    model_path = "data/3d_models/100_test.glb"
     
     try:
-        enhanced_model = read_enhanced_model(model_path)
+        scene, weather_df, epw = read_project_data(
+            model_path,
+            "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
+            verbose=True
+        )
         
         # Get combined mesh for MRT calculations
-        combined_mesh = enhanced_model.get_combined_mesh()
-        print(f"[INFO] Combined mesh: {len(combined_mesh.vertices):,} vertices, {len(combined_mesh.faces):,} faces")
+        combined_mesh = get_combined_mesh(scene)
+        
+        # Get ground bounds for grid generation
+        ground_bounds = get_ground_bounds(scene)
+        print(f"[INFO] Ground bounds: {ground_bounds}")
         
     except Exception as e:
         print(f"Error: {e}")

@@ -27,6 +27,7 @@ ANALYSIS_CONFIGS = [
         "month": 8,
         "day": 15,
         "grid_size": 2.0,
+        "model_file": "data/3d_models/100_test.glb",
         "embree_quality": "low",
         "intersects_any": True,
         "export_csv": False,
@@ -84,14 +85,14 @@ def main():
     for i, result in enumerate(results, 1):
         if result["success"]:
             res = result["result"]
-            print(f"\nConfig {i}: ✓ SUCCESS")
+            print(f"\nConfig {i}: SUCCESS")
             print(f"  - Grid: {res['grid_size']}m")
             print(f"  - Date: {res['month']}/{res['day']}")
-            print(f"  - UTCI: {res['utci_min']:.1f} to {res['utci_max']:.1f}°C")
+            print(f"  - UTCI: {res['utci_min']:.1f} to {res['utci_max']:.1f}C")
             print(f"  - Runtime: {res['total_time']:.1f}s")
             print(f"  - CSV: {res['csv_path']}")
         else:
-            print(f"\nConfig {i}: ✗ FAILED")
+            print(f"\nConfig {i}: FAILED")
             print(f"  - Error: {result['error']}")
     
     print("="*60)

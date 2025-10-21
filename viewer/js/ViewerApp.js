@@ -8,10 +8,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { loadAnalysis } from './UTCIDataLoader.js';
-import { loadModelWithLayers, toggleLayerVisibility } from './ModelLoader.js';
+import { loadModelWithLayers } from './ModelLoader.js';
+import { LayerManager } from './LayerManager.js';
 import { createUTCIPointCloud, updatePointCloudColors, createRaycaster, findNearestPoint, createHighlightSphere, createColorLegend } from './UTCIRenderer.js';
 import { createTimeControls } from './TimeController.js';
-import { loadValidationData, compareWithValidation, createAnalyticsPanel, updateAnalyticsPanel } from './Analytics.js';
+import { loadValidationData, compareWithValidation, createAnalyticsPanel, updateAnalyticsPanel, calculateAvgMeanDiffAllHours } from './Analytics.js';
 import { calculateStatistics } from './UTCIDataLoader.js';
 import { getUTCILabel } from './ColorScale.js';
 import { createSunPath, updateCurrentSunIndicator, createSunMarkerRaycaster, findClickedSunMarker } from './SunPathRenderer.js';
@@ -234,12 +235,25 @@ export class ViewerApp {
             
             // Load 3D model
             const modelPath = this.analysis.metadata.model_file.replace('data/', '../data/');
-            const model = await loadModelWithLayers(modelPath);
+            const coordinateSystem = this.analysis.metadata.coordinate_system || 'xy_ground';
+            const model = await loadModelWithLayers(modelPath, coordinateSystem);
             this.model = model; // Store reference for layer controls
             this.scene.add(model);
             
-            // Initialize layer visibility based on HTML defaults (roads and base hidden)
-            this.initializeLayerVisibility();
+            // Create layer manager and discover layers dynamically
+            const layerContainer = document.getElementById('layer-controls');
+            
+            // Create callback for UTCI toggle
+            const utciToggleCallback = (visible) => {
+                if (this.pointCloud) {
+                    this.pointCloud.visible = visible;
+                }
+            };
+            
+            this.layerManager = new LayerManager(layerContainer, utciToggleCallback);
+            this.layerManager.discoverLayers(model);
+            this.layerManager.createControls();
+            this.layerManager.initializeVisibility();
             
             // Create UTCI point cloud (pass model for coordinate alignment)
             this.showLoading('Creating UTCI visualization...');
@@ -312,7 +326,13 @@ export class ViewerApp {
             try {
                 this.validation = await loadValidationData();
                 const comparisonStats = compareWithValidation(this.analysis, this.validation, this.currentHour);
-                const analyticsPanel = createAnalyticsPanel(this.analysis.metadata, comparisonStats);
+                
+                // Calculate average mean diff across all 24 hours (for full day analysis)
+                const avgMeanDiff = this.analysis.metadata.analysis_type === 'full_day' 
+                    ? calculateAvgMeanDiffAllHours(this.analysis, this.validation)
+                    : null;
+                
+                const analyticsPanel = createAnalyticsPanel(this.analysis.metadata, comparisonStats, avgMeanDiff);
                 document.body.appendChild(analyticsPanel);
             } catch (error) {
                 console.warn('[WARN] Could not load validation data:', error);
@@ -427,8 +447,12 @@ export class ViewerApp {
         const legend = document.getElementById('utci-legend');
         if (!legend) return;
         
-        // Find all temperature label divs in the legend
-        const labelContainer = legend.querySelector('[style*="position: relative; flex: 1"]');
+        // Find the label container - it's the second div in the flex container
+        // Structure: div[flex] > div[gradient] + div[labels]
+        const flexContainer = legend.querySelector('[style*="display: inline-flex"]');
+        if (!flexContainer) return;
+        
+        const labelContainer = flexContainer.children[1];  // Second child is the labels container
         if (!labelContainer) return;
         
         // Clear existing labels
@@ -795,70 +819,14 @@ export class ViewerApp {
     }
     
     /**
-     * Initialize layer visibility based on HTML defaults
-     */
-    initializeLayerVisibility() {
-        const layerItems = document.querySelectorAll('.layer-item');
-        
-        layerItems.forEach(item => {
-            const layerType = item.getAttribute('data-layer');
-            const isVisible = item.getAttribute('data-visible') === 'true';
-            
-            // Skip UTCI layer as it's handled separately
-            if (layerType === 'utci') return;
-            
-            // Apply visibility to 3D objects
-            if (this.model) {
-                toggleLayerVisibility(this.model, layerType, isVisible);
-                console.log(`[INIT] ${layerType} layer visibility: ${isVisible}`);
-            }
-            
-            // Update visual state of layer control
-            if (isVisible) {
-                item.classList.add('active');
-            } else {
-                item.classList.remove('active');
-            }
-        });
-    }
-    
-    /**
      * Setup layer control event handlers
+     * 
+     * Note: All layer controls (including UTCI) are now managed by LayerManager
+     * This method is kept as a no-op for backward compatibility
      */
     setupLayerControls() {
-        const layerItems = document.querySelectorAll('.layer-item');
-        
-        layerItems.forEach(item => {
-            item.addEventListener('click', () => {
-                const layerType = item.getAttribute('data-layer');
-                
-                // Toggle visibility state
-                const currentVisible = item.getAttribute('data-visible') === 'true';
-                const newVisible = !currentVisible;
-                item.setAttribute('data-visible', newVisible.toString());
-                
-                // Toggle 'active' class for visual feedback
-                if (newVisible) {
-                    item.classList.add('active');
-                } else {
-                    item.classList.remove('active');
-                }
-                
-                // Toggle layer in scene
-                if (layerType === 'utci') {
-                    // Toggle UTCI point cloud visibility
-                    if (this.pointCloud) {
-                        this.pointCloud.visible = newVisible;
-                        console.log(`[LAYER] UTCI visibility: ${newVisible}`);
-                    }
-                } else {
-                    // Toggle model layers
-                    if (this.model) {
-                        toggleLayerVisibility(this.model, layerType, newVisible);
-                    }
-                }
-            });
-        });
+        // LayerManager now handles all layer toggles including UTCI
+        // No additional setup needed here
     }
     
     /**

@@ -1,71 +1,311 @@
 /**
- * Model Loader for GLTF models and layer metadata
+ * Model Loader with Scene Graph Layer Detection
  * 
- * Loads 3D models and applies layer-based materials from metadata.
+ * Loads GLTF models and applies materials based on layer names from the scene graph.
+ * No geometric detection - uses actual layer names from modeling software.
  */
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import { LAYER_MATERIALS, LAYER_NAME_MAPPING } from '../config/layer-materials.js';
 
 /**
- * Load layer metadata from JSON file
- * @param {string} metadataPath - Path to layer metadata JSON file
- * @returns {Promise<object>} Layer metadata object
+ * Get layer name from scene graph by traversing parent chain
+ * 
+ * @param {THREE.Mesh} mesh - Mesh object to find layer for
+ * @returns {string} Layer name from GLB scene graph
  */
-export async function loadLayerMetadata(metadataPath = '../data/models/model_layers.json') {
-    const response = await fetch(metadataPath);
-    if (!response.ok) {
-        throw new Error(`Failed to load layer metadata: ${response.statusText}`);
+function getLayerName(mesh) {
+    let current = mesh;
+    
+    // Traverse up parent chain (max 20 levels to prevent infinite loops)
+    for (let i = 0; i < 20; i++) {
+        if (!current.parent) break;
+        
+        current = current.parent;
+        const name = current.name;
+        
+        // Check if this is a layer node (meaningful name)
+        if (name && 
+            !name.match(/^\d+$/) &&              // Not just digits
+            !name.startsWith('GLTF') &&          // Not auto-generated GLTF name
+            !name.startsWith('Layer_') &&        // Ignore generic Layer_XX names
+            name !== 'Scene' &&                  // Not root scene
+            name !== '') {
+            return name;  // Found the layer name!
+        }
     }
-    return await response.json();
+    
+    return 'unknown';
 }
 
 /**
- * Create material from layer metadata
- * @param {object} layer - Layer metadata object
- * @returns {THREE.Material} THREE.js material
+ * Map actual GLB layer name to standard material type
+ * 
+ * @param {string} layerName - Layer name from scene graph
+ * @returns {string} Standard layer type (building, road, vegetation, etc.)
  */
-function createMaterialFromLayer(layer) {
-    const isBuilding = layer.type === 'building';
+function mapLayerNameToType(layerName) {
+    const nameLower = layerName.toLowerCase();
     
-    // Buildings use simpler, brighter MeshLambertMaterial
-    if (isBuilding) {
+    // Try exact match first
+    if (LAYER_NAME_MAPPING[nameLower]) {
+        return LAYER_NAME_MAPPING[nameLower];
+    }
+    
+    // Fallback to substring matching
+    for (const [key, type] of Object.entries(LAYER_NAME_MAPPING)) {
+        if (nameLower.includes(key)) {
+            return type;
+        }
+    }
+    
+    return 'default';
+}
+
+/**
+ * Detect layer type from geometry when scene graph name is unknown
+ * Uses simple geometric heuristics to identify base layers
+ * 
+ * @param {THREE.Mesh} mesh - Mesh to analyze
+ * @returns {string} Detected layer type
+ */
+function detectLayerTypeFromGeometry(mesh) {
+    const geometry = mesh.geometry;
+    
+    // Compute bounding box if not already computed
+    if (!geometry.boundingBox) {
+        geometry.computeBoundingBox();
+    }
+    
+    const bbox = geometry.boundingBox;
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    
+    const height = size.z;
+    const areaXY = size.x * size.y;
+    
+    // Base layer heuristic: truly flat (< 1cm) and large area (> 10000 m²)
+    if (height < 0.01 && areaXY > 10000) {
+        console.log(`[DETECT] Mesh with unknown name detected as base layer (height: ${height.toFixed(3)}m, area: ${areaXY.toFixed(1)}m²)`);
+        return 'base';
+    }
+    
+    // Default to 'default' type for other unknown meshes
+    return 'default';
+}
+
+/**
+ * Create Three.js material from layer configuration
+ * 
+ * @param {string} layerType - Standard layer type
+ * @returns {THREE.Material} Configured material
+ */
+function createMaterialFromConfig(layerType) {
+    const config = LAYER_MATERIALS[layerType] || LAYER_MATERIALS.default;
+    
+    // Buildings use Lambert material for performance
+    if (config.materialType === 'lambert') {
         const mat = new THREE.MeshLambertMaterial({
-            color: new THREE.Color(layer.color),
-            emissive: new THREE.Color(0xffffff),  // Self-illumination for pure white
-            emissiveIntensity: 0.3,                // Boost brightness
+            color: new THREE.Color(config.color),
+            emissive: config.emissive ? new THREE.Color(config.emissive) : undefined,
+            emissiveIntensity: config.emissiveIntensity || 0,
             side: THREE.DoubleSide,
-            transparent: false,
+            transparent: config.opacity < 1.0,
+            opacity: config.opacity,
             depthWrite: true
         });
-        mat.polygonOffset = false; // buildings should occlude points cleanly
+        mat.polygonOffset = false;  // Buildings should occlude points cleanly
         return mat;
     }
     
-    // Other layers use standard material with lighting
-    const std = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(layer.color),
-        opacity: layer.opacity,
-        transparent: layer.opacity < 1.0,
+    // Other layers use Standard material
+    const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(config.color),
+        opacity: config.opacity,
+        transparent: config.opacity < 1.0,
         side: THREE.DoubleSide,
         roughness: 0.7,
         metalness: 0.1,
-        depthWrite: layer.opacity > 0.5
+        depthWrite: config.opacity > 0.5
     });
-    // Slightly push base/ground away to avoid coplanar artifacts with UTCI overlay
-    if (layer.type === 'base') {
-        std.polygonOffset = true;
-        std.polygonOffsetFactor = 1;
-        std.polygonOffsetUnits = 1;
+    
+    // Apply polygon offset for base layer (prevents z-fighting with UTCI overlay)
+    if (config.polygonOffset) {
+        mat.polygonOffset = true;
+        mat.polygonOffsetFactor = 1;
+        mat.polygonOffsetUnits = 1;
     }
-    return std;
+    
+    return mat;
+}
+
+/**
+ * Apply layer materials to loaded model
+ * 
+ * Traverses scene graph to find layer names and applies appropriate materials.
+ * Also groups meshes by layer type for performance optimization.
+ * 
+ * @param {THREE.Group} model - Loaded GLTF model
+ * @returns {THREE.Group} Model with applied materials
+ */
+export function applyLayerMaterials(model) {
+    const meshesByLayer = {};  // Group meshes by layer type for merging
+    const layerStats = {};
+    const itemsToRemove = [];  // Track non-mesh items to remove
+    
+    model.traverse((child) => {
+        // Remove lines/curves that aren't needed (not building edges we add)
+        if (child.isLine || child.isLineSegments) {
+            if (!child.name.includes('_edges')) {
+                itemsToRemove.push(child);
+            }
+            return;
+        }
+        
+        if (child.isMesh) {
+            // Extract layer name from scene graph
+            const layerName = getLayerName(child);
+            let layerType = mapLayerNameToType(layerName);
+            
+            // Fallback: If layer name is 'unknown', try geometric detection for base layer
+            if (layerName === 'unknown') {
+                layerType = detectLayerTypeFromGeometry(child);
+            }
+            
+            // Apply material based on layer type
+            child.material = createMaterialFromConfig(layerType);
+            
+            // Store layer info in userData for later use (visibility toggles, etc.)
+            child.userData.layerType = layerType;
+            child.userData.layerName = layerName;
+            
+            // Track layer statistics
+            if (!layerStats[layerType]) {
+                layerStats[layerType] = { count: 0, layerName: layerName };
+            }
+            layerStats[layerType].count++;
+            
+            // Group meshes by layer for merging
+            if (!meshesByLayer[layerType]) {
+                meshesByLayer[layerType] = [];
+            }
+            meshesByLayer[layerType].push(child);
+            
+            // Shadow settings (all layers cast/receive shadows initially)
+            child.castShadow = true;
+            child.receiveShadow = true;
+        }
+    });
+    
+    // Remove unwanted lines/curves
+    itemsToRemove.forEach(item => {
+        if (item.parent) {
+            item.parent.remove(item);
+        }
+    });
+    if (itemsToRemove.length > 0) {
+        console.log(`[FILTER] Removed ${itemsToRemove.length} line/curve objects`);
+    }
+    
+    // Print layer summary
+    console.log('[LAYERS] Discovered layers:');
+    for (const [layerType, stats] of Object.entries(layerStats)) {
+        console.log(`  ${layerType}: ${stats.count} meshes (from '${stats.layerName}')`);
+    }
+    
+    // Debug: List all unique layer names found
+    const uniqueLayerNames = new Set();
+    for (const stats of Object.values(layerStats)) {
+        uniqueLayerNames.add(stats.layerName);
+    }
+    console.log(`[DEBUG] Unique layer names in scene graph: ${[...uniqueLayerNames].join(', ')}`);
+    console.log(`[DEBUG] Layer types that will be available: ${Object.keys(layerStats).join(', ')}`);
+    
+    // Merge geometries by layer type for massive performance improvement
+    console.log('[PERF] Merging geometries by layer type...');
+    for (const [layerType, meshes] of Object.entries(meshesByLayer)) {
+        if (meshes.length > 1) {
+            mergeLayerMeshes(model, layerType, meshes);
+        }
+    }
+    
+    return model;
+}
+
+/**
+ * Merge layer meshes into a single geometry for massive performance improvement
+ * 
+ * @param {THREE.Group} model - Model to add merged mesh to
+ * @param {string} layerType - Type of layer being merged
+ * @param {Array<THREE.Mesh>} meshes - Array of meshes to merge
+ */
+function mergeLayerMeshes(model, layerType, meshes) {
+    const geometries = [];
+    
+    console.log(`[PERF] Merging ${meshes.length} ${layerType} meshes...`);
+    
+    // Collect all geometries with world transforms
+    meshes.forEach(mesh => {
+        const geometry = mesh.geometry.clone();
+        mesh.updateWorldMatrix(true, false);
+        geometry.applyMatrix4(mesh.matrixWorld);
+        geometries.push(geometry);
+        
+        // Remove original mesh from scene
+        if (mesh.parent) {
+            mesh.parent.remove(mesh);
+        }
+    });
+    
+    // Merge all geometries into one
+    const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
+    
+    if (merged) {
+        // Create single mesh for this layer
+        const material = createMaterialFromConfig(layerType);
+        const mergedMesh = new THREE.Mesh(merged, material);
+        mergedMesh.name = `${layerType}_merged`;
+        mergedMesh.userData.layerType = layerType;
+        mergedMesh.userData.layerName = layerType;
+        
+        // Shadow settings based on layer type
+        if (layerType === 'vegetation') {
+            mergedMesh.castShadow = false;   // Vegetation doesn't cast shadows (performance)
+            mergedMesh.receiveShadow = true;
+        } else {
+            mergedMesh.castShadow = true;
+            mergedMesh.receiveShadow = true;
+        }
+        
+        model.add(mergedMesh);
+        
+        const vertexCount = (merged.attributes.position.count / 1000).toFixed(1);
+        console.log(`[PERF] ${layerType}: ${meshes.length} meshes -> 1 mesh (${vertexCount}k vertices)`);
+        
+        // Add building edges after merging for better performance
+        if (layerType === 'building') {
+            const edges = new THREE.EdgesGeometry(merged, 15);  // 15 degree threshold
+            const lineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x888888,  // Medium gray
+                linewidth: 1
+            });
+            const lineSegments = new THREE.LineSegments(edges, lineMaterial);
+            lineSegments.name = `${layerType}_edges`;
+            mergedMesh.add(lineSegments);
+            console.log(`[PERF] Added building edges to merged geometry`);
+        }
+    } else {
+        console.warn(`[PERF] Failed to merge ${layerType} geometry`);
+    }
 }
 
 /**
  * Load GLTF model
+ * 
  * @param {string} modelPath - Path to GLTF model file
- * @returns {Promise<THREE.Group>} Loaded model as THREE.Group
+ * @returns {Promise<THREE.Group>} Loaded model
  */
 export async function loadGLTFModel(modelPath) {
     return new Promise((resolve, reject) => {
@@ -90,268 +330,42 @@ export async function loadGLTFModel(modelPath) {
 }
 
 /**
- * Detect material type based on mesh geometry properties
+ * Load model with layer materials applied
  * 
- * This replicates the Python logic from model_reader.py
- * 
- * @param {string} meshName - Name of the mesh
- * @param {THREE.Mesh} mesh - THREE.js mesh object
- * @returns {string} Material type
- */
-function detectMaterialType(meshName, mesh) {
-    const name = meshName.toLowerCase();
-    
-    // Check name-based detection first
-    if (name.includes('building') || name.includes('wall') || name.includes('roof') || name.includes('facade')) {
-        return 'building';
-    } else if (name.includes('road') || name.includes('street') || name.includes('highway') || name.includes('pavement')) {
-        return 'road';
-    } else if (name.includes('sidewalk') || name.includes('footpath') || name.includes('walkway')) {
-        return 'sidewalk';
-    } else if (name.includes('tree') || name.includes('vegetation') || name.includes('plant') || name.includes('bush')) {
-        return 'vegetation';
-    } else if (name.includes('water') || name.includes('river') || name.includes('lake') || name.includes('pond')) {
-        return 'water';
-    }
-    
-    // Geometric analysis (replicating Python logic)
-    const geometry = mesh.geometry;
-    const position = geometry.getAttribute('position');
-    
-    if (!position) {
-        return 'default';
-    }
-    
-    // Calculate bounds
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    
-    for (let i = 0; i < position.count; i++) {
-        const x = position.getX(i);
-        const y = position.getY(i);
-        const z = position.getZ(i);
-        
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        minZ = Math.min(minZ, z);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-        maxZ = Math.max(maxZ, z);
-    }
-    
-    // Calculate dimensions
-    const boundsSize = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
-    const height = boundsSize.z;
-    const areaXY = boundsSize.x * boundsSize.y;
-    // Note: minZ and maxZ are already defined above
-    
-    // Calculate aspect ratio (vertices per area)
-    const aspectRatio = position.count / Math.max(areaXY, 1.0);
-    
-    console.log(`[GEOMETRY] ${meshName}: height=${height.toFixed(3)}m, area=${areaXY.toFixed(1)}m², aspect=${aspectRatio.toFixed(1)}, z=${minZ.toFixed(3)}-${maxZ.toFixed(3)}m`);
-    
-    // Apply the same logic as Python code
-    
-    // Base: truly flat, very large meshes (only the ground plane)
-    if (height <= 0.001 && areaXY > 10000) {
-        return 'base';
-    }
-    
-    // Buildings: tall structures with significant height and reasonable area
-    if (height > 2.0 && areaXY > 50) {
-        return 'building';
-    }
-    
-    // Roads: ANY linear elements (high aspect ratio) should be roads, regardless of height
-    if (aspectRatio > 3.0) {
-        return 'road';
-    }
-    
-    // Trees: only truly elevated blob-like elements (low aspect ratio + elevated)
-    if (minZ > 3.0 && aspectRatio < 2.0) {
-        return 'vegetation';
-    }
-    
-    // Elements just slightly above base should be roads/layout, not trees
-    if (minZ > 0.1 && minZ <= 3.0) {
-        return 'road';
-    }
-    
-    // Elements at or below base level should never be trees
-    if (minZ <= 0.1) {
-        return 'road';
-    }
-    
-    // Small volume elements = vegetation (only if truly elevated AND blob-like)
-    if (minZ > 3.0 && aspectRatio < 2.0) {
-        return 'vegetation';
-    }
-    
-    // Default: if it has significant height and area, it's likely a building
-    if (height > 1.0 && areaXY > 20) {
-        return 'building';
-    }
-    
-    return 'vegetation'; // Default fallback to vegetation
-}
-
-/**
- * Apply layer materials to model based on metadata
- * 
- * This function matches meshes to layer types based on geometric analysis
- * replicating the Python model_reader.py logic.
- * 
- * @param {THREE.Group} model - Loaded GLTF model
- * @param {object} layerMetadata - Layer metadata from loadLayerMetadata()
- * @returns {THREE.Group} Model with applied materials
- */
-export function applyLayerMaterials(model, layerMetadata) {
-    const materials = {};
-    
-    // Create materials for each layer type
-    for (const layer of layerMetadata.layers) {
-        materials[layer.type] = createMaterialFromLayer(layer);
-    }
-    
-    // Track vegetation meshes for potential merging (performance optimization)
-    const vegetationMeshes = [];
-    let totalMeshCount = 0;
-    
-    // Apply materials to meshes
-    model.traverse((child) => {
-        totalMeshCount++;
-        if (child.isMesh) {
-            // Detect material type using geometric analysis
-            const materialType = detectMaterialType(child.name, child);
-            
-            console.log(`[MATERIAL] ${child.name}: ${materialType}`);
-            
-            // Apply material
-            if (materials[materialType]) {
-                child.material = materials[materialType];
-                console.log(`[APPLIED] ${materialType} material (${materials[materialType].color.getHexString()})`);
-            } else {
-                child.material = materials['default'];
-                console.log(`[APPLIED] default material`);
-            }
-            
-            // Add gray edges to buildings for better definition
-            if (materialType === 'building') {
-                const edges = new THREE.EdgesGeometry(child.geometry, 15); // 15 degree threshold
-                const lineMaterial = new THREE.LineBasicMaterial({ 
-                    color: 0x888888, // Medium gray
-                    linewidth: 1,
-                    transparent: false
-                });
-                const lineSegments = new THREE.LineSegments(edges, lineMaterial);
-                lineSegments.name = `${child.name}_edges`;
-                child.add(lineSegments);
-            }
-            
-            // Performance optimization: disable shadows on vegetation (huge performance gain)
-            if (materialType === 'vegetation') {
-                child.castShadow = false;   // Vegetation doesn't cast shadows (performance)
-                child.receiveShadow = true; // Still receives shadows
-                vegetationMeshes.push(child);
-            } else {
-                // Enable shadows for other objects
-                child.castShadow = true;
-                child.receiveShadow = true;
-            }
-        }
-    });
-    
-    // Merge vegetation geometry for massive performance boost
-    if (vegetationMeshes.length > 0) {
-        console.log(`[PERF] Merging ${vegetationMeshes.length} vegetation meshes for performance...`);
-        
-        const mergedGeometry = new THREE.BufferGeometry();
-        const geometries = [];
-        
-        // Collect all vegetation geometries with world transforms
-        vegetationMeshes.forEach(mesh => {
-            const geometry = mesh.geometry.clone();
-            mesh.updateWorldMatrix(true, false);
-            geometry.applyMatrix4(mesh.matrixWorld); // Fixed: matrixWorld not worldMatrix
-            geometries.push(geometry);
-            
-            // Remove original mesh from scene
-            if (mesh.parent) {
-                mesh.parent.remove(mesh);
-            }
-        });
-        
-        // Merge all geometries into one
-        const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
-        
-        if (merged) {
-            // Create single mesh for all vegetation
-            const mergedMesh = new THREE.Mesh(merged, materials['vegetation']);
-            mergedMesh.name = 'Vegetation_Merged';
-            mergedMesh.castShadow = false;
-            mergedMesh.receiveShadow = true;
-            model.add(mergedMesh);
-            
-            console.log(`[PERF] Merged ${vegetationMeshes.length} meshes into 1 (${(merged.attributes.position.count / 1000).toFixed(1)}k vertices)`);
-        } else {
-            console.warn('[PERF] Failed to merge vegetation geometry');
-        }
-    }
-    
-    console.log('[OK] Layer materials applied');
-    console.log(`[PERF] Total meshes: ${totalMeshCount}, Vegetation optimized: ${vegetationMeshes.length} -> 1 mesh`);
-    return model;
-}
-
-/**
- * Load complete model with layer materials
  * @param {string} modelPath - Path to GLTF model file
- * @param {string} layerMetadataPath - Path to layer metadata JSON file
- * @returns {Promise<THREE.Group>} Model with applied materials
+ * @param {string} coordinateSystem - Coordinate system ('xy_ground' or 'xz_ground')
+ * @returns {Promise<THREE.Group>} Model with applied materials and coordinate transform
  */
 export async function loadModelWithLayers(
-    modelPath = '../data/3d_models/100.gltf',
-    layerMetadataPath = '../data/models/model_layers.json'
+    modelPath = '../data/3d_models/100_test.glb',
+    coordinateSystem = 'xy_ground'
 ) {
-    console.log('[LOAD] Loading model and layer metadata...');
+    console.log('[LOAD] Loading model...');
+    console.log(`[INFO] Model path: ${modelPath}`);
+    console.log(`[INFO] Coordinate system: ${coordinateSystem}`);
     
-    // Load both in parallel
-    const [model, layerMetadata] = await Promise.all([
-        loadGLTFModel(modelPath),
-        loadLayerMetadata(layerMetadataPath)
-    ]);
+    // Load GLTF model
+    const model = await loadGLTFModel(modelPath);
     
-    // Apply layer materials
-    const modelWithMaterials = applyLayerMaterials(model, layerMetadata);
+    // Apply layer materials based on scene graph
+    const modelWithMaterials = applyLayerMaterials(model);
     
+    // Apply coordinate transformation if needed
+    // Three.js uses Y-up by default, so models with Z-up need rotation
+    if (coordinateSystem === 'xy_ground') {
+        // Model uses Z-up (XY is ground plane)
+        // Rotate -90 degrees around X axis to convert Z-up to Y-up
+        console.log('[TRANSFORM] Applying Z-up to Y-up rotation (-90° around X)');
+        modelWithMaterials.rotation.x = -Math.PI / 2;
+    }
+    
+    console.log('[OK] Model loaded with layer materials');
     return modelWithMaterials;
 }
 
 /**
- * Toggle visibility of model layers
- * @param {THREE.Group} model - THREE.js model
- * @param {string} layerType - Layer type to toggle (building, road, vegetation, base, water)
- * @param {boolean} visible - Whether to show or hide the layer
- */
-export function toggleLayerVisibility(model, layerType, visible) {
-    let toggleCount = 0;
-    
-    model.traverse((child) => {
-        if (child.isMesh) {
-            // Check if this mesh belongs to the specified layer type
-            const materialType = detectMaterialType(child.name, child);
-            if (materialType === layerType) {
-                child.visible = visible;
-                toggleCount++;
-            }
-        }
-    });
-    
-    console.log(`[LAYER] ${visible ? 'Showing' : 'Hiding'} ${layerType}: ${toggleCount} meshes`);
-}
-
-/**
  * Calculate model bounds
+ * 
  * @param {THREE.Group} model - THREE.js model
  * @returns {THREE.Box3} Bounding box
  */

@@ -8,15 +8,15 @@
       "grid_size": 2,
       "description": "Full day analysis for 2025-08-15 with 2m grid spacing.",
       "positions": 0,
-      "runtime_seconds": 166.20136659999844,
+      "runtime_seconds": 178.54544930002885,
       "utci_min": 0,
       "utci_max": 0,
       "utci_mean": 0,
-      "model_file": "data/3d_models/100.gltf",
+      "model_file": "data/3d_models/100_test.glb",
       "epw_file": "data/weather/ISR_Beer.Sheva.401900_MSI.epw",
       "analysis_period": "",
       "target_hours": []
     }
   ],
-  "last_updated": "2025-10-21T12:35:18.507003"
+  "last_updated": "2025-10-21T16:32:52.716944"
 }
