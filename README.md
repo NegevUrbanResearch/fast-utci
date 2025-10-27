@@ -56,13 +56,51 @@ python quick_analysis.py
 
 # Interactive workflow with date selection (full day analysis)
 python run_analysis.py
+
+# Batch process all 50 scenario variations (5 categories × 10 variants)
+python batch_scenarios.py [--grid-size 10.0] [--month 8] [--day 15]
 ```
 
-**Note**: Both scripts perform full-day (24-hour) UTCI analysis. `quick_analysis.py` is a lightweight wrapper that calls `run_analysis_core()` with predefined configurations. Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple analyses.
+**Note**: 
+- `quick_analysis.py` and `run_analysis.py` perform single analysis runs
+- `batch_scenarios.py` processes all 50 scenario variations sequentially with consistent settings
+- Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple custom analyses
 
 **Output**:
 - Binary (`.bin`) + metadata (`.json`) for web viewer
 - CSV export (optional, set `export_csv=True` in config)
+
+### Batch Processing
+
+The `batch_scenarios.py` script processes all 50 scenario variations:
+
+```bash
+# Process all scenarios with default settings (10m grid, Aug 15)
+python batch_scenarios.py
+
+# Custom settings
+python batch_scenarios.py --grid-size 5.0 --month 7 --day 20
+```
+
+**Output Structure:**
+```
+data/analyses/
+├── existing_buildings/
+│   ├── existing_buildings_01.bin
+│   ├── existing_buildings_01.json
+│   └── ... (10 variants)
+├── existing_trees/
+│   └── ... (10 variants)
+├── new_high_buildings/
+│   └── ... (10 variants)
+├── new_low_buildings/
+│   └── ... (10 variants)
+├── new_trees/
+│   └── ... (10 variants)
+└── manifest.json
+```
+
+**Expected Runtime:** ~2-4 hours for all 50 scenarios (depending on grid size and hardware)
 
 ### View Results
 
@@ -70,6 +108,11 @@ python run_analysis.py
 python -m http.server 8000
 # Open http://localhost:8000/viewer/
 ```
+
+The viewer now includes:
+- **Scenario Selection**: Collapsible dropdown to switch between 5 categories
+- **Variant Slider**: Range control to select 1-10 variants within each category
+- **Auto-loading**: Default model loads immediately without selection page
 
 ### Using the API
 

@@ -69,7 +69,8 @@ def run_analysis_core(
     embree_quality: str = "low",
     intersects_any: bool = True,
     export_csv: bool = False,
-    verbose: bool = True
+    verbose: bool = True,
+    category: Optional[str] = None  # NEW: category for subdirectory organization
 ) -> Dict[str, Any]:
     """
     Run full day UTCI analysis with specified parameters.
@@ -344,7 +345,8 @@ def run_analysis_core(
             runtime_seconds=total_time,
             analysis_period=analysis_period,
             target_hours=target_hours,
-            coordinate_system=coordinate_system
+            coordinate_system=coordinate_system,
+            category=category  # NEW: pass category for subdirectory organization
         )
         
         # Summary

@@ -134,3 +134,80 @@ canvas {
     ) !important; 
 }
 
+/* Scenario Selection Panel */
+.scenario-panel {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    min-width: 300px;
+}
+
+.scenario-toggle {
+    width: 100%;
+    padding: 12px 20px;
+    background: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.scenario-toggle:hover {
+    background: #1976D2;
+}
+
+.scenario-content {
+    margin-top: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.3);
+    max-height: 500px;
+    overflow-y: auto;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+}
+
+.scenario-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.scenario-dropdown {
+    width: 100%;
+    padding: 10px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.scenario-variant {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e0e0e0;
+}
+
+.scenario-variant label {
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.scenario-variant input[type="range"] {
+    flex: 1;
+}
+
+.scenario-variant span {
+    min-width: 30px;
+    font-weight: bold;
+    color: #2196F3;
+}
+

@@ -368,7 +368,8 @@ def export_utci_for_viewer(
     analysis_period: Optional[Any] = None,
     target_hours: Optional[List[int]] = None,
     output_dir: str = "data/analyses",
-    coordinate_system: str = "xy_ground"
+    coordinate_system: str = "xy_ground",
+    category: Optional[str] = None  # NEW: category for subdirectory
 ) -> tuple[str, str]:
     """
     Export UTCI results to optimized binary format for web viewer.
@@ -387,8 +388,12 @@ def export_utci_for_viewer(
     Returns:
         Tuple of (binary_path, metadata_path)
     """
-    # Create output directory
-    output_path = Path(output_dir)
+    # Determine output directory
+    if category:
+        output_path = Path(output_dir) / category
+    else:
+        output_path = Path(output_dir)
+    
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Extract date from analysis period
@@ -410,8 +415,14 @@ def export_utci_for_viewer(
         hours = target_hours
     
     # Generate analysis ID
-    hour_single = hours[0] if analysis_type == "single_hour" else None
-    analysis_id = generate_analysis_id(date_str, grid_size, analysis_type, hour_single)
+    if category:
+        # Use model name as analysis_id when in category mode
+        model_name = Path(model_file).stem  # e.g., "existing_buildings_01"
+        analysis_id = model_name
+    else:
+        # Original date-based naming
+        hour_single = hours[0] if analysis_type == "single_hour" else None
+        analysis_id = generate_analysis_id(date_str, grid_size, analysis_type, hour_single)
     
     # Export binary data
     binary_filename = f"{analysis_id}.bin"

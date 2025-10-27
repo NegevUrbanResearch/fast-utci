@@ -17,6 +17,20 @@ export const LAYER_MATERIALS = {
         emissiveIntensity: 0.3,
         materialType: 'lambert'  // MeshLambertMaterial for better performance
     },
+    new_building: {
+        color: '#e8f4f8',  // Slightly blue-tinted white
+        opacity: 1.0,
+        displayName: 'New Buildings',
+        emissive: '#e8f4f8',
+        emissiveIntensity: 0.35,
+        materialType: 'lambert'
+    },
+    new_vegetation: {
+        color: '#52C77A',  // Brighter green than existing vegetation
+        opacity: 0.9,
+        displayName: 'New Trees',
+        materialType: 'standard'
+    },
     base: {
         color: '#BDC3C7',
         opacity: 0.2,
@@ -39,7 +53,7 @@ export const LAYER_MATERIALS = {
     vegetation: {
         color: '#27AE60',
         opacity: 0.9,
-        displayName: 'Vegetation',
+        displayName: 'Trees',
         materialType: 'standard'
     },
     water: {
@@ -79,12 +93,28 @@ export const LAYER_NAME_MAPPING = {
     'structure': 'building',
     'facade': 'building',
     
+    // New building variants
+    'new building': 'new_building',
+    'new buildings': 'new_building',
+    'new_building': 'new_building',
+    'new_buildings': 'new_building',
+    'proposed building': 'new_building',
+    'proposed buildings': 'new_building',
+    
     // Vegetation variants
     'treesurface': 'vegetation',
     'trees': 'vegetation',
     'vegetation': 'vegetation',
     'plants': 'vegetation',
     'greenery': 'vegetation',
+    
+    // New vegetation variants
+    'new trees': 'new_vegetation',
+    'new tree': 'new_vegetation',
+    'new_trees': 'new_vegetation',
+    'new_tree': 'new_vegetation',
+    'proposed trees': 'new_vegetation',
+    'proposed vegetation': 'new_vegetation',
     
     // Sidewalk/Parking variants
     'sidewalk': 'sidewalk',
@@ -105,7 +135,9 @@ export const LAYER_NAME_MAPPING = {
 // Defines display order and default visibility
 export const STANDARD_LAYER_TYPES = [
     { id: 'building', displayName: 'Buildings', defaultVisible: true },
-    { id: 'vegetation', displayName: 'Vegetation', defaultVisible: true },
+    { id: 'new_building', displayName: 'New Buildings', defaultVisible: true },
+    { id: 'vegetation', displayName: 'Trees', defaultVisible: true },
+    { id: 'new_vegetation', displayName: 'New Trees', defaultVisible: true },
     { id: 'road', displayName: 'Roads', defaultVisible: false },
     { id: 'sidewalk', displayName: 'Sidewalks', defaultVisible: false },
     { id: 'base', displayName: 'Ground', defaultVisible: false },

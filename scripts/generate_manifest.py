@@ -102,9 +102,19 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
         print(f"[ERROR] Analyses directory not found: {analyses_dir}")
         return False
     
-    # Find all analysis JSON files
-    analysis_files = list(analyses_dir.glob('*.json'))
-    analysis_files = [f for f in analysis_files if f.name != 'manifest.json']  # Exclude manifest itself
+    # Find all analysis JSON files in root and subdirectories
+    analysis_files = []
+    
+    # Root level files
+    root_files = [f for f in analyses_dir.glob('*.json') if f.name != 'manifest.json']
+    analysis_files.extend([(f, None) for f in root_files])
+    
+    # Subdirectory files (category-based)
+    for subdir in analyses_dir.iterdir():
+        if subdir.is_dir():
+            category = subdir.name
+            for json_file in subdir.glob('*.json'):
+                analysis_files.append((json_file, category))
     
     if not analysis_files:
         print(f"[WARN] No analysis files found in {analyses_dir}")
@@ -116,7 +126,7 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
     else:
         analyses = []
         
-        for analysis_file in sorted(analysis_files):
+        for analysis_file, category in sorted(analysis_files):
             filename = analysis_file.stem  # Remove .json extension
             
             # Parse filename to get basic metadata
@@ -130,7 +140,7 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
             
             # Combine parsed and loaded metadata
             analysis_entry = {
-                'id': filename,
+                'id': f"{category}/{filename}" if category else filename,
                 'title': parsed['title'],
                 'type': parsed['type'],
                 'date': parsed['date'],
@@ -138,6 +148,11 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
                 'description': parsed['description'],
                 **additional_metadata  # Add loaded metadata
             }
+            
+            # Add category and path for subdirectory analyses
+            if category:
+                analysis_entry['category'] = category
+                analysis_entry['path'] = f"{category}/{filename}"
             
             # Add hour for single hour analyses
             if parsed['type'] == 'single_hour':

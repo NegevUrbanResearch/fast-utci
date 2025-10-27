@@ -82,6 +82,9 @@ export function createTimeControls(numHours, onHourChange) {
         onHourChange(hourIndex);
     });
     
+    // Initialize display with current slider value
+    updateHourDisplay(hourDisplay, 0);
+    
     sliderContainer.appendChild(slider);
     container.appendChild(sliderContainer);
     

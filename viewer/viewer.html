@@ -64,15 +64,28 @@
 <body>
     <div id="viewer-container"></div>
     
-    <!-- Navigation button -->
-    <button id="back-btn" class="button" onclick="window.location.href='index.html'">
-        ← Back to Analyses
-    </button>
-    
-    <!-- Screenshot button -->
-    <button id="screenshot-btn" class="button" onclick="takeScreenshot()">
-        📷 Screenshot
-    </button>
+    <!-- Scenario Selection Panel -->
+    <div id="scenario-panel" class="scenario-panel">
+        <button id="scenario-toggle" class="scenario-toggle">
+            Select Scenario ▼
+        </button>
+        <div id="scenario-content" class="scenario-content collapsed">
+            <select id="scenario-category" class="scenario-dropdown">
+                <option value="">Choose Category...</option>
+                <option value="existing_buildings">Existing Buildings</option>
+                <option value="existing_trees">Existing Trees</option>
+                <option value="new_high_buildings">New High Buildings</option>
+                <option value="new_low_buildings">New Low Buildings</option>
+                <option value="new_trees">New Trees</option>
+            </select>
+            
+            <div id="scenario-variant-control" class="scenario-variant" style="display: none;">
+                <label for="scenario-slider">Variant:</label>
+                <input type="range" id="scenario-slider" min="1" max="10" value="1" step="1">
+                <span id="scenario-number">1</span>
+            </div>
+        </div>
+    </div>
     
     <!-- Layer Controls Panel -->
     <div id="layer-controls" class="panel">
@@ -118,6 +131,49 @@
         // Initialize viewer when page loads
         window.addEventListener('DOMContentLoaded', () => {
             initFromURL();
+            
+            // Setup scenario controls
+            const toggleBtn = document.getElementById('scenario-toggle');
+            const content = document.getElementById('scenario-content');
+            const categorySelect = document.getElementById('scenario-category');
+            const variantControl = document.getElementById('scenario-variant-control');
+            const slider = document.getElementById('scenario-slider');
+            const numberDisplay = document.getElementById('scenario-number');
+            
+            // Toggle collapse/expand
+            toggleBtn.addEventListener('click', () => {
+                content.classList.toggle('collapsed');
+                toggleBtn.textContent = content.classList.contains('collapsed') 
+                    ? 'Select Scenario ▼' 
+                    : 'Select Scenario ▲';
+            });
+            
+            // Show variant selector when category is chosen and auto-load variant 1
+            categorySelect.addEventListener('change', (e) => {
+                if (e.target.value) {
+                    variantControl.style.display = 'flex';
+                    slider.value = 1;
+                    numberDisplay.textContent = '1';
+                    
+                    // Auto-load variant 1
+                    if (window.viewerApp) {
+                        window.viewerApp.loadScenario(e.target.value, 1);
+                    }
+                } else {
+                    variantControl.style.display = 'none';
+                }
+            });
+            
+            // Update on slider drag (real-time) - more responsive
+            slider.addEventListener('input', (e) => {
+                numberDisplay.textContent = e.target.value;
+                
+                const category = categorySelect.value;
+                const variant = parseInt(e.target.value);
+                if (category && window.viewerApp) {
+                    window.viewerApp.loadScenario(category, variant);
+                }
+            });
         });
         
         // Screenshot function - save to clipboard with fallback to download

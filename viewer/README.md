@@ -16,17 +16,21 @@ A performant Three.js-based 3D viewer for UTCI (Universal Thermal Climate Index)
 
 1. **Generate Analysis Data**:
    ```bash
-   # Quick automated analysis with predefined parameters (full day)
+   # Single analysis
    python quick_analysis.py
-   
-   # OR interactive analysis with date selection (full day)
    python run_analysis.py
+   
+   # Batch process all 50 scenarios
+   python batch_scenarios.py
    ```
-   This will create binary data files in `data/analyses/`
+   This will create binary data files in `data/analyses/` (organized by category for batch processing)
 
 2. **Open Viewer**:
-   - Open `viewer/index.html` in a web browser
-   - Select an analysis to visualize
+   - Open `viewer/viewer.html` in a web browser (or `viewer/index.html` which auto-redirects)
+   - The default model loads immediately with existing analysis
+   - Use the **Scenario Selection** panel to switch between different scenarios:
+     - **Dropdown**: Choose from 5 categories (Existing Buildings, Existing Trees, etc.)
+     - **Slider**: Select variant 1-10 within the chosen category
    - Interact with the 3D model using mouse/touch:
      - **Left click + drag**: Rotate view
      - **Right click + drag**: Pan
@@ -37,14 +41,14 @@ A performant Three.js-based 3D viewer for UTCI (Universal Thermal Climate Index)
 
 ### Data Pipeline
 ```
-quick_analysis.py/run_analysis.py → scripts/export_for_viewer.py → Binary files (.bin + .json)
+quick_analysis.py/run_analysis.py/batch_scenarios.py → scripts/export_for_viewer.py → Binary files (.bin + .json)
 ```
 
 ### File Structure
 ```
 /viewer/
-  index.html              # Landing page with analysis selector
-  viewer.html             # Main 3D viewer
+  index.html              # Auto-redirects to viewer.html
+  viewer.html             # Main 3D viewer with scenario selection
   /js/
     ColorScale.js         # Ladybug UTCI color scale
     UTCIDataLoader.js     # Binary data parsing

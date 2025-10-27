@@ -222,10 +222,21 @@ export class ViewerApp {
     /**
      * Load and display analysis
      */
-    async loadAnalysisData(analysisId) {
+    async loadAnalysisData(analysisId, options = {}) {
+        const {
+            preservedHour = 0,
+            preservedColorMode = 'normalized',
+            preservedSunPathVisible = false,
+            skipCameraFocus = false
+        } = options;
         try {
             // Show loading indicator
             this.showLoading('Loading analysis data...');
+            
+            // Restore preserved state
+            this.currentHour = preservedHour;
+            this.colorMode = preservedColorMode;
+            this.sunPathVisible = preservedSunPathVisible;
             
             // Load analysis data
             this.analysis = await loadAnalysis(analysisId);
@@ -236,9 +247,16 @@ export class ViewerApp {
             // Load 3D model
             const modelPath = this.analysis.metadata.model_file.replace('data/', '../data/');
             const coordinateSystem = this.analysis.metadata.coordinate_system || 'xy_ground';
+            
+            console.log(`[MODEL] Loading model: ${modelPath}`);
+            console.log(`[MODEL] Coordinate system: ${coordinateSystem}`);
+            
             const model = await loadModelWithLayers(modelPath, coordinateSystem);
             this.model = model; // Store reference for layer controls
             this.scene.add(model);
+            
+            console.log(`[MODEL] Model added to scene. Children count: ${this.scene.children.length}`);
+            console.log(`[MODEL] Model bounds:`, new THREE.Box3().setFromObject(model));
             
             // Create layer manager and discover layers dynamically
             const layerContainer = document.getElementById('layer-controls');
@@ -259,6 +277,9 @@ export class ViewerApp {
             this.showLoading('Creating UTCI visualization...');
             this.pointCloud = createUTCIPointCloud(this.analysis, model, this.currentHour);
             this.scene.add(this.pointCloud);
+            
+            // Apply preserved color mode immediately
+            updatePointCloudColors(this.pointCloud, this.analysis, this.currentHour, this.colorMode);
             
             // Add dynamic grid based on model bounds
             this.addDynamicGrid(model, this.analysis);
@@ -320,6 +341,17 @@ export class ViewerApp {
                     (hourIndex) => this.onHourChange(hourIndex)
                 );
                 document.body.appendChild(timeControls);
+                
+                // Set slider to preserved hour
+                const hourSlider = document.getElementById('hour-slider');
+                if (hourSlider) {
+                    hourSlider.value = preservedHour;
+                    // Trigger display update
+                    const hourDisplay = document.getElementById('hour-display');
+                    if (hourDisplay) {
+                        hourDisplay.textContent = this.analysis.metadata.hours[preservedHour];
+                    }
+                }
             }
             
             // Try to load validation data and create analytics panel
@@ -341,9 +373,11 @@ export class ViewerApp {
                 document.body.appendChild(analyticsPanel);
             }
             
-            // Setup sun path toggle
+            // Setup sun path toggle with preserved visibility
             const sunPathToggle = document.getElementById('sun-path-toggle');
             if (sunPathToggle && this.sunPathGroup) {
+                this.sunPathGroup.visible = this.sunPathVisible;
+                sunPathToggle.checked = this.sunPathVisible;
                 sunPathToggle.addEventListener('change', (e) => {
                     this.sunPathGroup.visible = e.target.checked;
                     this.sunPathVisible = e.target.checked;
@@ -353,8 +387,10 @@ export class ViewerApp {
             // Hide loading indicator
             this.hideLoading();
             
-            // Focus camera on model
-            this.focusCameraOnModel(model);
+            // Focus camera on model (skip if requested)
+            if (!skipCameraFocus) {
+                this.focusCameraOnModel(model);
+            }
             
             console.log('[OK] Analysis loaded successfully');
             
@@ -847,6 +883,110 @@ export class ViewerApp {
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
     }
+    
+    /**
+     * Load scenario analysis based on category and variant
+     */
+    async loadScenario(category, variant) {
+        try {
+            // Store current state BEFORE clearing
+            const preservedHour = this.currentHour;
+            const preservedColorMode = this.colorMode;
+            const preservedSunPathVisible = this.sunPathVisible;
+            const preservedCameraPosition = this.camera.position.clone();
+            const preservedCameraTarget = this.controls.target.clone();
+            
+            // Construct analysis ID based on naming convention
+            const analysisId = `${category}/${category}_${variant.toString().padStart(2, '0')}`;
+            
+            console.log(`[SCENARIO] Loading: ${analysisId}`);
+            
+            // Clear existing DOM elements (prevent accumulation)
+            this.cleanupDOMElements();
+            
+            // Clear existing scene elements
+            if (this.pointCloud) {
+                this.scene.remove(this.pointCloud);
+                this.pointCloud = null;
+            }
+            if (this.model) {
+                this.scene.remove(this.model);
+                this.model = null;
+            }
+            if (this.sunPathGroup) {
+                this.scene.remove(this.sunPathGroup);
+                this.sunPathGroup = null;
+            }
+            if (this.layerManager) {
+                this.layerManager = null;
+            }
+            
+            // Load new analysis with preserved state
+            try {
+                await this.loadAnalysisData(analysisId, {
+                    preservedHour,
+                    preservedColorMode,
+                    preservedSunPathVisible,
+                    preservedCameraPosition,
+                    preservedCameraTarget,
+                    skipCameraFocus: true
+                });
+            } catch (loadError) {
+                console.error(`[ERROR] Failed to load analysis data: ${loadError.message}`);
+                console.error(`[ERROR] Analysis ID: ${analysisId}`);
+                throw loadError;
+            }
+            
+            // Focus camera on the new model (don't preserve camera position for different models)
+            if (this.model) {
+                console.log(`[CAMERA] Focusing on new model...`);
+                this.focusCameraOnModel(this.model);
+                console.log(`[CAMERA] Camera position:`, this.camera.position);
+                console.log(`[CAMERA] Camera target:`, this.controls.target);
+                
+                // Force render update
+                this.renderer.render(this.scene, this.camera);
+            }
+            
+            console.log(`[OK] Loaded scenario: ${category} variant ${variant}`);
+        } catch (error) {
+            console.error(`[ERROR] Failed to load scenario: ${error.message}`);
+            
+            // Check if it's a 404 error (file not found)
+            if (error.message.includes('404') || error.message.includes('Not Found')) {
+                alert(`Scenario files not found: ${category} variant ${variant}\n\nPlease run batch processing first:\npython batch_scenarios.py`);
+            } else {
+                alert(`Failed to load scenario: ${category} variant ${variant}\n${error.message}`);
+            }
+        }
+    }
+    
+    /**
+     * Clean up all DOM elements created by viewer
+     */
+    cleanupDOMElements() {
+        // Remove legend (multiple possible IDs)
+        const legends = document.querySelectorAll('[id^="legend"]');
+        legends.forEach(el => el.remove());
+        
+        // Remove time controls (has specific ID)
+        const timeControls = document.getElementById('time-controls');
+        if (timeControls) {
+            timeControls.remove();
+        }
+        
+        // Remove analytics panel (has specific ID)
+        const analyticsPanel = document.getElementById('analytics-panel');
+        if (analyticsPanel) {
+            analyticsPanel.remove();
+        }
+        
+        // Remove layer controls content (will be recreated)
+        const layerContainer = document.getElementById('layer-controls');
+        if (layerContainer) {
+            layerContainer.innerHTML = '';
+        }
+    }
 }
 
 /**
@@ -854,12 +994,7 @@ export class ViewerApp {
  */
 export function initFromURL() {
     const params = new URLSearchParams(window.location.search);
-    const analysisId = params.get('analysis');
-    
-    if (!analysisId) {
-        alert('No analysis specified. Please use: viewer.html?analysis=<analysis_id>');
-        return;
-    }
+    const analysisId = params.get('analysis') || '20250815_grid_2m_fullday'; // Default to existing analysis
     
     const container = document.getElementById('viewer-container');
     if (!container) {
@@ -868,5 +1003,6 @@ export function initFromURL() {
     }
     
     const app = new ViewerApp(container);
+    window.viewerApp = app; // Make accessible to UI handlers
     app.loadAnalysisData(analysisId);
 }
