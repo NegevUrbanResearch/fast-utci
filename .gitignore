@@ -6,7 +6,6 @@ __pycache__/
 .benchmarks
 
 # Python build artifacts
-build/
 *.egg-info/
 *.egg
 

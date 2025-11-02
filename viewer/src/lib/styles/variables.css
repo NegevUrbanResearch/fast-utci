@@ -1,0 +1,32 @@
+/**
+ * CSS Variables for Viewer Styling
+ */
+
+:root {
+	/* Colors */
+	--color-bg-primary: #acd8eb;
+	--color-bg-panel: rgba(255, 255, 255, 0.95);
+	--color-text-primary: #333;
+	--color-text-secondary: #666;
+	
+	/* Shadows */
+	--shadow-panel: 0 2px 15px rgba(0, 0, 0, 0.3);
+	--shadow-tooltip: 0 2px 8px rgba(0, 0, 0, 0.3);
+	
+	/* Border radius */
+	--radius-panel: 8px;
+	--radius-control: 6px;
+	
+	/* Spacing */
+	--spacing-xs: 4px;
+	--spacing-sm: 8px;
+	--spacing-md: 12px;
+	--spacing-lg: 20px;
+	--spacing-xl: 30px;
+	
+	/* Z-index layers */
+	--z-tooltip: 1000;
+	--z-panel: 100;
+}
+
+
