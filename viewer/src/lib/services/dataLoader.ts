@@ -8,6 +8,15 @@
 import { base } from '$app/paths';
 import type { SingleHourData, FullDayData, UTCIData, Analysis, Position, HourStatistics } from '$lib/types/analysis';
 
+// Data base path: strip /viewer/build from base path to get project root
+// e.g., /fast-utci/viewer/build -> /fast-utci
+const getDataBasePath = () => {
+	if (typeof window === 'undefined') return ''; // SSR
+	const basePath = base || '';
+	// Remove /viewer/build from the end if present
+	return basePath.replace(/\/viewer\/build$/, '');
+};
+
 /**
  * Parse single hour binary data
  * 
@@ -136,12 +145,13 @@ export async function loadMetadata(metadataPath: string) {
 /**
  * Load complete UTCI analysis (metadata + binary data)
  * @param analysisId - Analysis identifier (e.g., "20250815_grid_2m_fullday")
- * @param dataDir - Base directory for data files (default: uses base path + "/data/analyses")
+ * @param dataDir - Base directory for data files (default: uses project root + "/data/analyses")
  * @returns Complete analysis data with metadata and binary data
  */
 export async function loadAnalysis(analysisId: string, dataDir?: string): Promise<Analysis> {
-	// Use provided dataDir or construct from base path (supports GitHub Pages deployment)
-	const baseDataDir = dataDir || `${base}/data/analyses`;
+	// Use provided dataDir or construct from data base path (project root, not viewer/build)
+	const dataBasePath = getDataBasePath();
+	const baseDataDir = dataDir || `${dataBasePath}/data/analyses`;
 	const metadataPath = `${baseDataDir}/${analysisId}.json`;
 	const binaryPath = `${baseDataDir}/${analysisId}.bin`;
 	

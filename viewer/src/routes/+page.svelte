@@ -21,6 +21,12 @@
 	import '$lib/styles/variables.css';
 	import type { Group } from 'three';
 
+	// Data base path: strip /viewer/build from base path to get project root
+	const getDataBasePath = () => {
+		const basePath = base || '';
+		return basePath.replace(/\/viewer\/build$/, '');
+	};
+
 	let model: Group | null = null;
 	let gridVisible = false;
 
@@ -92,7 +98,7 @@
 		{#if $analysisStore}
 			{#key $analysisStore.metadata.model_file}
 				<Model
-					modelPath={$analysisStore.metadata.model_file.replace('data/', `${base}/data/`)}
+					modelPath={$analysisStore.metadata.model_file.replace('data/', `${getDataBasePath()}/data/`)}
 					coordinateSystem={$analysisStore.metadata.coordinate_system || 'xy_ground'}
 					on:modelLoaded={(e) => {
 						model = e.detail;

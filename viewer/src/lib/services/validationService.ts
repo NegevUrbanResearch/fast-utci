@@ -8,6 +8,13 @@ import { base } from '$app/paths';
 import { loadBinaryData, calculateStatistics } from './dataLoader';
 import type { Analysis } from '$lib/types/analysis';
 
+// Data base path: strip /viewer/build from base path to get project root
+const getDataBasePath = () => {
+	if (typeof window === 'undefined') return ''; // SSR
+	const basePath = base || '';
+	return basePath.replace(/\/viewer\/build$/, '');
+};
+
 /**
  * Validation data structure (same as analysis data)
  */
@@ -41,13 +48,14 @@ export interface ComparisonStats {
 
 /**
  * Load Grasshopper validation data
- * @param validationPath - Path to validation binary file (optional, defaults to base path + "/data/validation/...")
+ * @param validationPath - Path to validation binary file (optional, defaults to project root + "/data/validation/...")
  * @returns Promise with validation data
  */
 export async function loadValidationData(
 	validationPath?: string
 ): Promise<ValidationData> {
-	const path = validationPath || `${base}/data/validation/grasshopper_aug15_fullday.bin`;
+	const dataBasePath = getDataBasePath();
+	const path = validationPath || `${dataBasePath}/data/validation/grasshopper_aug15_fullday.bin`;
 	console.log('[LOAD] Loading Grasshopper validation data...');
 	const data = await loadBinaryData(path, 'full_day');
 	console.log('[OK] Validation data loaded');
