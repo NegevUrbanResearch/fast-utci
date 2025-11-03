@@ -242,17 +242,20 @@ def compute_summary_statistics(utci_results: Dict[str, Any]) -> Dict[str, Any]:
 
 def print_summary(summary: Dict[str, Any]) -> None:
     """
-    Print formatted summary statistics.
+    Log formatted summary statistics.
     
     Args:
         summary: Summary dictionary from compute_summary_statistics()
     """
-    print("\n=== UTCI Calculation Summary ===")
-    print(f"Positions: {summary['total_positions']}")
-    print(f"Hours: {summary['total_hours']}")
-    print(f"UTCI range: {summary['utci_stats']['min']:.1f} to {summary['utci_stats']['max']:.1f} °C")
-    print(f"UTCI mean: {summary['utci_stats']['mean']:.1f} °C")
-    print(f"MRT range: {summary['mrt_stats']['min']:.1f} to {summary['mrt_stats']['max']:.1f} °C")
-    print(f"MRT mean: {summary['mrt_stats']['mean']:.1f} °C")
-    print(f"Comfort distribution: {summary['comfort_distribution']}")
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("=== UTCI Calculation Summary ===")
+    logger.info(f"Positions: {summary['total_positions']}")
+    logger.info(f"Hours: {summary['total_hours']}")
+    logger.info(f"UTCI range: {summary['utci_stats']['min']:.1f} to {summary['utci_stats']['max']:.1f} °C")
+    logger.info(f"UTCI mean: {summary['utci_stats']['mean']:.1f} °C")
+    logger.info(f"MRT range: {summary['mrt_stats']['min']:.1f} to {summary['mrt_stats']['max']:.1f} °C")
+    logger.info(f"MRT mean: {summary['mrt_stats']['mean']:.1f} °C")
+    logger.info(f"Comfort distribution: {summary['comfort_distribution']}")
 

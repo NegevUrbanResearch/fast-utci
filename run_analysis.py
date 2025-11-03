@@ -114,7 +114,7 @@ def run_analysis_core(
             print("STEP 1: LOADING PROJECT DATA")
             print("=" * 60)
         
-        from fast_utci.model_reader import read_project_data, get_combined_mesh, get_ground_bounds
+        from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
         cfg = load_config()
         t0 = time.perf_counter()
         scene, weather_df, epw_data = read_project_data(
@@ -259,7 +259,7 @@ def run_analysis_core(
         )
         
         mrt_results = mrt_calc.compute_mrt(
-            epw_data=epw_data,
+            weather_data=epw_data,
             exposure_results=exposure_results,
             analysis_period=analysis_period,
             target_hours=target_hours

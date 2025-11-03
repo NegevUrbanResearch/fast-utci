@@ -10,13 +10,16 @@ from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from functools import partial
 import time
+import logging
 
 from fast_utci.shared import UTCIConfig
 from fast_utci.shared.weather import WeatherDataManager
 from .calculation import BoundaryAveragingCalculator
 from .statistics import compute_summary_statistics, classify_thermal_comfort
-from .export import to_csv as export_to_csv
+from fast_utci.shared.io.export import export_utci_results
 from fast_utci.shared import ParallelProcessor, BalancedChunkStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class UTCICalculator:
@@ -80,13 +83,13 @@ class UTCICalculator:
         self.weather = WeatherDataManager(weather_data, epw_object)
         
         summary = self.weather.get_summary()
-        print(f"Loaded weather data:")
+        logger.info("Loaded weather data")
         if summary['location']:
-            print(f"  Location: {summary['location']}")
-        print(f"  Data points: {summary['n_hours']} hours")
-        print(f"  Temperature range: {summary['temp_range'][0]:.1f} to {summary['temp_range'][1]:.1f} °C")
-        print(f"  Wind speed range: {summary['wind_range'][0]:.1f} to {summary['wind_range'][1]:.1f} m/s")
-        print(f"  Humidity range: {summary['humidity_range'][0]:.1f} to {summary['humidity_range'][1]:.1f} %")
+            logger.info(f"Location: {summary['location']}")
+        logger.info(f"Data points: {summary['n_hours']} hours")
+        logger.info(f"Temperature range: {summary['temp_range'][0]:.1f} to {summary['temp_range'][1]:.1f} °C")
+        logger.info(f"Wind speed range: {summary['wind_range'][0]:.1f} to {summary['wind_range'][1]:.1f} m/s")
+        logger.info(f"Humidity range: {summary['humidity_range'][0]:.1f} to {summary['humidity_range'][1]:.1f} %")
     
     def compute_utci(self,
                      mrt_results: Dict[str, Any],
@@ -188,7 +191,7 @@ class UTCICalculator:
         
         # Process and merge results automatically
         processor = ParallelProcessor(parallel_config=parallel_config)
-        print(f"Processing {n_positions} UTCI calculations with {processor.n_workers} workers")
+        logger.info(f"Processing {n_positions} UTCI calculations with {processor.n_workers} workers")
         
         return processor.process_and_merge(
             data=np.array(mrt_items, dtype=object),
@@ -212,7 +215,7 @@ class UTCICalculator:
             include_weather: Whether to include weather variables
             include_comfort_categories: Whether to include thermal comfort categories
         """
-        export_to_csv(
+        export_utci_results(
             utci_results,
             csv_path,
             include_weather=include_weather,

@@ -7,7 +7,7 @@ values from 3D building models using Mean Radiant Temperature (MRT) calculations
 
 from fast_utci.mrt import MRTCalculator, MRTConfig
 from fast_utci.utci import UTCICalculator
-from fast_utci.model_reader import read_project_data, get_combined_mesh, get_ground_bounds
+from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
 
 __version__ = "0.1.0"
 

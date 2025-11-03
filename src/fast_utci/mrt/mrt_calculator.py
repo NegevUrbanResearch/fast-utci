@@ -37,8 +37,10 @@ from .mesh import load_context_meshes, MeshContext
 from .exposure import compute_exposure, compute_exposure_batch, ExposureResult
 from .solarcal import compute_mrt_solarcal, create_solar_body_parameters, SolarCalResult
 from .grid import AnalysisGrid, create_grid_from_surface, create_rectangular_grid, load_surface_and_create_grid
-from .period import AnalysisPeriod, filter_weather_data, filter_arrays_by_period
+from .period import AnalysisPeriod
+from .boundary import create_boundary_arrays
 from fast_utci.shared import MRTConfig
+from fast_utci.shared.weather import WeatherDataManager, EPWAdapter, DataFrameAdapter
 
 # Import parallel utilities from shared
 from fast_utci.shared import ParallelProcessor
@@ -101,7 +103,8 @@ def _create_solarcal_from_epw(epw_data: Any,
     if len(exposure.fract_body_exp) != expected_hours:
         raise ValueError(
             f"Exposure array length ({len(exposure.fract_body_exp)}) "
-            f"doesn't match analysis period ({expected_hours} hours). "
+            f"doesn't match weather data length ({expected_hours} hours). "
+            f"Ensure analysis_period matches in both compute_exposure() and compute_mrt() calls. "
             f"Period: {day_period}"
         )
     
@@ -302,7 +305,7 @@ class MRTCalculator:
         return results
     
     def compute_mrt(self, 
-                   epw_data: Any,
+                   weather_data: Any,
                    exposure_results: List[ExposureResult],
                    analysis_period: Optional[AnalysisPeriod] = None,
                    target_hours: Optional[List[int]] = None,
@@ -316,7 +319,7 @@ class MRTCalculator:
         This matches Grasshopper's OutdoorSolarMRT behavior.
         
         Args:
-            epw_data: EPW object or weather DataFrame
+            weather_data: EPW object, weather DataFrame, or file path
             exposure_results: List of ExposureResult objects from compute_exposure
                             Should include N+1 hours for boundary averaging
             analysis_period: Optional time period filter
@@ -329,33 +332,24 @@ class MRTCalculator:
             - 'mrt1': MRT array using hour N+1 data
             - Other analysis results
         """
-        # Extract weather data
-        if hasattr(epw_data, 'dry_bulb_temperature'):
-            # EPW object
-            air_temp = np.array(epw_data.dry_bulb_temperature.values)
-            dir_norm_rad = np.array(epw_data.direct_normal_radiation.values)
-            diff_horiz_rad = np.array(epw_data.diffuse_horizontal_radiation.values)
-            horiz_ir_rad = np.array(epw_data.horizontal_infrared_radiation_intensity.values)
-            datetimes = epw_data.dry_bulb_temperature.datetimes
-        else:
-            # DataFrame
-            air_temp = epw_data['air_temp'].values
-            dir_norm_rad = epw_data['direct_normal_radiation'].values
-            diff_horiz_rad = epw_data['diffuse_horizontal_radiation'].values
-            horiz_ir_rad = epw_data['horizontal_infrared_radiation_intensity'].values
-            datetimes = epw_data['datetime'].tolist()
+        # Create and filter weather data using WeatherDataManager
+        weather_manager = WeatherDataManager(weather_data)
+        if analysis_period is not None:
+            weather_manager.filter_by_period(analysis_period)
+        if target_hours is not None:
+            weather_manager.filter_by_hours(target_hours)
         
-        # Apply period and hour filters to weather data
-        weather_arrays = {
-            'air_temp': air_temp,
-            'dir_norm_rad': dir_norm_rad,
-            'diff_horiz_rad': diff_horiz_rad,
-            'horiz_ir_rad': horiz_ir_rad
-        }
+        adapter = weather_manager.get_adapter()
         
-        filtered_weather, filtered_datetimes = filter_arrays_by_period(
-            weather_arrays, datetimes, analysis_period, target_hours
-        )
+        # Get underlying data for SolarCal (EPW object or arrays)
+        if isinstance(adapter, EPWAdapter):
+            epw_data = adapter.epw_data
+            weather_arrays = None
+            filtered_datetimes = None
+        else:  # DataFrameAdapter
+            epw_data = None
+            weather_arrays = adapter.to_numpy_arrays()
+            filtered_datetimes = adapter.get_datetimes()
         
         # Use parallel processing for MRT calculations
         n_positions = len(exposure_results)
@@ -364,56 +358,32 @@ class MRTCalculator:
         threshold = self.config.parallel.parallel_threshold
         if n_positions < threshold:
             return self._compute_mrt_serial(
-                exposure_results, epw_data, filtered_weather, filtered_datetimes, 
+                exposure_results, epw_data, weather_arrays, filtered_datetimes, 
                 analysis_period, target_hours
             )
         
         # Use parallel processing for larger datasets
         return self._compute_mrt_parallel(
-            exposure_results, epw_data, filtered_weather, filtered_datetimes,
+            exposure_results, epw_data, weather_arrays, filtered_datetimes,
             analysis_period, target_hours, n_workers, show_progress=True
         )
     
-    @staticmethod
-    def _create_boundary_arrays(mrt_array: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Create mrt0 and mrt1 arrays for boundary averaging.
-        
-        mrt0[i] uses hour i's data, mrt1[i] uses hour i+1's data.
-        For the last hour, mrt1 duplicates the final value (no next-day wrap).
-        
-        Args:
-            mrt_array: MRT values for N hours
-            
-        Returns:
-            Tuple of (mrt0, mrt1) both with length N
-        """
-        if len(mrt_array) > 1:
-            return mrt_array, np.concatenate([mrt_array[1:], [mrt_array[-1]]])
-        return mrt_array, mrt_array
     
-    def _compute_mrt_from_epw(self, epw_data, exposure, analysis_period, target_hours):
-        """Compute MRT using EPW data collections for proper Grasshopper-like filtering."""
-        return _create_solarcal_from_epw(
-            epw_data, exposure, analysis_period, target_hours,
-            self.config.ground_reflectance, self.body_params
-        )
-    
-    def _compute_mrt_serial(self, exposure_results, epw_data, filtered_weather, 
+    def _compute_mrt_serial(self, exposure_results, epw_data, weather_arrays, 
                            filtered_datetimes, analysis_period, target_hours):
         """Serial MRT computation for small datasets."""
         results = {}
         
         for i, exposure in enumerate(tqdm(exposure_results, desc="Computing MRT (serial)", unit="pos")):
             result = self._compute_single_mrt(
-                i, exposure, epw_data, filtered_weather, filtered_datetimes,
+                i, exposure, epw_data, weather_arrays, filtered_datetimes,
                 analysis_period, target_hours
             )
             results[f'position_{i}'] = result
         
         return results
     
-    def _compute_mrt_parallel(self, exposure_results, epw_data, filtered_weather, 
+    def _compute_mrt_parallel(self, exposure_results, epw_data, weather_arrays, 
                              filtered_datetimes, analysis_period, target_hours, n_workers, show_progress=True):
         """Parallel MRT computation for larger datasets using ParallelProcessor."""
         n_positions = len(exposure_results)
@@ -431,7 +401,7 @@ class MRTCalculator:
         worker_fn = partial(
             _worker_mrt_chunk,
             epw_data=epw_data,
-            filtered_weather=filtered_weather,
+            weather_arrays=weather_arrays,
             filtered_datetimes=filtered_datetimes,
             analysis_period=analysis_period,
             target_hours=target_hours,
@@ -453,7 +423,7 @@ class MRTCalculator:
             merge_dict=True
         )
     
-    def _compute_single_mrt(self, i, exposure, epw_data, filtered_weather, 
+    def _compute_single_mrt(self, i, exposure, epw_data, weather_arrays, 
                            filtered_datetimes, analysis_period, target_hours):
         """
         Compute MRT for a single position using boundary averaging.
@@ -462,35 +432,32 @@ class MRTCalculator:
         - mrt0: MRT values using hours [0:N]
         - mrt1: MRT values using hours [1:N+1]
         """
-        # Ensure exposure arrays match filtered weather length
-        if len(exposure.fract_body_exp) != len(filtered_datetimes):
-            warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
-                        f"doesn't match weather data length ({len(filtered_datetimes)})")
-            # Truncate or pad as needed
-            min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
-            fract_exp = exposure.fract_body_exp[:min_len]
-            if len(filtered_datetimes) > min_len:
-                # Pad weather data
-                for key in filtered_weather:
-                    filtered_weather[key] = filtered_weather[key][:min_len]
-                filtered_datetimes = filtered_datetimes[:min_len]
-        else:
-            fract_exp = exposure.fract_body_exp
-        
-        # Compute SolarCal MRT using EPW data collections for proper filtering
-        # This computes MRT for all N+1 hours
-        if hasattr(epw_data, 'dry_bulb_temperature'):
+        # Compute SolarCal MRT
+        if epw_data is not None:
             # Use EPW object directly for proper data collection handling
-            mrt_result = self._compute_mrt_from_epw(
-                epw_data, exposure, analysis_period, target_hours
+            mrt_result = _create_solarcal_from_epw(
+                epw_data, exposure, analysis_period, target_hours,
+                self.config.ground_reflectance, self.body_params
             )
         else:
-            # Fallback for DataFrame input
+            # Use DataFrame arrays
+            # Ensure exposure arrays match weather length
+            if filtered_datetimes is not None and len(exposure.fract_body_exp) != len(filtered_datetimes):
+                min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
+                fract_exp = exposure.fract_body_exp[:min_len]
+                # Truncate weather arrays to match
+                for key in weather_arrays:
+                    if isinstance(weather_arrays[key], np.ndarray):
+                        weather_arrays[key] = weather_arrays[key][:min_len]
+                filtered_datetimes = filtered_datetimes[:min_len]
+            else:
+                fract_exp = exposure.fract_body_exp
+            
             mrt_result = compute_mrt_solarcal(
-                air_temperature=filtered_weather['air_temp'],
-                direct_normal_rad=filtered_weather['dir_norm_rad'],
-                diffuse_horizontal_rad=filtered_weather['diff_horiz_rad'],
-                horizontal_infrared_rad=filtered_weather['horiz_ir_rad'],
+                air_temperature=weather_arrays['air_temp'],
+                direct_normal_rad=weather_arrays['direct_normal_radiation'],
+                diffuse_horizontal_rad=weather_arrays['diffuse_horizontal_radiation'],
+                horizontal_infrared_rad=weather_arrays['horizontal_infrared_radiation_intensity'],
                 fract_body_exp=fract_exp,
                 sky_exposure=exposure.sky_exposure,
                 location=self.location,
@@ -500,8 +467,15 @@ class MRTCalculator:
             )
         
         # Create boundary arrays for averaging
-        mrt0, mrt1 = self._create_boundary_arrays(mrt_result.mrt)
+        mrt0, mrt1 = create_boundary_arrays(mrt_result.mrt)
         n_hours = len(mrt0)
+        
+        # Get fract_body_exp for result (may have been truncated)
+        if epw_data is not None:
+            fract_exp = exposure.fract_body_exp
+        else:
+            # fract_exp was already set above
+            pass
         
         return {
             'position': exposure.position,
@@ -512,96 +486,16 @@ class MRTCalculator:
             'long_erf': mrt_result.long_erf,
             'short_dmrt': mrt_result.short_dmrt,
             'long_dmrt': mrt_result.long_dmrt,
-            'fract_body_exp': fract_exp[:n_hours],
+            'fract_body_exp': fract_exp[:n_hours] if len(fract_exp) > n_hours else fract_exp,
             'sky_exposure': exposure.sky_exposure,
-            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]
+            'datetimes': filtered_datetimes if filtered_datetimes is not None else [None]
         }
     
     
-    def to_csv(self, 
-              results: Dict[str, Any],
-              csv_path: str,
-              grasshopper_format: bool = False) -> None:
-        """
-        Export MRT results to CSV file.
-        
-        Args:
-            results: Results dictionary from compute_mrt
-            csv_path: Path for CSV file
-            grasshopper_format: If True, use Grasshopper-compatible format for validation
-        """
-        if grasshopper_format:
-            self._export_grasshopper_csv(results, csv_path)
-        else:
-            self._export_standard_csv(results, csv_path)
-    
-    def _export_grasshopper_csv(self, results: Dict[str, Any], csv_path: str):
-        """Export in Grasshopper validation format."""
-        rows = []
-        
-        for pos_key, pos_data in results.items():
-            # Extract position index from key (e.g., 'position_0' -> 0)
-            try:
-                pos_idx = int(pos_key.split('_')[1])
-            except (IndexError, ValueError):
-                pos_idx = 0
-            
-            mrt_values = pos_data['mrt']
-            
-            for hour_idx, mrt in enumerate(mrt_values):
-                # Grid index format: pixel10*10
-                pixel_id = pos_idx
-                
-                # Duplicate MRT in both columns for GH format
-                mrt_0 = mrt
-                mrt_1 = mrt
-                
-                # Placeholder values
-                utci = 30.0  # Placeholder - compute separately
-                color = "255,255,255"  # Placeholder
-                
-                rows.append([pixel_id, mrt_0, mrt_1, utci, color])
-        
-        # Create DataFrame and export
-        df = pd.DataFrame(rows, columns=['pixel10*10', 'mrt 0', 'mrt 1', 'utci', 'color'])
-        df.to_csv(csv_path, index=False)
-        logger.info(f"Exported Grasshopper format CSV: {csv_path}")
-    
-    def _export_standard_csv(self, results: Dict[str, Any], csv_path: str):
-        """Export in standard detailed format."""
-        rows = []
-        
-        for pos_key, pos_data in results.items():
-            position = pos_data['position']
-            mrt_values = pos_data['mrt']
-            fract_exp = pos_data['fract_body_exp']
-            sky_exposure = pos_data['sky_exposure']
-            
-            # Create rows for each timestep
-            for i, (mrt, fexp) in enumerate(zip(mrt_values, fract_exp)):
-                rows.append({
-                    'position_id': pos_key,
-                    'x': position[0],
-                    'y': position[1], 
-                    'z': position[2],
-                    'hour': i,  # Simplified - no datetime handling
-                    'mrt': mrt,
-                    'fract_body_exp': fexp,
-                    'sky_exposure': sky_exposure,
-                    'short_erf': pos_data['short_erf'][i],
-                    'long_erf': pos_data['long_erf'][i],
-                    'short_dmrt': pos_data['short_dmrt'][i],
-                    'long_dmrt': pos_data['long_dmrt'][i]
-                })
-        
-        # Export to CSV
-        df = pd.DataFrame(rows)
-        df.to_csv(csv_path, index=False, encoding=self.config.csv_encoding)
-        logger.info(f"Exported CSV: {csv_path}")
 
 
-def _worker_mrt_chunk(chunk: np.ndarray, epw_data: Any, filtered_weather: Dict[str, Any],
-                     filtered_datetimes: List, analysis_period: Any, target_hours: Optional[List[int]],
+def _worker_mrt_chunk(chunk: np.ndarray, epw_data: Any, weather_arrays: Optional[Dict[str, Any]],
+                     filtered_datetimes: Optional[List], analysis_period: Any, target_hours: Optional[List[int]],
                      location: Any, config: Any, body_params: Any) -> Dict[str, Any]:
     """
     Module-level worker function for parallel processing of MRT calculation chunks.
@@ -610,9 +504,9 @@ def _worker_mrt_chunk(chunk: np.ndarray, epw_data: Any, filtered_weather: Dict[s
     
     Args:
         chunk: Chunk of indexed exposure results to process
-        epw_data: EPW data object
-        filtered_weather: Filtered weather data dictionary
-        filtered_datetimes: Filtered datetime list
+        epw_data: EPW data object (None if using DataFrame)
+        weather_arrays: Filtered weather arrays dictionary (None if using EPW)
+        filtered_datetimes: Filtered datetime list (None if using EPW)
         analysis_period: Analysis period object
         target_hours: Target hours list
         location: Location object
@@ -622,77 +516,51 @@ def _worker_mrt_chunk(chunk: np.ndarray, epw_data: Any, filtered_weather: Dict[s
     Returns:
         Dictionary of MRT results
     """
-    # Convert chunk array to list of tuples for compatibility with existing function
-    chunk_list = [(idx, exp) for idx, exp in chunk]
-    
-    # Prepare args in the format expected by _compute_mrt_chunk
-    chunk_args = (
-        chunk_list,
-        epw_data,
-        filtered_weather,
-        filtered_datetimes,
-        analysis_period,
-        target_hours,
-        location,
-        config,
-        body_params
-    )
-    
-    # Use existing standalone worker function
-    return _compute_mrt_chunk(chunk_args)
-
-
-def _compute_mrt_chunk(args):
-    """Worker function for parallel processing of MRT calculation chunks."""
-    chunk_data, epw_data, filtered_weather, filtered_datetimes, analysis_period, target_hours, location, config, body_params = args
-    
     results = {}
     
-    for i, exposure in chunk_data:
-        # Ensure exposure arrays match filtered weather length
-        if len(exposure.fract_body_exp) != len(filtered_datetimes):
-            import warnings
-            warnings.warn(f"Exposure array length ({len(exposure.fract_body_exp)}) "
-                        f"doesn't match weather data length ({len(filtered_datetimes)})")
-            # Truncate or pad as needed
-            min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
-            fract_exp = exposure.fract_body_exp[:min_len]
-            if len(filtered_datetimes) > min_len:
-                # Pad weather data
-                for key in filtered_weather:
-                    filtered_weather[key] = filtered_weather[key][:min_len]
-                filtered_datetimes = filtered_datetimes[:min_len]
-        else:
-            fract_exp = exposure.fract_body_exp
-        
-        # Compute SolarCal MRT using EPW data collections for proper filtering
-        if hasattr(epw_data, 'dry_bulb_temperature'):
+    for idx, exposure in chunk:
+        # Compute SolarCal MRT
+        if epw_data is not None:
             # Use EPW object directly for proper data collection handling
             mrt_result = _create_solarcal_from_epw(
                 epw_data, exposure, analysis_period, target_hours,
                 config.ground_reflectance, body_params
             )
+            fract_exp = exposure.fract_body_exp
         else:
-            # Fallback for DataFrame input
+            # Use DataFrame arrays
+            # Ensure exposure arrays match weather length
+            if filtered_datetimes is not None and len(exposure.fract_body_exp) != len(filtered_datetimes):
+                min_len = min(len(exposure.fract_body_exp), len(filtered_datetimes))
+                fract_exp = exposure.fract_body_exp[:min_len]
+                # Truncate weather arrays to match
+                weather_truncated = {k: (v[:min_len] if isinstance(v, np.ndarray) else v) 
+                                    for k, v in weather_arrays.items()}
+                datetimes_truncated = filtered_datetimes[:min_len]
+            else:
+                fract_exp = exposure.fract_body_exp
+                weather_truncated = weather_arrays
+                datetimes_truncated = filtered_datetimes
+            
             from .solarcal import compute_mrt_solarcal
             mrt_result = compute_mrt_solarcal(
-                air_temperature=filtered_weather['air_temp'],
-                direct_normal_rad=filtered_weather['dir_norm_rad'],
-                diffuse_horizontal_rad=filtered_weather['diff_horiz_rad'],
-                horizontal_infrared_rad=filtered_weather['horiz_ir_rad'],
+                air_temperature=weather_truncated['air_temp'],
+                direct_normal_rad=weather_truncated['direct_normal_radiation'],
+                diffuse_horizontal_rad=weather_truncated['diffuse_horizontal_radiation'],
+                horizontal_infrared_rad=weather_truncated['horizontal_infrared_radiation_intensity'],
                 fract_body_exp=fract_exp,
                 sky_exposure=exposure.sky_exposure,
                 location=location,
-                datetimes=filtered_datetimes,
+                datetimes=datetimes_truncated,
                 ground_reflectance=config.ground_reflectance,
                 solar_body_par=body_params
             )
         
         # Create boundary arrays for averaging
-        mrt0, mrt1 = MRTCalculator._create_boundary_arrays(mrt_result.mrt)
+        mrt0, mrt1 = create_boundary_arrays(mrt_result.mrt)
         n_hours = len(mrt0)
         
-        results[f'position_{i}'] = {
+        results[f'position_{idx}'] = {
             'position': exposure.position,
             'mrt0': mrt0,
             'mrt1': mrt1,
@@ -701,11 +569,13 @@ def _compute_mrt_chunk(args):
             'long_erf': mrt_result.long_erf,
             'short_dmrt': mrt_result.short_dmrt,
             'long_dmrt': mrt_result.long_dmrt,
-            'fract_body_exp': fract_exp[:n_hours],
+            'fract_body_exp': fract_exp[:n_hours] if len(fract_exp) > n_hours else fract_exp,
             'sky_exposure': exposure.sky_exposure,
-            'datetimes': filtered_datetimes if not hasattr(epw_data, 'dry_bulb_temperature') else [None]
+            'datetimes': filtered_datetimes if filtered_datetimes is not None else [None]
         }
     
     return results
+
+
 
 

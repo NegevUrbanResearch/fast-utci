@@ -124,41 +124,6 @@ def create_hourly_mask(datetimes: List,
     return mask
 
 
-# Import filter_weather_data from shared.weather for backward compatibility
-# The implementation is now consolidated in fast_utci.shared.weather
-try:
-    from fast_utci.shared.weather import filter_weather_data
-except ImportError:
-    # Fallback implementation if shared.weather is not available
-    def filter_weather_data(weather_df: pd.DataFrame,
-                           analysis_period: Optional[AnalysisPeriod] = None,
-                           target_hours: Optional[List[int]] = None) -> pd.DataFrame:
-        """
-        Filter weather dataframe to analysis period and/or specific hours.
-        
-        NOTE: This function has been moved to fast_utci.shared.weather.
-        This is a fallback implementation for backward compatibility.
-        
-        Args:
-            weather_df: Weather data DataFrame with 'datetime' column
-            analysis_period: Optional period filter
-            target_hours: Optional list of hours (0-23) to include
-            
-        Returns:
-            Filtered weather DataFrame
-        """
-        assert 'datetime' in weather_df.columns, "Weather DataFrame must have 'datetime' column"
-        
-        # Convert datetime column to list for mask creation
-        datetimes = weather_df['datetime'].tolist()
-        
-        # Create filter mask
-        mask = create_hourly_mask(datetimes, analysis_period, target_hours)
-        
-        # Apply filter
-        return weather_df[mask].reset_index(drop=True)
-
-
 def filter_arrays_by_period(arrays_dict: dict,
                            datetimes: List,
                            analysis_period: Optional[AnalysisPeriod] = None,

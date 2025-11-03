@@ -20,7 +20,7 @@ from .statistics import (
     calculate_utci_statistics,
     calculate_hour_statistics
 )
-from .export import to_csv, to_json
+from fast_utci.shared.io.export import export_utci_results, export_utci_results_json
 
 __version__ = "0.1.0"
 __all__ = [
@@ -43,7 +43,7 @@ __all__ = [
     "calculate_utci_statistics",
     "calculate_hour_statistics",
     # Export
-    "to_csv",
-    "to_json"
+    "export_utci_results",
+    "export_utci_results_json"
 ]
 

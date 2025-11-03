@@ -15,11 +15,11 @@ import warnings
 @dataclass
 class AnalysisGrid:
     """Container for analysis grid data."""
-    points: np.ndarray      # Shape: (n_points, 3) grid point positions
-    normals: np.ndarray     # Shape: (n_points, 3) surface normals at points
-    face_areas: np.ndarray  # Shape: (n_points,) face areas
-    mesh: trimesh.Trimesh   # Original or generated mesh
-    grid_size: float        # Grid spacing used
+    points: np.ndarray              # Shape: (n_points, 3) grid point positions
+    normals: np.ndarray            # Shape: (n_points, 3) surface normals at points
+    face_areas: np.ndarray         # Shape: (n_points,) face areas
+    mesh: Optional[trimesh.Trimesh]  # Original or generated mesh (None for rectangular grids)
+    grid_size: float               # Grid spacing used
     
 
 def create_grid_from_surface(surface_vertices: np.ndarray,
@@ -152,14 +152,11 @@ def create_rectangular_grid(bounds_min: np.ndarray,
     # All areas are grid_size^2
     grid_face_areas = np.full(len(grid_points), grid_size ** 2)
     
-    # Create a simple mesh for the rectangular grid (not used for intersections)
-    dummy_mesh = trimesh.Trimesh(vertices=grid_points[:4], faces=[[0, 1, 2]])
-    
     return AnalysisGrid(
         points=grid_points,
         normals=grid_normals,
         face_areas=grid_face_areas,
-        mesh=dummy_mesh,
+        mesh=None,  # Rectangular grids don't need a mesh
         grid_size=grid_size
     )
 
