@@ -1,0 +1,61 @@
+[parallel]
+# Worker processes: "auto" = CPU count - 1; set integer to fix workers
+n_workers = "auto"
+# Show progress bars during long steps
+show_progress = true
+# Use parallel when item count >= this
+parallel_threshold = 50
+
+[performance]
+# Rays processed per batch (higher = faster, more memory)
+batch_size = 10000
+# Maximum ray distance in meters (skip far geometry)
+ray_max_distance = 1000.0
+
+[engine]
+# Ray intersector: auto|embree|trimesh (auto prefers embree)
+intersector = "auto"
+# Embree BVH build quality: low|medium|high
+embree_quality = "medium"
+# Build BVH ahead of time (usually faster)
+embree_build_bvh = true
+# Embree packet size: 0=auto, or 4|8|16
+embree_packet_size = 0
+# Use any-hit (faster) when available
+intersects_any = true
+
+[features]
+# Vectorized solar exposure (speeds up large problems)
+vectorized_solar = true
+# Batch positions per hour when pt_count==1 (fast path)
+batch_positions = false
+# Include weather arrays in UTCI outputs
+include_weather_in_results = true
+# Include datetime in UTCI outputs
+include_datetime_in_results = true
+
+[mrt]
+# Human model height (m)
+human_height = 1.8
+# Sample points along height (1 = mid-height only)
+pt_count = 1
+# Solar absorptivity (0-1)
+absorptivity = 0.7
+# Longwave emissivity (0-1)
+emissivity = 0.95
+# Ground reflectance (0-1)
+ground_reflectance = 0.25
+# North orientation in degrees (0 = +Y is north)
+north_degrees = 0.0
+# CSV settings for MRT exports
+csv_encoding = "utf-8"
+csv_index = false
+
+[utci]
+# Use vectorized UTCI path when possible
+enable_vectorized = true
+# CSV settings for UTCI exports
+csv_encoding = "utf-8"
+csv_index = false
+
+

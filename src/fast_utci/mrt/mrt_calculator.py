@@ -187,7 +187,7 @@ class MRTCalculator:
         # Load context geometry
         self.mesh_context = None
         if context_meshes:
-            self.mesh_context = load_context_meshes(context_meshes)
+            self.mesh_context = load_context_meshes(context_meshes, config=self.config)
             logger.info(f"Loaded context geometry: {len(self.mesh_context.mesh.faces)} faces, "
                         f"BVH acceleration: {self.mesh_context.has_bvh}")
         
@@ -290,7 +290,8 @@ class MRTCalculator:
             pt_count=self.config.pt_count,
             height=self.config.human_height,
             show_progress=self.config.show_progress,
-            n_workers=n_workers or self.config.n_workers
+            n_workers=n_workers or self.config.n_workers,
+            config=self.config
         )
         
         return results
@@ -355,7 +356,8 @@ class MRTCalculator:
         n_positions = len(exposure_results)
         
         # Use serial processing for small datasets
-        if n_positions < 50:
+        threshold = self.config.parallel.parallel_threshold
+        if n_positions < threshold:
             return self._compute_mrt_serial(
                 exposure_results, epw_data, filtered_weather, filtered_datetimes, 
                 analysis_period, target_hours

@@ -455,19 +455,6 @@ def export_utci_for_viewer(
     print(f"  Binary: {binary_path}")
     print(f"  Metadata: {metadata_path}")
     
-    # Update manifest to include this analysis
-    try:
-        import sys
-        # Add scripts directory to path to import generate_manifest
-        scripts_dir = Path(__file__).parent
-        if str(scripts_dir) not in sys.path:
-            sys.path.insert(0, str(scripts_dir))
-        
-        from generate_manifest import generate_manifest
-        generate_manifest()
-        print(f"  Manifest updated with new analysis")
-    except Exception as e:
-        print(f"  [WARN] Could not update manifest: {e}")
     
     return str(binary_path), str(metadata_path)
 

@@ -8,12 +8,10 @@ Usage:
     python batch_scenarios.py [--grid-size 10.0] [--month 8] [--day 15]
 """
 
-import sys
 import time
 from pathlib import Path
 from datetime import datetime
 
-sys.path.insert(0, str(Path(__file__).parent))
 from run_analysis import run_analysis_core
 
 # Scenario configuration

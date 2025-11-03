@@ -20,6 +20,7 @@ import os
 import sys
 from typing import Tuple, Dict, Any, Optional
 import gc
+from fast_utci.config import load_config
 
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
@@ -97,14 +98,6 @@ def run_analysis_core(
         print(f"Grid: {grid_size}m spacing")
         print(f"Embree: {embree_quality} quality, intersects_any={intersects_any}")
     
-    # Configure performance optimizations
-    os.environ.setdefault("FAST_UTCI_VECTORIZED_SOLAR", "1")
-    os.environ.setdefault("FAST_UTCI_VECTORIZED_UTCI", "1")
-    os.environ.setdefault("FAST_UTCI_INTERSECTOR", "embree")
-    os.environ.setdefault("FAST_UTCI_EMBREE_QUALITY", embree_quality)
-    os.environ.setdefault("FAST_UTCI_EMBREE_BUILD_BVH", "true")
-    os.environ.setdefault("FAST_UTCI_INTERSECTS_ANY", "1" if intersects_any else "0")
-    os.environ.setdefault("FAST_UTCI_BATCH_POSITIONS", "1")
     
     # Check files exist
     for file_path, name in [(model_file, "3D model"), (epw_file, "EPW weather")]:
@@ -122,6 +115,7 @@ def run_analysis_core(
             print("=" * 60)
         
         from fast_utci.model_reader import read_project_data, get_combined_mesh, get_ground_bounds
+        cfg = load_config()
         t0 = time.perf_counter()
         scene, weather_df, epw_data = read_project_data(
             model_file, epw_file, verbose=False
@@ -145,7 +139,7 @@ def run_analysis_core(
         )
         from fast_utci.mrt.grid import AnalysisGrid
         
-        mrt_calc = MRTCalculator(context_meshes=[model])
+        mrt_calc = MRTCalculator(context_meshes=[model], config=cfg.mrt)
         mrt_calc.set_location_from_epw(epw_file)
         
         # Create analysis grid with dynamic bounds
@@ -287,14 +281,14 @@ def run_analysis_core(
         
         from fast_utci.utci import UTCICalculator
         
-        utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data)
+        utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data, config=cfg.utci)
         
         t4 = time.perf_counter()
         utci_results = utci_calc.compute_utci(
             mrt_results=mrt_results,
             analysis_period=analysis_period,
             target_hours=target_hours,
-            show_progress=verbose
+            show_progress=cfg.utci.show_progress
         )
         t5 = time.perf_counter()
         

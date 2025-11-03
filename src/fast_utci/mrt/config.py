@@ -34,6 +34,17 @@ class MRTConfig:
     sky_exposure: float = 1.0  # Default sky exposure fraction (0-1)
     fract_body_exp: float = 1.0  # Default solar exposure fraction (0-1)
     
+    # Engine configuration
+    intersector: str = "auto"  # auto|embree|trimesh
+    embree_quality: str = "medium"  # low|medium|high
+    embree_build_bvh: bool = True
+    embree_packet_size: int = 0  # 0=auto, or 4|8|16
+    intersects_any: bool = True
+
+    # Feature toggles
+    vectorized_solar: bool = True
+    batch_positions: bool = False
+
     # Shared configuration (composition pattern)
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
@@ -84,69 +95,3 @@ DEFAULT_N_WORKERS = DEFAULT_CONFIG.parallel.n_workers
 DEFAULT_SHOW_PROGRESS = DEFAULT_CONFIG.parallel.show_progress
 DEFAULT_BATCH_SIZE = DEFAULT_CONFIG.performance.batch_size
 DEFAULT_RAY_MAX_DISTANCE = DEFAULT_CONFIG.performance.ray_max_distance
-
-
-@dataclass
-class EnvironmentConfig:
-    """
-    Environment variable configuration for MRT and UTCI calculations.
-    
-    Centralizes all environment variable reading with validation, type conversion,
-    and documentation. Provides a single source of truth for all env-based settings
-    shared across MRT and UTCI modules.
-    """
-    
-    # Performance optimizations
-    vectorized_solar: bool = False  # FAST_UTCI_VECTORIZED_SOLAR
-    vectorized_utci: bool = True  # FAST_UTCI_VECTORIZED_UTCI
-    batch_positions: bool = False  # FAST_UTCI_BATCH_POSITIONS
-    
-    # Ray intersector settings
-    intersector: str = "auto"  # FAST_UTCI_INTERSECTOR: auto|embree|trimesh
-    intersects_any: bool = False  # FAST_UTCI_INTERSECTS_ANY
-    
-    # Embree-specific settings
-    embree_quality: str = "auto"  # FAST_UTCI_EMBREE_QUALITY: auto|low|medium|high
-    embree_build_bvh: bool = True  # FAST_UTCI_EMBREE_BUILD_BVH
-    embree_packet_size: int = 0  # FAST_UTCI_EMBREE_PACKET_SIZE: 0=auto, 4|8|16
-    
-    # UTCI-specific settings
-    include_weather_in_results: bool = True  # FAST_UTCI_INCLUDE_WEATHER_IN_RESULTS
-    include_datetime_in_results: bool = True  # FAST_UTCI_INCLUDE_DATETIME_IN_RESULTS
-    
-    @classmethod
-    def from_environment(cls) -> 'EnvironmentConfig':
-        """Create EnvironmentConfig from environment variables."""
-        from fast_utci.shared.config import get_bool_env, get_int_env, get_str_env
-        
-        return cls(
-            vectorized_solar=get_bool_env("FAST_UTCI_VECTORIZED_SOLAR", False),
-            vectorized_utci=get_bool_env("FAST_UTCI_VECTORIZED_UTCI", True),
-            batch_positions=get_bool_env("FAST_UTCI_BATCH_POSITIONS", False),
-            intersector=get_str_env("FAST_UTCI_INTERSECTOR", "auto"),
-            intersects_any=get_bool_env("FAST_UTCI_INTERSECTS_ANY", False),
-            embree_quality=get_str_env("FAST_UTCI_EMBREE_QUALITY", "auto"),
-            embree_build_bvh=get_bool_env("FAST_UTCI_EMBREE_BUILD_BVH", True),
-            embree_packet_size=get_int_env("FAST_UTCI_EMBREE_PACKET_SIZE", 0),
-            include_weather_in_results=get_bool_env("FAST_UTCI_INCLUDE_WEATHER_IN_RESULTS", True),
-            include_datetime_in_results=get_bool_env("FAST_UTCI_INCLUDE_DATETIME_IN_RESULTS", True),
-        )
-
-
-# Global environment config instance
-_env_config: Optional[EnvironmentConfig] = None
-
-
-def get_env_config() -> EnvironmentConfig:
-    """
-    Get the global environment configuration.
-    
-    Lazily creates and caches the configuration on first access.
-    
-    Returns:
-        EnvironmentConfig instance with current environment settings
-    """
-    global _env_config
-    if _env_config is None:
-        _env_config = EnvironmentConfig.from_environment()
-    return _env_config

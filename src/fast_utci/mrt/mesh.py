@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import warnings
 import logging
 
-from .config import DEFAULT_RAY_MAX_DISTANCE, get_env_config
+from .config import DEFAULT_RAY_MAX_DISTANCE, MRTConfig
 from .adapters import create_intersector_strategy
 
 logger = logging.getLogger(__name__)
@@ -28,15 +28,16 @@ class MeshContext:
     
     def __post_init__(self):
         """Initialize ray intersector using strategy pattern."""
-        env_config = get_env_config()
+        # Defer to default configuration when not provided explicitly
+        mrt_config = getattr(self, "_mrt_config", None)
         
         try:
             strategy = create_intersector_strategy(
                 self.mesh,
-                intersector_choice=env_config.intersector,
-                embree_quality=env_config.embree_quality,
-                embree_build_bvh=env_config.embree_build_bvh,
-                embree_packet_size=env_config.embree_packet_size
+                intersector_choice=(mrt_config.intersector if mrt_config else "auto"),
+                embree_quality=(mrt_config.embree_quality if mrt_config else "medium"),
+                embree_build_bvh=(mrt_config.embree_build_bvh if mrt_config else True),
+                embree_packet_size=(mrt_config.embree_packet_size if mrt_config else 0)
             )
             
             self.ray_intersector = strategy.get_intersector()
@@ -52,7 +53,7 @@ class MeshContext:
             self.has_bvh = False
 
 
-def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> MeshContext:
+def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]], config: Optional[MRTConfig] = None) -> MeshContext:
     """
     Load and combine context meshes into a single mesh with BVH acceleration.
     
@@ -90,7 +91,12 @@ def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]]) -> Mesh
     else:
         combined_mesh = trimesh.util.concatenate(meshes)
     
-    return MeshContext(mesh=combined_mesh)
+    ctx = MeshContext(mesh=combined_mesh)
+    # Inject config for intersector init
+    if config is not None:
+        setattr(ctx, "_mrt_config", config)
+        ctx.__post_init__()
+    return ctx
 
 
 def ray_mesh_intersections(origins: np.ndarray,
@@ -118,9 +124,9 @@ def ray_mesh_intersections(origins: np.ndarray,
     try:
         # Use selected ray intersector (embree or trimesh)
         intersector = mesh_context.ray_intersector if mesh_context and mesh_context.ray_intersector is not None else mesh_context.mesh.ray
-        env_config = get_env_config()
+        mrt_config = getattr(mesh_context, "_mrt_config", None)
 
-        if env_config.intersects_any and hasattr(intersector, "intersects_any"):
+        if (mrt_config.intersects_any if mrt_config else True) and hasattr(intersector, "intersects_any"):
             # Fast boolean occlusion check; ignores hit locations
             any_hits = intersector.intersects_any(
                 ray_origins=origins,

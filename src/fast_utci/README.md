@@ -142,23 +142,50 @@ Performance scales with:
 
 ## Configuration
 
-Environment variables for optimization:
+Primary configuration is the single TOML file at the repository root: `fast_utci.toml`.
 
-```bash
-# Ray intersection backend
-export FAST_UTCI_INTERSECTOR=embree  # embree|trimesh|auto
+Example:
 
-# Performance optimizations
-export FAST_UTCI_VECTORIZED_SOLAR=true
-export FAST_UTCI_VECTORIZED_UTCI=true
-export FAST_UTCI_BATCH_POSITIONS=true
+```toml
+[parallel]
+n_workers = "auto"      # auto = CPU count - 1
+show_progress = true
+parallel_threshold = 50
 
-# Embree-specific
-export FAST_UTCI_EMBREE_QUALITY=high  # low|medium|high|auto
-export FAST_UTCI_EMBREE_BUILD_BVH=true
+[performance]
+batch_size = 10000
+ray_max_distance = 1000.0
+
+[engine]
+intersector = "auto"    # auto|embree|trimesh
+embree_quality = "medium"
+embree_build_bvh = true
+embree_packet_size = 0
+intersects_any = true
+
+[features]
+vectorized_solar = true
+batch_positions = false
+include_weather_in_results = true
+include_datetime_in_results = true
+
+[mrt]
+human_height = 1.8
+pt_count = 1
+absorptivity = 0.7
+emissivity = 0.95
+ground_reflectance = 0.25
+north_degrees = 0.0
+csv_encoding = "utf-8"
+csv_index = false
+
+[utci]
+enable_vectorized = true
+csv_encoding = "utf-8"
+csv_index = false
 ```
 
-Or use programmatic configuration:
+Programmatic overrides:
 
 ```python
 from fast_utci.mrt import MRTConfig

@@ -14,7 +14,7 @@ import logging
 
 from .solar import SunData
 from .mesh import MeshContext, batch_ray_intersections
-from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, get_env_config
+from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, MRTConfig
 from .cache import get_cached_sky_vectors
 from .performance import get_optimal_batch_size
 
@@ -71,7 +71,8 @@ def create_human_sample_points(position: np.ndarray,
 def compute_solar_exposure(sample_points: np.ndarray,
                           sun_data: SunData,
                           mesh_context: Optional[MeshContext] = None,
-                          show_progress: bool = True) -> np.ndarray:
+                          show_progress: bool = True,
+                          config: Optional[MRTConfig] = None) -> np.ndarray:
     """
     Compute fraction of body exposed to direct sun for each hour.
     
@@ -84,9 +85,8 @@ def compute_solar_exposure(sample_points: np.ndarray,
     Returns:
         Array of shape (n_hours,) with fraction exposed per hour (0-1)
     """
-    # Allow opt-in vectorized pathway via environment (non-breaking default)
-    env_config = get_env_config()
-    if env_config.vectorized_solar:
+    # Vectorized pathway via config
+    if config and config.vectorized_solar:
         return _compute_solar_exposure_vectorized(sample_points, sun_data, mesh_context, show_progress)
 
     n_hours = len(sun_data.sun_vectors)
@@ -263,7 +263,8 @@ def compute_exposure(position: np.ndarray,
                     mesh_context: Optional[MeshContext] = None,
                     pt_count: int = DEFAULT_PT_COUNT,
                     height: float = DEFAULT_HUMAN_HEIGHT,
-                    show_progress: bool = True) -> ExposureResult:
+                    show_progress: bool = True,
+                    config: Optional[MRTConfig] = None) -> ExposureResult:
     """
     Compute both solar and sky exposure for a single position.
     
@@ -283,7 +284,7 @@ def compute_exposure(position: np.ndarray,
     
     # Compute solar exposure (time series)
     fract_body_exp = compute_solar_exposure(
-        sample_points, sun_data, mesh_context, show_progress
+        sample_points, sun_data, mesh_context, show_progress, config
     )
     
     # Compute sky exposure (scalar)
@@ -305,7 +306,8 @@ def compute_exposure_batch(positions: np.ndarray,
                           pt_count: int = DEFAULT_PT_COUNT,
                           height: float = DEFAULT_HUMAN_HEIGHT,
                           show_progress: bool = True,
-                          n_workers: Optional[int] = None) -> List[ExposureResult]:
+                          n_workers: Optional[int] = None,
+                          config: Optional[MRTConfig] = None) -> List[ExposureResult]:
     """
     Compute exposure for multiple positions with progress tracking and parallel processing.
     
@@ -325,10 +327,10 @@ def compute_exposure_batch(positions: np.ndarray,
     
     # Use serial processing for small datasets or when no context
     if n_positions < 100 or mesh_context is None:
-        return _compute_exposure_serial(positions, sun_data, mesh_context, pt_count, height, show_progress)
+        return _compute_exposure_serial(positions, sun_data, mesh_context, pt_count, height, show_progress, config)
     
     # Use parallel processing for larger datasets
-    return _compute_exposure_parallel(positions, sun_data, mesh_context, pt_count, height, show_progress, n_workers)
+    return _compute_exposure_parallel(positions, sun_data, mesh_context, pt_count, height, show_progress, n_workers, config)
 
 
 def _compute_exposure_serial(positions: np.ndarray,
@@ -336,7 +338,8 @@ def _compute_exposure_serial(positions: np.ndarray,
                            mesh_context: Optional[MeshContext],
                            pt_count: int,
                            height: float,
-                           show_progress: bool) -> List[ExposureResult]:
+                           show_progress: bool,
+                           config: Optional[MRTConfig]) -> List[ExposureResult]:
     """Serial exposure computation for small datasets."""
     n_positions = len(positions)
     results = []
@@ -357,7 +360,8 @@ def _compute_exposure_serial(positions: np.ndarray,
             mesh_context=mesh_context,
             pt_count=pt_count,
             height=height,
-            show_progress=False
+            show_progress=False,
+            config=config
         )
         
         results.append(result)
@@ -371,7 +375,8 @@ def _compute_exposure_parallel(positions: np.ndarray,
                              pt_count: int,
                              height: float,
                              show_progress: bool,
-                             n_workers: Optional[int]) -> List[ExposureResult]:
+                             n_workers: Optional[int],
+                             config: Optional[MRTConfig]) -> List[ExposureResult]:
     """Parallel exposure computation for larger datasets."""
     import multiprocessing as mp
     from multiprocessing import Pool, Queue
@@ -411,7 +416,7 @@ def _compute_exposure_parallel(positions: np.ndarray,
     # Process chunks in parallel
     if show_progress:
         # Use simpler progress tracking without Queue (avoid multiprocessing issues)
-        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None) for chunk in chunks]
+        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None, config) for chunk in chunks]
         
         with Pool(processes=n_workers) as pool:
             # Use imap for progress tracking
@@ -435,7 +440,7 @@ def _compute_exposure_parallel(positions: np.ndarray,
                 
     else:
         # No progress bar - use simple processing
-        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None) for chunk in chunks]
+        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None, config) for chunk in chunks]
         with Pool(processes=n_workers) as pool:
             chunk_results_list = pool.map(_compute_exposure_chunk, chunk_args)
             results = []
@@ -447,12 +452,11 @@ def _compute_exposure_parallel(positions: np.ndarray,
 
 def _compute_exposure_chunk(args):
     """Worker function for parallel processing of position chunks."""
-    chunk_positions, sun_data, mesh_context, pt_count, height, _ = args
+    chunk_positions, sun_data, mesh_context, pt_count, height, _, config = args
     n_positions = len(chunk_positions)
 
     # Fast path: when pt_count==1 and env toggle is on, batch solar rays across positions per hour
-    env_config = get_env_config()
-    if env_config.batch_positions and pt_count == 1 and mesh_context is not None:
+    if config and config.batch_positions and pt_count == 1 and mesh_context is not None:
         # Prepare once
         positions = np.asarray(chunk_positions)
         # Create sample points: one per position at mid-height
@@ -505,7 +509,8 @@ def _compute_exposure_chunk(args):
             mesh_context=mesh_context,
             pt_count=pt_count,
             height=height,
-            show_progress=False
+            show_progress=False,
+            config=config
         )
         results[i] = result
 

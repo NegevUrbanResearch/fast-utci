@@ -9,11 +9,6 @@ Usage:
     python quick_analysis.py
 """
 
-import sys
-from pathlib import Path
-
-# Import the core analysis function
-sys.path.insert(0, str(Path(__file__).parent))
 from run_analysis import run_analysis_core
 
 # ============================================================================

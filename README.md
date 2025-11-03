@@ -36,7 +36,10 @@ Uses **Embree-accelerated ray tracing** via trimesh (pyembree) for fast occlusio
 git clone <repository-url>
 cd fast-utci
 
-# Install core dependencies
+# Create/activate venv (Windows PowerShell)
+..\.venv\Scripts\Activate.ps1
+
+# Install package (editable)
 pip install -e .
 
 # Or install with optional dependencies:
@@ -47,6 +50,10 @@ pip install -e .[all]       # Everything
 ```
 
 ## Quick Start
+
+### Configure
+
+Edit `fast_utci.toml` at the repo root to set workers, performance, engine, and MRT/UTCI options.
 
 ### Running Example Scripts
 
@@ -100,19 +107,12 @@ data/analyses/
 └── manifest.json
 ```
 
-**Expected Runtime:** ~2-4 hours for all 50 scenarios (depending on grid size and hardware)
-
 ### View Results
 
 ```bash
 python -m http.server 8000
 # Open http://localhost:8000/viewer/
 ```
-
-The viewer now includes:
-- **Scenario Selection**: Collapsible dropdown to switch between 5 categories
-- **Variant Slider**: Range control to select 1-10 variants within each category
-- **Auto-loading**: Default model loads immediately without selection page
 
 ### Using the API
 
@@ -123,7 +123,7 @@ For programmatic access, see [`fast_utci/README.md`](fast_utci/README.md) for co
 
 ```
 fast-utci/
-├── fast_utci/              # Main package
+├── src/fast_utci/          # Main package (src layout)
 │   ├── mrt/                # MRT calculation (ray tracing, solar)
 │   ├── utci/               # UTCI calculation (thermal comfort)
 │   ├── shared/             # Shared utilities (parallel, weather, config)
