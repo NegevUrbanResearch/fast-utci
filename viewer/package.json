@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"build:gh": "cross-env NODE_ENV=production vite build && echo. > build/.nojekyll",
+		"build:gh": "cross-env NODE_ENV=production vite build && node -e \"require('fs').writeFileSync('build/.nojekyll', '')\"",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
