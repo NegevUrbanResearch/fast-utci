@@ -7,6 +7,8 @@ export default defineConfig({
 		fs: {
 			// Allow serving files from the parent directory (where data/ folder is)
 			allow: ['..']
-		}
+		},
+		// Disable HMR in test mode to avoid issues with vitest
+		hmr: process.env.VITEST ? false : undefined
 	}
 });
