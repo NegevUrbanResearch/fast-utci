@@ -35,22 +35,27 @@ All modules are located in `fast_utci/mrt/`:
 | `exceptions.py` | Custom exception hierarchy for better error handling |
 | `cache.py` | Thread-safe cache management for expensive computations |
 | `performance.py` | Performance optimization utilities (batch sizing, memory) |
-| `adapters.py` | Weather data and ray intersector adapters/strategies |
-| `parallel_utils.py` | Reusable parallel processing patterns |
+| `adapters.py` | Ray intersector strategies (weather adapters moved to `fast_utci.shared.weather`) |
 
 ## Quick Start
 
 ```python
 from fast_utci.mrt import MRTCalculator, create_validation_period_filter, create_rectangular_grid
+from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
 
-# Setup
-calc = MRTCalculator(context_meshes=['buildings.obj'])
+# Load model and get combined mesh
+scene, _, _ = read_project_data('buildings.glb', 'weather.epw')
+model = get_combined_mesh(scene)
+
+# Setup MRT calculator
+calc = MRTCalculator(context_meshes=[model])
 calc.set_location_from_epw('weather.epw')
 
 # Create analysis grid
+model_bounds = get_ground_bounds(scene)
 grid = create_rectangular_grid(
-    bounds_min=[0, 0], 
-    bounds_max=[100, 100], 
+    bounds_min=model_bounds[0][:2],  # X, Y minimum
+    bounds_max=model_bounds[1][:2],  # X, Y maximum
     grid_size=10.0,
     z_height=1.5
 )
@@ -59,8 +64,10 @@ grid = create_rectangular_grid(
 period, hours = create_validation_period_filter()
 
 # Compute exposure and MRT
+from ladybug.epw import EPW
+epw = EPW('weather.epw')
 exposure_results = calc.compute_exposure(grid.points, period, hours)
-mrt_results = calc.compute_mrt(epw_data, exposure_results, period, hours)
+mrt_results = calc.compute_mrt(epw, exposure_results, period, hours)
 
 # Export results (via MRT calculator)
 calc.to_csv(mrt_results, 'mrt_results.csv')
@@ -135,10 +142,10 @@ Validates against Grasshopper OutdoorSolarMRT:
 
 ### Custom Weather Data Adapters
 
-Create adapters for different weather data sources:
+`fast_utci.shared.weather` for use across both MRT and UTCI modules:
 
 ```python
-from fast_utci.mrt import create_weather_adapter, EPWAdapter, DataFrameAdapter
+from fast_utci.shared import create_weather_adapter, EPWAdapter, DataFrameAdapter
 
 # Automatically detects EPW or DataFrame
 adapter = create_weather_adapter(weather_data)
@@ -151,7 +158,6 @@ df_adapter = DataFrameAdapter(weather_df)
 temperature = adapter.get_temperature()
 radiation = adapter.get_direct_radiation()
 ```
-
 ### Performance Optimization
 
 Fine-tune performance for your hardware:
@@ -198,11 +204,10 @@ class CustomIntersectorStrategy(RayIntersectorStrategy):
 ```
 
 ### Parallel Processing Utilities
-
-Reuse parallel processing patterns:
+`fast_utci.shared.parallel_utils` for use across both MRT and UTCI modules:
 
 ```python
-from fast_utci.mrt.parallel_utils import ParallelProcessor, SpatialChunkStrategy
+from fast_utci.shared import ParallelProcessor, SpatialChunkStrategy
 
 processor = ParallelProcessor(n_workers=8, show_progress=True)
 

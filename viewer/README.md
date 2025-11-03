@@ -54,7 +54,7 @@ For deployment to GitHub Pages with the correct base path:
 npm run build:gh
 ```
 
-This sets `NODE_ENV=production` to configure the base path as `/fast-utci/viewer/` and creates a `.nojekyll` file to prevent Jekyll processing.
+This sets `NODE_ENV=production` to configure the base path as `/fast-utci/viewer/build` and creates a `.nojekyll` file to prevent Jekyll processing.
 
 ## Preview Production Build
 
@@ -64,7 +64,7 @@ After building, preview the production version locally:
 npm run preview
 ```
 
-**Note**: The preview server simulates the GitHub Pages environment with the base path `/fast-utci/viewer/`.
+**Note**: The preview server simulates the GitHub Pages environment with the base path `/fast-utci/viewer/build`.
 
 ## Testing
 
@@ -82,20 +82,27 @@ npm run test:coverage
 
 ## Deployment to GitHub Pages
 
-1. **Build the production version**:
-   ```bash
-   cd viewer
-   npm run build:gh
-   ```
+Deployment is **automatic** via GitHub Actions. When you push to the `main` branch:
 
-2. **Commit all changes** (including the `build/` folder):
+1. **CI/CD workflow runs automatically**:
+   - Installs dependencies
+   - Runs tests
+   - Builds the viewer
+   - Deploys to GitHub Pages
+
+2. **No manual build required** - just push your changes:
    ```bash
    git add .
-   git commit -m "Update viewer for GitHub Pages"
+   git commit -m "Your changes"
    git push
    ```
 
-3. **Ensure GitHub Pages is configured** to serve from the root directory.
+3. **The workflow will**:
+   - Build the viewer in CI (ensuring consistent builds)
+   - Run tests before deployment (prevents bad deployments)
+   - Automatically deploy to GitHub Pages
+
+**Note**: The `viewer/build/` folder is now ignored by git (built in CI). For local testing, you can still run `npm run build:gh` in the `viewer/` directory.
 
 The viewer will be accessible at: `https://[username].github.io/fast-utci/viewer/build/`
 
@@ -115,7 +122,7 @@ viewer/
 │   └── routes/             # SvelteKit routes
 ├── tests/                  # Unit tests
 ├── static/                 # Static assets (robots.txt)
-└── build/                  # Production build output (commit this!)
+└── build/                  # Production build output (built in CI, not committed)
 ```
 
 ## Key Technologies

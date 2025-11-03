@@ -21,6 +21,24 @@ cache/
 .cache/
 node_modules/
 
+# Viewer build output (built in CI)
+viewer/build/
+viewer/.svelte-kit/
+
+# Viewer OS files
+viewer/.DS_Store
+viewer/Thumbs.db
+
+# Viewer environment files
+viewer/.env
+viewer/.env.*
+!viewer/.env.example
+!viewer/.env.test
+
+# Viewer Vite timestamps
+viewer/vite.config.js.timestamp-*
+viewer/vite.config.ts.timestamp-*
+
 # CSV files (ignore everywhere except validation folder)
 *.csv
 !data/validation/*.csv

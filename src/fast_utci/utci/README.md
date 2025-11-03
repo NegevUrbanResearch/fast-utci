@@ -30,13 +30,32 @@ fast_utci/utci/
 
 ```python
 from fast_utci.utci import UTCICalculator
-from fast_utci.mrt import MRTCalculator, create_rectangular_grid
+from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
+from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
+from ladybug.epw import EPW
+
+# Load model and get combined mesh
+scene, _, _ = read_project_data('buildings.glb', 'weather.epw')
+model = get_combined_mesh(scene)
 
 # Compute MRT (see fast_utci/mrt/README.md)
-mrt_calc = MRTCalculator(context_meshes=['buildings.obj'])
+mrt_calc = MRTCalculator(context_meshes=[model])
 mrt_calc.set_location_from_epw('weather.epw')
-grid = create_rectangular_grid(bounds_min=[0,0], bounds_max=[100,100], grid_size=10.0)
-mrt_results = mrt_calc.compute_mrt(epw_data, exposure_results)
+
+# Create analysis grid
+model_bounds = get_ground_bounds(scene)
+grid = create_rectangular_grid(
+    bounds_min=model_bounds[0][:2],
+    bounds_max=model_bounds[1][:2],
+    grid_size=10.0,
+    z_height=1.5
+)
+
+# Compute MRT
+period = create_analysis_period(start_month=8, start_day=15, start_hour=0, end_month=8, end_day=15, end_hour=23)
+epw = EPW('weather.epw')
+exposure_results = mrt_calc.compute_exposure(grid.points, period)
+mrt_results = mrt_calc.compute_mrt(epw, exposure_results, period)
 
 # Compute UTCI
 utci_calc = UTCICalculator(weather_data='weather.epw')
@@ -97,6 +116,7 @@ Automatic classification into UTCI categories:
 
 ```python
 from fast_utci.utci import UTCIConfig
+from fast_utci.shared import ParallelConfig
 
 config = UTCIConfig(
     enable_vectorized=True,  # Use numpy vectorization

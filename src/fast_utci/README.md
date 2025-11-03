@@ -38,21 +38,35 @@ UTCI values range from extreme cold (< -40°C) to extreme heat (> 46°C), with c
 
 ```python
 from fast_utci import MRTCalculator, UTCICalculator
-from fast_utci.mrt import create_rectangular_grid, AnalysisPeriod
+from fast_utci.mrt import create_rectangular_grid, create_analysis_period
+from fast_utci.shared.io import (
+    read_project_data, 
+    get_combined_mesh, 
+    get_ground_bounds
+)
 from ladybug.epw import EPW
+import numpy as np
 
 # 1. Setup MRT calculator with context geometry
-mrt_calc = MRTCalculator(context_meshes=['buildings.glb'])
+# Load model and get combined mesh
+scene, _, _ = read_project_data('buildings.glb', 'weather.epw')
+model = get_combined_mesh(scene)
+
+mrt_calc = MRTCalculator(context_meshes=[model])
 mrt_calc.set_location_from_epw('weather.epw')
 
 # 2. Create analysis grid
+model_bounds = get_ground_bounds(scene)
+
 grid = create_rectangular_grid(
+    bounds_min=model_bounds[0][:2],  # X, Y minimum
+    bounds_max=model_bounds[1][:2],  # X, Y maximum
     grid_size=2.0,
     z_height=1.5  # pedestrian height
 )
 
 # 3. Define analysis period (e.g., August 15, full day)
-period = AnalysisPeriod(
+period = create_analysis_period(
     start_month=8, start_day=15, start_hour=0,
     end_month=8, end_day=15, end_hour=23
 )

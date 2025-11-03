@@ -25,16 +25,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: viewer/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: viewer
+        run: npm ci
+      
+      - name: Run tests
+        working-directory: viewer
+        run: npm test
+      
+      - name: Build viewer
+        working-directory: viewer
+        run: npm run build:gh
+      
       - name: Setup Pages
         uses: actions/configure-pages@v4
       
       - name: Prepare deployment directory
         run: |
           mkdir -p _site
-          cp .nojekyll _site/
+          cp .nojekyll _site/ 2>/dev/null || true
           cp index.html _site/
-          cp -r viewer _site/
-          cp -r data _site/
+          cp -r viewer/build _site/viewer/build
+          cp -r data _site/data
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

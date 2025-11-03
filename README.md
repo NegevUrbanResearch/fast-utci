@@ -116,7 +116,7 @@ python -m http.server 8000
 
 ### Using the API
 
-For programmatic access, see [`fast_utci/README.md`](fast_utci/README.md) for complete API examples.
+For programmatic access, see [`src/fast_utci/README.md`](src/fast_utci/README.md) for complete API examples.
 
 
 ## Project Structure
@@ -127,12 +127,11 @@ fast-utci/
 │   ├── mrt/                # MRT calculation (ray tracing, solar)
 │   ├── utci/               # UTCI calculation (thermal comfort)
 │   ├── shared/             # Shared utilities (parallel, weather, config)
-│   ├── model_reader.py     # 3D model & EPW file loading
+│   │   └── io/             # 3D model & EPW file loading (GLB/GLTF, scene graph)
 │   └── ...
 ├── viewer/                 # Web-based 3D viewer (three.js)
 ├── data/                   # Models, weather, analyses, validation
 ├── scripts/                # Utility scripts
-├── tests/                  # Test suite with validation
 ├── quick_analysis.py       # Quick automated workflow
 └── run_analysis.py         # Interactive analysis workflow
 ```
@@ -144,18 +143,18 @@ See module READMEs for detailed structure.
 ### API Documentation
 
 For detailed API usage and programmatic access:
-- **[`fast_utci/README.md`](fast_utci/README.md)** - Complete API guide with code examples
-- **[`fast_utci/mrt/README.md`](fast_utci/mrt/README.md)** - MRT calculation details
-- **[`fast_utci/utci/README.md`](fast_utci/utci/README.md)** - UTCI calculation details
-- **[`fast_utci/shared/README.md`](fast_utci/shared/README.md)** - Shared utilities
+- **[`src/fast_utci/README.md`](src/fast_utci/README.md)** - Complete API guide with code examples
+- **[`src/fast_utci/mrt/README.md`](src/fast_utci/mrt/README.md)** - MRT calculation details
+- **[`src/fast_utci/utci/README.md`](src/fast_utci/utci/README.md)** - UTCI calculation details
+- **[`src/fast_utci/shared/README.md`](src/fast_utci/shared/README.md)** - Shared utilities
 
 ### Module Overview
 
 - **`fast_utci.mrt`** - MRT calculation with ray tracing and parallel processing
 - **`fast_utci.utci`** - UTCI calculation using pythermalcomfort
 - **`fast_utci.shared`** - Parallel processing, weather data, and configuration
-- **`fast_utci.model_reader`** - 3D model (GLTF/GLB) and EPW file loading
-- **`fast_utci.viewer`** - 3D visualization with UTCI heatmaps (three.js)
+- **`fast_utci.shared.io`** - 3D model (GLTF/GLB) and EPW file loading
+- **`viewer/`** - Separate web-based 3D viewer (SvelteKit + Three.js) for visualizing results
 
 ## Requirements
 
