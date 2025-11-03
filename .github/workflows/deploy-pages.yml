@@ -51,11 +51,11 @@ jobs:
       
       - name: Prepare deployment directory
         run: |
-          mkdir -p _site
+          mkdir -p _site/viewer
           cp .nojekyll _site/ 2>/dev/null || true
           cp index.html _site/
-          cp -r viewer/build _site/viewer/build
-          cp -r data _site/data
+          cp -r viewer/build _site/viewer/
+          cp -r data _site/
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
