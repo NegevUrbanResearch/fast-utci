@@ -7,7 +7,7 @@ progress tracking, and worker pool management.
 
 from __future__ import annotations
 import numpy as np
-from typing import List, Callable, Any, Optional, Tuple
+from typing import List, Callable, Any, Optional, Tuple, Union
 from abc import ABC, abstractmethod
 import multiprocessing as mp
 from multiprocessing import Pool
@@ -16,6 +16,12 @@ import time
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Import ParallelConfig for type hints (avoid circular import)
+try:
+    from .config import ParallelConfig
+except ImportError:
+    ParallelConfig = None  # Type: ignore
 
 
 class ChunkStrategy(ABC):
@@ -87,20 +93,26 @@ class ParallelProcessor:
     """
     
     def __init__(self, 
+                 parallel_config: Optional['ParallelConfig'] = None,
                  n_workers: Optional[int] = None,
-                 show_progress: bool = True):
+                 show_progress: Optional[bool] = None):
         """
         Initialize parallel processor.
         
         Args:
-            n_workers: Number of parallel workers (None = CPU count - 1)
-            show_progress: Whether to show progress bar
+            parallel_config: ParallelConfig object (preferred, takes precedence)
+            n_workers: Number of parallel workers (None = CPU count - 1) - deprecated, use parallel_config
+            show_progress: Whether to show progress bar - deprecated, use parallel_config
         """
-        if n_workers is None:
-            n_workers = max(1, mp.cpu_count() - 1)
-        
-        self.n_workers = n_workers
-        self.show_progress = show_progress
+        if parallel_config is not None:
+            self.n_workers = parallel_config.get_n_workers()
+            self.show_progress = parallel_config.show_progress
+        else:
+            # Fallback for backward compatibility (will be removed eventually)
+            if n_workers is None:
+                n_workers = max(1, mp.cpu_count() - 1)
+            self.n_workers = n_workers
+            self.show_progress = show_progress if show_progress is not None else True
     
     def process_chunks(self,
                       data: Any,
@@ -119,14 +131,12 @@ class ParallelProcessor:
         Returns:
             List of results from all chunks
         """
-        # Create chunks
-        if isinstance(data, np.ndarray) and len(data.shape) > 1:
-            # Spatial data
-            chunks = chunk_strategy.create_chunks(data, self.n_workers)
-        else:
-            # Generic data - use balanced chunking
-            balanced = BalancedChunkStrategy()
-            chunks = balanced.create_chunks(np.array(data), self.n_workers)
+        # Convert to numpy array if needed
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+        
+        # Create chunks using the provided strategy
+        chunks = chunk_strategy.create_chunks(data, self.n_workers)
         
         n_total = len(data) if hasattr(data, '__len__') else sum(len(c) for c in chunks)
         
@@ -218,6 +228,55 @@ class ParallelProcessor:
                 results = pool.map(worker_fn, chunks)
         
         return results
+    
+    def process_and_merge(self,
+                          data: Any,
+                          worker_fn: Callable,
+                          chunk_strategy: ChunkStrategy,
+                          description: str = "Processing",
+                          merge_dict: bool = False,
+                          merge_list: bool = False) -> Union[Dict[str, Any], List[Any], List[Dict[str, Any]]]:
+        """
+        Process data in parallel and automatically merge results.
+        
+        Args:
+            data: Input data to process
+            worker_fn: Worker function that processes a chunk
+            chunk_strategy: Strategy for creating chunks
+            description: Description for progress bar
+            merge_dict: If True, merge chunk results as dictionaries (dict.update)
+            merge_list: If True, merge chunk results as lists (list.extend)
+            
+        Returns:
+            Merged results (dict if merge_dict=True, list if merge_list=True, otherwise list of chunk results)
+        """
+        chunk_results = self.process_chunks(data, worker_fn, chunk_strategy, description)
+        
+        if merge_dict:
+            # Merge dictionaries
+            merged = {}
+            for chunk_result in chunk_results:
+                if isinstance(chunk_result, dict):
+                    merged.update(chunk_result)
+                else:
+                    # Handle case where chunk_result might be a list of dicts
+                    if hasattr(chunk_result, '__iter__'):
+                        for item in chunk_result:
+                            if isinstance(item, dict):
+                                merged.update(item)
+            return merged
+        elif merge_list:
+            # Merge lists
+            merged = []
+            for chunk_result in chunk_results:
+                if hasattr(chunk_result, '__iter__') and not isinstance(chunk_result, (str, bytes)):
+                    merged.extend(chunk_result)
+                else:
+                    merged.append(chunk_result)
+            return merged
+        else:
+            # Return raw chunk results
+            return chunk_results
 
 
 def create_balanced_chunks(data: List, n_workers: int) -> List[List]:

@@ -28,7 +28,7 @@ intersects_any = true
 # Vectorized solar exposure (speeds up large problems)
 vectorized_solar = true
 # Batch positions per hour when pt_count==1 (fast path)
-batch_positions = false
+batch_positions = true
 # Include weather arrays in UTCI outputs
 include_weather_in_results = true
 # Include datetime in UTCI outputs

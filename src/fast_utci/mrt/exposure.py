@@ -8,13 +8,14 @@ against context geometry, matching Grasshopper Human-to-Sky Relation component.
 import numpy as np
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
+from functools import partial
 from tqdm import tqdm
 import warnings
 import logging
 
 from .solar import SunData
 from .mesh import MeshContext, batch_ray_intersections
-from .config import DEFAULT_PT_COUNT, DEFAULT_HUMAN_HEIGHT, MRTConfig
+from fast_utci.shared import MRTConfig
 from .cache import get_cached_sky_vectors
 from .performance import get_optimal_batch_size
 
@@ -31,8 +32,8 @@ class ExposureResult:
 
 
 def create_human_sample_points(position: np.ndarray,
-                              pt_count: int = DEFAULT_PT_COUNT,
-                              height: float = DEFAULT_HUMAN_HEIGHT) -> np.ndarray:
+                              pt_count: int,
+                              height: float) -> np.ndarray:
     """
     Create vertical sample points representing human body for exposure testing.
     
@@ -87,7 +88,7 @@ def compute_solar_exposure(sample_points: np.ndarray,
     """
     # Vectorized pathway via config
     if config and config.vectorized_solar:
-        return _compute_solar_exposure_vectorized(sample_points, sun_data, mesh_context, show_progress)
+        return _compute_solar_exposure_vectorized(sample_points, sun_data, mesh_context, show_progress, config)
 
     n_hours = len(sun_data.sun_vectors)
     n_points = len(sample_points)
@@ -115,7 +116,7 @@ def compute_solar_exposure(sample_points: np.ndarray,
             ray_directions[:] = sun_vector  # Ray FROM position TO sun (matches Grasshopper sun_vector_reversed)
             
             # Test ray intersections with optimized batch sizing
-            optimal_batch_size = get_optimal_batch_size(n_points, "solar")
+            optimal_batch_size = get_optimal_batch_size(n_points, "solar", config)
             hits = batch_ray_intersections(
                 origins=sample_points,
                 directions=ray_directions,
@@ -131,7 +132,8 @@ def compute_solar_exposure(sample_points: np.ndarray,
 def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
                                       sun_data: SunData,
                                       mesh_context: Optional[MeshContext],
-                                      show_progress: bool) -> np.ndarray:
+                                      show_progress: bool,
+                                      config: Optional[MRTConfig] = None) -> np.ndarray:
     """
     Vectorized solar exposure across multiple hours to reduce Python overhead
     and improve Embree throughput by using larger ray batches.
@@ -179,7 +181,7 @@ def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
         # Directions: for each hour vector, repeat it n_points times (FROM position TO sun)
         all_directions = np.repeat(batch_vectors, n_points, axis=0)
 
-        optimal_batch_size = get_optimal_batch_size(len(all_origins), "solar")
+        optimal_batch_size = get_optimal_batch_size(len(all_origins), "solar", config)
         hits = batch_ray_intersections(
             origins=all_origins,
             directions=all_directions,
@@ -198,7 +200,8 @@ def _compute_solar_exposure_vectorized(sample_points: np.ndarray,
 
 def compute_sky_exposure(sample_points: np.ndarray,
                         mesh_context: Optional[MeshContext] = None,
-                        show_progress: bool = True) -> float:
+                        show_progress: bool = True,
+                        config: Optional[MRTConfig] = None) -> float:
     """
     Compute fraction of sky visible from sample points using Tregenza dome.
     
@@ -239,7 +242,7 @@ def compute_sky_exposure(sample_points: np.ndarray,
         
         # Test intersections (sky_vectors are already pre-computed)
         # Test intersections with sky patches using optimized batch sizing
-        optimal_batch_size = get_optimal_batch_size(n_sky_patches, "sky")
+        optimal_batch_size = get_optimal_batch_size(n_sky_patches, "sky", config)
         hits = batch_ray_intersections(
             origins=ray_origins,
             directions=sky_vectors,
@@ -261,8 +264,8 @@ def compute_sky_exposure(sample_points: np.ndarray,
 def compute_exposure(position: np.ndarray,
                     sun_data: SunData,
                     mesh_context: Optional[MeshContext] = None,
-                    pt_count: int = DEFAULT_PT_COUNT,
-                    height: float = DEFAULT_HUMAN_HEIGHT,
+                    pt_count: Optional[int] = None,
+                    height: Optional[float] = None,
                     show_progress: bool = True,
                     config: Optional[MRTConfig] = None) -> ExposureResult:
     """
@@ -272,13 +275,24 @@ def compute_exposure(position: np.ndarray,
         position: Ground position (x, y, z)
         sun_data: Solar vectors and timing data
         mesh_context: Optional context geometry for occlusion testing
-        pt_count: Number of sample points along human height
-        height: Human height in meters
+        pt_count: Number of sample points along human height (uses config if None)
+        height: Human height in meters (uses config if None)
         show_progress: Whether to show progress bars
+        config: Optional MRTConfig (required if pt_count/height not provided)
         
     Returns:
         ExposureResult with solar and sky exposure data
     """
+    # Use config values if not explicitly provided
+    if pt_count is None:
+        if config is None:
+            raise ValueError("pt_count must be provided or config must be supplied")
+        pt_count = config.pt_count
+    if height is None:
+        if config is None:
+            raise ValueError("height must be provided or config must be supplied")
+        height = config.human_height
+    
     # Create human sample points
     sample_points = create_human_sample_points(position, pt_count, height)
     
@@ -289,7 +303,7 @@ def compute_exposure(position: np.ndarray,
     
     # Compute sky exposure (scalar)
     sky_exposure = compute_sky_exposure(
-        sample_points, mesh_context, show_progress
+        sample_points, mesh_context, show_progress, config
     )
     
     return ExposureResult(
@@ -303,8 +317,8 @@ def compute_exposure(position: np.ndarray,
 def compute_exposure_batch(positions: np.ndarray,
                           sun_data: SunData,
                           mesh_context: Optional[MeshContext] = None,
-                          pt_count: int = DEFAULT_PT_COUNT,
-                          height: float = DEFAULT_HUMAN_HEIGHT,
+                          pt_count: Optional[int] = None,
+                          height: Optional[float] = None,
                           show_progress: bool = True,
                           n_workers: Optional[int] = None,
                           config: Optional[MRTConfig] = None) -> List[ExposureResult]:
@@ -315,14 +329,25 @@ def compute_exposure_batch(positions: np.ndarray,
         positions: Shape (n_positions, 3) analysis positions
         sun_data: Solar vectors and timing data
         mesh_context: Optional context geometry for occlusion testing
-        pt_count: Number of sample points along human height
-        height: Human height in meters
+        pt_count: Number of sample points along human height (uses config if None)
+        height: Human height in meters (uses config if None)
         show_progress: Whether to show progress bars
         n_workers: Number of parallel workers (default: CPU count - 1)
+        config: Optional MRTConfig (required if pt_count/height not provided)
         
     Returns:
         List of ExposureResult objects, one per position
     """
+    # Use config values if not explicitly provided
+    if pt_count is None:
+        if config is None:
+            raise ValueError("pt_count must be provided or config must be supplied")
+        pt_count = config.pt_count
+    if height is None:
+        if config is None:
+            raise ValueError("height must be provided or config must be supplied")
+        height = config.human_height
+    
     n_positions = len(positions)
     
     # Use serial processing for small datasets or when no context
@@ -377,77 +402,71 @@ def _compute_exposure_parallel(positions: np.ndarray,
                              show_progress: bool,
                              n_workers: Optional[int],
                              config: Optional[MRTConfig]) -> List[ExposureResult]:
-    """Parallel exposure computation for larger datasets."""
-    import multiprocessing as mp
-    from multiprocessing import Pool, Queue
-    import time
-    
+    """Parallel exposure computation for larger datasets using ParallelProcessor with SpatialChunkStrategy."""
     n_positions = len(positions)
     
-    if n_workers is None:
-        n_workers = max(1, mp.cpu_count() - 1)
-    
-    # Sort positions spatially for better cache locality when accessing mesh data
-    # Sort by X coordinate first, then Y, then Z for consistent ordering
-    sorted_indices = np.lexsort((positions[:, 2], positions[:, 1], positions[:, 0]))
-    sorted_positions = positions[sorted_indices]
-    
-    # Create chunks with improved load balancing
-    # Use dynamic chunk sizing to ensure more even distribution
-    base_chunk_size = max(100, n_positions // n_workers)
-    chunks = []
-    
-    # Distribute positions more evenly across workers
-    positions_per_worker = n_positions // n_workers
-    extra_positions = n_positions % n_workers
-    
-    start_idx = 0
-    for worker_id in range(n_workers):
-        # Some workers get one extra position for better load balancing
-        chunk_size = positions_per_worker + (1 if worker_id < extra_positions else 0)
-        end_idx = start_idx + chunk_size
-        
-        if start_idx < n_positions:
-            chunks.append(sorted_positions[start_idx:end_idx])
-        start_idx = end_idx
-    
-    logger.info(f"Processing {n_positions} positions with {n_workers} workers in {len(chunks)} chunks")
-    
-    # Process chunks in parallel
-    if show_progress:
-        # Use simpler progress tracking without Queue (avoid multiprocessing issues)
-        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None, config) for chunk in chunks]
-        
-        with Pool(processes=n_workers) as pool:
-            # Use imap for progress tracking
-            results = []
-            start_time = time.time()
-            
-            with tqdm(total=n_positions, desc="Computing exposure", unit="pos", 
-                     mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
-                
-                for chunk_results in pool.imap(_compute_exposure_chunk, chunk_args):
-                    results.extend(chunk_results)
-                    chunk_size = len(chunk_results)
-                    pbar.update(chunk_size)
-                    
-                    # Update description with time estimate
-                    elapsed = time.time() - start_time
-                    if elapsed > 0:
-                        rate = pbar.n / elapsed
-                        eta = (n_positions - pbar.n) / rate if rate > 0 else 0
-                        pbar.set_description(f"Computing exposure ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
-                
+    # Get parallel config from MRT config or create default
+    if config is not None:
+        parallel_config = config.parallel.with_overrides(
+            n_workers=n_workers,
+            show_progress=show_progress
+        )
     else:
-        # No progress bar - use simple processing
-        chunk_args = [(chunk, sun_data, mesh_context, pt_count, height, None, config) for chunk in chunks]
-        with Pool(processes=n_workers) as pool:
-            chunk_results_list = pool.map(_compute_exposure_chunk, chunk_args)
-            results = []
-            for chunk_results in chunk_results_list:
-                results.extend(chunk_results)
+        # Fallback for when config is None (shouldn't happen, but handle gracefully)
+        import multiprocessing as mp
+        from fast_utci.shared import ParallelConfig
+        if n_workers is None:
+            n_workers = max(1, mp.cpu_count() - 1)
+        parallel_config = ParallelConfig(
+            n_workers=n_workers,
+            show_progress=show_progress,
+            parallel_threshold=100
+        )
     
-    return results
+    # Use functools.partial to create a picklable worker function
+    worker_fn = partial(
+        _worker_exposure_chunk,
+        sun_data=sun_data,
+        mesh_context=mesh_context,
+        pt_count=pt_count,
+        height=height,
+        config=config
+    )
+    
+    # Process and merge results automatically
+    from fast_utci.shared import ParallelProcessor, SpatialChunkStrategy
+    processor = ParallelProcessor(parallel_config=parallel_config)
+    logger.info(f"Processing {n_positions} positions with {processor.n_workers} workers")
+    
+    return processor.process_and_merge(
+        data=positions,
+        worker_fn=worker_fn,
+        chunk_strategy=SpatialChunkStrategy(),
+        description="Computing exposure",
+        merge_list=True
+    )
+
+
+def _worker_exposure_chunk(chunk: np.ndarray, sun_data: SunData, mesh_context: MeshContext,
+                           pt_count: int, height: float, config: Optional[MRTConfig]) -> List[ExposureResult]:
+    """
+    Module-level worker function for parallel processing of position chunks.
+    
+    This function must be at module level to be picklable for multiprocessing.
+    """
+    # Prepare args in the format expected by _compute_exposure_chunk
+    chunk_args = (
+        chunk,
+        sun_data,
+        mesh_context,
+        pt_count,
+        height,
+        None,  # progress_queue (not used)
+        config
+    )
+    
+    # Use existing standalone worker function
+    return _compute_exposure_chunk(chunk_args)
 
 
 def _compute_exposure_chunk(args):
@@ -475,7 +494,7 @@ def _compute_exposure_chunk(args):
             ray_dirs = np.empty((n_positions, 3), dtype=np.float64)
             ray_dirs[:] = sun_vec  # Ray FROM position TO sun
             # Batch intersections in big chunks
-            optimal_batch_size = get_optimal_batch_size(n_positions, "solar")
+            optimal_batch_size = get_optimal_batch_size(n_positions, "solar", config)
             hits = batch_ray_intersections(
                 origins=sample_points,
                 directions=ray_dirs,
@@ -491,7 +510,7 @@ def _compute_exposure_chunk(args):
             pos = positions[i]
             # One sample point array of shape (1,3)
             sp = np.array([[pos[0], pos[1], pos[2] + height / 2.0]], dtype=np.float64)
-            sky = compute_sky_exposure(sp, mesh_context, show_progress=False)
+            sky = compute_sky_exposure(sp, mesh_context, show_progress=False, config=config)
             results[i] = ExposureResult(
                 fract_body_exp=fract_body_exp_all[i],
                 sky_exposure=sky,

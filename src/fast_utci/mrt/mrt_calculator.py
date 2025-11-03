@@ -27,9 +27,8 @@ import numpy as np
 import pandas as pd
 from typing import List, Union, Optional, Dict, Any, Tuple
 from pathlib import Path
+from functools import partial
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing as mp
 from tqdm import tqdm
 import logging
 
@@ -39,7 +38,7 @@ from .exposure import compute_exposure, compute_exposure_batch, ExposureResult
 from .solarcal import compute_mrt_solarcal, create_solar_body_parameters, SolarCalResult
 from .grid import AnalysisGrid, create_grid_from_surface, create_rectangular_grid, load_surface_and_create_grid
 from .period import AnalysisPeriod, filter_weather_data, filter_arrays_by_period
-from .config import MRTConfig, DEFAULT_CONFIG
+from fast_utci.shared import MRTConfig
 
 # Import parallel utilities from shared
 from fast_utci.shared import ParallelProcessor
@@ -180,9 +179,15 @@ class MRTCalculator:
         Args:
             context_meshes: List of mesh file paths or trimesh objects for occlusion
             location: Ladybug Location object (lat, lon, timezone)
-            config: MRTConfig object with all parameters
+            config: MRTConfig object (required - must be loaded from TOML via load_config())
         """
-        self.config = config or DEFAULT_CONFIG
+        if config is None:
+            raise ValueError(
+                "MRTConfig is required. Load from TOML using: "
+                "from fast_utci.shared import load_config; cfg = load_config(); "
+                "MRTCalculator(..., config=cfg.mrt)"
+            )
+        self.config = config
         
         # Load context geometry
         self.mesh_context = None
@@ -408,68 +413,45 @@ class MRTCalculator:
         
         return results
     
-    def _compute_mrt_parallel(self, exposure_results, epw_data, filtered_weather,
+    def _compute_mrt_parallel(self, exposure_results, epw_data, filtered_weather, 
                              filtered_datetimes, analysis_period, target_hours, n_workers, show_progress=True):
-        """Parallel MRT computation for larger datasets."""
-        import multiprocessing as mp
-        from multiprocessing import Pool
-        import time
-        
+        """Parallel MRT computation for larger datasets using ParallelProcessor."""
         n_positions = len(exposure_results)
         
-        if n_workers is None:
-            n_workers = max(1, mp.cpu_count() - 1)
+        # Create config with overrides
+        parallel_config = self.config.parallel.with_overrides(
+            n_workers=n_workers,
+            show_progress=show_progress
+        )
         
-        # Create chunks with improved load balancing
-        positions_per_worker = n_positions // n_workers
-        extra_positions = n_positions % n_workers
+        # Prepare indexed data for chunking
+        indexed_data = [(i, exposure_results[i]) for i in range(n_positions)]
         
-        chunks = []
-        start_idx = 0
-        for worker_id in range(n_workers):
-            chunk_size = positions_per_worker + (1 if worker_id < extra_positions else 0)
-            end_idx = start_idx + chunk_size
-            
-            if start_idx < n_positions:
-                chunk_data = []
-                for i in range(start_idx, end_idx):
-                    chunk_data.append((i, exposure_results[i]))
-                chunks.append(chunk_data)
-                start_idx = end_idx
+        # Use functools.partial to create a picklable worker function
+        worker_fn = partial(
+            _worker_mrt_chunk,
+            epw_data=epw_data,
+            filtered_weather=filtered_weather,
+            filtered_datetimes=filtered_datetimes,
+            analysis_period=analysis_period,
+            target_hours=target_hours,
+            location=self.location,
+            config=self.config,
+            body_params=self.body_params
+        )
         
-        logger.info(f"Processing {n_positions} MRT calculations with {n_workers} workers in {len(chunks)} chunks")
+        # Process and merge results automatically
+        from fast_utci.shared import ParallelProcessor, BalancedChunkStrategy
+        processor = ParallelProcessor(parallel_config=parallel_config)
+        logger.info(f"Processing {n_positions} MRT calculations with {processor.n_workers} workers")
         
-        # Process chunks in parallel
-        chunk_args = [(chunk, epw_data, filtered_weather, filtered_datetimes, 
-                      analysis_period, target_hours, self.location, self.config, self.body_params) 
-                     for chunk in chunks]
-        
-        with Pool(processes=n_workers) as pool:
-            start_time = time.time()
-            
-            if show_progress:
-                with tqdm(total=n_positions, desc="Computing MRT (parallel)", unit="pos", 
-                         mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
-                    
-                    results = {}
-                    for chunk_results in pool.imap(_compute_mrt_chunk, chunk_args):
-                        results.update(chunk_results)
-                        pbar.update(len(chunk_results))
-                        
-                        # Update description with time estimate
-                        elapsed = time.time() - start_time
-                        if elapsed > 0:
-                            rate = pbar.n / elapsed
-                            eta = (n_positions - pbar.n) / rate if rate > 0 else 0
-                            pbar.set_description(f"Computing MRT (parallel) ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
-            else:
-                # No progress bar - use simple processing
-                chunk_results_list = pool.map(_compute_mrt_chunk, chunk_args)
-                results = {}
-                for chunk_results in chunk_results_list:
-                    results.update(chunk_results)
-        
-        return results
+        return processor.process_and_merge(
+            data=np.array(indexed_data, dtype=object),
+            worker_fn=worker_fn,
+            chunk_strategy=BalancedChunkStrategy(),
+            description="Computing MRT (parallel)",
+            merge_dict=True
+        )
     
     def _compute_single_mrt(self, i, exposure, epw_data, filtered_weather, 
                            filtered_datetimes, analysis_period, target_hours):
@@ -616,6 +598,48 @@ class MRTCalculator:
         df = pd.DataFrame(rows)
         df.to_csv(csv_path, index=False, encoding=self.config.csv_encoding)
         logger.info(f"Exported CSV: {csv_path}")
+
+
+def _worker_mrt_chunk(chunk: np.ndarray, epw_data: Any, filtered_weather: Dict[str, Any],
+                     filtered_datetimes: List, analysis_period: Any, target_hours: Optional[List[int]],
+                     location: Any, config: Any, body_params: Any) -> Dict[str, Any]:
+    """
+    Module-level worker function for parallel processing of MRT calculation chunks.
+    
+    This function must be at module level to be picklable for multiprocessing.
+    
+    Args:
+        chunk: Chunk of indexed exposure results to process
+        epw_data: EPW data object
+        filtered_weather: Filtered weather data dictionary
+        filtered_datetimes: Filtered datetime list
+        analysis_period: Analysis period object
+        target_hours: Target hours list
+        location: Location object
+        config: MRT config
+        body_params: SolarCal body parameters
+        
+    Returns:
+        Dictionary of MRT results
+    """
+    # Convert chunk array to list of tuples for compatibility with existing function
+    chunk_list = [(idx, exp) for idx, exp in chunk]
+    
+    # Prepare args in the format expected by _compute_mrt_chunk
+    chunk_args = (
+        chunk_list,
+        epw_data,
+        filtered_weather,
+        filtered_datetimes,
+        analysis_period,
+        target_hours,
+        location,
+        config,
+        body_params
+    )
+    
+    # Use existing standalone worker function
+    return _compute_mrt_chunk(chunk_args)
 
 
 def _compute_mrt_chunk(args):

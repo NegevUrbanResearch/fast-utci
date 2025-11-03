@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fast_utci.utci import UTCICalculator
 from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
 from fast_utci.model_reader import read_project_data, get_combined_mesh
+from fast_utci.shared import load_config
 
 
 def load_baseline_reference():
@@ -57,8 +58,11 @@ def run_refactored_analysis():
         start_hour=0, end_hour=23
     )
     
+    # Load config from TOML
+    cfg = load_config()
+    
     # Compute MRT
-    mrt_calc = MRTCalculator(context_meshes=[model])
+    mrt_calc = MRTCalculator(context_meshes=[model], config=cfg.mrt)
     mrt_calc.set_location_from_epw(epw_file)
     
     exposure_results = mrt_calc.compute_exposure(
@@ -75,7 +79,7 @@ def run_refactored_analysis():
     )
     
     # Compute UTCI using NEW refactored implementation
-    utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data)
+    utci_calc = UTCICalculator(weather_data=weather_df, epw_object=epw_data, config=cfg.utci)
     
     utci_results = utci_calc.compute_utci(
         mrt_results=mrt_results,

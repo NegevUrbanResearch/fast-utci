@@ -8,14 +8,15 @@ using a clean, modular architecture.
 import numpy as np
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
+from functools import partial
 import time
 
-from .config import UTCIConfig, DEFAULT_CONFIG
-from .weather import WeatherDataManager
+from fast_utci.shared import UTCIConfig
+from fast_utci.shared.weather import WeatherDataManager
 from .calculation import BoundaryAveragingCalculator
 from .statistics import compute_summary_statistics, classify_thermal_comfort
 from .export import to_csv as export_to_csv
-from fast_utci.shared import ParallelProcessor
+from fast_utci.shared import ParallelProcessor, BalancedChunkStrategy
 
 
 class UTCICalculator:
@@ -49,9 +50,15 @@ class UTCICalculator:
         Args:
             weather_data: Weather data as file path, DataFrame, or EPW object
             epw_object: Optional EPW object for location info if weather_data is DataFrame
-            config: Optional UTCIConfig object (uses DEFAULT_CONFIG if None)
+            config: UTCIConfig object (required - must be loaded from TOML via load_config())
         """
-        self.config = config or DEFAULT_CONFIG
+        if config is None:
+            raise ValueError(
+                "UTCIConfig is required. Load from TOML using: "
+                "from fast_utci.shared import load_config; cfg = load_config(); "
+                "UTCICalculator(..., config=cfg.utci)"
+            )
+        self.config = config
         self.weather = None
         self.calculator = BoundaryAveragingCalculator(
             enable_vectorized=self.config.enable_vectorized
@@ -153,74 +160,43 @@ class UTCICalculator:
                          weather_filtered: WeatherDataManager,
                          show_progress: bool,
                          n_workers: Optional[int]) -> Dict[str, Any]:
-        """Parallel UTCI computation for larger datasets."""
-        import multiprocessing as mp
-        from multiprocessing import Pool
-        import time
-        
+        """Parallel UTCI computation for larger datasets using ParallelProcessor."""
         # Prepare weather data for workers
         if self.config.enable_vectorized:
             weather_data = weather_filtered.to_numpy_arrays()
         else:
             weather_data = weather_filtered.to_dataframe()
         
-        # Determine number of workers
-        if n_workers is None:
-            n_workers = max(1, mp.cpu_count() - 1)
-        
         # Convert to list for chunking
         mrt_items = list(mrt_results.items())
         n_positions = len(mrt_items)
         
-        # Create balanced chunks
-        from fast_utci.shared import BalancedChunkStrategy
-        chunk_strategy = BalancedChunkStrategy()
-        chunks = chunk_strategy.create_chunks(np.array(mrt_items, dtype=object), n_workers)
+        # Create config with overrides
+        parallel_config = self.config.parallel.with_overrides(
+            n_workers=n_workers,
+            show_progress=show_progress
+        )
         
-        print(f"Processing {n_positions} UTCI calculations with {n_workers} workers in {len(chunks)} chunks")
+        # Use functools.partial to create a picklable worker function
+        worker_fn = partial(
+            _worker_utci_chunk,
+            weather_data=weather_data,
+            enable_vectorized=self.config.enable_vectorized,
+            include_weather=self.config.include_weather_in_results,
+            include_datetime=self.config.include_datetime_in_results
+        )
         
-        # Prepare chunk arguments with all parameters (avoid partial for Windows compatibility)
-        chunk_args = [
-            ((i, chunk), weather_data, self.config.enable_vectorized, 
-             self.config.include_weather_in_results, self.config.include_datetime_in_results)
-            for i, chunk in enumerate(chunks)
-        ]
+        # Process and merge results automatically
+        processor = ParallelProcessor(parallel_config=parallel_config)
+        print(f"Processing {n_positions} UTCI calculations with {processor.n_workers} workers")
         
-        # Process chunks in parallel
-        with Pool(processes=n_workers) as pool:
-            start_time = time.time()
-            
-            if show_progress:
-                try:
-                    from tqdm import tqdm
-                    with tqdm(total=n_positions, desc="Computing UTCI (parallel)", unit="pos",
-                             mininterval=1.0, maxinterval=5.0, smoothing=0.1, leave=True) as pbar:
-                        
-                        utci_results = {}
-                        for chunk_result in pool.starmap(_compute_utci_worker_batch, chunk_args):
-                            utci_results.update(chunk_result)
-                            pbar.update(len(chunk_result))
-                            
-                            # Update description with time estimate
-                            elapsed = time.time() - start_time
-                            if elapsed > 0:
-                                rate = pbar.n / elapsed
-                                eta = (n_positions - pbar.n) / rate if rate > 0 else 0
-                                pbar.set_description(f"Computing UTCI (parallel) ({rate:.1f} pos/s, ETA: {eta:.0f}s)")
-                except ImportError:
-                    # No tqdm - use simple processing
-                    chunk_results_list = pool.starmap(_compute_utci_worker_batch, chunk_args)
-                    utci_results = {}
-                    for chunk_result in chunk_results_list:
-                        utci_results.update(chunk_result)
-            else:
-                # No progress bar - simple processing
-                chunk_results_list = pool.starmap(_compute_utci_worker_batch, chunk_args)
-                utci_results = {}
-                for chunk_result in chunk_results_list:
-                    utci_results.update(chunk_result)
-        
-        return utci_results
+        return processor.process_and_merge(
+            data=np.array(mrt_items, dtype=object),
+            worker_fn=worker_fn,
+            chunk_strategy=BalancedChunkStrategy(),
+            description="Computing UTCI (parallel)",
+            merge_dict=True
+        )
     
     def to_csv(self,
               utci_results: Dict[str, Any],
@@ -258,23 +234,28 @@ class UTCICalculator:
         return compute_summary_statistics(utci_results)
 
 
-def _compute_utci_worker_batch(args, weather_data, enable_vectorized, include_weather, include_datetime) -> Dict[str, Any]:
+def _worker_utci_chunk(chunk: np.ndarray, weather_data: Any, enable_vectorized: bool,
+                      include_weather: bool, include_datetime: bool) -> Dict[str, Any]:
     """
-    Worker function for parallel UTCI computation.
+    Module-level worker function for parallel UTCI computation.
+    
+    This function must be at module level to be picklable for multiprocessing.
     
     Args:
-        args: Tuple of (chunk_id, chunk_data)
+        chunk: Chunk of MRT items to process
         weather_data: Weather data (DataFrame or numpy dict)
         enable_vectorized: Whether to use vectorized calculations
         include_weather: Whether to include weather in results
         include_datetime: Whether to include datetime in results
+        
+    Returns:
+        Dictionary of UTCI results
     """
-    chunk_id, chunk_data = args
-    
     calculator = BoundaryAveragingCalculator(enable_vectorized=enable_vectorized)
     results = {}
     
-    for pos_key, mrt_data in chunk_data:
+    # Process each item in the chunk
+    for pos_key, mrt_data in chunk:
         result = calculator.calculate(
             mrt_data,
             weather_data,
@@ -284,4 +265,6 @@ def _compute_utci_worker_batch(args, weather_data, enable_vectorized, include_we
         results[pos_key] = result.to_dict()
     
     return results
+
+
 

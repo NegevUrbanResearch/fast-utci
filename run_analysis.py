@@ -20,7 +20,7 @@ import os
 import sys
 from typing import Tuple, Dict, Any, Optional
 import gc
-from fast_utci.config import load_config
+from fast_utci.shared import load_config
 
 # Add scripts directory to path
 sys.path.insert(0, str(Path(__file__).parent / 'scripts'))

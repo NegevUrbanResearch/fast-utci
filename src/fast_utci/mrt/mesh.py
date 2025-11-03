@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import warnings
 import logging
 
-from .config import DEFAULT_RAY_MAX_DISTANCE, MRTConfig
+from fast_utci.shared import MRTConfig
 from .adapters import create_intersector_strategy
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def load_context_meshes(mesh_sources: List[Union[str, trimesh.Trimesh]], config:
 def ray_mesh_intersections(origins: np.ndarray,
                           directions: np.ndarray,
                           mesh_context: MeshContext,
-                          max_distance: float = DEFAULT_RAY_MAX_DISTANCE) -> np.ndarray:
+                          max_distance: Optional[float] = None) -> np.ndarray:
     """
     Test ray-mesh intersections for occlusion detection.
     
@@ -125,6 +125,9 @@ def ray_mesh_intersections(origins: np.ndarray,
         # Use selected ray intersector (embree or trimesh)
         intersector = mesh_context.ray_intersector if mesh_context and mesh_context.ray_intersector is not None else mesh_context.mesh.ray
         mrt_config = getattr(mesh_context, "_mrt_config", None)
+        # Resolve max distance from config if not provided
+        if max_distance is None:
+            max_distance = (mrt_config.performance.ray_max_distance if mrt_config else 1000.0)
 
         if (mrt_config.intersects_any if mrt_config else True) and hasattr(intersector, "intersects_any"):
             # Fast boolean occlusion check; ignores hit locations
@@ -160,7 +163,7 @@ def batch_ray_intersections(origins: np.ndarray,
                            directions: np.ndarray,
                            mesh_context: MeshContext,
                            batch_size: int = 10000,
-                           max_distance: float = DEFAULT_RAY_MAX_DISTANCE) -> np.ndarray:
+                           max_distance: Optional[float] = None) -> np.ndarray:
     """
     Perform ray intersections in batches to manage memory usage.
     

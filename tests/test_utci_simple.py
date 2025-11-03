@@ -7,9 +7,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 if __name__ == "__main__":
     from fast_utci.utci import UTCICalculator
+    from fast_utci.shared import load_config
     import pandas as pd
     
     print("Testing refactored UTCI calculator (serial mode)...")
+    
+    # Load config from TOML
+    cfg = load_config()
     
     # Create simple test weather data
     weather_df = pd.DataFrame({
@@ -29,7 +33,7 @@ if __name__ == "__main__":
         }
     
     # Test calculator
-    calc = UTCICalculator(weather_data=weather_df)
+    calc = UTCICalculator(weather_data=weather_df, config=cfg.utci)
     
     utci_results = calc.compute_utci(
         mrt_results=mrt_results,

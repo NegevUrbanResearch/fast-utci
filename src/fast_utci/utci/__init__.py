@@ -5,19 +5,11 @@ This package provides Universal Thermal Climate Index (UTCI) calculation
 functionality that integrates with MRT results and weather data.
 """
 
-from .config import (
-    UTCIConfig,
-    DEFAULT_CONFIG,
-    CSV_ENCODING,
-    CSV_INDEX,
-    DEFAULT_N_WORKERS,
-    DEFAULT_SHOW_PROGRESS,
-    DEFAULT_PARALLEL_THRESHOLD
-)
+from fast_utci.shared import UTCIConfig
 
 from .calculator import UTCICalculator
 from .calculation import BoundaryAveragingCalculator, UTCICalculationResult
-from .weather import WeatherDataManager
+from fast_utci.shared.weather import WeatherDataManager
 from .statistics import (
     classify_thermal_comfort,
     compute_summary_statistics,
@@ -34,12 +26,6 @@ __version__ = "0.1.0"
 __all__ = [
     # Config
     "UTCIConfig",
-    "DEFAULT_CONFIG",
-    "CSV_ENCODING",
-    "CSV_INDEX",
-    "DEFAULT_N_WORKERS",
-    "DEFAULT_SHOW_PROGRESS",
-    "DEFAULT_PARALLEL_THRESHOLD",
     # Main calculator
     "UTCICalculator",
     # Calculation components

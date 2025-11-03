@@ -3,11 +3,22 @@ Performance optimization utilities for MRT calculations.
 
 Provides tools for optimizing batch sizes, memory management, and computational
 efficiency based on system resources and workload characteristics.
+
+Uses PerformanceConfig from shared utilities for configuration values.
 """
 
 import numpy as np
 from typing import Optional
-from .config import DEFAULT_BATCH_SIZE
+from fast_utci.shared import MRTConfig
+
+
+def _get_default_batch_size() -> int:
+    """Fetch default batch size from TOML via load_config; fallback to 10000."""
+    try:
+        from fast_utci.shared import load_config
+        return int(load_config().performance.batch_size)
+    except Exception:
+        return 10000
 
 
 class PerformanceOptimizer:
@@ -16,23 +27,34 @@ class PerformanceOptimizer:
     
     Dynamically calculates optimal batch sizes based on available memory,
     ray types, and system resources to balance performance and memory safety.
+    
+    Uses PerformanceConfig for configuration values (no hardcoded defaults).
     """
     
     def __init__(self, 
-                 memory_fraction: float = 0.25,
-                 min_solar_batch: int = 100,
-                 min_sky_batch: int = 500):
+                 config: Optional[MRTConfig] = None,
+                 memory_fraction: Optional[float] = None):
         """
         Initialize performance optimizer.
         
         Args:
-            memory_fraction: Fraction of available memory to use for ray processing (0-1)
-            min_solar_batch: Minimum batch size for solar rays
-            min_sky_batch: Minimum batch size for sky rays
+            config: MRTConfig with performance settings (if None, loads from TOML)
+            memory_fraction: Fraction of available memory to use (0-1). 
+                          If None, uses 0.25 as default (not in config currently)
         """
-        self.memory_fraction = memory_fraction
-        self.min_solar_batch = min_solar_batch
-        self.min_sky_batch = min_sky_batch
+        if config is None:
+            try:
+                from fast_utci.shared import load_config
+                config = load_config().mrt
+            except Exception:
+                config = None
+        
+        self.config = config
+        # Memory fraction not currently in config, use default or parameter
+        self.memory_fraction = memory_fraction if memory_fraction is not None else 0.25
+        # Minimum batch sizes - could be moved to config if needed
+        self.min_solar_batch = 100
+        self.min_sky_batch = 500
     
     def calculate_batch_size(self, 
                             n_rays: int, 
@@ -50,17 +72,22 @@ class PerformanceOptimizer:
             Optimal batch size that balances performance and memory safety
         """
         # Base batch sizes optimized for different ray types
+        # Use config batch_size as base, with multipliers for different ray types
+        base_config_batch_size = self.config.performance.batch_size if self.config else _get_default_batch_size()
+        
         if ray_type == "sky":
             # Sky rays: typically 145 rays per position, can use larger batches
-            base_batch_size = 20000
+            # Use 2x config batch_size for sky rays
+            base_batch_size = base_config_batch_size * 2
             min_batch_size = self.min_sky_batch
         elif ray_type == "solar":
             # Solar rays: typically 1 ray per position, use smaller batches
-            base_batch_size = 5000
+            # Use 0.5x config batch_size for solar rays
+            base_batch_size = base_config_batch_size // 2
             min_batch_size = self.min_solar_batch
         else:
-            # Mixed or unknown: use default
-            base_batch_size = DEFAULT_BATCH_SIZE
+            # Mixed or unknown: use configured default
+            base_batch_size = base_config_batch_size
             min_batch_size = min(self.min_solar_batch, self.min_sky_batch)
         
         try:
@@ -105,20 +132,23 @@ class PerformanceOptimizer:
             return 2 * 1024 * 1024 * 1024
 
 
-# Global instance for convenience
-_default_optimizer = PerformanceOptimizer()
+# Note: No global optimizer instance - must provide config when needed
 
 
-def get_optimal_batch_size(n_rays: int, ray_type: str = "mixed") -> int:
+def get_optimal_batch_size(n_rays: int, 
+                          ray_type: str = "mixed",
+                          config: Optional[MRTConfig] = None) -> int:
     """
     Calculate optimal batch size (convenience function).
     
     Args:
         n_rays: Number of rays to process
         ray_type: Type of rays ("sky", "solar", or "mixed")
+        config: Optional MRTConfig (loads from TOML if not provided)
         
     Returns:
         Optimal batch size
     """
-    return _default_optimizer.calculate_batch_size(n_rays, ray_type)
+    optimizer = PerformanceOptimizer(config=config)
+    return optimizer.calculate_batch_size(n_rays, ray_type)
 

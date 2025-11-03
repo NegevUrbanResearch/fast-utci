@@ -453,6 +453,35 @@ class WeatherDataManager:
     def get_adapter(self) -> Union[EPWAdapter, DataFrameAdapter]:
         """Get the underlying weather adapter."""
         return self.adapter
+    
+    def get_location_info(self) -> Optional[str]:
+        """
+        Get location information if available.
+        
+        Returns:
+            Location string or None
+        """
+        if self.epw_data:
+            return str(self.epw_data.location)
+        return None
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """
+        Get summary statistics for weather data.
+        
+        Returns:
+            Dictionary with summary information
+        """
+        if self.weather_df is None:
+            raise ValueError("Weather data not loaded")
+        
+        return {
+            'n_hours': len(self.weather_df),
+            'temp_range': (self.weather_df['air_temp'].min(), self.weather_df['air_temp'].max()),
+            'wind_range': (self.weather_df['wind_speed'].min(), self.weather_df['wind_speed'].max()),
+            'humidity_range': (self.weather_df['relative_humidity'].min(), self.weather_df['relative_humidity'].max()),
+            'location': self.get_location_info()
+        }
 
 
 # ============================================================================
