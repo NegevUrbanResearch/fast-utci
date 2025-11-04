@@ -5,7 +5,7 @@
 	import SceneInvalidateSetup from './SceneInvalidateSetup.svelte';
 	import type { WebGLRenderer } from 'three';
 
-	export let backgroundColor: number = 0xacd8eb;
+	export let backgroundColor: number = 0xd3d3d3;
 	export let enableShadows: boolean = true;
 
 	function createRenderer(canvas: HTMLCanvasElement): WebGLRenderer {

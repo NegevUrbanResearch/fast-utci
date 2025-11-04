@@ -91,7 +91,7 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 		z-index: 1000;
 		min-width: 180px;
-		font-family: Arial, sans-serif;
+	font-family: var(--font-family);
 		font-size: 13px;
 	}
 

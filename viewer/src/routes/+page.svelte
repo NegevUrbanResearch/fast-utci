@@ -138,6 +138,7 @@
 		overflow: hidden;
 		width: 100%;
 		height: 100%;
+		font-family: var(--font-family);
 	}
 
 	.viewer-container {

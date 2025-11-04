@@ -117,7 +117,7 @@
 		font-size: 14px;
 		font-weight: bold;
 		transition: background 0.2s;
-		font-family: Arial, sans-serif;
+	font-family: var(--font-family);
 	}
 
 	.scenario-toggle:hover {
@@ -142,7 +142,7 @@
 		border: 1px solid #ccc;
 		border-radius: 4px;
 		margin-bottom: 10px;
-		font-family: Arial, sans-serif;
+	font-family: var(--font-family);
 		background: white;
 	}
 

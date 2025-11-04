@@ -164,7 +164,7 @@
 		padding: 15px;
 		border-radius: 8px;
 		box-shadow: 0 2px 15px rgba(0, 0, 0, 0.3);
-		font-family: Arial, sans-serif;
+	font-family: var(--font-family);
 		font-size: 12px;
 		max-width: 300px;
 		z-index: 100;

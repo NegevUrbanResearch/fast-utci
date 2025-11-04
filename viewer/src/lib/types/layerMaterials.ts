@@ -143,7 +143,8 @@ export const STANDARD_LAYER_TYPES: StandardLayerType[] = [
 	{ id: 'road', displayName: 'Roads', defaultVisible: false },
 	{ id: 'sidewalk', displayName: 'Sidewalks', defaultVisible: false },
 	{ id: 'base', displayName: 'Ground', defaultVisible: false },
-	{ id: 'water', displayName: 'Water', defaultVisible: true }
+	{ id: 'water', displayName: 'Water', defaultVisible: true },
+	{ id: 'unknown', displayName: 'Unknown', defaultVisible: false }
 ];
 
 

@@ -160,7 +160,7 @@ export function applyLayerVisibilityState(visibilityState: Record<string, boolea
 	
 	// Apply visibility for each layer type in the map
 	layerMap.forEach((meshes, layerType) => {
-		const visible = visibilityState[layerType] ?? true; // Default to visible if not specified
+        const visible = visibilityState[layerType] ?? false; // Default to hidden if not specified
 		toggleLayerVisibility(layerType, visible);
 	});
 }

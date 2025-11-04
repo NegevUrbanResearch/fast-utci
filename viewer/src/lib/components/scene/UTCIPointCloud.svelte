@@ -31,11 +31,12 @@
 		updatePointCloudColors(pointsRef, analysis, currentHour, colorMode);
 	}
 
-	// Apply coordinate transformation when model or analysis changes
-	// Note: model prop is used implicitly here via analysis metadata
+	// Apply coordinate transformation and tiny up-offset when model or analysis changes
 	$: if (pointsRef && analysis && model) {
 		const coordinateSystem = analysis.metadata.coordinate_system || 'xy_ground';
 		applyCoordinateTransform(pointsRef, coordinateSystem);
+		// Apply tiny world-up offset post-transform to avoid z-fighting with ground
+		pointsRef.position.y = 0.05;
 	}
 </script>
 
