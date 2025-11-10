@@ -13,7 +13,7 @@
 	import GridHelper from '$lib/components/scene/GridHelper.svelte';
 	import Model from '$lib/components/scene/Model.svelte';
 	import UTCIPointCloud from '$lib/components/scene/UTCIPointCloud.svelte';
-	import TimeSlider from '$lib/components/ui/TimeSlider.svelte';
+import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	import LayerControls from '$lib/components/ui/LayerControls.svelte';
 	import ColorLegend from '$lib/components/ui/ColorLegend.svelte';
 	import ScenarioSelector from '$lib/components/ui/ScenarioSelector.svelte';
@@ -126,7 +126,7 @@
 	<LayerControls />
 	<AnalyticsPanel />
 	{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
-		<TimeSlider />
+		<RadialTimePicker />
 	{/if}
 	<ColorLegend />
 </div>
