@@ -5,13 +5,33 @@
  */
 
 import * as THREE from 'three';
-import type { Analysis, UTCIData } from '$lib/types/analysis';
+import type { Analysis, AnalysisMetadata, UTCIData } from '$lib/types/analysis';
 import { getUTCIForHour } from '$lib/services/dataLoader';
 import { mapUTCIToColor } from '$lib/services/colorScale';
-import { applyCoordinateTransform } from '$lib/utils/coordinates';
 
-const VISUAL_OFFSET = 0.0; // Object-level offset will be applied post-transform
-const OVERLAP_FACTOR = 1.05; // Slight overlap to fill gaps between tiles
+const VISUAL_LAYER_OFFSET = 0.04;
+const POLYGON_OFFSET_FACTOR = -0.75;
+const POLYGON_OFFSET_UNITS = -0.75;
+const DEFAULT_OPACITY = 0.9;
+const TEXTURE_ALPHA = 255;
+
+interface UtciGridLayout {
+	width: number;
+	height: number;
+	gridSize: number;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+	numPositions: number;
+	minX: number;
+	minZ: number;
+	minY: number;
+	maxY: number;
+	centerX: number;
+	centerZ: number;
+	baseY: number;
+	indexToTexel: Uint32Array;
+	colorBuffer: Uint8Array;
+	texture?: THREE.DataTexture;
+}
 
 /**
  * Create UTCI point cloud geometry and material
@@ -28,12 +48,12 @@ export function createPointCloudGeometry(
 	const { data, metadata } = analysis;
 	const numPositions = data.numPositions;
 
-    // Create position attribute without baked vertical offset
+	// Create position attribute without baked vertical offset
 	const positions = new Float32Array(data.positions.length);
 	for (let i = 0; i < numPositions; i++) {
 		positions[i * 3] = data.positions[i * 3];
 		positions[i * 3 + 1] = data.positions[i * 3 + 1];
-        positions[i * 3 + 2] = data.positions[i * 3 + 2];
+		positions[i * 3 + 2] = data.positions[i * 3 + 2];
 	}
 
 	const geometry = new THREE.BufferGeometry();
@@ -74,10 +94,34 @@ export function createColors(
 	const numPositions = data.numPositions;
 	const utciValues = getUTCIForHour(data, hourIndex);
 
-	// Determine range based on color mode
+	const { utciMin, utciMax } = resolveUtciRange(metadata, hourIndex, colorMode);
+
+	// Create color attribute
+	const colors = new Float32Array(numPositions * 3);
+
+	for (let i = 0; i < numPositions; i++) {
+		const utci = utciValues[i];
+		const color = mapUTCIToColor(utci, utciMin, utciMax);
+		colors[i * 3] = color.r;
+		colors[i * 3 + 1] = color.g;
+		colors[i * 3 + 2] = color.b;
+	}
+
+	return colors;
+}
+
+/**
+ * Resolve UTCI range for the requested hour and color mode.
+ */
+function resolveUtciRange(
+	metadata: AnalysisMetadata,
+	hourIndex: number,
+	colorMode: 'normalized' | 'discrete'
+): { utciMin: number; utciMax: number } {
 	let utciMin: number;
 	let utciMax: number;
 
+	// Determine range based on color mode
 	if (colorMode === 'normalized') {
 		utciMin = metadata.utci_range.min;
 		utciMax = metadata.utci_range.max;
@@ -92,18 +136,7 @@ export function createColors(
 		}
 	}
 
-	// Create color attribute
-	const colors = new Float32Array(numPositions * 3);
-
-	for (let i = 0; i < numPositions; i++) {
-		const utci = utciValues[i];
-		const color = mapUTCIToColor(utci, utciMin, utciMax);
-		colors[i * 3] = color.r;
-		colors[i * 3 + 1] = color.g;
-		colors[i * 3 + 2] = color.b;
-	}
-
-	return colors;
+	return { utciMin, utciMax };
 }
 
 /**
@@ -137,126 +170,210 @@ export function updatePointCloudColors(
 }
 
 /**
- * Create ground-aligned InstancedMesh geometry and material
- * @param analysis - Analysis data
- * @param hourIndex - Hour index (default: 0)
- * @param colorMode - Color mode ('normalized' or 'discrete')
- * @returns Object with geometry, material, instance count, and cell size
+ * Create a textured ground-aligned mesh that visualizes UTCI values.
  */
-export function createInstancedMeshGeometry(
+export function createUtciSurfaceMesh(
 	analysis: Analysis,
 	hourIndex: number = 0,
 	colorMode: 'normalized' | 'discrete' = 'normalized'
-): { geometry: THREE.PlaneGeometry; material: THREE.MeshBasicMaterial; instanceCount: number; cellSize: number } {
-	const { data, metadata } = analysis;
-	const instanceCount = data.numPositions;
-	// Make planes larger to ensure visibility - use 2x grid size for testing
-	const cellSize = metadata.grid_size * 2.0; // Larger for visibility testing
+): THREE.Mesh {
+	const layout = buildUtciGridLayout(analysis);
+	const colors = createColors(analysis, hourIndex, colorMode);
+	fillColorBuffer(layout, colors);
 
-	// Create plane geometry for each instance
-	const geometry = new THREE.PlaneGeometry(cellSize, cellSize);
+	const texture = new THREE.DataTexture(
+		layout.colorBuffer,
+		layout.width,
+		layout.height,
+		THREE.RGBAFormat,
+		THREE.UnsignedByteType
+	);
+	texture.needsUpdate = true;
+	texture.flipY = false;
+	texture.generateMipmaps = false;
+	texture.magFilter = THREE.NearestFilter;
+	texture.minFilter = THREE.NearestFilter;
+	texture.colorSpace = THREE.SRGBColorSpace;
 
-	// Create material with solid color for testing - no instance colors
-	// Once we confirm rendering works, we'll add instance colors back
+	layout.texture = texture;
+
 	const material = new THREE.MeshBasicMaterial({
-		color: 0xff0000, // Bright red - solid color for testing
-		transparent: false,
+		map: texture,
+		transparent: true,
+		opacity: DEFAULT_OPACITY,
 		side: THREE.DoubleSide,
 		depthTest: true,
-		depthWrite: false
+		depthWrite: false,
+		polygonOffset: true,
+		polygonOffsetFactor: POLYGON_OFFSET_FACTOR,
+		polygonOffsetUnits: POLYGON_OFFSET_UNITS,
+		toneMapped: false
 	});
 
-	return { geometry, material, instanceCount, cellSize };
+	const planeWidth = layout.width * layout.gridSize;
+	const planeHeight = layout.height * layout.gridSize;
+
+	const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+	geometry.rotateX(-Math.PI / 2);
+
+	const mesh = new THREE.Mesh(geometry, material);
+	mesh.name = 'UTCI Texture Overlay';
+	mesh.position.set(layout.centerX, layout.baseY, layout.centerZ);
+	mesh.renderOrder = 2;
+	mesh.frustumCulled = false;
+
+	mesh.userData.utciLayout = layout;
+	return mesh;
 }
 
 /**
- * Update InstancedMesh instance matrices (positions) and colors
- * @param instancedMesh - Three.js InstancedMesh object
- * @param analysis - Analysis data
- * @param hourIndex - Hour index
- * @param colorMode - Color mode
+ * Update the UTCI texture mesh with new colors for the specified hour/mode.
  */
-export function updateInstancedMesh(
-	instancedMesh: THREE.InstancedMesh,
+export function updateUtciSurfaceTexture(
+	mesh: THREE.Mesh,
 	analysis: Analysis,
 	hourIndex: number,
 	colorMode: 'normalized' | 'discrete'
 ): void {
-	const { data, metadata } = analysis;
-	const numPositions = data.numPositions;
-	const instanceCount = Math.min(numPositions, instancedMesh.count);
-	const coordinateSystem = metadata.coordinate_system || 'xy_ground';
+	const layout: UtciGridLayout | undefined = mesh.userData.utciLayout;
+	if (!layout) {
+		console.warn('[UTCI] Missing layout on surface mesh. Recreating mesh.');
+		return;
+	}
 
-	// Create colors
+	if (layout.numPositions !== analysis.data.numPositions) {
+		console.warn('[UTCI] Analysis position count changed; recreate mesh to realign texture.');
+		return;
+	}
+
+	const material = mesh.material as THREE.MeshBasicMaterial;
+	const texture = layout.texture ?? (material.map as THREE.DataTexture | null);
+	if (!texture) {
+		console.warn('[UTCI] Missing texture on surface mesh. Recreating mesh.');
+		return;
+	}
+
 	const colors = createColors(analysis, hourIndex, colorMode);
+	fillColorBuffer(layout, colors);
 
-	// Set instance matrices (positions) and colors
-	const dummy = new THREE.Object3D();
-	const color = new THREE.Color();
-
-	// TEST: Render first instance at origin to verify rendering works
-	const testCount = Math.min(instanceCount, 1);
-	console.log('[UTCI] Rendering', testCount, 'instances for testing');
-	
-	for (let i = 0; i < testCount; i++) {
-		// Transform positions based on coordinate system BEFORE setting instance matrix
-		// This way we don't need to rotate the mesh object
-		let x = data.positions[i * 3];
-		let y = data.positions[i * 3 + 1];
-		let z = data.positions[i * 3 + 2];
-		
-		// Transform coordinates: xy_ground (Z-up) -> Three.js (Y-up)
-		if (coordinateSystem === 'xy_ground') {
-			// Swap Y and Z: (X, Y, Z) -> (X, Z, -Y)
-			const temp = y;
-			y = z;
-			z = -temp;
-		}
-		
-		// Log first position for debugging
-		if (i === 0) {
-			console.log('[UTCI] First instance position:', x, y, z, 'original:', data.positions[0], data.positions[1], data.positions[2]);
-		}
-		
-		// TEST: Position at origin for first instance
-		if (i === 0) {
-			dummy.position.set(0, 0, 0);
-			console.log('[UTCI] TEST: First instance at origin (0,0,0)');
-		} else {
-			dummy.position.set(x, y, z);
-		}
-		
-		// Planes should be horizontal (flat on ground)
-		// PlaneGeometry is in XY plane facing +Z, rotate to face +Y (up) so visible from above
-		// Try +90° around X to face +Y
-		dummy.rotation.set(Math.PI / 2, 0, 0);
-		dummy.scale.set(1, 1, 1);
-		dummy.updateMatrix();
-		instancedMesh.setMatrixAt(i, dummy.matrix);
-
-		// Skip instance colors for now - testing with solid material color
-		// Once we confirm planes render, we'll enable instance colors
-		// color.setRGB(1, 0, 0);
-		// instancedMesh.setColorAt(i, color);
-	}
-	
-	// Hide remaining instances by setting their scale to 0
-	for (let i = testCount; i < instanceCount; i++) {
-		dummy.position.set(0, 0, 0);
-		dummy.rotation.set(0, 0, 0);
-		dummy.scale.set(0, 0, 0);
-		dummy.updateMatrix();
-		instancedMesh.setMatrixAt(i, dummy.matrix);
-	}
-
-	instancedMesh.instanceMatrix.needsUpdate = true;
-	if (instancedMesh.instanceColor) {
-		instancedMesh.instanceColor.needsUpdate = true;
-	}
-	
-	// CRITICAL: Compute bounding sphere for frustum culling
-	// Without this, Three.js may cull the entire InstancedMesh
-	instancedMesh.computeBoundingSphere();
+	texture.needsUpdate = true;
 }
 
+function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
+	const { data, metadata } = analysis;
+	const coordinateSystem = metadata.coordinate_system || 'xy_ground';
+	const gridSize = metadata.grid_size || 1;
+	const numPositions = data.numPositions;
 
+	const xs = new Float32Array(numPositions);
+	const ys = new Float32Array(numPositions);
+	const zs = new Float32Array(numPositions);
+
+	const indexToTexel = new Uint32Array(numPositions);
+	const rows = new Uint32Array(numPositions);
+	const cols = new Uint32Array(numPositions);
+
+	let minX = Infinity;
+	let minZ = Infinity;
+	let maxX = -Infinity;
+	let maxZ = -Infinity;
+	let minY = Infinity;
+	let maxY = -Infinity;
+
+	const transformed = new THREE.Vector3();
+
+	for (let i = 0; i < numPositions; i++) {
+		const x = data.positions[i * 3];
+		const y = data.positions[i * 3 + 1];
+		const z = data.positions[i * 3 + 2];
+
+		transformToWorld(x, y, z, coordinateSystem, transformed);
+
+		xs[i] = transformed.x;
+		ys[i] = transformed.y;
+		zs[i] = transformed.z;
+
+		if (transformed.x < minX) minX = transformed.x;
+		if (transformed.x > maxX) maxX = transformed.x;
+		if (transformed.z < minZ) minZ = transformed.z;
+		if (transformed.z > maxZ) maxZ = transformed.z;
+		if (transformed.y < minY) minY = transformed.y;
+		if (transformed.y > maxY) maxY = transformed.y;
+	}
+
+	let maxRow = 0;
+	let maxCol = 0;
+	const invGrid = 1 / gridSize;
+
+	for (let i = 0; i < numPositions; i++) {
+		const col = Math.round((xs[i] - minX) * invGrid);
+		const row = Math.round((zs[i] - minZ) * invGrid);
+
+		cols[i] = col;
+		rows[i] = row;
+
+		if (col > maxCol) maxCol = col;
+		if (row > maxRow) maxRow = row;
+	}
+
+	const width = maxCol + 1;
+	const height = maxRow + 1;
+
+	for (let i = 0; i < numPositions; i++) {
+		const flippedRow = height - 1 - rows[i];
+		const texelIndex = flippedRow * width + cols[i];
+		indexToTexel[i] = texelIndex;
+	}
+
+	const colorBuffer = new Uint8Array(width * height * 4);
+	const centerX = minX + ((width - 1) * gridSize) / 2;
+	const centerZ = minZ + ((height - 1) * gridSize) / 2;
+	const baseY = (minY + maxY) / 2 + VISUAL_LAYER_OFFSET;
+
+	return {
+		width,
+		height,
+		gridSize,
+		coordinateSystem,
+		numPositions,
+		minX,
+		minZ,
+		minY,
+		maxY,
+		centerX,
+		centerZ,
+		baseY,
+		indexToTexel,
+		colorBuffer
+	};
+}
+
+function fillColorBuffer(layout: UtciGridLayout, colors: Float32Array): void {
+	layout.colorBuffer.fill(0);
+
+	for (let i = 0; i < layout.numPositions; i++) {
+		const texelIndex = layout.indexToTexel[i];
+		const colorOffset = texelIndex * 4;
+		const colorIndex = i * 3;
+
+		layout.colorBuffer[colorOffset] = Math.floor(colors[colorIndex] * 255);
+		layout.colorBuffer[colorOffset + 1] = Math.floor(colors[colorIndex + 1] * 255);
+		layout.colorBuffer[colorOffset + 2] = Math.floor(colors[colorIndex + 2] * 255);
+		layout.colorBuffer[colorOffset + 3] = TEXTURE_ALPHA;
+	}
+}
+
+function transformToWorld(
+	x: number,
+	y: number,
+	z: number,
+	coordinateSystem: 'xy_ground' | 'xz_ground',
+	target: THREE.Vector3
+): THREE.Vector3 {
+	if (coordinateSystem === 'xy_ground') {
+		target.set(x, z, -y);
+	} else {
+		target.set(x, y, z);
+	}
+	return target;
+}
