@@ -24,6 +24,7 @@ node_modules/
 # Viewer build output (built in CI)
 viewer/build/
 viewer/.svelte-kit/
+viewer/package-lock.json
 
 # Viewer OS files
 viewer/.DS_Store

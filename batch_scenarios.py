@@ -24,7 +24,7 @@ SCENARIO_CATEGORIES = [
 ]
 
 # Default analysis settings
-DEFAULT_GRID_SIZE = 10.0
+DEFAULT_GRID_SIZE = 2.0
 DEFAULT_MONTH = 8
 DEFAULT_DAY = 15
 EPW_FILE = "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw"
