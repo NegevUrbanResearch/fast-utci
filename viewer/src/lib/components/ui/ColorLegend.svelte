@@ -100,10 +100,7 @@
 
 <style>
 	.color-legend {
-		position: absolute;
-		bottom: 20px;
-		right: 20px;
-		background: var(--color-bg-panel);
+		background: var(--color-bg-panel-soft);
 		padding: var(--spacing-lg);
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
@@ -143,7 +140,7 @@
 	.gradient {
 		width: 35px;
 		height: 250px;
-		border: 2px solid #666;
+		border: 2px solid var(--color-border-strong);
 		border-radius: 5px;
 		box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
 	}

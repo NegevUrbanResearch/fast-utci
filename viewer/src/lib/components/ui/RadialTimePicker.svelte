@@ -462,15 +462,11 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 
 <style>
 	.radial-wrapper {
-		position: absolute;
-		bottom: 20px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: var(--z-panel);
+		width: 100%;
 	}
 
 	.radial-panel {
-		background: var(--color-bg-panel);
+		background: var(--color-bg-panel-soft);
 		padding: var(--spacing-lg);
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);

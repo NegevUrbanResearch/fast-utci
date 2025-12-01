@@ -98,18 +98,13 @@
 
 <style>
 	.scenario-panel {
-		position: absolute;
-		top: 20px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 100;
-		min-width: 300px;
+	width: 100%;
 	}
 
 	.scenario-toggle {
 		width: 100%;
 		padding: 12px 20px;
-		background: #2196f3;
+		background: var(--color-accent);
 		color: white;
 		border: none;
 		border-radius: 5px;
@@ -121,15 +116,15 @@
 	}
 
 	.scenario-toggle:hover {
-		background: #1976d2;
+		background: color-mix(in srgb, var(--color-accent) 80%, #000000 20%);
 	}
 
 	.scenario-content {
 		margin-top: 8px;
-		background: rgba(255, 255, 255, 0.95);
+		background: var(--color-bg-panel-soft);
 		padding: 15px;
 		border-radius: 8px;
-		box-shadow: 0 2px 15px rgba(0, 0, 0, 0.3);
+		box-shadow: var(--shadow-panel);
 		max-height: 500px;
 		overflow-y: auto;
 		transition: max-height 0.3s ease, opacity 0.3s ease;
@@ -139,11 +134,11 @@
 		width: 100%;
 		padding: 10px;
 		font-size: 14px;
-		border: 1px solid #ccc;
+		border: 1px solid var(--color-border-subtle);
 		border-radius: 4px;
 		margin-bottom: 10px;
 	font-family: var(--font-family);
-		background: white;
+		background: var(--color-bg-panel);
 	}
 
 	.scenario-variant {
@@ -151,13 +146,13 @@
 		align-items: center;
 		gap: 10px;
 		padding-top: 10px;
-		border-top: 1px solid #e0e0e0;
+		border-top: 1px solid var(--color-border-subtle);
 	}
 
 	.scenario-variant label {
 		font-weight: bold;
 		font-size: 13px;
-		color: #333;
+		color: var(--color-text-primary);
 	}
 
 	.scenario-variant input[type="range"] {
@@ -167,7 +162,7 @@
 	.scenario-number {
 		min-width: 30px;
 		font-weight: bold;
-		color: #2196f3;
+		color: var(--color-accent);
 		text-align: center;
 	}
 </style>

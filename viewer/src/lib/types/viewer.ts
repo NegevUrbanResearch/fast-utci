@@ -17,6 +17,7 @@ export interface ViewerState {
 	analysisId: string | null;
 	loading: boolean;
 	error: string | null;
+	theme: 'dark' | 'light';
 }
 
 

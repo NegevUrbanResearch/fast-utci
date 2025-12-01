@@ -82,16 +82,7 @@
 
 <style>
 	.layer-controls {
-		position: absolute;
-		top: 120px;
-		left: 20px;
-		background: rgba(255, 255, 255, 0.95);
-		padding: 10px;
-		border-radius: 4px;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-		z-index: 1000;
-		min-width: 180px;
-	font-family: var(--font-family);
+		font-family: var(--font-family);
 		font-size: 13px;
 	}
 
@@ -99,9 +90,9 @@
 		font-weight: bold;
 		margin-bottom: 10px;
 		font-size: 13px;
-		color: #333;
+		color: var(--color-text-primary);
 		padding-bottom: 5px;
-		border-bottom: 1px solid #ddd;
+		border-bottom: 1px solid var(--color-border-subtle);
 	}
 
 	.layer-item {
@@ -122,11 +113,11 @@
 	}
 
 	.layer-item:hover {
-		background-color: rgba(0, 0, 0, 0.05);
+		background-color: rgba(148, 163, 184, 0.12);
 	}
 
 	.layer-item:focus {
-		outline: 2px solid #3498db;
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -135,13 +126,13 @@
 		height: 16px;
 		border-radius: 2px;
 		margin-right: 8px;
-		border: 1px solid rgba(0, 0, 0, 0.2);
+		border: 1px solid var(--color-border-subtle);
 		flex-shrink: 0;
 	}
 
 	.layer-label {
 		flex: 1;
-		color: #333;
+		color: var(--color-text-primary);
 		user-select: none;
 	}
 

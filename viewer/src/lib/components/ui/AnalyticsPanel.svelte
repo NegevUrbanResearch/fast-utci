@@ -8,6 +8,7 @@
 	let comparisonStats: ComparisonStats | null = null;
 	let avgMeanDiffAllHours: number | null = null;
 	let validationLoaded = false;
+	let showValidation = false;
 
 	$: metadata = $analysisStore?.metadata;
 	$: currentHour = $viewerStore.currentHour;
@@ -130,58 +131,93 @@
 				Max: {currentUtciStats.max.toFixed(1)}°C<br />
 				Mean: {currentUtciStats.mean.toFixed(1)}°C
 			{:else}
-				<span style="color: #999;">Loading...</span>
+				<span class="loading-text">Loading...</span>
 			{/if}
 		</div>
 
 		{#if comparisonStats}
-			<div class="panel-header">Grasshopper Comparison</div>
-			<div class="panel-section">
-				<strong>Validation Data:</strong><br />
-				Min: {comparisonStats.validation.min.toFixed(1)}°C<br />
-				Max: {comparisonStats.validation.max.toFixed(1)}°C<br />
-				Mean: {comparisonStats.validation.mean.toFixed(1)}°C
-			</div>
-			<div class="panel-section">
-				<strong>Comparison Metrics:</strong><br />
-				Min Diff: {comparisonStats.comparison.minDiff >= 0 ? '+' : ''}{comparisonStats.comparison.minDiff.toFixed(2)}°C<br />
-				Max Diff: {comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}{comparisonStats.comparison.maxDiff.toFixed(2)}°C<br />
-				Mean Diff: {comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}{comparisonStats.comparison.meanDiff.toFixed(2)}°C
-				{#if avgMeanDiffAllHours !== null}
-					<br />24-Hour Avg: {avgMeanDiffAllHours >= 0 ? '+' : ''}{avgMeanDiffAllHours.toFixed(2)}°C
-				{/if}
-			</div>
+			<button type="button" class="validation-toggle" on:click={() => (showValidation = !showValidation)}>
+				<span class="validation-title">Validation vs Grasshopper</span>
+				<span class:open={showValidation} class="chevron">▾</span>
+			</button>
+
+			{#if showValidation}
+				<div class="panel-header panel-header-secondary">Grasshopper Comparison</div>
+				<div class="panel-section">
+					<strong>Validation Data:</strong><br />
+					Min: {comparisonStats.validation.min.toFixed(1)}°C<br />
+					Max: {comparisonStats.validation.max.toFixed(1)}°C<br />
+					Mean: {comparisonStats.validation.mean.toFixed(1)}°C
+				</div>
+				<div class="panel-section">
+					<strong>Comparison Metrics:</strong><br />
+					Min Diff: {comparisonStats.comparison.minDiff >= 0 ? '+' : ''}{comparisonStats.comparison.minDiff.toFixed(2)}°C<br />
+					Max Diff: {comparisonStats.comparison.maxDiff >= 0 ? '+' : ''}{comparisonStats.comparison.maxDiff.toFixed(2)}°C<br />
+					Mean Diff: {comparisonStats.comparison.meanDiff >= 0 ? '+' : ''}{comparisonStats.comparison.meanDiff.toFixed(2)}°C
+					{#if avgMeanDiffAllHours !== null}
+						<br />24-Hour Avg: {avgMeanDiffAllHours >= 0 ? '+' : ''}{avgMeanDiffAllHours.toFixed(2)}°C
+					{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 {/if}
 
 <style>
 	.analytics-panel {
-		position: absolute;
-		top: 20px;
-		right: 20px;
-		background: rgba(255, 255, 255, 0.95);
-		padding: 15px;
-		border-radius: 8px;
-		box-shadow: 0 2px 15px rgba(0, 0, 0, 0.3);
-	font-family: var(--font-family);
+		font-family: var(--font-family);
 		font-size: 12px;
-		max-width: 300px;
-		z-index: 100;
+		color: var(--color-text-primary);
 	}
 
 	.panel-header {
-		font-weight: bold;
-		font-size: 14px;
-		margin-bottom: 10px;
-		border-bottom: 2px solid #333;
-		padding-bottom: 5px;
+		font-weight: 600;
+		font-size: 13px;
+		margin-bottom: 8px;
+		border-bottom: 1px solid var(--color-border-subtle);
+		padding-bottom: 4px;
+		color: var(--color-text-primary);
+	}
+
+	.panel-header-secondary {
+		margin-top: 6px;
 	}
 
 	.panel-section {
 		margin-bottom: 8px;
-		color: #333;
+		color: var(--color-text-secondary);
 		line-height: 1.5;
+	}
+
+	.validation-toggle {
+		margin-top: 6px;
+		margin-bottom: 2px;
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		border: none;
+		background: transparent;
+		color: var(--color-text-muted);
+		font-size: 11px;
+		cursor: pointer;
+		padding: 2px 0;
+	}
+
+	.validation-title {
+		text-align: left;
+	}
+
+	.chevron {
+		transition: transform 0.15s ease;
+	}
+
+	.chevron.open {
+		transform: rotate(180deg);
+	}
+
+	.loading-text {
+		color: var(--color-text-muted);
 	}
 </style>
 

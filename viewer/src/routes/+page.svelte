@@ -13,15 +13,18 @@
 	import GridHelper from '$lib/components/scene/GridHelper.svelte';
 	import Model from '$lib/components/scene/Model.svelte';
 	import UTCIPointCloud from '$lib/components/scene/UTCIPointCloud.svelte';
-import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
+	import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	import LayerControls from '$lib/components/ui/LayerControls.svelte';
 	import ColorLegend from '$lib/components/ui/ColorLegend.svelte';
 	import ScenarioSelector from '$lib/components/ui/ScenarioSelector.svelte';
 	import AnalyticsPanel from '$lib/components/ui/AnalyticsPanel.svelte';
+	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import '$lib/styles/variables.css';
+	import nurLogo from '$lib/assets/Nur Logo white.svg';
+	import mitLogo from '$lib/assets/MIT.svg';
+	import bguLogo from '$lib/assets/bgu-logo.png';
 	import type { Group } from 'three';
 
-	// Data base path: strip /viewer/build from base path to get project root
 	const getDataBasePath = () => {
 		const basePath = base || '';
 		return basePath.replace(/\/viewer\/build$/, '');
@@ -30,7 +33,8 @@ import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	let model: Group | null = null;
 	let gridVisible = false;
 
-	// Get analysis ID from URL parameters (client-side only)
+	let analyticsOpen = false;
+
 	let analysisId: string = '20250815_grid_2m_fullday';
 	let mounted = false;
 
@@ -40,8 +44,7 @@ import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 			setError(null);
 			setAnalysisId(id);
 			await loadAnalysisData(id);
-			
-			// Focus camera on model once loaded
+
 			if (model && $analysisStore) {
 				const bounds = calculateModelBounds(model);
 				const center = calculateModelCenter(model);
@@ -57,18 +60,16 @@ import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	}
 
 	onMount(() => {
-		// Client-side only: get analysis ID from URL parameters
 		if (typeof window !== 'undefined') {
 			const params = new URLSearchParams(window.location.search);
 			analysisId = params.get('analysis') || '20250815_grid_2m_fullday';
-			
+
 			console.log('[OK] Viewer initialized');
 			mounted = true;
 			loadAnalysis(analysisId);
 		}
 	});
 
-	// React to URL changes (client-side only)
 	$: if (typeof window !== 'undefined' && $page.url.searchParams && mounted) {
 		const newAnalysisId = $page.url.searchParams.get('analysis') || '20250815_grid_2m_fullday';
 		if (newAnalysisId !== analysisId) {
@@ -78,57 +79,106 @@ import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	}
 </script>
 
-<div class="viewer-container">
-	{#if $viewerStore.loading}
-		<div class="loading">
-			<div class="loading-message">Loading analysis data...</div>
+<div class="viewer-shell">
+	<header class="app-header">
+		<div class="header-left">
+			<div class="partner-logos">
+				<img src={nurLogo} alt="NUR Negev Urban Research" class="logo logo-nur" />
+				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
+				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
+			</div>
+			<div class="header-title">
+				<div class="title">Urban Comfort Lab</div>
+			</div>
 		</div>
-	{/if}
-
-	{#if $viewerStore.error}
-		<div class="error">
-			<div class="error-message">Error: {$viewerStore.error}</div>
+		<div class="header-right">
+			<ThemeToggle />
 		</div>
-	{/if}
+	</header>
 
-	<Scene>
-		<Camera />
-		<Lights />
-		
-		{#if $analysisStore}
-			{#key $analysisStore.metadata.model_file}
-				<Model
-					modelPath={$analysisStore.metadata.model_file.replace('data/', `${getDataBasePath()}/data/`)}
-					coordinateSystem={$analysisStore.metadata.coordinate_system || 'xy_ground'}
-					on:modelLoaded={(e) => {
-						model = e.detail;
-						if (model) {
-							const bounds = calculateModelBounds(model);
-							const center = calculateModelCenter(model);
-							const size = calculateModelSize(model);
-							focusCameraOnModel(center, size);
-						}
-					}}
-					on:layersDiscovered={(e) => {
-						setDiscoveredLayers(e.detail);
-					}}
-				/>
-			{/key}
-			
-			{#if model}
-				<GridHelper {model} visible={gridVisible} />
-				<UTCIPointCloud analysis={$analysisStore} model={model} />
+	<div class="app-body">
+		<aside class="app-sidebar">
+			<div class="sidebar-section">
+				<div class="section-header">Scenario</div>
+				<ScenarioSelector />
+			</div>
+
+			<div class="sidebar-section analytics-section">
+				<button
+					type="button"
+					class="section-header section-header-toggle"
+					on:click={() => (analyticsOpen = !analyticsOpen)}
+				>
+					<span>Analytics</span>
+					<span class:open={analyticsOpen} class="chevron">▾</span>
+				</button>
+				{#if analyticsOpen}
+					<AnalyticsPanel />
+				{/if}
+			</div>
+
+			<div class="sidebar-section">
+				<div class="section-header">Model Layers</div>
+				<LayerControls />
+			</div>
+
+			<div class="sidebar-section">
+				<div class="section-header">UTCI Legend &amp; Scale</div>
+				<ColorLegend />
+			</div>
+
+			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
+				<div class="sidebar-section">
+					<div class="section-header">Time of Day</div>
+					<RadialTimePicker />
+				</div>
 			{/if}
-		{/if}
-	</Scene>
+		</aside>
 
-	<ScenarioSelector />
-	<LayerControls />
-	<AnalyticsPanel />
-	{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
-		<RadialTimePicker />
-	{/if}
-	<ColorLegend />
+		<main class="app-main">
+			{#if $viewerStore.loading}
+				<div class="overlay-message">Loading analysis data...</div>
+			{/if}
+
+			{#if $viewerStore.error}
+				<div class="overlay-message error">Error: {$viewerStore.error}</div>
+			{/if}
+
+			<Scene backgroundColor={$viewerStore.theme === 'light' ? 0x4b5563 : 0x111827}>
+				<Camera />
+				<Lights />
+
+				{#if $analysisStore}
+					{#key $analysisStore.metadata.model_file}
+						<Model
+							modelPath={$analysisStore.metadata.model_file.replace(
+								'data/',
+								`${getDataBasePath()}/data/`
+							)}
+							coordinateSystem={$analysisStore.metadata.coordinate_system || 'xy_ground'}
+							on:modelLoaded={(e) => {
+								model = e.detail;
+								if (model) {
+									const bounds = calculateModelBounds(model);
+									const center = calculateModelCenter(model);
+									const size = calculateModelSize(model);
+									focusCameraOnModel(center, size);
+								}
+							}}
+							on:layersDiscovered={(e) => {
+								setDiscoveredLayers(e.detail);
+							}}
+						/>
+					{/key}
+
+					{#if model}
+						<GridHelper {model} visible={gridVisible} />
+						<UTCIPointCloud analysis={$analysisStore} model={model} />
+					{/if}
+				{/if}
+			</Scene>
+		</main>
+	</div>
 </div>
 
 <style>
@@ -139,36 +189,167 @@ import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 		width: 100%;
 		height: 100%;
 		font-family: var(--font-family);
+		background: var(--color-bg-page);
+		color: var(--color-text-primary);
 	}
 
-	.viewer-container {
+	.viewer-shell {
 		width: 100vw;
 		height: 100vh;
-		position: relative;
-		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		background:
+			radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 55%),
+			var(--color-bg-page);
 	}
 
-	.loading,
-	.error {
-		position: absolute;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
+	.app-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 8px 18px;
+		border-bottom: 1px solid var(--color-border-subtle);
+		background: var(--color-bg-header);
+		backdrop-filter: blur(16px);
+		z-index: 10;
+	}
+
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+	}
+
+	.header-title .title {
+		font-size: 15px;
+		font-weight: 600;
+	}
+
+	.header-right {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.partner-logos {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.logo {
+		height: 39px;
+		object-fit: contain;
+		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
+	}
+
+	.logo-nur {
+		height: 39px;
+	}
+
+	.logo-bgu {
+		height: 39px;
+		border-radius: 50%;
+	}
+
+	:global(html[data-theme='dark'] .logo-nur) {
+		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+	}
+
+	:global(html[data-theme='light'] .logo-nur) {
+		filter: brightness(0) drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+	}
+
+	:global(html[data-theme='dark'] .logo-mit) {
+		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+	}
+
+	:global(html[data-theme='light'] .logo-mit) {
+		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
+	}
+
+	.app-body {
+		flex: 1;
+		display: grid;
+		grid-template-columns: 320px minmax(0, 1fr);
+		height: 100%;
+	}
+
+	.app-sidebar {
+		border-right: 1px solid var(--color-border-subtle);
+		background: var(--color-bg-sidebar);
+		padding: 12px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		overflow-y: auto;
+	}
+
+	.sidebar-section {
 		background: var(--color-bg-panel);
-		padding: var(--spacing-xl);
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
-		z-index: calc(var(--z-tooltip) + 1);
+		padding: 10px 12px;
+		border: 1px solid var(--color-border-subtle);
 	}
 
-	.loading-message,
-	.error-message {
-		font-size: 16px;
+	.section-header {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		margin-bottom: 8px;
+		color: var(--color-text-secondary);
+	}
+
+	.section-header-toggle {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 6px;
+		background: transparent;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.analytics-section {
+		padding-top: 8px;
+	}
+
+	.analytics-section .section-header {
+		margin-bottom: 4px;
+	}
+
+	.chevron {
+		transition: transform 0.15s ease;
+	}
+
+	.chevron.open {
+		transform: rotate(180deg);
+	}
+
+	.app-main {
+		position: relative;
+		background: var(--color-bg-page);
+	}
+
+	.overlay-message {
+		position: absolute;
+		top: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: var(--z-tooltip);
+		padding: 10px 16px;
+		border-radius: 999px;
+		background: var(--color-bg-panel);
 		color: var(--color-text-primary);
-		text-align: center;
+		box-shadow: var(--shadow-panel);
+		font-size: 13px;
 	}
 
-	.error-message {
-		color: #e74c3c;
+	.overlay-message.error {
+		border: 1px solid var(--color-danger);
 	}
 </style>

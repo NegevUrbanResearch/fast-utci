@@ -1,7 +1,7 @@
 /**
  * Viewer Store
- * 
- * Svelte store for managing viewer state (hour, color mode, sun path visibility, etc.)
+ *
+ * Svelte store for managing viewer state (hour, color mode, sun path visibility, theme, etc.)
  */
 
 import { writable, type Writable } from 'svelte/store';
@@ -16,7 +16,8 @@ export const viewerStore: Writable<ViewerState> = writable<ViewerState>({
 	utciVisible: true,
 	analysisId: null,
 	loading: false,
-	error: null
+	error: null,
+	theme: 'dark'
 });
 
 /**
@@ -65,6 +66,14 @@ export function setLoading(loading: boolean): void {
  */
 export function setError(error: string | null): void {
 	viewerStore.update((state) => ({ ...state, error }));
+}
+
+/**
+ * Set theme (light or dark)
+ * @param theme - 'light' or 'dark'
+ */
+export function setTheme(theme: 'dark' | 'light'): void {
+	viewerStore.update((state) => ({ ...state, theme }));
 }
 
 
