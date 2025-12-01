@@ -535,12 +535,12 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 
 	.phase-marker .phase-ring {
 		fill: currentColor;
-		opacity: 0.18;
+		opacity: 0.32;
 	}
 
 	.phase-marker .phase-ring-inner {
 		fill: currentColor;
-		opacity: 0.28;
+		opacity: 0.5;
 	}
 
 	.radial-dial:focus-visible .phase-marker,

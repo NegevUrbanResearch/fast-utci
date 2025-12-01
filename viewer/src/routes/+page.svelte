@@ -22,7 +22,7 @@
 	import '$lib/styles/variables.css';
 	import nurLogo from '$lib/assets/Nur Logo white.svg';
 	import mitLogo from '$lib/assets/MIT.svg';
-	import bguLogo from '$lib/assets/bgu-logo.png';
+	import bguLogo from '$lib/assets/bgu-logo.svg';
 	import type { Group } from 'three';
 
 	const getDataBasePath = () => {
@@ -88,7 +88,8 @@
 				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
 			</div>
 			<div class="header-title">
-				<div class="title">Urban Comfort Lab</div>
+				<div class="title-kicker">CityScope</div>
+				<div class="title-main">Urban Comfort Lab</div>
 			</div>
 		</div>
 		<div class="header-right">
@@ -130,6 +131,7 @@
 			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
 				<div class="sidebar-section">
 					<div class="section-header">Time of Day</div>
+					<div class="section-subtitle">Select analysis hour for UTCI</div>
 					<RadialTimePicker />
 				</div>
 			{/if}
@@ -220,9 +222,23 @@
 		gap: 14px;
 	}
 
-	.header-title .title {
-		font-size: 15px;
+	.header-title {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.header-title .title-kicker {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.16em;
+		color: var(--color-text-secondary);
+	}
+
+	.header-title .title-main {
+		font-size: 16px;
 		font-weight: 600;
+		letter-spacing: 0.02em;
 	}
 
 	.header-right {
@@ -234,13 +250,14 @@
 	.partner-logos {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 12px;
 	}
 
 	.logo {
 		height: 39px;
 		object-fit: contain;
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
+		display: block;
 	}
 
 	.logo-nur {
@@ -249,7 +266,6 @@
 
 	.logo-bgu {
 		height: 39px;
-		border-radius: 50%;
 	}
 
 	:global(html[data-theme='dark'] .logo-nur) {
@@ -258,6 +274,14 @@
 
 	:global(html[data-theme='light'] .logo-nur) {
 		filter: brightness(0) drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+	}
+
+	:global(html[data-theme='dark'] .logo-bgu) {
+		filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
+	}
+
+	:global(html[data-theme='light'] .logo-bgu) {
+		filter: drop-shadow(0 0 3px rgba(15, 23, 42, 0.45));
 	}
 
 	:global(html[data-theme='dark'] .logo-mit) {
@@ -293,6 +317,12 @@
 		border: 1px solid var(--color-border-subtle);
 	}
 
+	:global(html[data-theme='dark'] .app-sidebar .sidebar-section) {
+		box-shadow:
+			0 14px 30px rgba(15, 23, 42, 0.7),
+			0 0 0 1px rgba(248, 250, 252, 0.03);
+	}
+
 	.section-header {
 		font-size: 12px;
 		font-weight: 600;
@@ -300,6 +330,12 @@
 		letter-spacing: 0.06em;
 		margin-bottom: 8px;
 		color: var(--color-text-secondary);
+	}
+
+	.section-subtitle {
+		font-size: 13px;
+		color: var(--color-text-muted);
+		margin-bottom: 8px;
 	}
 
 	.section-header-toggle {

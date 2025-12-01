@@ -9,26 +9,50 @@
 	let selectedVariant = 1;
 
 	const categories = [
-		{ value: 'existing_buildings', label: 'Existing Buildings' },
-		{ value: 'existing_trees', label: 'Existing Trees' },
-		{ value: 'new_high_buildings', label: 'New High Buildings' },
-		{ value: 'new_low_buildings', label: 'New Low Buildings' },
-		{ value: 'new_trees', label: 'New Trees' }
+		{
+			value: 'existing_buildings',
+			label: 'Existing Buildings',
+			description: 'Current buildings; taller with higher variant'
+		},
+		{
+			value: 'existing_trees',
+			label: 'Existing Trees',
+			description: 'From no trees up to current canopy'
+		},
+		{
+			value: 'new_high_buildings',
+			label: 'New High Buildings',
+			description: 'Adds more tall buildings to the site'
+		},
+		{
+			value: 'new_low_buildings',
+			label: 'New Low Buildings',
+			description: 'Adds more low and mid-rise buildings'
+		},
+		{
+			value: 'new_trees',
+			label: 'New Trees',
+			description: 'Adds more new trees and shade'
+		}
 	];
 
 	function togglePanel() {
 		isExpanded = !isExpanded;
 	}
 
-	async function handleCategoryChange(event: Event) {
-		const target = event.target as HTMLSelectElement;
-		selectedCategory = target.value;
+	async function applyCategory(category: string) {
+		selectedCategory = category;
 
 		if (selectedCategory) {
 			// Auto-load variant 1 when category is selected
 			selectedVariant = 1;
 			await loadScenario(selectedCategory, 1);
 		}
+	}
+
+	async function handleCategoryChange(event: Event) {
+		const target = event.target as HTMLSelectElement;
+		await applyCategory(target.value);
 	}
 
 	async function handleVariantChange(event: Event) {
@@ -61,25 +85,45 @@
 </script>
 
 <div class="scenario-panel">
-	<button class="scenario-toggle" on:click={togglePanel}>
-		Select Scenario {isExpanded ? '▲' : '▼'}
+	<div class="scenario-summary">
+		<div class="summary-label">Active scenario</div>
+		<div class="summary-value">
+			{#if selectedCategory}
+				{categories.find((c) => c.value === selectedCategory)?.label ?? 'Custom'} · Variant&nbsp;{selectedVariant}
+			{:else}
+				No scenario selected
+			{/if}
+		</div>
+	</div>
+
+	<button class="scenario-toggle" type="button" on:click={togglePanel}>
+		<span class="toggle-title">Browse variants</span>
+		<span class="toggle-meta">{isExpanded ? 'Hide options' : 'Compare design scenarios'}</span>
+		<span class="chevron" aria-hidden="true">{isExpanded ? '▴' : '▾'}</span>
 	</button>
+
 	{#if isExpanded}
 		<div class="scenario-content">
-			<select
-				class="scenario-dropdown"
-				value={selectedCategory}
-				on:change={handleCategoryChange}
-			>
-				<option value="">Choose Category...</option>
+			<div class="category-grid" role="list">
 				{#each categories as category}
-					<option value={category.value}>{category.label}</option>
+					<button
+						type="button"
+						role="listitem"
+						class="category-card"
+						class:category-card-active={selectedCategory === category.value}
+						on:click={() => applyCategory(category.value)}
+					>
+						<div class="card-title">{category.label}</div>
+					</button>
 				{/each}
-			</select>
+			</div>
 
 			{#if selectedCategory}
 				<div class="scenario-variant">
-					<label for="scenario-slider">Variant:</label>
+					<div class="variant-header">
+						<label for="scenario-slider">Variant</label>
+						<span class="variant-badge">#{selectedVariant}</span>
+					</div>
 					<input
 						type="range"
 						id="scenario-slider"
@@ -89,7 +133,10 @@
 						step="1"
 						on:input={handleVariantChange}
 					/>
-					<span class="scenario-number">{selectedVariant}</span>
+					<div class="variant-hints">
+						<span>1 · Less</span>
+						<span>More · 10</span>
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -98,65 +145,158 @@
 
 <style>
 	.scenario-panel {
-	width: 100%;
+		width: 100%;
 	}
 
 	.scenario-toggle {
 		width: 100%;
-		padding: 12px 20px;
-		background: var(--color-accent);
-		color: white;
+		padding: 10px 12px;
+		background: var(--color-bg-panel-soft);
+		color: var(--color-text-primary);
 		border: none;
-		border-radius: 5px;
+		border-radius: var(--radius-control);
 		cursor: pointer;
-		font-size: 14px;
-		font-weight: bold;
-		transition: background 0.2s;
-	font-family: var(--font-family);
+		font-size: 13px;
+		font-weight: 500;
+		transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+		font-family: var(--font-family);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 	}
 
 	.scenario-toggle:hover {
-		background: color-mix(in srgb, var(--color-accent) 80%, #000000 20%);
+		background: var(--color-accent-soft);
+		box-shadow: 0 0 0 1px var(--color-border-subtle);
+	}
+
+	.scenario-toggle:active {
+		transform: translateY(1px);
+	}
+
+	.toggle-title {
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		font-size: 11px;
+		color: var(--color-text-secondary);
+	}
+
+	.toggle-meta {
+		font-size: 11px;
+		color: var(--color-text-muted);
+		margin-left: 8px;
+		flex: 1;
+		text-align: left;
+	}
+
+	.chevron {
+		margin-left: 8px;
+	}
+
+	.scenario-summary {
+		margin-bottom: 8px;
+	}
+
+	.summary-label {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--color-text-secondary);
+		margin-bottom: 2px;
+	}
+
+	.summary-value {
+		font-size: 13px;
+		color: var(--color-text-primary);
 	}
 
 	.scenario-content {
 		margin-top: 8px;
 		background: var(--color-bg-panel-soft);
-		padding: 15px;
-		border-radius: 8px;
+		padding: 12px;
+		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
 		max-height: 500px;
 		overflow-y: auto;
 		transition: max-height 0.3s ease, opacity 0.3s ease;
 	}
 
-	.scenario-dropdown {
-		width: 100%;
-		padding: 10px;
-		font-size: 14px;
-		border: 1px solid var(--color-border-subtle);
-		border-radius: 4px;
+	.category-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
 		margin-bottom: 10px;
-	font-family: var(--font-family);
-		background: var(--color-bg-panel);
 	}
 
+	.category-card {
+		text-align: center;
+		width: 100%;
+		min-height: 46px;
+		padding: 8px 10px;
+		border-radius: var(--radius-control);
+		border: 1px solid var(--color-border-subtle);
+		background: var(--color-bg-panel);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+		font-family: var(--font-family);
+	}
+
+	.category-card:hover {
+		background: var(--color-accent-soft);
+		border-color: var(--color-border-strong);
+	}
+
+	.category-card:active {
+		transform: translateY(1px);
+	}
+
+	.category-card-active {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+	}
+
+	.card-title {
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-text-primary);
+	}
 	.scenario-variant {
 		display: flex;
 		align-items: center;
-		gap: 10px;
-		padding-top: 10px;
+		flex-direction: column;
+		gap: 8px;
+		padding-top: 12px;
 		border-top: 1px solid var(--color-border-subtle);
 	}
 
+	.variant-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+	}
+
 	.scenario-variant label {
-		font-weight: bold;
-		font-size: 13px;
+		font-weight: 500;
+		font-size: 12px;
+		color: var(--color-text-primary);
+	}
+
+	.variant-badge {
+		font-size: 11px;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--color-accent-soft);
 		color: var(--color-text-primary);
 	}
 
 	.scenario-variant input[type="range"] {
-		flex: 1;
+		width: 100%;
 	}
 
 	.scenario-number {
@@ -164,6 +304,14 @@
 		font-weight: bold;
 		color: var(--color-accent);
 		text-align: center;
+	}
+
+	.variant-hints {
+		display: flex;
+		justify-content: space-between;
+		width: 100%;
+		font-size: 10px;
+		color: var(--color-text-muted);
 	}
 </style>
 

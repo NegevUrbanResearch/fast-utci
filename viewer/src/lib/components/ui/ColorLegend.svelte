@@ -22,9 +22,19 @@
 		}
 	}
 
-	function handleColorModeToggle(event: Event) {
-		const target = event.target as HTMLInputElement;
-		setColorMode(target.checked ? 'discrete' : 'normalized');
+	const isFullDayMode = () => $viewerStore.colorMode === 'normalized';
+	const isPerHourMode = () => $viewerStore.colorMode === 'discrete';
+
+	function selectFullDayMode() {
+		if (!isFullDayMode()) {
+			setColorMode('normalized');
+		}
+	}
+
+	function selectPerHourMode() {
+		if (!isPerHourMode()) {
+			setColorMode('discrete');
+		}
 	}
 
 	// Create stepped gradient
@@ -49,52 +59,62 @@
 	<div class="color-legend">
 		<div class="legend-header">
 			<div class="title">UTCI</div>
-			<div class="range">
-				Range: {utciMin.toFixed(1)} - {utciMax.toFixed(1)}°C
-				{#if $viewerStore.colorMode === 'discrete' && $analysisStore.metadata.analysis_type === 'full_day'}
-					<span class="hour-label">(Hour {$analysisStore.metadata.hours[$viewerStore.currentHour]})</span>
-				{/if}
-			</div>
 		</div>
 
-		<div class="gradient-container">
-			<div
-				class="gradient"
-				style="background: linear-gradient(to bottom, {[...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
-					const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
-					const start = (i * stepSize).toFixed(2);
-					const end = ((i + 1) * stepSize).toFixed(2);
-					return `${color} ${start}%, ${color} ${end}%`;
-				}).join(', ')})"
-			></div>
-			<div class="labels">
-				{#each Array(6) as _, i}
-					{@const temp = utciMax - (i * (utciMax - utciMin) / 5)}
-					{@const position = (i / 5) * 100}
-					<div class="label" style="top: {position}%">
-						{temp.toFixed(1)}°C
-					</div>
-				{/each}
-			</div>
-		</div>
-
-		{#if $analysisStore.metadata.analysis_type === 'full_day'}
-			<div class="color-mode-toggle">
-				<span class="toggle-label">Color Scale</span>
-				<div class="switch-container">
-					<span class="switch-label">Full Day</span>
-					<label class="switch">
-						<input
-							type="checkbox"
-							checked={$viewerStore.colorMode === 'discrete'}
-							on:change={handleColorModeToggle}
-						/>
-						<span class="slider"></span>
-					</label>
-					<span class="switch-label">Per Hour</span>
+		<div class="gradient-row">
+			<div class="gradient-container">
+				<div
+					class="gradient"
+					style="background: linear-gradient(to bottom, {[...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
+						const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
+						const start = (i * stepSize).toFixed(2);
+						const end = ((i + 1) * stepSize).toFixed(2);
+						return `${color} ${start}%, ${color} ${end}%`;
+					}).join(', ')})"
+				></div>
+				<div class="labels">
+					{#each Array(6) as _, i}
+						{@const temp = utciMax - (i * (utciMax - utciMin) / 5)}
+						{@const position = (i / 5) * 100}
+						<div class="label" style="top: {position}%">
+							{temp.toFixed(1)}°C
+						</div>
+					{/each}
 				</div>
 			</div>
-		{/if}
+
+			{#if $analysisStore.metadata.analysis_type === 'full_day'}
+				<div class="mode-column">
+					<div class="mode-caption">
+						<span>Color scale</span>
+						<span class="mode-caption-secondary">Mode</span>
+					</div>
+					<div class="mode-toggle-vertical" aria-label="Color scale mode" role="toolbar">
+						<button
+							type="button"
+							class="mode-pill-vertical"
+							class:mode-pill-vertical-active={isFullDayMode()}
+							on:click={selectFullDayMode}
+							aria-pressed={isFullDayMode()}
+						>
+							<span class="mode-pill-label">Full day</span>
+						</button>
+						<button
+							type="button"
+							class="mode-pill-vertical"
+							class:mode-pill-vertical-active={isPerHourMode()}
+							on:click={selectPerHourMode}
+							aria-pressed={isPerHourMode()}
+						>
+							<span class="mode-pill-label">Per hour</span>
+						</button>
+					</div>
+					<div class="mode-help">
+						Switch between the full‑day range and the range for the selected hour.
+					</div>
+				</div>
+			{/if}
+		</div>
 	</div>
 {/if}
 
@@ -106,27 +126,44 @@
 		box-shadow: var(--shadow-panel);
 		z-index: var(--z-panel);
 		min-width: 200px;
-	}
-
-	.legend-header {
-		margin-bottom: var(--spacing-md);
+		width: 100%;
+		box-sizing: border-box;
+		overflow: hidden;
 	}
 
 	.title {
-		font-weight: bold;
-		font-size: 15px;
-		margin-bottom: var(--spacing-sm);
+		font-weight: 600;
+		font-size: 14px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
 		color: var(--color-text-primary);
+	}
+
+	.legend-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: var(--spacing-sm);
 	}
 
 	.range {
 		font-size: 12px;
-		color: var(--color-text-secondary);
+	}
+
+	.range-values {
+		color: var(--color-text-primary);
 	}
 
 	.hour-label {
 		font-size: 11px;
 		color: var(--color-text-secondary);
+		margin-left: 4px;
+	}
+
+	.gradient-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
 	}
 
 	.gradient-container {
@@ -148,7 +185,7 @@
 	.labels {
 		position: relative;
 		height: 250px;
-		width: 70px;
+		width: 60px;
 	}
 
 	.label {
@@ -161,73 +198,77 @@
 		color: var(--color-text-primary);
 	}
 
-	.color-mode-toggle {
-		margin-top: var(--spacing-md);
+	.mode-column {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--spacing-md);
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+		min-width: 0;
+		max-width: 130px;
 	}
 
-	.toggle-label {
+	.mode-caption {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
 		font-size: 12px;
-		color: var(--color-text-primary);
-	}
-
-	.switch-container {
-		display: flex;
-		align-items: center;
-		gap: var(--spacing-sm);
-	}
-
-	.switch-label {
-		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
 		color: var(--color-text-secondary);
+		line-height: 1.1;
 	}
 
-	.switch {
-		position: relative;
-		display: inline-block;
-		width: 42px;
-		height: 22px;
+	.mode-caption-secondary {
+		align-self: center;
 	}
 
-	.switch input {
-		opacity: 0;
-		width: 0;
-		height: 0;
+	.mode-toggle-vertical {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		background: var(--color-bg-panel);
+		border-radius: 18px;
+		padding: 4px;
+		gap: 2px;
+		border: 1px solid rgba(148, 163, 184, 0.45);
+		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
+		overflow: hidden;
 	}
 
-	.switch .slider {
-		position: absolute;
+	.mode-pill-vertical {
+		border: none;
+		background: transparent;
+		color: var(--color-text-secondary);
+		font-size: 12px;
+		padding: 6px 12px;
+		border-radius: 999px;
 		cursor: pointer;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background-color: #ccc;
-		transition: 0.4s;
-		border-radius: 22px;
+		text-align: left;
+		transition:
+			background 0.16s ease,
+			color 0.16s ease;
 	}
 
-	.switch .slider:before {
-		position: absolute;
-		content: '';
-		height: 18px;
-		width: 18px;
-		left: 2px;
-		bottom: 2px;
-		background-color: white;
-		transition: 0.4s;
-		border-radius: 50%;
+	.mode-pill-vertical:hover {
+		background: rgba(148, 163, 184, 0.08);
 	}
 
-	.switch input:checked + .slider {
-		background-color: #3498db;
+	.mode-pill-vertical-active {
+		background: linear-gradient(to bottom, rgba(56, 189, 248, 0.24), rgba(56, 189, 248, 0.55));
+		color: var(--color-bg-elevated);
 	}
 
-	.switch input:checked + .slider:before {
-		transform: translateX(20px);
+	.mode-pill-label {
+		display: inline-block;
+		font-weight: 500;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.mode-help {
+		font-size: 12px;
+		color: var(--color-text-muted);
+		line-height: 1.4;
 	}
 </style>
 

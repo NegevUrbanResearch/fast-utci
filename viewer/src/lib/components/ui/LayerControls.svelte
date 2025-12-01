@@ -17,7 +17,8 @@
 </script>
 
 <div class="layer-controls">
-	<div class="layer-header">Model Layers</div>
+	<div class="layers-caption">Toggle visibility in the 3D model</div>
+
 	{#each STANDARD_LAYER_TYPES as layer}
 		{#if $discoveredLayersStore.includes(layer.id) && !HIDDEN_LAYERS.includes(layer.id)}
 			<div
@@ -84,36 +85,41 @@
 	.layer-controls {
 		font-family: var(--font-family);
 		font-size: 13px;
-	}
-
-	.layer-header {
-		font-weight: bold;
-		margin-bottom: 10px;
-		font-size: 13px;
-		color: var(--color-text-primary);
-		padding-bottom: 5px;
-		border-bottom: 1px solid var(--color-border-subtle);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 
 	.layer-item {
 		display: flex;
 		align-items: center;
-		padding: 6px 8px;
+		padding: 6px 9px;
 		cursor: pointer;
-		border-radius: 3px;
-		margin-bottom: 2px;
-		transition: background-color 0.2s;
-		opacity: 0.5;
-		text-decoration: line-through;
+		border-radius: var(--radius-control);
+		border: 1px solid transparent;
+		position: relative;
+		padding-right: 40px;
+		transition:
+			background-color 0.15s ease,
+			border-color 0.15s ease,
+			color 0.15s ease,
+			opacity 0.15s ease,
+			transform 0.08s ease;
+		opacity: 0.65;
 	}
 
 	.layer-item.active {
 		opacity: 1;
-		text-decoration: none;
+		background-color: var(--color-accent-soft);
+		border-color: var(--color-border-subtle);
 	}
 
 	.layer-item:hover {
-		background-color: rgba(148, 163, 184, 0.12);
+		background-color: rgba(148, 163, 184, 0.16);
+	}
+
+	.layer-item:active {
+		transform: translateY(1px);
 	}
 
 	.layer-item:focus {
@@ -121,19 +127,64 @@
 		outline-offset: 2px;
 	}
 
+	.layer-item::after {
+		content: '';
+		position: absolute;
+		right: 8px;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 26px;
+		height: 14px;
+		border-radius: 999px;
+		background: rgba(148, 163, 184, 0.45);
+		transition: background-color 0.15s ease;
+	}
+
+	.layer-item::before {
+		content: '';
+		position: absolute;
+		right: 18px;
+		top: 50%;
+		transform: translate(0, -50%);
+		width: 12px;
+		height: 12px;
+		border-radius: 999px;
+		background: #f9fafb;
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.5);
+		border: 1px solid rgba(15, 23, 42, 0.55);
+		transition:
+			transform 0.15s ease,
+			background-color 0.15s ease;
+	}
+
+	.layer-item.active::after {
+		background: rgba(56, 189, 248, 0.55);
+	}
+
+	.layer-item.active::before {
+		transform: translate(10px, -50%);
+	}
+
 	.layer-color {
 		width: 16px;
 		height: 16px;
-		border-radius: 2px;
-		margin-right: 8px;
+		border-radius: 999px;
+		margin-right: 9px;
 		border: 1px solid var(--color-border-subtle);
 		flex-shrink: 0;
+		box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6);
 	}
 
 	.layer-label {
 		flex: 1;
 		color: var(--color-text-primary);
 		user-select: none;
+	}
+
+	.layers-caption {
+		font-size: 12px;
+		color: var(--color-text-secondary);
+		margin-bottom: 2px;
 	}
 
 	.utci-gradient {
