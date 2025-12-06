@@ -23,6 +23,7 @@
 	import { get } from 'svelte/store';
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 	import { getCachedModel, cacheModel, hasModelInCache } from '$lib/services/modelCacheService';
+	import { T } from '@threlte/core';
 	import * as THREE from 'three';
 
 	export let modelPath: string;
@@ -213,8 +214,12 @@
 	});
 </script>
 
-<!-- Only render GLTF component if not using cache -->
-{#if !useCache}
+<!-- When cached, render the cloned scene directly; otherwise load via GLTF -->
+{#if useCache && gltfGroup}
+	<T is={THREE.Group} oncreate={(ref) => ref.add(gltfGroup!)}>
+		<slot />
+	</T>
+{:else}
 	<!-- Add cache-busting version parameter to force reload on model change -->
 	<GLTF url={`${modelPath}?v=${currentModelVersion}`} onload={onloadHandler}>
 		<slot />
