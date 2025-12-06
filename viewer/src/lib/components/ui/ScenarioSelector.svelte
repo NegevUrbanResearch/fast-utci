@@ -55,9 +55,8 @@
 		await applyCategory(target.value);
 	}
 
-	async function handleVariantChange(event: Event) {
-		const target = event.target as HTMLInputElement;
-		selectedVariant = parseInt(target.value, 10);
+	async function handleVariantClick(variant: number) {
+		selectedVariant = variant;
 		await loadScenario(selectedCategory, selectedVariant);
 	}
 
@@ -119,20 +118,23 @@
 			</div>
 
 			{#if selectedCategory}
-				<div class="scenario-variant">
+				<div class="variant-buttons">
 					<div class="variant-header">
-						<label for="scenario-slider">Variant</label>
+						<div class="variant-title">Variant</div>
 						<span class="variant-badge">#{selectedVariant}</span>
 					</div>
-					<input
-						type="range"
-						id="scenario-slider"
-						min="1"
-						max="10"
-						value={selectedVariant}
-						step="1"
-						on:input={handleVariantChange}
-					/>
+					<div class="variant-grid" role="group" aria-label="Select variant">
+						{#each Array(10) as _, idx}
+							<button
+								type="button"
+								class:selected={selectedVariant === idx + 1}
+								on:click={() => handleVariantClick(idx + 1)}
+								aria-pressed={selectedVariant === idx + 1}
+							>
+								{idx + 1}
+							</button>
+						{/each}
+					</div>
 					<div class="variant-hints">
 						<span>1 · Less</span>
 						<span>More · 10</span>
@@ -265,11 +267,10 @@
 		text-transform: uppercase;
 		color: var(--color-text-primary);
 	}
-	.scenario-variant {
+	.variant-buttons {
 		display: flex;
-		align-items: center;
 		flex-direction: column;
-		gap: 8px;
+		gap: 10px;
 		padding-top: 12px;
 		border-top: 1px solid var(--color-border-subtle);
 	}
@@ -281,10 +282,12 @@
 		width: 100%;
 	}
 
-	.scenario-variant label {
-		font-weight: 500;
+	.variant-title {
+		font-weight: 600;
 		font-size: 12px;
 		color: var(--color-text-primary);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 
 	.variant-badge {
@@ -295,15 +298,38 @@
 		color: var(--color-text-primary);
 	}
 
-	.scenario-variant input[type="range"] {
-		width: 100%;
+	.variant-grid {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 6px;
 	}
 
-	.scenario-number {
-		min-width: 30px;
-		font-weight: bold;
-		color: var(--color-accent);
-		text-align: center;
+	.variant-grid button {
+		width: 100%;
+		padding: 8px 0;
+		border-radius: var(--radius-control);
+		border: 1px solid var(--color-border-subtle);
+		background: var(--color-bg-panel);
+		color: var(--color-text-primary);
+		font-weight: 600;
+		font-size: 12px;
+		cursor: pointer;
+		transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+	}
+
+	.variant-grid button:hover {
+		background: var(--color-accent-soft);
+		border-color: var(--color-border-strong);
+	}
+
+	.variant-grid button:active {
+		transform: translateY(1px);
+	}
+
+	.variant-grid button.selected {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+		background: var(--color-accent-soft);
 	}
 
 	.variant-hints {
@@ -314,4 +340,3 @@
 		color: var(--color-text-muted);
 	}
 </style>
-

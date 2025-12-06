@@ -23,6 +23,7 @@
 	import nurLogo from '$lib/assets/Nur Logo white.svg';
 	import mitLogo from '$lib/assets/MIT.svg';
 	import bguLogo from '$lib/assets/bgu-logo.svg';
+	import * as THREE from 'three';
 	import type { Group } from 'three';
 
 	const getDataBasePath = () => {
@@ -34,12 +35,16 @@
 	let gridVisible = false;
 
 	let analyticsOpen = false;
+	let modelLoading = true;
+	let hasFitOnce = false;
+	let lastModelFile: string | null = null;
 
 	let analysisId: string = '20250815_grid_2m_fullday';
 	let mounted = false;
 
 	async function loadAnalysis(id: string) {
 		try {
+			modelLoading = true;
 			setLoading(true);
 			setError(null);
 			setAnalysisId(id);
@@ -75,6 +80,15 @@
 		if (newAnalysisId !== analysisId) {
 			analysisId = newAnalysisId;
 			loadAnalysis(analysisId);
+		}
+	}
+
+	// Trigger model loading overlay when the model file changes
+	$: if ($analysisStore && $analysisStore.metadata?.model_file) {
+		const currentModelFile = $analysisStore.metadata.model_file;
+		if (currentModelFile !== lastModelFile) {
+			modelLoading = true;
+			lastModelFile = currentModelFile;
 		}
 	}
 </script>
@@ -146,6 +160,13 @@
 				<div class="overlay-message error">Error: {$viewerStore.error}</div>
 			{/if}
 
+			{#if modelLoading}
+				<div class="model-loading-overlay" aria-live="polite">
+					<div class="spinner"></div>
+					<div class="loading-text">Preparing model…</div>
+				</div>
+			{/if}
+
 			<Scene backgroundColor={$viewerStore.theme === 'light' ? 0x4b5563 : 0x111827}>
 				<Camera />
 				<Lights />
@@ -158,13 +179,24 @@
 								`${getDataBasePath()}/data/`
 							)}
 							coordinateSystem={$analysisStore.metadata.coordinate_system || 'xy_ground'}
+							metadata={$analysisStore.metadata}
 							on:modelLoaded={(e) => {
 								model = e.detail;
-								if (model) {
+								modelLoading = false;
+								if (!hasFitOnce && model) {
 									const bounds = calculateModelBounds(model);
 									const center = calculateModelCenter(model);
 									const size = calculateModelSize(model);
-									focusCameraOnModel(center, size);
+									// Bird's-eye, closer top-down fit
+									const maxDim = Math.max(size.x, size.y, size.z);
+									const distance = maxDim * 1.05;
+									const position = center.clone().add(new THREE.Vector3(0, distance, 0.01));
+									cameraStore.update((state) => ({
+										...state,
+										position,
+										target: center.clone()
+									}));
+									hasFitOnce = true;
 								}
 							}}
 							on:layersDiscovered={(e) => {
@@ -388,4 +420,50 @@
 	.overlay-message.error {
 		border: 1px solid var(--color-danger);
 	}
+
+	.model-loading-overlay {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		z-index: var(--z-tooltip);
+		min-width: 180px;
+		padding: 14px 18px;
+		border-radius: 14px;
+		background: rgba(17, 24, 39, 0.82);
+		backdrop-filter: blur(10px);
+		color: white;
+		box-shadow:
+			0 14px 30px rgba(0, 0, 0, 0.35),
+			0 0 0 1px rgba(255, 255, 255, 0.05);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+		text-align: center;
+	}
+
+	.model-loading-overlay .loading-text {
+		font-size: 13px;
+		letter-spacing: 0.04em;
+	}
+
+	.spinner {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		border: 3px solid rgba(255, 255, 255, 0.18);
+		border-top-color: var(--color-accent);
+		animation: spin 0.9s linear infinite;
+	}
+
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 </style>
