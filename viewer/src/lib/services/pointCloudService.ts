@@ -8,6 +8,8 @@ import * as THREE from 'three';
 import type { Analysis, AnalysisMetadata, UTCIData } from '$lib/types/analysis';
 import { getUTCIForHour } from '$lib/services/dataLoader';
 import { mapUTCIToColor } from '$lib/services/colorScale';
+import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
+import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 
 const VISUAL_LAYER_OFFSET = 0.04;
 const POLYGON_OFFSET_FACTOR = -0.75;
@@ -282,12 +284,41 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 
 	const transformed = new THREE.Vector3();
 
+	// Calculate normalization offset if enabled
+	let normalizationOffset = new THREE.Vector3(0, 0, 0);
+	if (isNormalizationEnabled()) {
+		const scenarioOrigin = calculateScenarioOrigin(metadata);
+		const anchorOffset = getAnchorOffset();
+		
+		// Transform scenario origin to world space to match the coordinate system
+		// For xy_ground: transformToWorld does (x, y, z) → (x, z, -y)
+		let transformedOrigin: THREE.Vector3;
+		if (coordinateSystem === 'xy_ground') {
+			// Transform origin to world space: (x, y, z) → (x, z, -y)
+			transformedOrigin = new THREE.Vector3(scenarioOrigin.x, scenarioOrigin.z, -scenarioOrigin.y);
+		} else {
+			transformedOrigin = scenarioOrigin.clone();
+		}
+		
+		// Calculate offset in world space (where anchorOffset already is)
+		normalizationOffset = anchorOffset.clone().sub(transformedOrigin);
+		
+		if (normalizationOffset.lengthSq() > 0.001) {
+			console.log(`[UTCI] Applying normalization offset to analysis data:`, normalizationOffset);
+		} else {
+			normalizationOffset.set(0, 0, 0);
+		}
+	}
+
 	for (let i = 0; i < numPositions; i++) {
 		const x = data.positions[i * 3];
 		const y = data.positions[i * 3 + 1];
 		const z = data.positions[i * 3 + 2];
 
 		transformToWorld(x, y, z, coordinateSystem, transformed);
+		
+		// Apply normalization offset
+		transformed.add(normalizationOffset);
 
 		xs[i] = transformed.x;
 		ys[i] = transformed.y;
