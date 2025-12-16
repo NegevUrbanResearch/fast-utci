@@ -161,6 +161,7 @@
 			{/if}
 
 			{#if modelLoading}
+				<div class="model-loading-backdrop" aria-hidden="true"></div>
 				<div class="model-loading-overlay" aria-live="polite">
 					<div class="spinner"></div>
 					<div class="loading-text">Preparing model…</div>
@@ -419,6 +420,26 @@
 
 	.overlay-message.error {
 		border: 1px solid var(--color-danger);
+	}
+
+	.model-loading-backdrop {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: calc(var(--z-tooltip) - 1);
+		background: rgba(17, 24, 39, 0.4);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		pointer-events: none;
+		transition: opacity 0.25s ease-out;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.model-loading-backdrop {
+			transition: none;
+		}
 	}
 
 	.model-loading-overlay {
