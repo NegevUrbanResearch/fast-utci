@@ -83,10 +83,16 @@ mrt_results = mrt_calc.compute_mrt(epw, exposure_results, period)
 utci_calc = UTCICalculator(weather_data='weather.epw')
 utci_results = utci_calc.compute_utci(mrt_results)
 
-# 6. Export results
+# 6. Calculate Shading Index (optional)
+from fast_utci.mrt.shading_index import calculate_shading_index
+sun_data = mrt_calc.get_sun_data(period)
+shading_indices = calculate_shading_index(exposure_results, sun_data)
+print(f"Shading Index range: {np.min(shading_indices):.3f} to {np.max(shading_indices):.3f}")
+
+# 7. Export results
 utci_calc.to_csv(utci_results, 'utci_results.csv')
 
-# 7. Get summary statistics
+# 8. Get summary statistics
 summary = utci_calc.summary_statistics(utci_results)
 print(f"UTCI range: {summary['utci_stats']['min']:.1f} to {summary['utci_stats']['max']:.1f}°C")
 ```
@@ -100,6 +106,7 @@ fast_utci/
 ├── mrt/        # Mean Radiant Temperature calculations
 │   ├── Ray tracing for sun/sky visibility
 │   ├── SolarCal MRT computation
+│   ├── Shading Index calculation
 │   └── Parallel processing & BVH acceleration
 │
 ├── utci/       # UTCI thermal comfort calculations
@@ -130,6 +137,12 @@ See individual module READMEs for details:
 - **Tregenza sky dome** for diffuse sky radiation
 - **SolarCal algorithm** (ladybug-comfort) for MRT
 - **Boundary averaging** for temporal interpolation
+
+### Shading Index Calculation
+- **Point-based shading metric** measuring proportion of sunlight hours fully shaded
+- **Epsilon threshold** for floating-point precision in exposure detection
+- **Complements UTCI** by providing direct shading availability measure
+- **Categories**: Poor (0-0.5), Acceptable (0.5-0.7), Good (0.7-0.9), Excellent (0.9-1.0)
 
 ### Misc
 - **Progress tracking** with time estimates

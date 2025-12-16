@@ -12,7 +12,8 @@
 	export let analysis: Analysis | null = null;
 	export let model: Group | null = null;
 
-	let utciSurface: Mesh | null = null;
+	// Expose mesh for tooltip raycasting
+	export let utciSurface: Mesh | null = null;
 	let lastAnalysis: Analysis | null = null;
 	const { scene, invalidate } = useThrelte();
 
@@ -46,7 +47,8 @@
 			utciSurface = createUtciSurfaceMesh(
 				analysis,
 				viewerState?.currentHour ?? 0,
-				viewerState?.colorMode ?? 'normalized'
+				viewerState?.colorMode ?? 'normalized',
+				viewerState?.metricType ?? 'utci'
 			);
 			scene.add(utciSurface);
 			lastAnalysis = analysis;
@@ -56,7 +58,8 @@
 				utciSurface,
 				analysis,
 				viewerState.currentHour,
-				viewerState.colorMode
+				viewerState.colorMode,
+				viewerState.metricType ?? 'utci'
 			);
 			invalidate();
 		}

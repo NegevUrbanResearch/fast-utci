@@ -9,7 +9,8 @@
 	export let near: number = 0.1;
 	export let far: number = 5000;
 
-	let cameraRef: THREE.PerspectiveCamera | undefined;
+	// Expose camera ref for tooltip raycasting
+	export let cameraRef: THREE.PerspectiveCamera | undefined;
 	let controlsRef: any = undefined; // OrbitControls from Threlte
 	let lastStoreUpdate = 0;
 	const UPDATE_THROTTLE_MS = 100; // Throttle store updates to avoid excessive writes

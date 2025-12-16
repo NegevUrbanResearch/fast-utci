@@ -5,7 +5,7 @@
  */
 
 import { writable, type Writable } from 'svelte/store';
-import type { ViewerState, ColorMode } from '$lib/types/viewer';
+import type { ViewerState, ColorMode, MetricType } from '$lib/types/viewer';
 
 /**
  * Viewer state store
@@ -13,6 +13,7 @@ import type { ViewerState, ColorMode } from '$lib/types/viewer';
 export const viewerStore: Writable<ViewerState> = writable<ViewerState>({
 	currentHour: 0,
 	colorMode: 'normalized',
+	metricType: 'utci',
 	utciVisible: true,
 	analysisId: null,
 	loading: false,
@@ -34,6 +35,14 @@ export function setCurrentHour(hour: number): void {
  */
 export function setColorMode(mode: ColorMode): void {
 	viewerStore.update((state) => ({ ...state, colorMode: mode }));
+}
+
+/**
+ * Set metric type
+ * @param type - Metric type ('utci' or 'shading_index')
+ */
+export function setMetricType(type: MetricType): void {
+	viewerStore.update((state) => ({ ...state, metricType: type }));
 }
 
 /**

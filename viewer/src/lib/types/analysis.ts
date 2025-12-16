@@ -10,6 +10,7 @@ export interface SingleHourData {
 	numHours: 1;
 	positions: Float32Array;
 	utciValues: Float32Array;
+	shadingIndex?: Float32Array; // Optional Shading Index values
 }
 
 /**
@@ -20,6 +21,7 @@ export interface FullDayData {
 	numHours: number;
 	positions: Float32Array;
 	utciByHour: Float32Array[];
+	shadingIndex?: Float32Array; // Optional Shading Index values
 }
 
 /**
@@ -31,6 +33,14 @@ export type UTCIData = SingleHourData | FullDayData;
  * UTCI value range
  */
 export interface UTCIRange {
+	min: number;
+	max: number;
+}
+
+/**
+ * Shading Index value range
+ */
+export interface ShadingIndexRange {
 	min: number;
 	max: number;
 }
@@ -80,6 +90,8 @@ export interface AnalysisMetadata {
 		longitude: number;
 	};
 	date?: string;
+	has_shading_index?: boolean; // Whether Shading Index data is available
+	shading_index_range?: ShadingIndexRange; // Shading Index value range
 }
 
 /**

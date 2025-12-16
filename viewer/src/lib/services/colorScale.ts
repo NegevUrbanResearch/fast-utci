@@ -157,4 +157,96 @@ export function createLegendData(): LegendItem[] {
 	}));
 }
 
+// Shading Index color scale (simplified)
+// 0-0.5: Red - Less than 50% of time shaded
+// 0.5-0.7: Light green - At least 50% of time shaded
+// 0.7-0.9: Darker green - At least 70% of time shaded
+// 0.9-1.0: Darkest green - At least 90% of time shaded
+export const SHADING_INDEX_COLORS = [
+	'#EF4444', // Red (0-0.5)
+	'#84CC16', // Light Green (0.5-0.7)
+	'#16A34A', // Darker Green (0.7-0.9)
+	'#15803D'  // Darkest Green (0.9-1.0)
+];
+
+export interface ShadingIndexCategory {
+	value: number;
+	range: [number, number];
+	label: string;
+	abbrev: string;
+}
+
+export const SHADING_INDEX_CATEGORIES: ShadingIndexCategory[] = [
+	{ value: 0, range: [0, 0.5], label: 'Poor Shading', abbrev: 'Poor' },
+	{ value: 1, range: [0.5, 0.7], label: 'Acceptable Shading', abbrev: 'Acceptable' },
+	{ value: 2, range: [0.7, 0.9], label: 'Good Shading', abbrev: 'Good' },
+	{ value: 3, range: [0.9, 1.0], label: 'Excellent Shading', abbrev: 'Excellent' }
+];
+
+/**
+ * Get the Shading Index category for a given value
+ * @param shadingIndex - Shading Index value (0-1)
+ * @returns Category value from 0 (poor) to 3 (excellent)
+ */
+export function getShadingIndexCategory(shadingIndex: number): number {
+	for (const category of SHADING_INDEX_CATEGORIES) {
+		const [min, max] = category.range;
+		if (shadingIndex >= min && shadingIndex < max) {
+			return category.value;
+		}
+	}
+	// Handle edge case: exactly 1.0
+	if (shadingIndex >= 1.0) {
+		return 3; // Excellent
+	}
+	return 0; // Default to poor
+}
+
+/**
+ * Get the color for a Shading Index value
+ * @param shadingIndex - Shading Index value (0-1)
+ * @returns Hex color string
+ */
+export function getShadingIndexColor(shadingIndex: number): string {
+	const category = getShadingIndexCategory(shadingIndex);
+	return SHADING_INDEX_COLORS[category];
+}
+
+/**
+ * Map Shading Index value to color using discrete category colors
+ * @param shadingIndex - Shading Index value (0-1)
+ * @param shadingIndexMin - Minimum Shading Index in dataset (typically 0, unused but kept for API compatibility)
+ * @param shadingIndexMax - Maximum Shading Index in dataset (typically 1, unused but kept for API compatibility)
+ * @returns RGB color object normalized to 0-1
+ */
+export function mapShadingIndexToColor(
+	shadingIndex: number,
+	shadingIndexMin: number = 0,
+	shadingIndexMax: number = 1
+): RGBColor {
+	// Use discrete category-based coloring (no interpolation)
+	const hexColor = getShadingIndexColor(shadingIndex);
+	return hexToThreeColor(hexColor);
+}
+
+/**
+ * Create a legend data array for the Shading Index scale
+ * @returns Array of legend items with color and label
+ */
+export interface ShadingIndexLegendItem {
+	color: string;
+	label: string;
+	abbrev: string;
+	range: [number, number];
+}
+
+export function createShadingIndexLegendData(): ShadingIndexLegendItem[] {
+	return SHADING_INDEX_CATEGORIES.map((category, index) => ({
+		color: SHADING_INDEX_COLORS[index],
+		label: category.label,
+		abbrev: category.abbrev,
+		range: category.range
+	}));
+}
+
 

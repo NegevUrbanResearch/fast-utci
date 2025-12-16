@@ -6,8 +6,9 @@
 
 import * as THREE from 'three';
 import type { Analysis, AnalysisMetadata, UTCIData } from '$lib/types/analysis';
-import { getUTCIForHour } from '$lib/services/dataLoader';
-import { mapUTCIToColor } from '$lib/services/colorScale';
+import type { MetricType } from '$lib/types/viewer';
+import { getUTCIForHour, getShadingIndex } from '$lib/services/dataLoader';
+import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 
@@ -38,14 +39,16 @@ interface UtciGridLayout {
 /**
  * Create UTCI point cloud geometry and material
  * @param analysis - Analysis data
- * @param hourIndex - Hour index (default: 0)
- * @param colorMode - Color mode ('normalized' or 'discrete')
+ * @param hourIndex - Hour index (default: 0, ignored for Shading Index)
+ * @param colorMode - Color mode ('normalized' or 'discrete', ignored for Shading Index)
+ * @param metricType - Metric type ('utci' or 'shading_index')
  * @returns Object with geometry and material
  */
 export function createPointCloudGeometry(
 	analysis: Analysis,
 	hourIndex: number = 0,
-	colorMode: 'normalized' | 'discrete' = 'normalized'
+	colorMode: 'normalized' | 'discrete' = 'normalized',
+	metricType: MetricType = 'utci'
 ): { geometry: THREE.BufferGeometry; material: THREE.PointsMaterial } {
 	const { data, metadata } = analysis;
 	const numPositions = data.numPositions;
@@ -62,7 +65,7 @@ export function createPointCloudGeometry(
 	geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
 	// Create color attribute
-	const colors = createColors(analysis, hourIndex, colorMode);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType);
 	geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
 	// Create material
@@ -83,30 +86,56 @@ export function createPointCloudGeometry(
 /**
  * Create color array for point cloud
  * @param analysis - Analysis data
- * @param hourIndex - Hour index
- * @param colorMode - Color mode
+ * @param hourIndex - Hour index (ignored for Shading Index)
+ * @param colorMode - Color mode (ignored for Shading Index)
+ * @param metricType - Metric type ('utci' or 'shading_index')
  * @returns Color Float32Array
  */
 export function createColors(
 	analysis: Analysis,
 	hourIndex: number,
-	colorMode: 'normalized' | 'discrete'
+	colorMode: 'normalized' | 'discrete',
+	metricType: MetricType = 'utci'
 ): Float32Array {
 	const { data, metadata } = analysis;
 	const numPositions = data.numPositions;
-	const utciValues = getUTCIForHour(data, hourIndex);
-
-	const { utciMin, utciMax } = resolveUtciRange(metadata, hourIndex, colorMode);
 
 	// Create color attribute
 	const colors = new Float32Array(numPositions * 3);
 
-	for (let i = 0; i < numPositions; i++) {
-		const utci = utciValues[i];
-		const color = mapUTCIToColor(utci, utciMin, utciMax);
-		colors[i * 3] = color.r;
-		colors[i * 3 + 1] = color.g;
-		colors[i * 3 + 2] = color.b;
+	if (metricType === 'shading_index') {
+		// Shading Index: use full-day aggregated value (ignores hourIndex)
+		const shadingIndexValues = getShadingIndex(data);
+		
+		if (!shadingIndexValues) {
+			// Fallback to UTCI if Shading Index not available (backward compatibility)
+			console.warn('[PointCloud] Shading Index requested but not available, falling back to UTCI');
+			return createColors(analysis, hourIndex, colorMode, 'utci');
+		}
+
+		// Get Shading Index range from metadata
+		const shadingIndexMin = metadata.shading_index_range?.min ?? 0;
+		const shadingIndexMax = metadata.shading_index_range?.max ?? 1;
+
+		for (let i = 0; i < numPositions; i++) {
+			const shadingIndex = shadingIndexValues[i];
+			const color = mapShadingIndexToColor(shadingIndex, shadingIndexMin, shadingIndexMax);
+			colors[i * 3] = color.r;
+			colors[i * 3 + 1] = color.g;
+			colors[i * 3 + 2] = color.b;
+		}
+	} else {
+		// UTCI: use hour-specific value
+		const utciValues = getUTCIForHour(data, hourIndex);
+		const { utciMin, utciMax } = resolveUtciRange(metadata, hourIndex, colorMode);
+
+		for (let i = 0; i < numPositions; i++) {
+			const utci = utciValues[i];
+			const color = mapUTCIToColor(utci, utciMin, utciMax);
+			colors[i * 3] = color.r;
+			colors[i * 3 + 1] = color.g;
+			colors[i * 3 + 2] = color.b;
+		}
 	}
 
 	return colors;
@@ -145,23 +174,26 @@ function resolveUtciRange(
  * Update point cloud colors
  * @param pointCloud - Three.js Points object
  * @param analysis - Analysis data
- * @param hourIndex - Hour index
- * @param colorMode - Color mode
+ * @param hourIndex - Hour index (ignored for Shading Index)
+ * @param colorMode - Color mode (ignored for Shading Index)
+ * @param metricType - Metric type ('utci' or 'shading_index')
  */
 export function updatePointCloudColors(
 	pointCloud: THREE.Points,
 	analysis: Analysis,
 	hourIndex: number,
-	colorMode: 'normalized' | 'discrete'
+	colorMode: 'normalized' | 'discrete',
+	metricType: MetricType = 'utci'
 ): void {
 	const { data } = analysis;
 
-	if (data.numHours === 1) {
+	// For UTCI, check if we can update (full day analysis only)
+	if (metricType === 'utci' && data.numHours === 1) {
 		console.warn('[WARN] Cannot update colors for single hour analysis');
 		return;
 	}
 
-	const colors = createColors(analysis, hourIndex, colorMode);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType);
 	const colorAttribute = pointCloud.geometry.getAttribute('color') as THREE.BufferAttribute;
 
 	for (let i = 0; i < colors.length / 3; i++) {
@@ -172,15 +204,16 @@ export function updatePointCloudColors(
 }
 
 /**
- * Create a textured ground-aligned mesh that visualizes UTCI values.
+ * Create a textured ground-aligned mesh that visualizes UTCI or Shading Index values.
  */
 export function createUtciSurfaceMesh(
 	analysis: Analysis,
 	hourIndex: number = 0,
-	colorMode: 'normalized' | 'discrete' = 'normalized'
+	colorMode: 'normalized' | 'discrete' = 'normalized',
+	metricType: MetricType = 'utci'
 ): THREE.Mesh {
 	const layout = buildUtciGridLayout(analysis);
-	const colors = createColors(analysis, hourIndex, colorMode);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType);
 	fillColorBuffer(layout, colors);
 
 	const texture = new THREE.DataTexture(
@@ -229,13 +262,14 @@ export function createUtciSurfaceMesh(
 }
 
 /**
- * Update the UTCI texture mesh with new colors for the specified hour/mode.
+ * Update the UTCI texture mesh with new colors for the specified hour/mode/metric.
  */
 export function updateUtciSurfaceTexture(
 	mesh: THREE.Mesh,
 	analysis: Analysis,
 	hourIndex: number,
-	colorMode: 'normalized' | 'discrete'
+	colorMode: 'normalized' | 'discrete',
+	metricType: MetricType = 'utci'
 ): void {
 	const layout: UtciGridLayout | undefined = mesh.userData.utciLayout;
 	if (!layout) {
@@ -255,7 +289,7 @@ export function updateUtciSurfaceTexture(
 		return;
 	}
 
-	const colors = createColors(analysis, hourIndex, colorMode);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType);
 	fillColorBuffer(layout, colors);
 
 	texture.needsUpdate = true;
@@ -287,7 +321,7 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	// Calculate normalization offset if enabled
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
 	if (isNormalizationEnabled()) {
-		const scenarioOrigin = calculateScenarioOrigin(metadata);
+		const scenarioOrigin = calculateScenarioOrigin(metadata as any);
 		const anchorOffset = getAnchorOffset();
 		
 		// Transform scenario origin to world space to match the coordinate system

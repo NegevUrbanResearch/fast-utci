@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
 	import { analysisStore, loadAnalysisData } from '$lib/stores/analysisStore';
@@ -19,12 +19,14 @@
 	import ScenarioSelector from '$lib/components/ui/ScenarioSelector.svelte';
 	import AnalyticsPanel from '$lib/components/ui/AnalyticsPanel.svelte';
 	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
+	import MetricTooltip from '$lib/components/ui/MetricTooltip.svelte';
 	import '$lib/styles/variables.css';
 	import nurLogo from '$lib/assets/Nur Logo white.svg';
 	import mitLogo from '$lib/assets/MIT.svg';
 	import bguLogo from '$lib/assets/bgu-logo.svg';
 	import * as THREE from 'three';
-	import type { Group } from 'three';
+	import type { Group, Mesh, PerspectiveCamera } from 'three';
+	import { getTooltipData } from '$lib/services/tooltipService';
 
 	const getDataBasePath = () => {
 		const basePath = base || '';
@@ -41,6 +43,17 @@
 
 	let analysisId: string = '20250815_grid_2m_fullday';
 	let mounted = false;
+
+	// Tooltip state
+	let tooltipVisible = false;
+	let tooltipX = 0;
+	let tooltipY = 0;
+	let tooltipValue: number | null = null;
+	let utciMesh: Mesh | null = null;
+	let canvasElement: HTMLCanvasElement | null = null;
+
+	// Camera reference - will be set from Camera component
+	let cameraRef: PerspectiveCamera | undefined = undefined;
 
 	async function loadAnalysis(id: string) {
 		try {
@@ -91,6 +104,67 @@
 			lastModelFile = currentModelFile;
 		}
 	}
+
+	// Throttle tooltip updates for performance
+	let lastTooltipUpdate = 0;
+	const TOOLTIP_THROTTLE_MS = 16; // ~60fps
+
+	// Handle mouse move for tooltip
+	function handleMouseMove(event: MouseEvent) {
+		const now = performance.now();
+		if (now - lastTooltipUpdate < TOOLTIP_THROTTLE_MS) {
+			return; // Throttle updates
+		}
+		lastTooltipUpdate = now;
+
+		if (!utciMesh || !$analysisStore || !$viewerStore.utciVisible || !canvasElement || !cameraRef) {
+			tooltipVisible = false;
+			return;
+		}
+
+		const canvasRect = canvasElement.getBoundingClientRect();
+		const tooltipData = getTooltipData(
+			event,
+			cameraRef,
+			utciMesh,
+			$analysisStore,
+			$viewerStore.metricType,
+			$viewerStore.currentHour,
+			canvasRect
+		);
+
+		if (tooltipData) {
+			tooltipVisible = true;
+			tooltipX = event.clientX;
+			tooltipY = event.clientY;
+			tooltipValue = tooltipData.value;
+		} else {
+			tooltipVisible = false;
+		}
+	}
+
+	function handleMouseLeave() {
+		tooltipVisible = false;
+	}
+
+	// Attach event listeners to canvas element when available
+	let eventListenersAttached = false;
+
+	$: if (canvasElement && mounted && !eventListenersAttached) {
+		const canvas = canvasElement;
+		canvas.addEventListener('mousemove', handleMouseMove, { passive: true });
+		canvas.addEventListener('mouseleave', handleMouseLeave, { passive: true });
+		eventListenersAttached = true;
+	}
+
+	onDestroy(() => {
+		if (canvasElement && eventListenersAttached) {
+			canvasElement.removeEventListener('mousemove', handleMouseMove);
+			canvasElement.removeEventListener('mouseleave', handleMouseLeave);
+			eventListenersAttached = false;
+		}
+	});
+
 </script>
 
 <div class="viewer-shell">
@@ -137,12 +211,7 @@
 				<LayerControls />
 			</div>
 
-			<div class="sidebar-section">
-				<div class="section-header">UTCI Legend &amp; Scale</div>
-				<ColorLegend />
-			</div>
-
-			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
+			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day' && $viewerStore.metricType === 'utci'}
 				<div class="sidebar-section">
 					<div class="section-header">Time of Day</div>
 					<div class="section-subtitle">Select analysis hour for UTCI</div>
@@ -152,6 +221,19 @@
 		</aside>
 
 		<main class="app-main">
+			<!-- Color Legend positioned at bottom right of screen -->
+			<div class="legend-container">
+				<ColorLegend />
+			</div>
+
+			<!-- Metric Tooltip -->
+			<MetricTooltip
+				visible={tooltipVisible}
+				x={tooltipX}
+				y={tooltipY}
+				value={tooltipValue}
+				metricType={$viewerStore.metricType}
+			/>
 			{#if $viewerStore.loading}
 				<div class="overlay-message">Loading analysis data...</div>
 			{/if}
@@ -168,8 +250,11 @@
 				</div>
 			{/if}
 
-			<Scene backgroundColor={$viewerStore.theme === 'light' ? 0x4b5563 : 0x111827}>
-				<Camera />
+			<Scene
+				backgroundColor={$viewerStore.theme === 'light' ? 0x4b5563 : 0x111827}
+				bind:canvasElement={canvasElement}
+			>
+				<Camera bind:cameraRef={cameraRef} />
 				<Lights />
 
 				{#if $analysisStore}
@@ -208,7 +293,11 @@
 
 					{#if model}
 						<GridHelper {model} visible={gridVisible} />
-						<UTCIPointCloud analysis={$analysisStore} model={model} />
+						<UTCIPointCloud
+							analysis={$analysisStore}
+							model={model}
+							bind:utciSurface={utciMesh}
+						/>
 					{/if}
 				{/if}
 			</Scene>
@@ -402,6 +491,13 @@
 	.app-main {
 		position: relative;
 		background: var(--color-bg-page);
+	}
+
+	.legend-container {
+		position: absolute;
+		bottom: 20px;
+		right: 20px;
+		z-index: var(--z-tooltip);
 	}
 
 	.overlay-message {

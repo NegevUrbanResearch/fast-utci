@@ -3,6 +3,7 @@
 	import { STANDARD_LAYER_TYPES } from '$lib/types/layerMaterials';
 	import { LAYER_MATERIALS } from '$lib/types/layerMaterials';
 	import { viewerStore, setUtciVisible } from '$lib/stores/viewerStore';
+	import type { MetricType } from '$lib/types/viewer';
 
 	// Layers to hide from UI (we don't care about them currently)
 	const HIDDEN_LAYERS = ['base', 'road', 'sidewalk', 'unknown'];
@@ -62,7 +63,7 @@
 		{/if}
 	{/each}
 	
-	<!-- UTCI Data Layer -->
+	<!-- UTCI/Shading Index Data Layer -->
 	<div
 		class="layer-item"
 		class:active={$viewerStore.utciVisible}
@@ -77,7 +78,9 @@
 		}}
 	>
 		<div class="layer-color utci-gradient"></div>
-		<div class="layer-label">UTCI Data</div>
+		<div class="layer-label">
+			{$viewerStore.metricType === 'shading_index' ? 'Shading Index Data' : 'UTCI Data'}
+		</div>
 	</div>
 </div>
 

@@ -270,9 +270,6 @@ def run_analysis_core(
             print(f"[OK] MRT computed: {len(mrt_results)} positions")
             print(f"[TIME] MRT time: {(t3-t2):.2f}s")
         
-        del exposure_results
-        gc.collect()
-        
         # Compute UTCI
         if verbose:
             print("\n" + "=" * 60)
@@ -300,6 +297,132 @@ def run_analysis_core(
         from fast_utci.utci.statistics import calculate_utci_statistics
         utci_stats = calculate_utci_statistics(utci_results)
         utci_min, utci_max, utci_mean = utci_stats['min'], utci_stats['max'], utci_stats['mean']
+        
+        # Calculate Shading Index
+        if verbose:
+            print("\n" + "=" * 60)
+            print("STEP 3.5: COMPUTING SHADING INDEX")
+            print("=" * 60)
+        
+        from fast_utci.mrt.shading_index import calculate_shading_index
+        
+        # Get sun_data for Shading Index calculation
+        sun_data = mrt_calc.get_sun_data(analysis_period, target_hours)
+        
+        t_shading_start = time.perf_counter()
+        shading_indices = calculate_shading_index(exposure_results, sun_data)
+        t_shading_end = time.perf_counter()
+        
+        # Calculate Shading Index statistics
+        shading_min = float(np.min(shading_indices))
+        shading_max = float(np.max(shading_indices))
+        shading_mean = float(np.mean(shading_indices))
+        
+        if verbose:
+            print(f"[OK] Shading Index computed: {len(shading_indices)} positions")
+            print(f"     Min: {shading_min:.3f}, Max: {shading_max:.3f}, Mean: {shading_mean:.3f}")
+            print(f"[TIME] Shading Index time: {(t_shading_end-t_shading_start):.2f}s")
+            
+            # Debug: Compare UTCI vs Shading Index for validation
+            if len(exposure_results) > 0 and len(utci_results) > 0:
+                # Calculate mean UTCI per position
+                # utci_results is a dict: {position_key: {utci: array, position: tuple, ...}, ...}
+                # IMPORTANT: We need to match positions between exposure_results and utci_results
+                # utci_results keys are like 'position_0', 'position_1', etc., in order
+                # Sort by numeric part of key to ensure correct order (not lexicographic)
+                def get_position_index(key: str) -> int:
+                    """Extract numeric index from 'position_N' key."""
+                    try:
+                        return int(key.split('_')[1])
+                    except (IndexError, ValueError):
+                        return 0
+                
+                utci_per_position = []
+                utci_positions = []
+                for key in sorted(utci_results.keys(), key=get_position_index):
+                    utci_result = utci_results[key]
+                    utci_values = np.asarray(utci_result['utci'], dtype=np.float64)
+                    utci_per_position.append(np.nanmean(utci_values))
+                    utci_positions.append(np.array(utci_result['position']))
+                utci_per_position = np.array(utci_per_position)
+                utci_positions = np.array(utci_positions)
+                
+                # Find positions with lowest UTCI (should be most shaded)
+                lowest_utci_indices = np.argsort(utci_per_position)[:5]
+                highest_utci_indices = np.argsort(utci_per_position)[-5:]
+                
+                print(f"[DEBUG] Validation: UTCI vs Shading Index correlation")
+                print(f"        Positions with LOWEST UTCI (should have HIGH Shading Index):")
+                for utci_idx in lowest_utci_indices:
+                    if utci_idx < len(exposure_results) and utci_idx < len(shading_indices):
+                        # Match exposure_result by position (not by index, to be safe)
+                        utci_pos = utci_positions[utci_idx]
+                        # Find matching exposure_result
+                        exp_idx = None
+                        for i, exp_result in enumerate(exposure_results):
+                            if np.allclose(exp_result.position, utci_pos, atol=0.1):
+                                exp_idx = i
+                                break
+                        
+                        if exp_idx is not None:
+                            sample_exp = exposure_results[exp_idx]
+                            sample_fract = np.asarray(sample_exp.fract_body_exp, dtype=np.float64)
+                            sample_sun_up = np.asarray(sun_data.is_sun_up, dtype=bool)
+                            sample_sunlight = sample_fract[sample_sun_up]
+                            n_shaded = np.sum(sample_sunlight <= 1e-6)
+                            n_sunlight = np.sum(sample_sun_up)
+                            mean_utci = utci_per_position[utci_idx]
+                            shading_idx = shading_indices[exp_idx]  # Use exp_idx, not utci_idx
+                            mean_fract = np.mean(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            min_fract = np.min(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            max_fract = np.max(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            status = "OK" if shading_idx > 0.7 else "MISMATCH!"
+                            print(f"        [UTCI_idx={utci_idx}, EXP_idx={exp_idx}] UTCI={mean_utci:.2f}°C, Shading={shading_idx:.3f}")
+                            print(f"          Mean fract={mean_fract:.4f}, Min={min_fract:.4f}, Max={max_fract:.4f}, Shaded hrs={n_shaded}/{n_sunlight} {status}")
+                        else:
+                            print(f"        [UTCI_idx={utci_idx}] WARNING: Could not find matching exposure_result!")
+                
+                print(f"        Positions with HIGHEST UTCI (should have LOW Shading Index):")
+                for utci_idx in highest_utci_indices:
+                    if utci_idx < len(exposure_results) and utci_idx < len(shading_indices):
+                        # Match exposure_result by position
+                        utci_pos = utci_positions[utci_idx]
+                        exp_idx = None
+                        for i, exp_result in enumerate(exposure_results):
+                            if np.allclose(exp_result.position, utci_pos, atol=0.1):
+                                exp_idx = i
+                                break
+                        
+                        if exp_idx is not None:
+                            sample_exp = exposure_results[exp_idx]
+                            sample_fract = np.asarray(sample_exp.fract_body_exp, dtype=np.float64)
+                            sample_sun_up = np.asarray(sun_data.is_sun_up, dtype=bool)
+                            sample_sunlight = sample_fract[sample_sun_up]
+                            n_shaded = np.sum(sample_sunlight <= 1e-6)
+                            n_sunlight = np.sum(sample_sun_up)
+                            mean_utci = utci_per_position[utci_idx]
+                            shading_idx = shading_indices[exp_idx]  # Use exp_idx, not utci_idx
+                            mean_fract = np.mean(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            min_fract = np.min(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            max_fract = np.max(sample_sunlight) if len(sample_sunlight) > 0 else 0.0
+                            status = "OK" if shading_idx < 0.3 else "MISMATCH!"
+                            print(f"        [UTCI_idx={utci_idx}, EXP_idx={exp_idx}] UTCI={mean_utci:.2f}°C, Shading={shading_idx:.3f}")
+                            print(f"          Mean fract={mean_fract:.4f}, Min={min_fract:.4f}, Max={max_fract:.4f}, Shaded hrs={n_shaded}/{n_sunlight} {status}")
+                        else:
+                            print(f"        [UTCI_idx={utci_idx}] WARNING: Could not find matching exposure_result!")
+                
+                # Calculate correlation
+                valid_mask = ~np.isnan(utci_per_position) & (utci_per_position != 0)
+                if np.sum(valid_mask) > 1:
+                    correlation = np.corrcoef(utci_per_position[valid_mask], shading_indices[valid_mask])[0, 1]
+                    print(f"        Correlation (UTCI vs Shading): {correlation:.4f} (expected: negative)")
+                    if correlation > -0.3:
+                        print(f"        ⚠️  WARNING: Weak negative correlation suggests calculation issue!")
+                print()
+        
+        # Clean up exposure_results after Shading Index calculation
+        del exposure_results
+        gc.collect()
         
         # Export results
         if verbose:
@@ -340,7 +463,8 @@ def run_analysis_core(
             analysis_period=analysis_period,
             target_hours=target_hours,
             coordinate_system=coordinate_system,
-            category=category  # NEW: pass category for subdirectory organization
+            category=category,  # NEW: pass category for subdirectory organization
+            shading_indices=shading_indices  # NEW: pass Shading Index data
         )
         
         # Summary
@@ -350,6 +474,7 @@ def run_analysis_core(
             print("=" * 60)
             print(f"Positions analyzed: {len(utci_results)}")
             print(f"UTCI range: {utci_min:.1f} to {utci_max:.1f} C (mean: {utci_mean:.1f} C)")
+            print(f"Shading Index range: {shading_min:.3f} to {shading_max:.3f} (mean: {shading_mean:.3f})")
             print(f"Total runtime: {total_time:.1f}s")
             print(f"\nOutput files:")
             if csv_filename:
@@ -368,6 +493,9 @@ def run_analysis_core(
             "utci_min": utci_min,
             "utci_max": utci_max,
             "utci_mean": utci_mean,
+            "shading_min": shading_min,
+            "shading_max": shading_max,
+            "shading_mean": shading_mean,
             "total_time": total_time,
             "num_positions": len(utci_results),
             "grid_size": grid_size,

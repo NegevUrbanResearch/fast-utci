@@ -16,6 +16,18 @@ UTCI (Universal Thermal Climate Index) represents how hot or cold it *feels* to 
 
 UTCI values range from extreme cold (< -40°C) to extreme heat (> 46°C), with comfortable conditions between 9-26°C.
 
+## What is Shading Index?
+
+Shading Index measures the proportion of sunlight hours during which each point is fully shaded (no direct solar radiation). This metric complements UTCI by providing a direct measure of shading availability, following Israeli shading metrics guidelines for urban planning.
+
+**Shading Index values:**
+- **0.0-0.5**: Poor Shading (always or mostly exposed)
+- **0.5-0.7**: Acceptable Shading
+- **0.7-0.9**: Good Shading
+- **0.9-1.0**: Excellent Shading (always or mostly shaded)
+
+The viewer allows toggling between UTCI and Shading Index visualizations to analyze both thermal comfort and shading patterns.
+
 ## How It Works
 
 ```
@@ -75,6 +87,8 @@ python batch_scenarios.py [--grid-size 10.0] [--month 8] [--day 15]
 
 **Output**:
 - Binary (`.bin`) + metadata (`.json`) for web viewer
+  - Includes both UTCI and Shading Index data
+  - Backward compatible with older analyses (Shading Index optional)
 - CSV export (optional, set `export_csv=True` in config)
 
 ### Batch Processing

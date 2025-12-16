@@ -61,18 +61,27 @@ export function parseSingleHourBinary(buffer: ArrayBuffer): SingleHourData {
 /**
  * Parse full day binary data
  * 
- * Binary structure:
+ * Binary structure (with optional Shading Index):
  *   [8 bytes: num_positions (uint32), num_hours (uint32)]
  *   [num_positions × 12 bytes: positions as float32 x,y,z]
+ *   [4 bytes: has_shading_index (uint32, 0 or 1)] - NEW format only
+ *   [IF has_shading_index == 1: num_positions × 4 bytes: shading_index as float32]
  *   [num_positions × 4 bytes: utci values hour 0 as float32]
  *   [num_positions × 4 bytes: utci values hour 1 as float32]
  *   ...
  *   [num_positions × 4 bytes: utci values hour 23 as float32]
  * 
+ * OLD format (backward compatibility):
+ *   [8 bytes: num_positions (uint32), num_hours (uint32)]
+ *   [num_positions × 12 bytes: positions as float32 x,y,z]
+ *   [num_positions × 4 bytes: utci values hour 0 as float32]
+ *   ... (no has_shading_index flag, no Shading Index array)
+ * 
  * @param buffer - Binary data buffer
+ * @param metadata - Optional metadata to determine format (checks has_shading_index)
  * @returns Parsed data with positions and utci arrays organized by hour
  */
-export function parseFullDayBinary(buffer: ArrayBuffer): FullDayData {
+export function parseFullDayBinary(buffer: ArrayBuffer, metadata?: any): FullDayData {
 	const dataView = new DataView(buffer);
 	let offset = 0;
 	
@@ -89,32 +98,83 @@ export function parseFullDayBinary(buffer: ArrayBuffer): FullDayData {
 		offset += 4;
 	}
 	
+	// Determine if this is new format (has Shading Index flag)
+	// Calculate expected size for old format (without Shading Index)
+	const oldFormatSize = 8 + (numPositions * 12) + (numPositions * 4 * numHours);
+	const isNewFormat = buffer.byteLength > oldFormatSize;
+	
+	// Read has_shading_index flag and Shading Index array if new format
+	let shadingIndex: Float32Array | undefined;
+	let hasShadingIndex = false;
+	
+	if (isNewFormat) {
+		// New format: read the flag
+		if (offset + 4 > buffer.byteLength) {
+			// Safety check: shouldn't happen if size calculation is correct
+			console.warn('[WARN] Binary file size suggests new format but cannot read flag');
+		} else {
+			hasShadingIndex = dataView.getUint32(offset, true) === 1;
+			offset += 4;
+			
+			// Read Shading Index array if present
+			if (hasShadingIndex) {
+				shadingIndex = new Float32Array(numPositions);
+				for (let i = 0; i < numPositions; i++) {
+					if (offset + 4 > buffer.byteLength) {
+						// Safety check: if we go out of bounds, stop reading
+						console.warn('[WARN] Binary file truncated while reading Shading Index');
+						shadingIndex = undefined;
+						break;
+					}
+					shadingIndex[i] = dataView.getFloat32(offset, true);
+					offset += 4;
+				}
+			}
+		}
+	}
+	// If old format, skip the flag and Shading Index - offset is already correct
+	
 	// Read UTCI values hour by hour
 	const utciByHour: Float32Array[] = [];
 	for (let hour = 0; hour < numHours; hour++) {
 		const hourValues = new Float32Array(numPositions);
 		for (let i = 0; i < numPositions; i++) {
+			if (offset + 4 > buffer.byteLength) {
+				throw new Error(`Binary file is truncated: expected ${numPositions} UTCI values for hour ${hour}, but reached end of file`);
+			}
 			hourValues[i] = dataView.getFloat32(offset, true);
 			offset += 4;
 		}
 		utciByHour.push(hourValues);
 	}
 	
-	return {
+	const result: FullDayData = {
 		numPositions,
 		numHours,
 		positions,
 		utciByHour
 	};
+	
+	// Add Shading Index if present
+	if (shadingIndex) {
+		result.shadingIndex = shadingIndex;
+	}
+	
+	return result;
 }
 
 /**
  * Load binary UTCI data file
  * @param binaryPath - Path to binary data file
  * @param analysisType - "single_hour" or "full_day"
+ * @param metadata - Optional metadata to help determine binary format
  * @returns Parsed data object
  */
-export async function loadBinaryData(binaryPath: string, analysisType: 'single_hour' | 'full_day'): Promise<UTCIData> {
+export async function loadBinaryData(
+	binaryPath: string, 
+	analysisType: 'single_hour' | 'full_day',
+	metadata?: any
+): Promise<UTCIData> {
 	const response = await fetch(binaryPath);
 	if (!response.ok) {
 		throw new Error(`Failed to load binary data: ${response.statusText}`);
@@ -125,7 +185,7 @@ export async function loadBinaryData(binaryPath: string, analysisType: 'single_h
 	if (analysisType === 'single_hour') {
 		return parseSingleHourBinary(buffer);
 	} else {
-		return parseFullDayBinary(buffer);
+		return parseFullDayBinary(buffer, metadata);
 	}
 }
 
@@ -161,8 +221,8 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
 	const metadata = await loadMetadata(metadataPath);
 	console.log(`[OK] Metadata loaded: ${metadata.num_positions} positions, ${metadata.hours.length} hours`);
 	
-	// Load binary data
-	const binaryData = await loadBinaryData(binaryPath, metadata.analysis_type);
+	// Load binary data (pass metadata for format detection)
+	const binaryData = await loadBinaryData(binaryPath, metadata.analysis_type, metadata);
 	console.log(`[OK] Binary data loaded: ${(binaryData.positions.length * 4 / 1024).toFixed(1)} KB`);
 	
 	return {
@@ -214,6 +274,19 @@ export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Ar
 		return (data as SingleHourData).utciValues;
 	} else {
 		return (data as FullDayData).utciByHour[hourIndex];
+	}
+}
+
+/**
+ * Get Shading Index array from data
+ * @param data - UTCI data (single hour or full day)
+ * @returns Shading Index array if available, null otherwise
+ */
+export function getShadingIndex(data: UTCIData): Float32Array | null {
+	if (data.numHours === 1) {
+		return (data as SingleHourData).shadingIndex || null;
+	} else {
+		return (data as FullDayData).shadingIndex || null;
 	}
 }
 

@@ -119,14 +119,17 @@ def export_binary_single_hour(
 def export_binary_full_day(
     utci_results: Dict[str, Any],
     output_path: Path,
-    num_hours: int = 24
+    num_hours: int = 24,
+    shading_indices: Optional[np.ndarray] = None
 ) -> None:
     """
     Export full day UTCI data to binary format.
     
-    Binary structure:
+    Binary structure (with optional Shading Index):
         [8 bytes: num_positions (uint32), num_hours (uint32)]
         [num_positions × 12 bytes: positions as float32 x,y,z]
+        [4 bytes: has_shading_index (uint32, 0 or 1)]
+        [IF has_shading_index == 1: num_positions × 4 bytes: shading_index as float32]
         [num_positions × 4 bytes: utci values hour 0 as float32]
         [num_positions × 4 bytes: utci values hour 1 as float32]
         ...
@@ -136,9 +139,19 @@ def export_binary_full_day(
         utci_results: UTCI results dictionary
         output_path: Path to output .bin file
         num_hours: Number of hours (default 24)
+        shading_indices: Optional Shading Index array (shape: n_positions,)
     """
     # Extract positions and UTCI values organized by hour
-    sorted_keys = sorted(utci_results.keys())
+    # Sort by numeric part of key to ensure correct order (not lexicographic)
+    # Keys are like 'position_0', 'position_1', etc.
+    def get_position_index(key: str) -> int:
+        """Extract numeric index from 'position_N' key."""
+        try:
+            return int(key.split('_')[1])
+        except (IndexError, ValueError):
+            return 0
+    
+    sorted_keys = sorted(utci_results.keys(), key=get_position_index)
     num_positions = len(sorted_keys)
     
     positions = []
@@ -160,6 +173,16 @@ def export_binary_full_day(
             for hour_idx in range(num_hours):
                 utci_by_hour[hour_idx].append(float(utci_vals))
     
+    # Validate shading_indices if provided
+    has_shading_index = shading_indices is not None
+    if has_shading_index:
+        shading_indices = np.asarray(shading_indices, dtype=np.float32)
+        if len(shading_indices) != num_positions:
+            raise ValueError(
+                f"shading_indices length ({len(shading_indices)}) doesn't match "
+                f"num_positions ({num_positions})"
+            )
+    
     # Write binary file
     with open(output_path, 'wb') as f:
         # Header: num_positions, num_hours (uint32, uint32)
@@ -168,6 +191,11 @@ def export_binary_full_day(
         # Positions: write once (float32)
         positions_flat = np.array(positions, dtype=np.float32).flatten()
         f.write(positions_flat.tobytes())
+        
+        # Shading Index flag and data (if present)
+        f.write(struct.pack('I', 1 if has_shading_index else 0))
+        if has_shading_index:
+            f.write(shading_indices.tobytes())
         
         # UTCI values: write hour by hour (float32)
         for hour_idx in range(num_hours):
@@ -276,7 +304,8 @@ def export_metadata_json(
     epw_file: str,
     runtime_seconds: float,
     output_path: Path,
-    coordinate_system: str = "xy_ground"
+    coordinate_system: str = "xy_ground",
+    shading_indices: Optional[np.ndarray] = None
 ) -> None:
     """
     Export analysis metadata to JSON.
@@ -336,6 +365,22 @@ def export_metadata_json(
     if analysis_type == "full_day":
         metadata["hour_statistics"] = calculate_hour_statistics(utci_results, hours)
     
+    # Add Shading Index metadata if available
+    if shading_indices is not None:
+        shading_indices = np.asarray(shading_indices)
+        # Filter out NaN values for statistics
+        valid_indices = shading_indices[~np.isnan(shading_indices)]
+        if len(valid_indices) > 0:
+            metadata["has_shading_index"] = True
+            metadata["shading_index_range"] = {
+                "min": float(np.nanmin(shading_indices)),
+                "max": float(np.nanmax(shading_indices))
+            }
+        else:
+            metadata["has_shading_index"] = False
+    else:
+        metadata["has_shading_index"] = False
+    
     # Extract and add location data from EPW file
     try:
         metadata["location"] = _extract_location_from_epw(epw_file)
@@ -369,7 +414,8 @@ def export_utci_for_viewer(
     target_hours: Optional[List[int]] = None,
     output_dir: str = "data/analyses",
     coordinate_system: str = "xy_ground",
-    category: Optional[str] = None  # NEW: category for subdirectory
+    category: Optional[str] = None,  # NEW: category for subdirectory
+    shading_indices: Optional[np.ndarray] = None  # NEW: optional Shading Index array
 ) -> tuple[str, str]:
     """
     Export UTCI results to optimized binary format for web viewer.
@@ -431,7 +477,7 @@ def export_utci_for_viewer(
     if analysis_type == "single_hour":
         export_binary_single_hour(utci_results, binary_path)
     else:
-        export_binary_full_day(utci_results, binary_path, num_hours=len(hours))
+        export_binary_full_day(utci_results, binary_path, num_hours=len(hours), shading_indices=shading_indices)
     
     # Export metadata
     metadata_filename = f"{analysis_id}.json"
@@ -448,7 +494,8 @@ def export_utci_for_viewer(
         epw_file=epw_file,
         runtime_seconds=runtime_seconds,
         output_path=metadata_path,
-        coordinate_system=coordinate_system
+        coordinate_system=coordinate_system,
+        shading_indices=shading_indices  # NEW: pass Shading Index for metadata
     )
     
     print(f"[OK] Exported analysis: {analysis_id}")
