@@ -247,3 +247,124 @@ def test_shading_index_array_length_mismatch():
     with pytest.raises(ValueError, match="length"):
         calculate_shading_index([exposure_result], sun_data)
 
+
+def test_shading_index_epsilon_threshold():
+    """Test that very small floating point values near 0.0 are treated as shaded."""
+    n_hours = 10
+    n_positions = 1
+    
+    is_sun_up = np.array([False, True, True, True, True, True, True, True, True, False])
+    
+    # Very small values that should be treated as 0.0 (shaded) due to floating point precision
+    fract_body_exp = np.array([
+        0.0,           # hour 0: sun down
+        1e-10,         # hour 1: tiny value (should be shaded)
+        0.0,           # hour 2: exactly 0.0 (shaded)
+        1e-15,         # hour 3: even tinier (should be shaded)
+        0.5,           # hour 4: partial exposure (not shaded)
+        1.0,           # hour 5: full exposure (not shaded)
+        0.0,           # hour 6: shaded
+        0.0,           # hour 7: shaded
+        0.0,           # hour 8: shaded
+        0.0            # hour 9: sun down
+    ])
+    
+    exposure_result = ExposureResult(
+        fract_body_exp=fract_body_exp,
+        sky_exposure=0.5,
+        position=np.array([0.0, 0.0, 0.0]),
+        sample_points=np.array([[0.0, 0.0, 1.7]])
+    )
+    
+    sun_data = SunData(
+        sun_vectors=np.zeros((n_hours, 3)),
+        is_sun_up=is_sun_up,
+        solar_times=[],
+        hoys=np.arange(n_hours)
+    )
+    
+    shading_indices = calculate_shading_index([exposure_result], sun_data)
+    
+    assert len(shading_indices) == 1
+    # Hours 1, 2, 3, 6, 7, 8 are shaded during sunlight = 6 out of 8 = 0.75
+    # Note: epsilon threshold should treat 1e-10 and 1e-15 as shaded
+    assert shading_indices[0] == pytest.approx(6.0 / 8.0, rel=1e-6)
+
+
+def test_shading_index_building_scenario():
+    """Test Shading Index for a point under a building (should be fully shaded)."""
+    n_hours = 24
+    n_positions = 1
+    
+    # Simulate August day: sun up from hour 6 to 19 (14 hours)
+    is_sun_up = np.array([
+        False, False, False, False, False, False,  # 0-5: night
+        True, True, True, True, True, True, True, True, True, True, True, True, True, True,  # 6-19: day
+        False, False, False, False  # 20-23: night
+    ])
+    
+    # Point under building: always shaded when sun is up
+    fract_body_exp = np.array([
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # night
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # day: all shaded
+        0.0, 0.0, 0.0, 0.0  # night
+    ])
+    
+    exposure_result = ExposureResult(
+        fract_body_exp=fract_body_exp,
+        sky_exposure=0.1,  # Low sky exposure (under building)
+        position=np.array([0.0, 0.0, 0.0]),
+        sample_points=np.array([[0.0, 0.0, 1.7]])
+    )
+    
+    sun_data = SunData(
+        sun_vectors=np.zeros((n_hours, 3)),
+        is_sun_up=is_sun_up,
+        solar_times=[],
+        hoys=np.arange(n_hours)
+    )
+    
+    shading_indices = calculate_shading_index([exposure_result], sun_data)
+    
+    assert len(shading_indices) == 1
+    assert shading_indices[0] == 1.0  # 100% shaded during all sunlight hours
+
+
+def test_shading_index_open_field_scenario():
+    """Test Shading Index for a point in open field (should be fully exposed)."""
+    n_hours = 24
+    n_positions = 1
+    
+    # Simulate August day: sun up from hour 6 to 19 (14 hours)
+    is_sun_up = np.array([
+        False, False, False, False, False, False,  # 0-5: night
+        True, True, True, True, True, True, True, True, True, True, True, True, True, True,  # 6-19: day
+        False, False, False, False  # 20-23: night
+    ])
+    
+    # Point in open field: always exposed when sun is up
+    fract_body_exp = np.array([
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # night
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,  # day: all exposed
+        0.0, 0.0, 0.0, 0.0  # night
+    ])
+    
+    exposure_result = ExposureResult(
+        fract_body_exp=fract_body_exp,
+        sky_exposure=1.0,  # Full sky exposure
+        position=np.array([0.0, 0.0, 0.0]),
+        sample_points=np.array([[0.0, 0.0, 1.7]])
+    )
+    
+    sun_data = SunData(
+        sun_vectors=np.zeros((n_hours, 3)),
+        is_sun_up=is_sun_up,
+        solar_times=[],
+        hoys=np.arange(n_hours)
+    )
+    
+    shading_indices = calculate_shading_index([exposure_result], sun_data)
+    
+    assert len(shading_indices) == 1
+    assert shading_indices[0] == 0.0  # 0% shaded (always exposed during sunlight)
+

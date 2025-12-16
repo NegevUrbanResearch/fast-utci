@@ -142,7 +142,16 @@ def export_binary_full_day(
         shading_indices: Optional Shading Index array (shape: n_positions,)
     """
     # Extract positions and UTCI values organized by hour
-    sorted_keys = sorted(utci_results.keys())
+    # Sort by numeric part of key to ensure correct order (not lexicographic)
+    # Keys are like 'position_0', 'position_1', etc.
+    def get_position_index(key: str) -> int:
+        """Extract numeric index from 'position_N' key."""
+        try:
+            return int(key.split('_')[1])
+        except (IndexError, ValueError):
+            return 0
+    
+    sorted_keys = sorted(utci_results.keys(), key=get_position_index)
     num_positions = len(sorted_keys)
     
     positions = []

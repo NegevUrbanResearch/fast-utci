@@ -37,46 +37,49 @@
 		}
 	}
 
-	const isUTCI = () => $viewerStore.metricType === 'utci';
-	const isShadingIndex = () => $viewerStore.metricType === 'shading_index';
-	const hasShadingIndex = () => $analysisStore?.metadata.has_shading_index ?? false;
+	// Make these reactive to ensure updates
+	$: isUTCI = $viewerStore.metricType === 'utci';
+	$: isShadingIndex = $viewerStore.metricType === 'shading_index';
+	$: hasShadingIndex = $analysisStore?.metadata.has_shading_index ?? false;
 
 	function selectUTCI() {
-		if (!isUTCI()) {
+		if (!isUTCI) {
 			setMetricType('utci');
 		}
 	}
 
 	function selectShadingIndex() {
-		if (!isShadingIndex() && hasShadingIndex()) {
+		if (!isShadingIndex && hasShadingIndex) {
 			setMetricType('shading_index');
 		}
 	}
 
-	// Create UTCI gradient
-	$: utciGradient = [...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
+	// Create UTCI gradient (reactive to metricType to force update)
+	$: utciGradient = $viewerStore.metricType === 'utci' ? [...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
 		const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
 		const start = (i * stepSize).toFixed(2);
 		const end = ((i + 1) * stepSize).toFixed(2);
 		return `${color} ${start}%, ${color} ${end}%`;
-	}).join(', ');
+	}).join(', ') : '';
 
-	// Create Shading Index gradient
-	$: shadingIndexGradient = createShadingIndexLegendData().map((item, i) => {
+	// Create Shading Index gradient (reactive to metricType to force update)
+	// Reverse the gradient so high values (excellent, green) are at top, low values (poor, red) at bottom
+	$: shadingIndexGradient = $viewerStore.metricType === 'shading_index' ? [...createShadingIndexLegendData()].reverse().map((item, i) => {
 		const stepSize = 100 / 4; // 4 categories
 		const start = (i * stepSize).toFixed(2);
 		const end = ((i + 1) * stepSize).toFixed(2);
 		return `${item.color} ${start}%, ${item.color} ${end}%`;
-	}).join(', ');
+	}).join(', ') : '';
 
-	$: shadingIndexLabels = createShadingIndexLegendData();
+	$: shadingIndexLabels = $viewerStore.metricType === 'shading_index' ? createShadingIndexLegendData() : [];
+	$: shadingIndexLabelsReversed = shadingIndexLabels.length > 0 ? [...shadingIndexLabels].reverse() : [];
 </script>
 
 {#if $analysisStore}
 	<div class="color-legend">
 		<div class="legend-header">
 			<div class="title">
-				{#if isUTCI()}
+				{#if isUTCI}
 					UTCI
 				{:else}
 					Shading Index
@@ -86,7 +89,7 @@
 
 		<div class="gradient-row">
 			<div class="gradient-container">
-				{#if isUTCI()}
+				{#if isUTCI}
 					<div
 						class="gradient"
 						style="background: linear-gradient(to bottom, {utciGradient})"
@@ -106,17 +109,34 @@
 						style="background: linear-gradient(to bottom, {shadingIndexGradient})"
 					></div>
 					<div class="labels">
-						{#each shadingIndexLabels.reverse() as item, i}
-							{@const position = (i / (shadingIndexLabels.length - 1)) * 100}
-							<div class="label" style="top: {position}%">
-								{item.range[0].toFixed(1)}
+						{#if shadingIndexLabels.length > 0}
+							<!-- Show all category boundaries: 1.0, 0.9, 0.7, 0.5, 0.0 -->
+							<!-- Top: 1.0 (excellent max) -->
+							<div class="label" style="top: 0%">
+								1.0
 							</div>
-						{/each}
+							<!-- 0.9 (boundary between excellent and good) -->
+							<div class="label" style="top: 25%">
+								0.9
+							</div>
+							<!-- 0.7 (boundary between good and acceptable) -->
+							<div class="label" style="top: 50%">
+								0.7
+							</div>
+							<!-- 0.5 (boundary between acceptable and poor) -->
+							<div class="label" style="top: 75%">
+								0.5
+							</div>
+							<!-- Bottom: 0.0 (poor min) -->
+							<div class="label" style="top: 100%">
+								0.0
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</div>
 
-			{#if hasShadingIndex()}
+			{#if hasShadingIndex}
 				<div class="metric-column">
 					<div class="mode-caption">
 						<span>Metric</span>
@@ -126,27 +146,25 @@
 						<button
 							type="button"
 							class="mode-pill-vertical"
-							class:mode-pill-vertical-active={isUTCI()}
+							class:mode-pill-vertical-active={isUTCI}
 							on:click={selectUTCI}
-							aria-pressed={isUTCI()}
+							aria-pressed={isUTCI}
 						>
 							<span class="mode-pill-label">UTCI</span>
 						</button>
 						<button
 							type="button"
 							class="mode-pill-vertical"
-							class:mode-pill-vertical-active={isShadingIndex()}
+							class:mode-pill-vertical-active={isShadingIndex}
 							on:click={selectShadingIndex}
-							aria-pressed={isShadingIndex()}
-							disabled={!hasShadingIndex()}
+							aria-pressed={isShadingIndex}
+							disabled={!hasShadingIndex}
 						>
 							<span class="mode-pill-label">Shading</span>
 						</button>
 					</div>
 					<div class="mode-help">
-						{#if isUTCI()}
-							Universal Thermal Climate Index - thermal comfort metric.
-						{:else}
+						{#if !isUTCI}
 							Shading Index - proportion of time shaded during sunlight hours.
 						{/if}
 					</div>
@@ -164,7 +182,7 @@
 		box-shadow: var(--shadow-panel);
 		z-index: var(--z-panel);
 		min-width: 200px;
-		width: 100%;
+		max-width: 280px;
 		box-sizing: border-box;
 		overflow: hidden;
 	}
@@ -257,7 +275,7 @@
 	}
 
 	.mode-caption-secondary {
-		align-self: center;
+		align-self: flex-start;
 	}
 
 	.mode-toggle-vertical {

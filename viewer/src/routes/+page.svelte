@@ -137,11 +137,6 @@
 				<LayerControls />
 			</div>
 
-			<div class="sidebar-section">
-				<div class="section-header">UTCI Legend &amp; Scale</div>
-				<ColorLegend />
-			</div>
-
 			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day' && $viewerStore.metricType === 'utci'}
 				<div class="sidebar-section">
 					<div class="section-header">Time of Day</div>
@@ -152,6 +147,10 @@
 		</aside>
 
 		<main class="app-main">
+			<!-- Color Legend positioned at bottom right of screen -->
+			<div class="legend-container">
+				<ColorLegend />
+			</div>
 			{#if $viewerStore.loading}
 				<div class="overlay-message">Loading analysis data...</div>
 			{/if}
@@ -402,6 +401,13 @@
 	.app-main {
 		position: relative;
 		background: var(--color-bg-page);
+	}
+
+	.legend-container {
+		position: absolute;
+		bottom: 20px;
+		right: 20px;
+		z-index: var(--z-tooltip);
 	}
 
 	.overlay-message {

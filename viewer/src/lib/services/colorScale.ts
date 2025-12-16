@@ -157,17 +157,16 @@ export function createLegendData(): LegendItem[] {
 	}));
 }
 
-// Shading Index color scale
-// Categories based on Israeli Shading Metrics Guide:
-// 0-0.5: Poor (red) - Less than 50% of time shaded
-// 0.5-0.7: Acceptable (yellow/orange) - At least 50% of time shaded
-// 0.7-0.9: Good (light green) - At least 70% of time shaded
-// 0.9-1.0: Excellent (dark green) - At least 90% of time shaded
+// Shading Index color scale (simplified)
+// 0-0.5: Red - Less than 50% of time shaded
+// 0.5-0.7: Light green - At least 50% of time shaded
+// 0.7-0.9: Darker green - At least 70% of time shaded
+// 0.9-1.0: Darkest green - At least 90% of time shaded
 export const SHADING_INDEX_COLORS = [
-	'#D73027', // Red - Poor (0-0.5)
-	'#FEE08B', // Yellow - Acceptable (0.5-0.7)
-	'#A6D96A', // Light Green - Good (0.7-0.9)
-	'#1A9850'  // Dark Green - Excellent (0.9-1.0)
+	'#EF4444', // Red (0-0.5)
+	'#84CC16', // Light Green (0.5-0.7)
+	'#16A34A', // Darker Green (0.7-0.9)
+	'#15803D'  // Darkest Green (0.9-1.0)
 ];
 
 export interface ShadingIndexCategory {
@@ -214,10 +213,10 @@ export function getShadingIndexColor(shadingIndex: number): string {
 }
 
 /**
- * Map Shading Index value to color using smooth gradient interpolation
+ * Map Shading Index value to color using discrete category colors
  * @param shadingIndex - Shading Index value (0-1)
- * @param shadingIndexMin - Minimum Shading Index in dataset (typically 0)
- * @param shadingIndexMax - Maximum Shading Index in dataset (typically 1)
+ * @param shadingIndexMin - Minimum Shading Index in dataset (typically 0, unused but kept for API compatibility)
+ * @param shadingIndexMax - Maximum Shading Index in dataset (typically 1, unused but kept for API compatibility)
  * @returns RGB color object normalized to 0-1
  */
 export function mapShadingIndexToColor(
@@ -225,56 +224,9 @@ export function mapShadingIndexToColor(
 	shadingIndexMin: number = 0,
 	shadingIndexMax: number = 1
 ): RGBColor {
-	// Normalize value to 0-1 range
-	const normalized = (shadingIndex - shadingIndexMin) / (shadingIndexMax - shadingIndexMin);
-	
-	// Clamp to 0-1
-	const clamped = Math.max(0, Math.min(1, normalized));
-	
-	// Map to color stops:
-	// 0.0 -> Red (#D73027)
-	// 0.5 -> Yellow (#FEE08B)
-	// 0.7 -> Light Green (#A6D96A)
-	// 1.0 -> Dark Green (#1A9850)
-	
-	let color: RGBColor;
-	
-	if (clamped < 0.5) {
-		// Interpolate between red and yellow (0-0.5)
-		const t = clamped / 0.5;
-		const red = hexToThreeColor(SHADING_INDEX_COLORS[0]);
-		const yellow = hexToThreeColor(SHADING_INDEX_COLORS[1]);
-		color = {
-			r: red.r + (yellow.r - red.r) * t,
-			g: red.g + (yellow.g - red.g) * t,
-			b: red.b + (yellow.b - red.b) * t
-		};
-	} else if (clamped < 0.7) {
-		// Yellow (0.5-0.7)
-		color = hexToThreeColor(SHADING_INDEX_COLORS[1]);
-	} else if (clamped < 0.9) {
-		// Interpolate between yellow and light green (0.7-0.9)
-		const t = (clamped - 0.7) / 0.2;
-		const yellow = hexToThreeColor(SHADING_INDEX_COLORS[1]);
-		const lightGreen = hexToThreeColor(SHADING_INDEX_COLORS[2]);
-		color = {
-			r: yellow.r + (lightGreen.r - yellow.r) * t,
-			g: yellow.g + (lightGreen.g - yellow.g) * t,
-			b: yellow.b + (lightGreen.b - yellow.b) * t
-		};
-	} else {
-		// Interpolate between light green and dark green (0.9-1.0)
-		const t = (clamped - 0.9) / 0.1;
-		const lightGreen = hexToThreeColor(SHADING_INDEX_COLORS[2]);
-		const darkGreen = hexToThreeColor(SHADING_INDEX_COLORS[3]);
-		color = {
-			r: lightGreen.r + (darkGreen.r - lightGreen.r) * t,
-			g: lightGreen.g + (darkGreen.g - lightGreen.g) * t,
-			b: lightGreen.b + (darkGreen.b - lightGreen.b) * t
-		};
-	}
-	
-	return color;
+	// Use discrete category-based coloring (no interpolation)
+	const hexColor = getShadingIndexColor(shadingIndex);
+	return hexToThreeColor(hexColor);
 }
 
 /**

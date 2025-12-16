@@ -85,20 +85,58 @@ def calculate_shading_index(
         return np.ones(n_positions, dtype=np.float64)
     
     # Calculate Shading Index for each position
+    # Epsilon threshold for floating point comparison (treat very small values as 0.0)
+    EPSILON = 1e-6
+    
     shading_indices = np.zeros(n_positions, dtype=np.float64)
     
+    # Debug: Track statistics
+    fully_shaded_count = 0
+    fully_exposed_count = 0
+    sample_exposure_values = []
+    
     for i, exp_result in enumerate(exposure_results):
-        fract_body_exp = exp_result.fract_body_exp
+        fract_body_exp = np.asarray(exp_result.fract_body_exp, dtype=np.float64)
         
         # Filter to sunlight hours only
         sunlight_exposure = fract_body_exp[is_sun_up]
         
-        # Count hours where fract_body_exp == 0.0 (fully shaded)
-        # Use small epsilon for floating point comparison
-        shaded_hours = np.sum(sunlight_exposure == 0.0)
+        # Count hours where fract_body_exp <= EPSILON (fully shaded)
+        # Use epsilon threshold to handle floating point precision issues
+        # Values very close to 0.0 are treated as fully shaded
+        shaded_hours = np.sum(sunlight_exposure <= EPSILON)
         
         # Calculate Shading Index
         shading_indices[i] = shaded_hours / n_sunlight_hours
+        
+        # Debug: Track detailed stats for first few positions
+        if i < 5:
+            sample_exposure_values.append({
+                'position': i,
+                'position_coords': exp_result.position.tolist(),
+                'fract_body_exp_all': fract_body_exp.tolist(),
+                'is_sun_up': is_sun_up.tolist(),
+                'sunlight_exposure': sunlight_exposure.tolist(),
+                'shaded_hours': int(shaded_hours),
+                'total_sunlight_hours': int(n_sunlight_hours),
+                'shading_index': float(shading_indices[i]),
+                'min_fract_sunlight': float(np.min(sunlight_exposure)) if len(sunlight_exposure) > 0 else 0.0,
+                'max_fract_sunlight': float(np.max(sunlight_exposure)) if len(sunlight_exposure) > 0 else 0.0,
+                'mean_fract_sunlight': float(np.mean(sunlight_exposure)) if len(sunlight_exposure) > 0 else 0.0,
+            })
+        
+        if shading_indices[i] >= 0.99:
+            fully_shaded_count += 1
+        elif shading_indices[i] <= 0.01:
+            fully_exposed_count += 1
+    
+    # Debug output (can be removed later or made conditional)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Shading Index calculation summary:")
+    logger.debug(f"  Fully shaded positions (>=0.99): {fully_shaded_count}/{n_positions}")
+    logger.debug(f"  Fully exposed positions (<=0.01): {fully_exposed_count}/{n_positions}")
+    logger.debug(f"  Sample exposure values: {sample_exposure_values[:3]}")
     
     return shading_indices
 

@@ -637,7 +637,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 	}
 
 	.mode-caption-secondary {
-		align-self: center;
+		align-self: flex-start;
 	}
 
 	.mode-toggle-vertical {

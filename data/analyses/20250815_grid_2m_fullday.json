@@ -45,8 +45,8 @@
   "num_positions": 104445,
   "model_file": "data/3d_models/original_with_layers.glb",
   "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
-  "generation_date": "2025-12-16T21:44:32.694693",
-  "runtime_seconds": 171.93293900002027,
+  "generation_date": "2025-12-16T23:17:32.735489",
+  "runtime_seconds": 195.06108000001404,
   "coordinate_system": "xy_ground",
   "hour_statistics": [
     {
