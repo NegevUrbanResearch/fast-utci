@@ -12,7 +12,8 @@
 	export let analysis: Analysis | null = null;
 	export let model: Group | null = null;
 
-	let utciSurface: Mesh | null = null;
+	// Expose mesh for tooltip raycasting
+	export let utciSurface: Mesh | null = null;
 	let lastAnalysis: Analysis | null = null;
 	const { scene, invalidate } = useThrelte();
 

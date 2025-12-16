@@ -36,6 +36,7 @@ All modules are located in `fast_utci/mrt/`:
 | `cache.py` | Thread-safe cache management for expensive computations |
 | `performance.py` | Performance optimization utilities (batch sizing, memory) |
 | `adapters.py` | Ray intersector strategies (weather adapters moved to `fast_utci.shared.weather`) |
+| `shading_index.py` | Shading Index calculation (proportion of sunlight hours fully shaded) |
 
 ## Quick Start
 
@@ -68,6 +69,11 @@ from ladybug.epw import EPW
 epw = EPW('weather.epw')
 exposure_results = calc.compute_exposure(grid.points, period, hours)
 mrt_results = calc.compute_mrt(epw, exposure_results, period, hours)
+
+# Calculate Shading Index (optional)
+from fast_utci.mrt.shading_index import calculate_shading_index
+sun_data = calc.get_sun_data(period, hours)
+shading_indices = calculate_shading_index(exposure_results, sun_data)
 
 # Export results (via MRT calculator)
 calc.to_csv(mrt_results, 'mrt_results.csv')
