@@ -82,9 +82,13 @@ def main():
             print(f"\nConfig {i}: SUCCESS")
             print(f"  - Grid: {res['grid_size']}m")
             print(f"  - Date: {res['month']}/{res['day']}")
-            print(f"  - UTCI: {res['utci_min']:.1f} to {res['utci_max']:.1f}C")
+            print(f"  - UTCI: {res['utci_min']:.1f} to {res['utci_max']:.1f}C (mean: {res['utci_mean']:.1f}C)")
+            print(f"  - Shading Index: {res['shading_min']:.3f} to {res['shading_max']:.3f} (mean: {res['shading_mean']:.3f})")
             print(f"  - Runtime: {res['total_time']:.1f}s")
-            print(f"  - CSV: {res['csv_path']}")
+            if res.get('csv_path'):
+                print(f"  - CSV: {res['csv_path']}")
+            print(f"  - Binary: {res['binary_path']}")
+            print(f"  - Metadata: {res['metadata_path']}")
         else:
             print(f"\nConfig {i}: FAILED")
             print(f"  - Error: {result['error']}")

@@ -46,7 +46,8 @@
 			utciSurface = createUtciSurfaceMesh(
 				analysis,
 				viewerState?.currentHour ?? 0,
-				viewerState?.colorMode ?? 'normalized'
+				viewerState?.colorMode ?? 'normalized',
+				viewerState?.metricType ?? 'utci'
 			);
 			scene.add(utciSurface);
 			lastAnalysis = analysis;
@@ -56,7 +57,8 @@
 				utciSurface,
 				analysis,
 				viewerState.currentHour,
-				viewerState.colorMode
+				viewerState.colorMode,
+				viewerState.metricType ?? 'utci'
 			);
 			invalidate();
 		}

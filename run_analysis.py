@@ -270,9 +270,6 @@ def run_analysis_core(
             print(f"[OK] MRT computed: {len(mrt_results)} positions")
             print(f"[TIME] MRT time: {(t3-t2):.2f}s")
         
-        del exposure_results
-        gc.collect()
-        
         # Compute UTCI
         if verbose:
             print("\n" + "=" * 60)
@@ -300,6 +297,35 @@ def run_analysis_core(
         from fast_utci.utci.statistics import calculate_utci_statistics
         utci_stats = calculate_utci_statistics(utci_results)
         utci_min, utci_max, utci_mean = utci_stats['min'], utci_stats['max'], utci_stats['mean']
+        
+        # Calculate Shading Index
+        if verbose:
+            print("\n" + "=" * 60)
+            print("STEP 3.5: COMPUTING SHADING INDEX")
+            print("=" * 60)
+        
+        from fast_utci.mrt.shading_index import calculate_shading_index
+        
+        # Get sun_data for Shading Index calculation
+        sun_data = mrt_calc.get_sun_data(analysis_period, target_hours)
+        
+        t_shading_start = time.perf_counter()
+        shading_indices = calculate_shading_index(exposure_results, sun_data)
+        t_shading_end = time.perf_counter()
+        
+        # Calculate Shading Index statistics
+        shading_min = float(np.min(shading_indices))
+        shading_max = float(np.max(shading_indices))
+        shading_mean = float(np.mean(shading_indices))
+        
+        if verbose:
+            print(f"[OK] Shading Index computed: {len(shading_indices)} positions")
+            print(f"     Min: {shading_min:.3f}, Max: {shading_max:.3f}, Mean: {shading_mean:.3f}")
+            print(f"[TIME] Shading Index time: {(t_shading_end-t_shading_start):.2f}s")
+        
+        # Clean up exposure_results after Shading Index calculation
+        del exposure_results
+        gc.collect()
         
         # Export results
         if verbose:
@@ -340,7 +366,8 @@ def run_analysis_core(
             analysis_period=analysis_period,
             target_hours=target_hours,
             coordinate_system=coordinate_system,
-            category=category  # NEW: pass category for subdirectory organization
+            category=category,  # NEW: pass category for subdirectory organization
+            shading_indices=shading_indices  # NEW: pass Shading Index data
         )
         
         # Summary
@@ -350,6 +377,7 @@ def run_analysis_core(
             print("=" * 60)
             print(f"Positions analyzed: {len(utci_results)}")
             print(f"UTCI range: {utci_min:.1f} to {utci_max:.1f} C (mean: {utci_mean:.1f} C)")
+            print(f"Shading Index range: {shading_min:.3f} to {shading_max:.3f} (mean: {shading_mean:.3f})")
             print(f"Total runtime: {total_time:.1f}s")
             print(f"\nOutput files:")
             if csv_filename:
@@ -368,6 +396,9 @@ def run_analysis_core(
             "utci_min": utci_min,
             "utci_max": utci_max,
             "utci_mean": utci_mean,
+            "shading_min": shading_min,
+            "shading_max": shading_max,
+            "shading_mean": shading_mean,
             "total_time": total_time,
             "num_positions": len(utci_results),
             "grid_size": grid_size,

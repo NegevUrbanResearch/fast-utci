@@ -142,7 +142,7 @@
 				<ColorLegend />
 			</div>
 
-			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day'}
+			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day' && $viewerStore.metricType === 'utci'}
 				<div class="sidebar-section">
 					<div class="section-header">Time of Day</div>
 					<div class="section-subtitle">Select analysis hour for UTCI</div>

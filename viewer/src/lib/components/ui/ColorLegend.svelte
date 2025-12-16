@@ -1,116 +1,154 @@
 <script lang="ts">
 	import { analysisStore } from '$lib/stores/analysisStore';
-	import { viewerStore, setColorMode } from '$lib/stores/viewerStore';
-	import { LADYBUG_NUANCED_COLORS } from '$lib/services/colorScale';
+	import { viewerStore, setMetricType } from '$lib/stores/viewerStore';
+	import { 
+		LADYBUG_NUANCED_COLORS, 
+		SHADING_INDEX_COLORS,
+		createShadingIndexLegendData 
+	} from '$lib/services/colorScale';
+	import type { MetricType } from '$lib/types/viewer';
 
 	let utciMin = 0;
 	let utciMax = 100;
+	let shadingIndexMin = 0;
+	let shadingIndexMax = 1;
 
 	$: if ($analysisStore) {
-		if ($viewerStore.colorMode === 'normalized') {
-			utciMin = $analysisStore.metadata.utci_range.min;
-			utciMax = $analysisStore.metadata.utci_range.max;
-		} else {
-			const hourStat = $analysisStore.metadata.hour_statistics?.[$viewerStore.currentHour];
-			if (hourStat) {
-				utciMin = hourStat.min;
-				utciMax = hourStat.max;
-			} else {
+		if ($viewerStore.metricType === 'utci') {
+			if ($viewerStore.colorMode === 'normalized') {
 				utciMin = $analysisStore.metadata.utci_range.min;
 				utciMax = $analysisStore.metadata.utci_range.max;
+			} else {
+				const hourStat = $analysisStore.metadata.hour_statistics?.[$viewerStore.currentHour];
+				if (hourStat) {
+					utciMin = hourStat.min;
+					utciMax = hourStat.max;
+				} else {
+					utciMin = $analysisStore.metadata.utci_range.min;
+					utciMax = $analysisStore.metadata.utci_range.max;
+				}
+			}
+		} else {
+			// Shading Index
+			if ($analysisStore.metadata.shading_index_range) {
+				shadingIndexMin = $analysisStore.metadata.shading_index_range.min;
+				shadingIndexMax = $analysisStore.metadata.shading_index_range.max;
 			}
 		}
 	}
 
-	const isFullDayMode = () => $viewerStore.colorMode === 'normalized';
-	const isPerHourMode = () => $viewerStore.colorMode === 'discrete';
+	const isUTCI = () => $viewerStore.metricType === 'utci';
+	const isShadingIndex = () => $viewerStore.metricType === 'shading_index';
+	const hasShadingIndex = () => $analysisStore?.metadata.has_shading_index ?? false;
 
-	function selectFullDayMode() {
-		if (!isFullDayMode()) {
-			setColorMode('normalized');
+	function selectUTCI() {
+		if (!isUTCI()) {
+			setMetricType('utci');
 		}
 	}
 
-	function selectPerHourMode() {
-		if (!isPerHourMode()) {
-			setColorMode('discrete');
+	function selectShadingIndex() {
+		if (!isShadingIndex() && hasShadingIndex()) {
+			setMetricType('shading_index');
 		}
 	}
 
-	// Create stepped gradient
-	$: {
-		const colors = [...LADYBUG_NUANCED_COLORS].reverse();
-		const numColors = colors.length;
-		const stepSize = 100 / numColors;
-		const gradientStops: string[] = [];
-		
-		for (let i = 0; i < numColors; i++) {
-			const startPercent = (i * stepSize).toFixed(2);
-			const endPercent = ((i + 1) * stepSize).toFixed(2);
-			gradientStops.push(`${colors[i]} ${startPercent}%`);
-			gradientStops.push(`${colors[i]} ${endPercent}%`);
-		}
-		
-		gradientStops.join(', ');
-	}
+	// Create UTCI gradient
+	$: utciGradient = [...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
+		const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
+		const start = (i * stepSize).toFixed(2);
+		const end = ((i + 1) * stepSize).toFixed(2);
+		return `${color} ${start}%, ${color} ${end}%`;
+	}).join(', ');
+
+	// Create Shading Index gradient
+	$: shadingIndexGradient = createShadingIndexLegendData().map((item, i) => {
+		const stepSize = 100 / 4; // 4 categories
+		const start = (i * stepSize).toFixed(2);
+		const end = ((i + 1) * stepSize).toFixed(2);
+		return `${item.color} ${start}%, ${item.color} ${end}%`;
+	}).join(', ');
+
+	$: shadingIndexLabels = createShadingIndexLegendData();
 </script>
 
 {#if $analysisStore}
 	<div class="color-legend">
 		<div class="legend-header">
-			<div class="title">UTCI</div>
+			<div class="title">
+				{#if isUTCI()}
+					UTCI
+				{:else}
+					Shading Index
+				{/if}
+			</div>
 		</div>
 
 		<div class="gradient-row">
 			<div class="gradient-container">
-				<div
-					class="gradient"
-					style="background: linear-gradient(to bottom, {[...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
-						const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
-						const start = (i * stepSize).toFixed(2);
-						const end = ((i + 1) * stepSize).toFixed(2);
-						return `${color} ${start}%, ${color} ${end}%`;
-					}).join(', ')})"
-				></div>
-				<div class="labels">
-					{#each Array(6) as _, i}
-						{@const temp = utciMax - (i * (utciMax - utciMin) / 5)}
-						{@const position = (i / 5) * 100}
-						<div class="label" style="top: {position}%">
-							{temp.toFixed(1)}°C
-						</div>
-					{/each}
-				</div>
+				{#if isUTCI()}
+					<div
+						class="gradient"
+						style="background: linear-gradient(to bottom, {utciGradient})"
+					></div>
+					<div class="labels">
+						{#each Array(6) as _, i}
+							{@const temp = utciMax - (i * (utciMax - utciMin) / 5)}
+							{@const position = (i / 5) * 100}
+							<div class="label" style="top: {position}%">
+								{temp.toFixed(1)}°C
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div
+						class="gradient"
+						style="background: linear-gradient(to bottom, {shadingIndexGradient})"
+					></div>
+					<div class="labels">
+						{#each shadingIndexLabels.reverse() as item, i}
+							{@const position = (i / (shadingIndexLabels.length - 1)) * 100}
+							<div class="label" style="top: {position}%">
+								{item.range[0].toFixed(1)}
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
-			{#if $analysisStore.metadata.analysis_type === 'full_day'}
-				<div class="mode-column">
+			{#if hasShadingIndex()}
+				<div class="metric-column">
 					<div class="mode-caption">
-						<span>Color scale</span>
-						<span class="mode-caption-secondary">Mode</span>
+						<span>Metric</span>
+						<span class="mode-caption-secondary">Type</span>
 					</div>
-					<div class="mode-toggle-vertical" aria-label="Color scale mode" role="toolbar">
+					<div class="mode-toggle-vertical" aria-label="Metric type" role="toolbar">
 						<button
 							type="button"
 							class="mode-pill-vertical"
-							class:mode-pill-vertical-active={isFullDayMode()}
-							on:click={selectFullDayMode}
-							aria-pressed={isFullDayMode()}
+							class:mode-pill-vertical-active={isUTCI()}
+							on:click={selectUTCI}
+							aria-pressed={isUTCI()}
 						>
-							<span class="mode-pill-label">Full day</span>
+							<span class="mode-pill-label">UTCI</span>
 						</button>
 						<button
 							type="button"
 							class="mode-pill-vertical"
-							class:mode-pill-vertical-active={isPerHourMode()}
-							on:click={selectPerHourMode}
-							aria-pressed={isPerHourMode()}
+							class:mode-pill-vertical-active={isShadingIndex()}
+							on:click={selectShadingIndex}
+							aria-pressed={isShadingIndex()}
+							disabled={!hasShadingIndex()}
 						>
-							<span class="mode-pill-label">Per hour</span>
+							<span class="mode-pill-label">Shading</span>
 						</button>
 					</div>
 					<div class="mode-help">
-						Switch between the full‑day range and the range for the selected hour.
+						{#if isUTCI()}
+							Universal Thermal Climate Index - thermal comfort metric.
+						{:else}
+							Shading Index - proportion of time shaded during sunlight hours.
+						{/if}
 					</div>
 				</div>
 			{/if}
@@ -198,7 +236,7 @@
 		color: var(--color-text-primary);
 	}
 
-	.mode-column {
+	.metric-column {
 		display: flex;
 		flex-direction: column;
 		align-items: stretch;
@@ -256,6 +294,11 @@
 	.mode-pill-vertical-active {
 		background: linear-gradient(to bottom, rgba(56, 189, 248, 0.24), rgba(56, 189, 248, 0.55));
 		color: var(--color-bg-elevated);
+	}
+
+	.mode-pill-vertical:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.mode-pill-label {

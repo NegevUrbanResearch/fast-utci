@@ -157,4 +157,144 @@ export function createLegendData(): LegendItem[] {
 	}));
 }
 
+// Shading Index color scale
+// Categories based on Israeli Shading Metrics Guide:
+// 0-0.5: Poor (red) - Less than 50% of time shaded
+// 0.5-0.7: Acceptable (yellow/orange) - At least 50% of time shaded
+// 0.7-0.9: Good (light green) - At least 70% of time shaded
+// 0.9-1.0: Excellent (dark green) - At least 90% of time shaded
+export const SHADING_INDEX_COLORS = [
+	'#D73027', // Red - Poor (0-0.5)
+	'#FEE08B', // Yellow - Acceptable (0.5-0.7)
+	'#A6D96A', // Light Green - Good (0.7-0.9)
+	'#1A9850'  // Dark Green - Excellent (0.9-1.0)
+];
+
+export interface ShadingIndexCategory {
+	value: number;
+	range: [number, number];
+	label: string;
+	abbrev: string;
+}
+
+export const SHADING_INDEX_CATEGORIES: ShadingIndexCategory[] = [
+	{ value: 0, range: [0, 0.5], label: 'Poor Shading', abbrev: 'Poor' },
+	{ value: 1, range: [0.5, 0.7], label: 'Acceptable Shading', abbrev: 'Acceptable' },
+	{ value: 2, range: [0.7, 0.9], label: 'Good Shading', abbrev: 'Good' },
+	{ value: 3, range: [0.9, 1.0], label: 'Excellent Shading', abbrev: 'Excellent' }
+];
+
+/**
+ * Get the Shading Index category for a given value
+ * @param shadingIndex - Shading Index value (0-1)
+ * @returns Category value from 0 (poor) to 3 (excellent)
+ */
+export function getShadingIndexCategory(shadingIndex: number): number {
+	for (const category of SHADING_INDEX_CATEGORIES) {
+		const [min, max] = category.range;
+		if (shadingIndex >= min && shadingIndex < max) {
+			return category.value;
+		}
+	}
+	// Handle edge case: exactly 1.0
+	if (shadingIndex >= 1.0) {
+		return 3; // Excellent
+	}
+	return 0; // Default to poor
+}
+
+/**
+ * Get the color for a Shading Index value
+ * @param shadingIndex - Shading Index value (0-1)
+ * @returns Hex color string
+ */
+export function getShadingIndexColor(shadingIndex: number): string {
+	const category = getShadingIndexCategory(shadingIndex);
+	return SHADING_INDEX_COLORS[category];
+}
+
+/**
+ * Map Shading Index value to color using smooth gradient interpolation
+ * @param shadingIndex - Shading Index value (0-1)
+ * @param shadingIndexMin - Minimum Shading Index in dataset (typically 0)
+ * @param shadingIndexMax - Maximum Shading Index in dataset (typically 1)
+ * @returns RGB color object normalized to 0-1
+ */
+export function mapShadingIndexToColor(
+	shadingIndex: number,
+	shadingIndexMin: number = 0,
+	shadingIndexMax: number = 1
+): RGBColor {
+	// Normalize value to 0-1 range
+	const normalized = (shadingIndex - shadingIndexMin) / (shadingIndexMax - shadingIndexMin);
+	
+	// Clamp to 0-1
+	const clamped = Math.max(0, Math.min(1, normalized));
+	
+	// Map to color stops:
+	// 0.0 -> Red (#D73027)
+	// 0.5 -> Yellow (#FEE08B)
+	// 0.7 -> Light Green (#A6D96A)
+	// 1.0 -> Dark Green (#1A9850)
+	
+	let color: RGBColor;
+	
+	if (clamped < 0.5) {
+		// Interpolate between red and yellow (0-0.5)
+		const t = clamped / 0.5;
+		const red = hexToThreeColor(SHADING_INDEX_COLORS[0]);
+		const yellow = hexToThreeColor(SHADING_INDEX_COLORS[1]);
+		color = {
+			r: red.r + (yellow.r - red.r) * t,
+			g: red.g + (yellow.g - red.g) * t,
+			b: red.b + (yellow.b - red.b) * t
+		};
+	} else if (clamped < 0.7) {
+		// Yellow (0.5-0.7)
+		color = hexToThreeColor(SHADING_INDEX_COLORS[1]);
+	} else if (clamped < 0.9) {
+		// Interpolate between yellow and light green (0.7-0.9)
+		const t = (clamped - 0.7) / 0.2;
+		const yellow = hexToThreeColor(SHADING_INDEX_COLORS[1]);
+		const lightGreen = hexToThreeColor(SHADING_INDEX_COLORS[2]);
+		color = {
+			r: yellow.r + (lightGreen.r - yellow.r) * t,
+			g: yellow.g + (lightGreen.g - yellow.g) * t,
+			b: yellow.b + (lightGreen.b - yellow.b) * t
+		};
+	} else {
+		// Interpolate between light green and dark green (0.9-1.0)
+		const t = (clamped - 0.9) / 0.1;
+		const lightGreen = hexToThreeColor(SHADING_INDEX_COLORS[2]);
+		const darkGreen = hexToThreeColor(SHADING_INDEX_COLORS[3]);
+		color = {
+			r: lightGreen.r + (darkGreen.r - lightGreen.r) * t,
+			g: lightGreen.g + (darkGreen.g - lightGreen.g) * t,
+			b: lightGreen.b + (darkGreen.b - lightGreen.b) * t
+		};
+	}
+	
+	return color;
+}
+
+/**
+ * Create a legend data array for the Shading Index scale
+ * @returns Array of legend items with color and label
+ */
+export interface ShadingIndexLegendItem {
+	color: string;
+	label: string;
+	abbrev: string;
+	range: [number, number];
+}
+
+export function createShadingIndexLegendData(): ShadingIndexLegendItem[] {
+	return SHADING_INDEX_CATEGORIES.map((category, index) => ({
+		color: SHADING_INDEX_COLORS[index],
+		label: category.label,
+		abbrev: category.abbrev,
+		range: category.range
+	}));
+}
+
 
