@@ -84,18 +84,28 @@ export function createPointCloudGeometry(
 }
 
 /**
+ * Optional range override for unified color scales during comparison
+ */
+export interface UtciRangeOverride {
+	utciMin: number;
+	utciMax: number;
+}
+
+/**
  * Create color array for point cloud
  * @param analysis - Analysis data
  * @param hourIndex - Hour index (ignored for Shading Index)
  * @param colorMode - Color mode (ignored for Shading Index)
  * @param metricType - Metric type ('utci' or 'shading_index')
+ * @param rangeOverride - Optional UTCI range override for unified comparison scales
  * @returns Color Float32Array
  */
 export function createColors(
 	analysis: Analysis,
 	hourIndex: number,
 	colorMode: 'normalized' | 'discrete',
-	metricType: MetricType = 'utci'
+	metricType: MetricType = 'utci',
+	rangeOverride?: UtciRangeOverride
 ): Float32Array {
 	const { data, metadata } = analysis;
 	const numPositions = data.numPositions;
@@ -110,7 +120,7 @@ export function createColors(
 		if (!shadingIndexValues) {
 			// Fallback to UTCI if Shading Index not available (backward compatibility)
 			console.warn('[PointCloud] Shading Index requested but not available, falling back to UTCI');
-			return createColors(analysis, hourIndex, colorMode, 'utci');
+			return createColors(analysis, hourIndex, colorMode, 'utci', rangeOverride);
 		}
 
 		// Get Shading Index range from metadata
@@ -127,7 +137,9 @@ export function createColors(
 	} else {
 		// UTCI: use hour-specific value
 		const utciValues = getUTCIForHour(data, hourIndex);
-		const { utciMin, utciMax } = resolveUtciRange(metadata, hourIndex, colorMode);
+		
+		// Use override range if provided (for comparison mode), otherwise resolve from metadata
+		const { utciMin, utciMax } = rangeOverride ?? resolveUtciRange(metadata, hourIndex, colorMode);
 
 		for (let i = 0; i < numPositions; i++) {
 			const utci = utciValues[i];
@@ -205,15 +217,21 @@ export function updatePointCloudColors(
 
 /**
  * Create a textured ground-aligned mesh that visualizes UTCI or Shading Index values.
+ * @param analysis - Analysis data
+ * @param hourIndex - Hour index (default: 0)
+ * @param colorMode - Color mode ('normalized' or 'discrete')
+ * @param metricType - Metric type ('utci' or 'shading_index')
+ * @param rangeOverride - Optional UTCI range override for unified comparison scales
  */
 export function createUtciSurfaceMesh(
 	analysis: Analysis,
 	hourIndex: number = 0,
 	colorMode: 'normalized' | 'discrete' = 'normalized',
-	metricType: MetricType = 'utci'
+	metricType: MetricType = 'utci',
+	rangeOverride?: UtciRangeOverride
 ): THREE.Mesh {
 	const layout = buildUtciGridLayout(analysis);
-	const colors = createColors(analysis, hourIndex, colorMode, metricType);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType, rangeOverride);
 	fillColorBuffer(layout, colors);
 
 	const texture = new THREE.DataTexture(
@@ -263,13 +281,20 @@ export function createUtciSurfaceMesh(
 
 /**
  * Update the UTCI texture mesh with new colors for the specified hour/mode/metric.
+ * @param mesh - The UTCI surface mesh to update
+ * @param analysis - Analysis data
+ * @param hourIndex - Hour index
+ * @param colorMode - Color mode ('normalized' or 'discrete')
+ * @param metricType - Metric type ('utci' or 'shading_index')
+ * @param rangeOverride - Optional UTCI range override for unified comparison scales
  */
 export function updateUtciSurfaceTexture(
 	mesh: THREE.Mesh,
 	analysis: Analysis,
 	hourIndex: number,
 	colorMode: 'normalized' | 'discrete',
-	metricType: MetricType = 'utci'
+	metricType: MetricType = 'utci',
+	rangeOverride?: UtciRangeOverride
 ): void {
 	const layout: UtciGridLayout | undefined = mesh.userData.utciLayout;
 	if (!layout) {
@@ -289,7 +314,7 @@ export function updateUtciSurfaceTexture(
 		return;
 	}
 
-	const colors = createColors(analysis, hourIndex, colorMode, metricType);
+	const colors = createColors(analysis, hourIndex, colorMode, metricType, rangeOverride);
 	fillColorBuffer(layout, colors);
 
 	texture.needsUpdate = true;

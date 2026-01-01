@@ -1,6 +1,17 @@
 <script lang="ts">
+	/**
+	 * ScenarioSelector Component
+	 *
+	 * ABOUTME: UI component for selecting and comparing scenario variants.
+	 * When a scenario is selected, it triggers comparison mode instead of replacing
+	 * the base analysis, allowing side-by-side comparison with a curtain slider.
+	 */
 	import { loadAnalysisData } from '$lib/stores/analysisStore';
 	import { cameraStore, focusCameraOnModel } from '$lib/stores/cameraStore';
+	import {
+		comparisonStore,
+		startComparison
+	} from '$lib/stores/comparisonStore';
 	import { get } from 'svelte/store';
 	import type { Writable } from 'svelte/store';
 
@@ -36,6 +47,24 @@
 		}
 	];
 
+	// Export selected category label for use by parent components
+	export function getSelectedCategoryLabel(): string {
+		if (!selectedCategory) return '';
+		return categories.find((c) => c.value === selectedCategory)?.label ?? 'Custom';
+	}
+
+	// Export selected variant for use by parent components
+	export function getSelectedVariant(): number {
+		return selectedVariant;
+	}
+
+	// Get scenario name for comparison curtain label
+	export function getScenarioName(): string {
+		if (!selectedCategory) return 'Comparison';
+		const label = categories.find((c) => c.value === selectedCategory)?.label ?? 'Comparison';
+		return `${label} #${selectedVariant}`;
+	}
+
 	function togglePanel() {
 		isExpanded = !isExpanded;
 	}
@@ -62,32 +91,44 @@
 
 	async function loadScenario(category: string, variant: number) {
 		try {
-			// Preserve current camera state
-			const currentCameraState = get(cameraStore);
-
 			// Construct analysis ID: category/category_variant (e.g., "existing_buildings/existing_buildings_01")
 			const variantStr = variant.toString().padStart(2, '0');
 			const analysisId = `${category}/${category}_${variantStr}`;
 
-			console.log(`[SCENARIO] Loading: ${analysisId}`);
+			console.log(`[SCENARIO] Starting comparison: ${analysisId}`);
 
-			// Load analysis data (this will update the analysisStore)
-			// dataDir defaults to base path + "/data/analyses" for GitHub Pages compatibility
-			await loadAnalysisData(analysisId);
-
-			// Preserve camera position after model loads (model loaded event will handle camera focus)
-			// Note: Camera will be repositioned when model loads, but state is preserved in analysisStore
+			// Start comparison mode instead of replacing base analysis
+			// This loads the comparison analysis and enables the curtain slider
+			await startComparison(analysisId);
 		} catch (error) {
 			console.error('[SCENARIO] Failed to load scenario:', error);
 		}
+	}
+
+	// Check if currently comparing
+	$: isComparing = $comparisonStore.isComparing;
+	$: isLoading = $comparisonStore.isLoading;
+
+	// Reset selection when comparison is exited (via curtain or any other means)
+	$: if (!isComparing && selectedCategory) {
+		selectedCategory = '';
+		selectedVariant = 1;
 	}
 </script>
 
 <div class="scenario-panel">
 	<div class="scenario-summary">
-		<div class="summary-label">Active scenario</div>
+		<div class="summary-label">
+			{#if isComparing}
+				Comparing with
+			{:else}
+				Active scenario
+			{/if}
+		</div>
 		<div class="summary-value">
-			{#if selectedCategory}
+			{#if isLoading}
+				Loading scenario...
+			{:else if selectedCategory}
 				{categories.find((c) => c.value === selectedCategory)?.label ?? 'Custom'} · Variant&nbsp;{selectedVariant}
 			{:else}
 				No scenario selected
@@ -428,4 +469,5 @@
 		font-size: 10px;
 		color: var(--color-text-muted);
 	}
+
 </style>

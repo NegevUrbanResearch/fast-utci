@@ -1,4 +1,10 @@
 <script lang="ts">
+	/**
+	 * Main Page Component
+	 *
+	 * ABOUTME: The main viewer page that integrates the 3D scene, UI panels, and comparison features.
+	 * When comparison mode is active, renders both base and comparison scenes with a curtain slider.
+	 */
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
@@ -6,6 +12,7 @@
 	import { viewerStore, setAnalysisId, setLoading, setError } from '$lib/stores/viewerStore';
 	import { cameraStore, focusCameraOnModel } from '$lib/stores/cameraStore';
 	import { setDiscoveredLayers } from '$lib/stores/layerStore';
+	import { comparisonStore } from '$lib/stores/comparisonStore';
 	import { calculateModelBounds, calculateModelCenter, calculateModelSize } from '$lib/utils/bounds';
 	import Scene from '$lib/components/scene/Scene.svelte';
 	import Camera from '$lib/components/scene/Camera.svelte';
@@ -13,6 +20,8 @@
 	import GridHelper from '$lib/components/scene/GridHelper.svelte';
 	import Model from '$lib/components/scene/Model.svelte';
 	import UTCIPointCloud from '$lib/components/scene/UTCIPointCloud.svelte';
+	import ComparisonRenderer from '$lib/components/scene/ComparisonRenderer.svelte';
+	import ComparisonCurtain from '$lib/components/ui/ComparisonCurtain.svelte';
 	import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
 	import LayerControls from '$lib/components/ui/LayerControls.svelte';
 	import ColorLegend from '$lib/components/ui/ColorLegend.svelte';
@@ -54,6 +63,15 @@
 
 	// Camera reference - will be set from Camera component
 	let cameraRef: PerspectiveCamera | undefined = undefined;
+
+	// Main viewport element reference for comparison curtain positioning
+	let mainViewportElement: HTMLElement | null = null;
+
+	// Scenario selector component reference
+	let scenarioSelector: ScenarioSelector;
+
+	// Track comparison mode
+	$: isComparing = $comparisonStore.isComparing;
 
 	async function loadAnalysis(id: string) {
 		try {
@@ -195,7 +213,7 @@
 		<aside class="app-sidebar">
 			<div class="sidebar-section">
 				<div class="section-header">Scenario</div>
-				<ScenarioSelector />
+				<ScenarioSelector bind:this={scenarioSelector} />
 			</div>
 
 			<div class="sidebar-section analytics-section">
@@ -221,7 +239,7 @@
 			{/if}
 		</aside>
 
-		<main class="app-main">
+		<main class="app-main" bind:this={mainViewportElement}>
 			<!-- Color Legend positioned at bottom right of screen -->
 			<div class="legend-container">
 				<ColorLegend />
@@ -300,8 +318,21 @@
 							bind:utciSurface={utciMesh}
 						/>
 					{/if}
+
+					<!-- Comparison renderer (only active when comparing) -->
+					{#if isComparing}
+						<ComparisonRenderer baseCamera={cameraRef} />
+					{/if}
 				{/if}
 			</Scene>
+
+			<!-- Comparison curtain overlay (only visible when comparing) -->
+			{#if isComparing}
+				<ComparisonCurtain
+					containerElement={mainViewportElement}
+					comparisonScenarioName={scenarioSelector?.getScenarioName() ?? 'Comparison'}
+				/>
+			{/if}
 		</main>
 	</div>
 </div>
