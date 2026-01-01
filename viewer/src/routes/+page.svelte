@@ -18,12 +18,12 @@
 	import ColorLegend from '$lib/components/ui/ColorLegend.svelte';
 	import ScenarioSelector from '$lib/components/ui/ScenarioSelector.svelte';
 	import AnalyticsPanel from '$lib/components/ui/AnalyticsPanel.svelte';
-	import ThemeToggle from '$lib/components/ui/ThemeToggle.svelte';
 	import MetricTooltip from '$lib/components/ui/MetricTooltip.svelte';
 	import '$lib/styles/variables.css';
 	import nurLogo from '$lib/assets/Nur Logo white.svg';
 	import mitLogo from '$lib/assets/MIT.svg';
 	import bguLogo from '$lib/assets/bgu-logo.svg';
+	import sceLogo from '$lib/assets/sce-logo.svg';
 	import * as THREE from 'three';
 	import type { Group, Mesh, PerspectiveCamera } from 'three';
 	import { getTooltipData } from '$lib/services/tooltipService';
@@ -170,18 +170,18 @@
 <div class="viewer-shell">
 	<header class="app-header">
 		<div class="header-left">
-			<div class="partner-logos">
-				<img src={nurLogo} alt="NUR Negev Urban Research" class="logo logo-nur" />
-				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
-				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
-			</div>
 			<div class="header-title">
 				<div class="title-kicker">CityScope</div>
 				<div class="title-main">Urban Comfort Lab</div>
 			</div>
 		</div>
 		<div class="header-right">
-			<ThemeToggle />
+			<div class="partner-logos">
+				<img src={nurLogo} alt="NUR Negev Urban Research" class="logo logo-nur" />
+				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
+				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
+				<img src={sceLogo} alt="SCE" class="logo logo-sce" />
+			</div>
 		</div>
 	</header>
 
@@ -414,14 +414,23 @@
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
 	}
 
+	.logo-sce {
+		height: 39px;
+		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+	}
+
 	.app-body {
 		flex: 1;
 		display: grid;
-		grid-template-columns: 320px minmax(0, 1fr);
+		grid-template-columns: minmax(320px, 320px) 1fr;
+		grid-template-areas: 'sidebar main';
 		height: 100%;
+		overflow: hidden;
+		position: relative;
 	}
 
 	.app-sidebar {
+		grid-area: sidebar;
 		border-right: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-sidebar);
 		padding: 12px 10px;
@@ -429,6 +438,19 @@
 		flex-direction: column;
 		gap: 10px;
 		overflow-y: auto;
+		overflow-x: hidden;
+		scrollbar-gutter: stable;
+		width: 320px;
+		min-width: 320px;
+		max-width: 320px;
+		box-sizing: border-box;
+		flex-shrink: 0;
+		contain: layout size;
+		position: relative;
+	}
+
+	.app-main {
+		grid-area: main;
 	}
 
 	.sidebar-section {
@@ -437,6 +459,9 @@
 		box-shadow: var(--shadow-panel);
 		padding: 10px 12px;
 		border: 1px solid var(--color-border-subtle);
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	:global(html[data-theme='dark'] .app-sidebar .sidebar-section) {
@@ -491,6 +516,8 @@
 	.app-main {
 		position: relative;
 		background: var(--color-bg-page);
+		min-width: 0;
+		overflow: hidden;
 	}
 
 	.legend-container {

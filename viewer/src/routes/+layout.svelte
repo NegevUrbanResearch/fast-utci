@@ -8,21 +8,15 @@
 	onMount(() => {
 		if (typeof window === 'undefined') return;
 
-		const stored = window.localStorage.getItem('fast_utci_theme');
-		let next: 'dark' | 'light' = 'dark';
-
-		if (stored === 'dark' || stored === 'light') {
-			next = stored;
-		} else if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
-			next = 'dark';
-		}
+		// Always set dark mode as default
+		const next: 'dark' | 'light' = 'dark';
 
 		setTheme(next);
 		document.documentElement.dataset.theme = next;
 
 		const unsubscribe = viewerStore.subscribe((state) => {
-			const theme = state.theme ?? 'dark';
-			document.documentElement.dataset.theme = theme;
+			// Always enforce dark theme
+			document.documentElement.dataset.theme = 'dark';
 		});
 
 		return () => {

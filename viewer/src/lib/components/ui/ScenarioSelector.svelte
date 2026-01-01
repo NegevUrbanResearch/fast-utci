@@ -11,27 +11,27 @@
 	const categories = [
 		{
 			value: 'existing_buildings',
-			label: 'Existing Buildings',
+			label: 'Existing buildings with added mass',
 			description: 'Current buildings; taller with higher variant'
 		},
 		{
 			value: 'existing_trees',
-			label: 'Existing Trees',
+			label: 'Existing Tree Cover',
 			description: 'From no trees up to current canopy'
 		},
 		{
 			value: 'new_high_buildings',
-			label: 'New High Buildings',
+			label: 'New Highrise Buildings',
 			description: 'Adds more tall buildings to the site'
 		},
 		{
 			value: 'new_low_buildings',
-			label: 'New Low Buildings',
+			label: 'New Lowrise Buildings',
 			description: 'Adds more low and mid-rise buildings'
 		},
 		{
 			value: 'new_trees',
-			label: 'New Trees',
+			label: 'New Tree Cover',
 			description: 'Adds more new trees and shade'
 		}
 	];
@@ -148,6 +148,10 @@
 <style>
 	.scenario-panel {
 		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
+		contain: layout;
 	}
 
 	.scenario-toggle {
@@ -197,6 +201,9 @@
 
 	.scenario-summary {
 		margin-bottom: 8px;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.summary-label {
@@ -210,6 +217,18 @@
 	.summary-value {
 		font-size: 13px;
 		color: var(--color-text-primary);
+		min-height: 2.6em;
+		height: auto;
+		word-wrap: break-word;
+		overflow-wrap: break-word;
+		width: 100%;
+		max-width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+		overflow: hidden;
+		display: block;
+		white-space: normal;
+		line-height: 1.3;
 	}
 
 	.scenario-content {
@@ -220,7 +239,13 @@
 		box-shadow: var(--shadow-panel);
 		max-height: 500px;
 		overflow-y: auto;
+		overflow-x: hidden;
+		scrollbar-gutter: stable;
 		transition: max-height 0.3s ease, opacity 0.3s ease;
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.category-grid {
@@ -228,11 +253,17 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 8px;
 		margin-bottom: 10px;
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.category-card {
 		text-align: center;
 		width: 100%;
+		min-width: 0;
+		max-width: 100%;
 		min-height: 46px;
 		padding: 8px 10px;
 		border-radius: var(--radius-control);
@@ -244,6 +275,8 @@
 		justify-content: center;
 		transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 		font-family: var(--font-family);
+		box-sizing: border-box;
+		overflow: hidden;
 	}
 
 	.category-card:hover {
@@ -266,6 +299,9 @@
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
 		color: var(--color-text-primary);
+		overflow-wrap: break-word;
+		word-wrap: break-word;
+		min-width: 0;
 	}
 	.variant-buttons {
 		display: flex;
@@ -273,6 +309,10 @@
 		gap: 10px;
 		padding-top: 12px;
 		border-top: 1px solid var(--color-border-subtle);
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.variant-header {
@@ -302,6 +342,10 @@
 		display: grid;
 		grid-template-columns: repeat(5, minmax(0, 1fr));
 		gap: 6px;
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.variant-grid button {
