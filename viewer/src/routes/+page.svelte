@@ -12,7 +12,7 @@
 	import { viewerStore, setAnalysisId, setLoading, setError } from '$lib/stores/viewerStore';
 	import { cameraStore, focusCameraOnModel } from '$lib/stores/cameraStore';
 	import { setDiscoveredLayers } from '$lib/stores/layerStore';
-	import { comparisonStore } from '$lib/stores/comparisonStore';
+	import { comparisonStore, comparisonAnalysis } from '$lib/stores/comparisonStore';
 	import { calculateModelBounds, calculateModelCenter, calculateModelSize } from '$lib/utils/bounds';
 	import Scene from '$lib/components/scene/Scene.svelte';
 	import Camera from '$lib/components/scene/Camera.svelte';
@@ -69,6 +69,9 @@
 
 	// Scenario selector component reference
 	let scenarioSelector: ScenarioSelector;
+
+	// ComparisonRenderer component reference for accessing comparison UTCI mesh
+	let comparisonRenderer: ComparisonRenderer;
 
 	// Track comparison mode
 	$: isComparing = $comparisonStore.isComparing;
@@ -141,11 +144,32 @@
 		}
 
 		const canvasRect = canvasElement.getBoundingClientRect();
+
+		// Determine which side of the comparison curtain the mouse is on
+		// If in comparison mode and mouse is on the right side, use comparison data
+		let meshToRaycast = utciMesh;
+		let analysisToUse = $analysisStore;
+
+		if (isComparing && mainViewportElement) {
+			const viewportRect = mainViewportElement.getBoundingClientRect();
+			const mouseXRelative = (event.clientX - viewportRect.left) / viewportRect.width;
+			const curtainPos = $comparisonStore.curtainPosition;
+
+			// If mouse is on the right side of the curtain, use comparison data
+			if (mouseXRelative > curtainPos) {
+				const comparisonMesh = comparisonRenderer?.getComparisonUtciMesh();
+				if (comparisonMesh && $comparisonAnalysis) {
+					meshToRaycast = comparisonMesh;
+					analysisToUse = $comparisonAnalysis;
+				}
+			}
+		}
+
 		const tooltipData = getTooltipData(
 			event,
 			cameraRef,
-			utciMesh,
-			$analysisStore,
+			meshToRaycast,
+			analysisToUse,
 			$viewerStore.metricType,
 			$viewerStore.currentHour,
 			canvasRect
@@ -321,7 +345,7 @@
 
 					<!-- Comparison renderer (only active when comparing) -->
 					{#if isComparing}
-						<ComparisonRenderer baseCamera={cameraRef} />
+						<ComparisonRenderer bind:this={comparisonRenderer} baseCamera={cameraRef} />
 					{/if}
 				{/if}
 			</Scene>

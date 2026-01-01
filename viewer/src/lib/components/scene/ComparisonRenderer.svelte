@@ -57,6 +57,13 @@
 	// UTCI surface mesh for comparison scene
 	let comparisonUtciMesh: Mesh | null = null;
 
+	/**
+	 * Get the comparison UTCI mesh for external use (e.g., tooltip raycasting)
+	 */
+	export function getComparisonUtciMesh(): Mesh | null {
+		return comparisonUtciMesh;
+	}
+
 	// Loading state
 	let isLoading = false;
 	let loadError: string | null = null;
