@@ -231,9 +231,10 @@
 	.gradient {
 		width: 35px;
 		height: 250px;
-		border: 2px solid var(--color-border-strong);
 		border-radius: 5px;
-		box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
+		box-shadow: 
+			inset 0 0 5px rgba(0, 0, 0, 0.1),
+			0 0 0 1px rgba(148, 163, 184, 0.2);
 		flex-shrink: 0;
 	}
 

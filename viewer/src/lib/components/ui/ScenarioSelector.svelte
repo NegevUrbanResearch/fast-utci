@@ -114,9 +114,6 @@
 						<div class="category-content">
 							<div class="category-header">
 								<div class="category-title">{category.label}</div>
-								{#if selectedCategory === category.value}
-									<div class="category-indicator" aria-hidden="true">✓</div>
-								{/if}
 							</div>
 							<div class="category-description">{category.description}</div>
 						</div>
@@ -153,6 +150,11 @@
 </div>
 
 <style>
+	:global(button) {
+		border: none;
+		outline: none;
+	}
+
 	.scenario-panel {
 		width: 100%;
 		min-width: 0;
@@ -180,7 +182,6 @@
 
 	.scenario-toggle:hover {
 		background: var(--color-accent-soft);
-		box-shadow: 0 0 0 1px var(--color-border-subtle);
 	}
 
 	.scenario-toggle:active {
@@ -266,8 +267,8 @@
 		min-width: 0;
 		max-width: 100%;
 		padding: 0;
+		border: none;
 		border-radius: var(--radius-control);
-		border: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-panel);
 		cursor: pointer;
 		text-align: left;
@@ -292,7 +293,6 @@
 
 	.category-item:hover {
 		background: var(--color-accent-soft);
-		border-color: var(--color-border-strong);
 		transform: translateX(2px);
 	}
 
@@ -305,9 +305,7 @@
 	}
 
 	.category-item-active {
-		border-color: var(--color-accent);
 		background: var(--color-accent-soft);
-		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
 	}
 
 	.category-item-active::before {
@@ -343,21 +341,6 @@
 		line-height: 1.4;
 	}
 
-	.category-indicator {
-		flex-shrink: 0;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
-		background: var(--color-accent);
-		color: var(--color-bg-page);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 11px;
-		font-weight: 700;
-		line-height: 1;
-	}
-
 	.category-description {
 		font-size: 11px;
 		color: var(--color-text-secondary);
@@ -370,8 +353,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding-top: 12px;
-		border-top: 1px solid var(--color-border-subtle);
+		padding: 12px;
+		margin-top: 12px;
+		background: rgba(15, 23, 42, 0.4);
+		border-radius: var(--radius-control);
 		width: 100%;
 		min-width: 0;
 		max-width: 100%;
@@ -414,19 +399,18 @@
 	.variant-grid button {
 		width: 100%;
 		padding: 8px 0;
+		border: none;
 		border-radius: var(--radius-control);
-		border: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-panel);
 		color: var(--color-text-primary);
 		font-weight: 600;
 		font-size: 12px;
 		cursor: pointer;
-		transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+		transition: background 0.15s ease, transform 0.1s ease;
 	}
 
 	.variant-grid button:hover {
 		background: var(--color-accent-soft);
-		border-color: var(--color-border-strong);
 	}
 
 	.variant-grid button:active {
@@ -434,8 +418,6 @@
 	}
 
 	.variant-grid button.selected {
-		border-color: var(--color-accent);
-		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
 		background: var(--color-accent-soft);
 	}
 

@@ -26,16 +26,16 @@
 		gap: 6px;
 		padding: 4px 8px;
 		border-radius: 999px;
-		border: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-panel-soft);
 		color: var(--color-text-secondary);
 		font-size: 11px;
 		font-family: var(--font-family);
 		cursor: pointer;
+		transition: background 0.15s ease;
 	}
 
 	.theme-toggle:hover {
-		border-color: var(--color-border-strong);
+		background: var(--color-accent-soft);
 	}
 
 	.label {

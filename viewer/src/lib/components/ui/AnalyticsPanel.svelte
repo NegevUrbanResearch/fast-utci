@@ -223,7 +223,6 @@
 		font-weight: 600;
 		font-size: 13px;
 		margin-bottom: 8px;
-		border-bottom: 1px solid var(--color-border-subtle);
 		padding-bottom: 4px;
 		color: var(--color-text-primary);
 	}

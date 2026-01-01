@@ -114,7 +114,6 @@
 	.layer-item.active {
 		opacity: 1;
 		background-color: var(--color-accent-soft);
-		border-color: var(--color-border-subtle);
 	}
 
 	.layer-item:hover {
@@ -173,7 +172,6 @@
 		height: 16px;
 		border-radius: 999px;
 		margin-right: 9px;
-		border: 1px solid var(--color-border-subtle);
 		flex-shrink: 0;
 		box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6);
 	}

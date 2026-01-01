@@ -332,10 +332,10 @@
 		justify-content: space-between;
 		align-items: center;
 		padding: 8px 18px;
-		border-bottom: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-header);
 		backdrop-filter: blur(16px);
 		z-index: 10;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 	}
 
 	.header-left {
@@ -431,7 +431,6 @@
 
 	.app-sidebar {
 		grid-area: sidebar;
-		border-right: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-sidebar);
 		padding: 12px 10px;
 		display: flex;
@@ -447,6 +446,7 @@
 		flex-shrink: 0;
 		contain: layout size;
 		position: relative;
+		box-shadow: 2px 0 12px rgba(0, 0, 0, 0.12);
 	}
 
 	.app-main {
@@ -458,7 +458,6 @@
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
 		padding: 10px 12px;
-		border: 1px solid var(--color-border-subtle);
 		min-width: 0;
 		max-width: 100%;
 		box-sizing: border-box;

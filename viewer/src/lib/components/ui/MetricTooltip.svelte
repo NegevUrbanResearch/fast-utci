@@ -66,7 +66,6 @@
 		pointer-events: none;
 		z-index: var(--z-tooltip);
 		background: var(--color-bg-panel);
-		border: 1px solid var(--color-border-subtle);
 		border-radius: var(--radius-panel);
 		padding: var(--spacing-sm) var(--spacing-md);
 		box-shadow: var(--shadow-tooltip);
@@ -122,7 +121,6 @@
 	.tooltip-description {
 		margin-top: 6px;
 		padding-top: 6px;
-		border-top: 1px solid var(--color-border-subtle);
 		color: var(--color-text-secondary);
 		font-size: 12px;
 		font-weight: 500;
