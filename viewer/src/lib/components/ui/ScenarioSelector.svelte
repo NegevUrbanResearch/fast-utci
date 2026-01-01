@@ -12,7 +12,7 @@
 		{
 			value: 'existing_buildings',
 			label: 'Existing buildings with added mass',
-			description: 'Current buildings; taller with higher variant'
+			description: 'Current buildings made higher'
 		},
 		{
 			value: 'existing_trees',
@@ -32,7 +32,7 @@
 		{
 			value: 'new_trees',
 			label: 'New Tree Cover',
-			description: 'Adds more new trees and shade'
+			description: 'Adds more tree cover'
 		}
 	];
 
@@ -103,16 +103,23 @@
 
 	{#if isExpanded}
 		<div class="scenario-content">
-			<div class="category-grid" role="list">
+			<div class="category-list" role="list">
 				{#each categories as category}
 					<button
 						type="button"
-						role="listitem"
-						class="category-card"
-						class:category-card-active={selectedCategory === category.value}
+						class="category-item"
+						class:category-item-active={selectedCategory === category.value}
 						on:click={() => applyCategory(category.value)}
 					>
-						<div class="card-title">{category.label}</div>
+						<div class="category-content">
+							<div class="category-header">
+								<div class="category-title">{category.label}</div>
+								{#if selectedCategory === category.value}
+									<div class="category-indicator" aria-hidden="true">✓</div>
+								{/if}
+							</div>
+							<div class="category-description">{category.description}</div>
+						</div>
 					</button>
 				{/each}
 			</div>
@@ -237,21 +244,16 @@
 		padding: 12px;
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
-		max-height: 500px;
-		overflow-y: auto;
-		overflow-x: hidden;
-		scrollbar-gutter: stable;
-		transition: max-height 0.3s ease, opacity 0.3s ease;
 		width: 100%;
 		min-width: 0;
 		max-width: 100%;
 		box-sizing: border-box;
 	}
 
-	.category-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 8px;
+	.category-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 		margin-bottom: 10px;
 		width: 100%;
 		min-width: 0;
@@ -259,49 +261,110 @@
 		box-sizing: border-box;
 	}
 
-	.category-card {
-		text-align: center;
+	.category-item {
 		width: 100%;
 		min-width: 0;
 		max-width: 100%;
-		min-height: 46px;
-		padding: 8px 10px;
+		padding: 0;
 		border-radius: var(--radius-control);
 		border: 1px solid var(--color-border-subtle);
 		background: var(--color-bg-panel);
 		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+		text-align: left;
+		transition: all 0.2s ease;
 		font-family: var(--font-family);
 		box-sizing: border-box;
 		overflow: hidden;
+		position: relative;
 	}
 
-	.category-card:hover {
+	.category-item::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 3px;
+		background: var(--color-accent);
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.category-item:hover {
 		background: var(--color-accent-soft);
 		border-color: var(--color-border-strong);
+		transform: translateX(2px);
 	}
 
-	.category-card:active {
-		transform: translateY(1px);
+	.category-item:hover::before {
+		opacity: 0.6;
 	}
 
-	.category-card-active {
+	.category-item:active {
+		transform: translateX(1px);
+	}
+
+	.category-item-active {
 		border-color: var(--color-accent);
-		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+		background: var(--color-accent-soft);
+		box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
 	}
 
-	.card-title {
-		font-size: 12px;
+	.category-item-active::before {
+		opacity: 1;
+	}
+
+	.category-content {
+		padding: 10px 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 100%;
+		box-sizing: border-box;
+	}
+
+	.category-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		width: 100%;
+	}
+
+	.category-title {
+		font-size: 13px;
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+		letter-spacing: 0.02em;
 		color: var(--color-text-primary);
 		overflow-wrap: break-word;
 		word-wrap: break-word;
 		min-width: 0;
+		flex: 1;
+		line-height: 1.4;
+	}
+
+	.category-indicator {
+		flex-shrink: 0;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--color-accent);
+		color: var(--color-bg-page);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 11px;
+		font-weight: 700;
+		line-height: 1;
+	}
+
+	.category-description {
+		font-size: 11px;
+		color: var(--color-text-secondary);
+		line-height: 1.4;
+		margin-top: 2px;
+		overflow-wrap: break-word;
+		word-wrap: break-word;
 	}
 	.variant-buttons {
 		display: flex;
