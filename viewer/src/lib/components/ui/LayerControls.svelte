@@ -18,174 +18,144 @@
 </script>
 
 <div class="layer-controls">
-	<div class="layers-caption">Toggle visibility in the 3D model</div>
-
 	{#each STANDARD_LAYER_TYPES as layer}
 		{#if $discoveredLayersStore.includes(layer.id) && !HIDDEN_LAYERS.includes(layer.id)}
-			<div
-				class="layer-item"
+			<button
+				type="button"
+				class="layer-button"
 				class:active={$layerStore[layer.id] ?? layer.defaultVisible}
-				role="button"
-				tabindex="0"
 				on:click={() => handleToggle(layer.id)}
-				on:keydown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						handleToggle(layer.id);
-					}
-				}}
+				aria-label="Toggle {layer.displayName} layer visibility"
+				aria-pressed={$layerStore[layer.id] ?? layer.defaultVisible}
 			>
 				<div class="layer-color" style="background-color: {LAYER_MATERIALS[layer.id]?.color || '#95a5a6'};"></div>
-				<div class="layer-label">{layer.displayName}</div>
-			</div>
+				<span class="layer-label">{layer.displayName}</span>
+			</button>
 		{/if}
 	{/each}
 	
 	<!-- Show any discovered layers that aren't in the standard list and aren't hidden -->
 	{#each $discoveredLayersStore as layerId}
 		{#if !STANDARD_LAYER_TYPES.some(l => l.id === layerId) && !HIDDEN_LAYERS.includes(layerId)}
-			<div
-				class="layer-item"
+			<button
+				type="button"
+				class="layer-button"
 				class:active={$layerStore[layerId] ?? true}
-				role="button"
-				tabindex="0"
 				on:click={() => handleToggle(layerId)}
-				on:keydown={(e) => {
-					if (e.key === 'Enter' || e.key === ' ') {
-						e.preventDefault();
-						handleToggle(layerId);
-					}
-				}}
+				aria-label="Toggle {layerId} layer visibility"
+				aria-pressed={$layerStore[layerId] ?? true}
 			>
 				<div class="layer-color" style="background-color: {LAYER_MATERIALS[layerId]?.color || '#95a5a6'};"></div>
-				<div class="layer-label">{layerId.charAt(0).toUpperCase() + layerId.slice(1)}</div>
-			</div>
+				<span class="layer-label">{layerId.charAt(0).toUpperCase() + layerId.slice(1)}</span>
+			</button>
 		{/if}
 	{/each}
 	
 	<!-- UTCI/Shading Index Data Layer -->
-	<div
-		class="layer-item"
+	<button
+		type="button"
+		class="layer-button"
 		class:active={$viewerStore.utciVisible}
-		role="button"
-		tabindex="0"
 		on:click={handleUtciToggle}
-		on:keydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				handleUtciToggle();
-			}
-		}}
+		aria-label="Toggle {$viewerStore.metricType === 'shading_index' ? 'Shading Index' : 'UTCI'} data layer visibility"
+		aria-pressed={$viewerStore.utciVisible}
 	>
 		<div class="layer-color utci-gradient"></div>
-		<div class="layer-label">
+		<span class="layer-label">
 			{$viewerStore.metricType === 'shading_index' ? 'Shading Index Data' : 'UTCI Data'}
-		</div>
-	</div>
+		</span>
+	</button>
 </div>
 
 <style>
 	.layer-controls {
-		font-family: var(--font-family);
-		font-size: 13px;
 		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		flex-direction: row;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-family);
 	}
 
-	.layer-item {
+	.layer-button {
 		display: flex;
 		align-items: center;
-		padding: 6px 9px;
+		justify-content: flex-start;
+		gap: 6px;
+		height: 26px;
+		min-width: 100px;
+		padding: 4px 10px;
 		cursor: pointer;
 		border-radius: var(--radius-control);
-		border: 1px solid transparent;
-		position: relative;
-		padding-right: 40px;
+		border: 1px solid var(--color-border-subtle);
+		background: transparent;
 		transition:
 			background-color 0.15s ease,
 			border-color 0.15s ease,
-			color 0.15s ease,
 			opacity 0.15s ease,
 			transform 0.08s ease;
-		opacity: 0.65;
+		opacity: 0.7;
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--color-text-secondary);
+		user-select: none;
+		-webkit-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
+		white-space: nowrap;
 	}
 
-	.layer-item.active {
+	.layer-button.active {
 		opacity: 1;
 		background-color: var(--color-accent-soft);
+		border-color: rgba(56, 189, 248, 0.8);
+		border-width: 1.5px;
+		color: var(--color-text-primary);
 	}
 
-	.layer-item:hover {
-		background-color: rgba(148, 163, 184, 0.16);
+	.layer-button:hover {
+		background-color: rgba(148, 163, 184, 0.12);
+		border-color: var(--color-border-strong);
+		transform: scale(1.02);
 	}
 
-	.layer-item:active {
-		transform: translateY(1px);
+	.layer-button.active:hover {
+		background-color: var(--color-accent-soft);
+		border-color: var(--color-accent);
 	}
 
-	.layer-item:focus {
+	.layer-button:active {
+		transform: scale(0.98);
+	}
+
+	.layer-button:focus {
 		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
-	.layer-item::after {
-		content: '';
-		position: absolute;
-		right: 8px;
-		top: 50%;
-		transform: translateY(-50%);
-		width: 26px;
-		height: 14px;
-		border-radius: 999px;
-		background: rgba(148, 163, 184, 0.45);
-		transition: background-color 0.15s ease;
-	}
-
-	.layer-item::before {
-		content: '';
-		position: absolute;
-		right: 18px;
-		top: 50%;
-		transform: translate(0, -50%);
-		width: 12px;
-		height: 12px;
-		border-radius: 999px;
-		background: #f9fafb;
-		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.5);
-		border: 1px solid rgba(15, 23, 42, 0.55);
-		transition:
-			transform 0.15s ease,
-			background-color 0.15s ease;
-	}
-
-	.layer-item.active::after {
-		background: rgba(56, 189, 248, 0.55);
-	}
-
-	.layer-item.active::before {
-		transform: translate(10px, -50%);
+	.layer-button:focus:not(:focus-visible) {
+		outline: none;
 	}
 
 	.layer-color {
-		width: 16px;
-		height: 16px;
+		width: 10px;
+		height: 10px;
 		border-radius: 999px;
-		margin-right: 9px;
 		flex-shrink: 0;
-		box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.6);
+		border: 1px solid rgba(15, 23, 42, 0.3);
+		transition: opacity 0.15s ease;
+	}
+
+	.layer-button.active .layer-color {
+		opacity: 1;
+	}
+
+	.layer-button:not(.active) .layer-color {
+		opacity: 0.6;
 	}
 
 	.layer-label {
-		flex: 1;
-		color: var(--color-text-primary);
-		user-select: none;
-	}
-
-	.layers-caption {
-		font-size: 12px;
-		color: var(--color-text-secondary);
-		margin-bottom: 2px;
+		line-height: 1.2;
+		flex-shrink: 0;
 	}
 
 	.utci-gradient {

@@ -175,6 +175,12 @@
 				<div class="title-main">Urban Comfort Lab</div>
 			</div>
 		</div>
+		<div class="header-center">
+			<div class="layers-section">
+				<div class="layers-title">Layers</div>
+				<LayerControls />
+			</div>
+		</div>
 		<div class="header-right">
 			<div class="partner-logos">
 				<img src={nurLogo} alt="NUR Negev Urban Research" class="logo logo-nur" />
@@ -204,11 +210,6 @@
 				{#if analyticsOpen}
 					<AnalyticsPanel />
 				{/if}
-			</div>
-
-			<div class="sidebar-section">
-				<div class="section-header">Model Layers</div>
-				<LayerControls />
 			</div>
 
 			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day' && $viewerStore.metricType === 'utci'}
@@ -336,6 +337,7 @@
 		backdrop-filter: blur(16px);
 		z-index: 10;
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+		gap: 20px;
 	}
 
 	.header-left {
@@ -361,6 +363,32 @@
 		font-size: 16px;
 		font-weight: 600;
 		letter-spacing: 0.02em;
+	}
+
+	.header-center {
+		display: flex;
+		align-items: center;
+		flex: 1;
+		justify-content: center;
+		min-width: 0;
+	}
+
+	.layers-section {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: center;
+		gap: 4px;
+	}
+
+	.layers-title {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--color-text-secondary);
+		line-height: 1.2;
+		margin: 0;
 	}
 
 	.header-right {

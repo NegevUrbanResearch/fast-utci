@@ -520,6 +520,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 		padding: var(--spacing-lg);
 		border-radius: var(--radius-panel);
 		box-shadow: var(--shadow-panel);
+		-webkit-backdrop-filter: blur(12px);
 		backdrop-filter: blur(12px);
 	}
 
@@ -542,7 +543,10 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 
 	.dial-viewport {
 		position: absolute;
-		inset: 0;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
 		pointer-events: none;
 	}
 
@@ -633,10 +637,6 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 		letter-spacing: 0.08em;
 		color: var(--color-text-secondary);
 		line-height: 1.1;
-	}
-
-	.mode-caption-secondary {
-		align-self: center;
 	}
 
 	.mode-toggle-vertical {
