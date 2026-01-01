@@ -45,8 +45,8 @@
   "num_positions": 104445,
   "model_file": "data/3d_models/scenarios/new_low_buildings/new_low_buildings_06.glb",
   "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
-  "generation_date": "2025-11-11T13:22:58.094129",
-  "runtime_seconds": 23.232703699963167,
+  "generation_date": "2026-01-01T14:00:05.944499",
+  "runtime_seconds": 32.20020990003832,
   "coordinate_system": "xy_ground",
   "hour_statistics": [
     {
@@ -194,6 +194,11 @@
       "mean": 23.690214004048258
     }
   ],
+  "has_shading_index": true,
+  "shading_index_range": {
+    "min": 0.0,
+    "max": 1.0
+  },
   "location": {
     "latitude": 31.2515,
     "longitude": 34.7995,

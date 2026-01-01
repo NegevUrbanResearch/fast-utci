@@ -45,8 +45,8 @@
   "num_positions": 104445,
   "model_file": "data/3d_models/scenarios/existing_trees/existing_trees_09.glb",
   "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
-  "generation_date": "2025-11-11T13:15:41.027284",
-  "runtime_seconds": 21.786162600037642,
+  "generation_date": "2026-01-01T13:50:20.332782",
+  "runtime_seconds": 29.536476700101048,
   "coordinate_system": "xy_ground",
   "hour_statistics": [
     {
@@ -194,6 +194,11 @@
       "mean": 23.42007795161775
     }
   ],
+  "has_shading_index": true,
+  "shading_index_range": {
+    "min": 0.0,
+    "max": 1.0
+  },
   "location": {
     "latitude": 31.2515,
     "longitude": 34.7995,
