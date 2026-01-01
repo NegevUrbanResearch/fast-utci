@@ -139,8 +139,7 @@
 			{#if hasShadingIndex}
 				<div class="metric-column">
 					<div class="mode-caption">
-						<span>Metric</span>
-						<span class="mode-caption-secondary">Type</span>
+						<span>Metric Type</span>
 					</div>
 					<div class="mode-toggle-vertical" aria-label="Metric type" role="toolbar">
 						<button
@@ -164,9 +163,6 @@
 						</button>
 					</div>
 					<div class="mode-help">
-						{#if !isUTCI}
-							Shading Index - proportion of time shaded during sunlight hours.
-						{/if}
 					</div>
 				</div>
 			{/if}
@@ -219,15 +215,17 @@
 	.gradient-row {
 		display: flex;
 		align-items: flex-start;
-		gap: 10px;
+		gap: 20px;
 	}
 
 	.gradient-container {
 		position: relative;
-		display: inline-flex;
+		display: flex;
 		align-items: stretch;
 		gap: var(--spacing-md);
 		margin-bottom: var(--spacing-md);
+		width: 103px;
+		flex-shrink: 0;
 	}
 
 	.gradient {
@@ -236,28 +234,32 @@
 		border: 2px solid var(--color-border-strong);
 		border-radius: 5px;
 		box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.1);
+		flex-shrink: 0;
 	}
 
 	.labels {
 		position: relative;
 		height: 250px;
 		width: 60px;
+		flex-shrink: 0;
 	}
 
 	.label {
 		position: absolute;
-		left: 8px;
+		right: 0px;
 		transform: translateY(-50%);
 		font-size: 12px;
 		font-weight: 500;
 		white-space: nowrap;
 		color: var(--color-text-primary);
+		text-align: left;
+		min-width: 50px;
 	}
 
 	.metric-column {
 		display: flex;
 		flex-direction: column;
-		align-items: stretch;
+		align-items: center;
 		gap: 8px;
 		min-width: 0;
 		max-width: 130px;
@@ -266,17 +268,16 @@
 	.mode-caption {
 		display: flex;
 		flex-direction: column;
-		align-items: flex-start;
+		align-items: center;
 		font-size: 12px;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--color-text-secondary);
 		line-height: 1.1;
+		text-align: center;
 	}
 
-	.mode-caption-secondary {
-		align-self: flex-start;
-	}
+
 
 	.mode-toggle-vertical {
 		display: flex;
@@ -299,7 +300,7 @@
 		padding: 6px 12px;
 		border-radius: 999px;
 		cursor: pointer;
-		text-align: left;
+		text-align: center;
 		transition:
 			background 0.16s ease,
 			color 0.16s ease;
@@ -330,6 +331,11 @@
 		font-size: 12px;
 		color: var(--color-text-muted);
 		line-height: 1.4;
+		min-height: 2.8em;
+		text-align: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 </style>
 

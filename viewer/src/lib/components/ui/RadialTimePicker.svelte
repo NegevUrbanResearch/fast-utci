@@ -476,8 +476,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 		{#if showColorModeToggle()}
 			<div class="color-mode-section">
 				<div class="mode-caption">
-					<span>Color scale</span>
-					<span class="mode-caption-secondary">Mode</span>
+					<span>Color scale Mode</span>
 				</div>
 				<div class="mode-toggle-vertical" aria-label="Color scale mode" role="toolbar">
 					<button
@@ -628,7 +627,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 	.mode-caption {
 		display: flex;
 		flex-direction: column;
-		align-items: flex-start;
+		align-items: center;
 		font-size: 12px;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
@@ -637,7 +636,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 	}
 
 	.mode-caption-secondary {
-		align-self: flex-start;
+		align-self: center;
 	}
 
 	.mode-toggle-vertical {
@@ -661,7 +660,7 @@ function mergeAndSortPhaseMarkers(customMarkers: PhaseMarker[], fallbackMarkers:
 		padding: 6px 12px;
 		border-radius: 999px;
 		cursor: pointer;
-		text-align: left;
+		text-align: center;
 		transition:
 			background 0.16s ease,
 			color 0.16s ease;
