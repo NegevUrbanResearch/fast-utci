@@ -18,8 +18,8 @@ const config = {
 			strict: true
 		}),
 		paths: {
-			// Set base path for GitHub Pages (repo name + /viewer/build/)
-			base: process.env.NODE_ENV === 'production' ? '/fast-utci/viewer/build' : ''
+			// Base path - empty for custom domain (utci.nurlab.org)
+			base: ''
 		}
 	}
 };

@@ -44,18 +44,21 @@ jobs:
       
       - name: Build viewer
         working-directory: viewer
-        run: npm run build:gh
+        run: npm run build
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
       
       - name: Prepare deployment directory
         run: |
-          mkdir -p _site/viewer
-          cp .nojekyll _site/ 2>/dev/null || true
-          cp index.html _site/
-          cp -r viewer/build _site/viewer/
+          # Create _site directory
+          mkdir -p _site
+          # Copy SvelteKit build output directly to root
+          cp -r viewer/build/* _site/
+          # Copy data directory
           cp -r data _site/
+          # Ensure .nojekyll exists for GitHub Pages
+          touch _site/.nojekyll
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
