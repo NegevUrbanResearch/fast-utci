@@ -9,7 +9,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { useThrelte } from '@threlte/core';
 	import { T } from '@threlte/core';
-	import { comparisonStore, curtainPosition, comparisonAnalysis, unifiedUtciRange } from '$lib/stores/comparisonStore';
+	import { comparisonStore, curtainPosition, comparisonAnalysis, unifiedUtciRange, setComparisonModelLoading } from '$lib/stores/comparisonStore';
 	import { cameraStore } from '$lib/stores/cameraStore';
 	import { layerStore, discoveredLayersStore, setDiscoveredLayers } from '$lib/stores/layerStore';
 	import { viewerStore } from '$lib/stores/viewerStore';
@@ -244,6 +244,7 @@
 
 		console.log(`[COMPARISON RENDERER] Loading model: ${modelPath}`);
 		isLoading = true;
+		setComparisonModelLoading(true);
 		loadError = null;
 
 		try {
@@ -285,15 +286,18 @@
 				modelGroup = processLoadedModel(gltf.scene, analysis, modelPath);
 			}
 
-			// Clear old model from comparison scene
+			// Add new model to comparison scene FIRST (before removing old one)
+			// This prevents the scene from being empty during the transition
+			comparisonScene.add(modelGroup);
+
+			// Clear old model from comparison scene AFTER new one is added
 			if (comparisonModel && comparisonScene) {
 				comparisonScene.remove(comparisonModel);
 				disposeGroup(comparisonModel);
 			}
 
-			// Add new model to comparison scene
+			// Update reference to new model
 			comparisonModel = modelGroup;
-			comparisonScene.add(comparisonModel);
 
 			// Discover layers for visibility sync
 			comparisonLayerMap = discoverLayersForComparison(comparisonModel);
@@ -313,6 +317,7 @@
 
 			loadedAnalysisId = modelPath;
 			isLoading = false;
+			setComparisonModelLoading(false);
 
 			console.log(`[COMPARISON RENDERER] Model loaded successfully`);
 			invalidate();
@@ -320,6 +325,7 @@
 			console.error('[COMPARISON RENDERER] Failed to load model:', error);
 			loadError = error instanceof Error ? error.message : 'Failed to load comparison model';
 			isLoading = false;
+			setComparisonModelLoading(false);
 		}
 	}
 
@@ -486,6 +492,10 @@
 		// Reset UTCI update state tracking
 		lastUtciUpdateState = null;
 		
+		// Reset loading state
+		isLoading = false;
+		setComparisonModelLoading(false);
+		
 		// Restore base-only layers in the store
 		restoreBaseOnlyLayers();
 	}
@@ -542,7 +552,8 @@
 		}
 
 		// Render comparison scene on RIGHT side (curtainX to end)
-		if (curtainX < width && comparisonScene) {
+		// Only render if scene exists AND model is loaded (prevents empty scene flash)
+		if (curtainX < width && comparisonScene && comparisonModel) {
 			renderer.setViewport(0, 0, width, height);
 			renderer.setScissor(curtainX, 0, width - curtainX, height);
 			renderer.render(comparisonScene, comparisonCamera);

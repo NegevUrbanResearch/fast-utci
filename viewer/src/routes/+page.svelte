@@ -76,6 +76,12 @@
 	// Track comparison mode
 	$: isComparing = $comparisonStore.isComparing;
 
+	// Reactive scenario name for comparison curtain label
+	// Watch comparisonAnalysisId to trigger updates when scenarios change
+	$: comparisonScenarioName = (isComparing && scenarioSelector && $comparisonStore.comparisonAnalysisId)
+		? scenarioSelector.getScenarioName()
+		: 'Comparison';
+
 	async function loadAnalysis(id: string) {
 		try {
 			modelLoading = true;
@@ -285,9 +291,23 @@
 				<div class="overlay-message error">Error: {$viewerStore.error}</div>
 			{/if}
 
-			{#if modelLoading}
-				<div class="model-loading-backdrop" aria-hidden="true"></div>
-				<div class="model-loading-overlay" aria-live="polite">
+			{#if modelLoading || ($comparisonStore.isComparing && $comparisonStore.modelLoading)}
+				<div 
+					class="model-loading-backdrop" 
+					class:comparison-mode={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading}
+					style={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading 
+						? `--curtain-position: ${$comparisonStore.curtainPosition}` 
+						: ''}
+					aria-hidden="true"
+				></div>
+				<div 
+					class="model-loading-overlay" 
+					class:comparison-mode={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading}
+					style={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading 
+						? `--curtain-position: ${$comparisonStore.curtainPosition}` 
+						: ''}
+					aria-live="polite"
+				>
 					<div class="spinner"></div>
 					<div class="loading-text">Preparing model…</div>
 				</div>
@@ -354,7 +374,7 @@
 			{#if isComparing}
 				<ComparisonCurtain
 					containerElement={mainViewportElement}
-					comparisonScenarioName={scenarioSelector?.getScenarioName() ?? 'Comparison'}
+					comparisonScenarioName={comparisonScenarioName}
 				/>
 			{/if}
 		</main>
@@ -641,6 +661,11 @@
 		transition: opacity 0.25s ease-out;
 	}
 
+	.model-loading-backdrop.comparison-mode {
+		left: calc(var(--curtain-position) * 100%);
+		right: 0;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.model-loading-backdrop {
 			transition: none;
@@ -667,6 +692,11 @@
 		align-items: center;
 		gap: 10px;
 		text-align: center;
+	}
+
+	.model-loading-overlay.comparison-mode {
+		left: calc(50% + var(--curtain-position) * 50%);
+		transform: translate(-50%, -50%);
 	}
 
 	.model-loading-overlay .loading-text {

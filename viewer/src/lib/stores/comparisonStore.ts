@@ -25,6 +25,8 @@ export interface ComparisonState {
 	curtainPosition: number;
 	/** Whether comparison analysis is loading */
 	isLoading: boolean;
+	/** Whether comparison model is loading */
+	modelLoading: boolean;
 	/** Error message if comparison loading failed */
 	error: string | null;
 }
@@ -38,6 +40,7 @@ const defaultComparisonState: ComparisonState = {
 	comparisonAnalysis: null,
 	curtainPosition: 0.5,
 	isLoading: false,
+	modelLoading: false,
 	error: null
 };
 
@@ -160,6 +163,11 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 	// For now we allow it but log a warning
 	console.log(`[COMPARISON] Starting comparison: base vs ${comparisonAnalysisId}`);
 
+	// Preserve curtain position if already comparing (switching scenarios),
+	// otherwise reset to center (starting new comparison)
+	const preservePosition = currentState.isComparing;
+	const newCurtainPosition = preservePosition ? currentState.curtainPosition : 0.5;
+
 	// Set loading state
 	comparisonStore.update((state) => ({
 		...state,
@@ -167,7 +175,7 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		isLoading: true,
 		error: null,
 		comparisonAnalysisId,
-		curtainPosition: 0.5 // Reset curtain to center
+		curtainPosition: newCurtainPosition
 	}));
 
 	try {
@@ -245,4 +253,16 @@ export function nudgeCurtain(direction: 'left' | 'right', amount: number = 0.05)
 	const delta = direction === 'left' ? -amount : amount;
 	const currentPosition = get(comparisonStore).curtainPosition;
 	setCurtainPosition(currentPosition + delta);
+}
+
+/**
+ * Set comparison model loading state
+ *
+ * @param loading - Whether the comparison model is loading
+ */
+export function setComparisonModelLoading(loading: boolean): void {
+	comparisonStore.update((state) => ({
+		...state,
+		modelLoading: loading
+	}));
 }
