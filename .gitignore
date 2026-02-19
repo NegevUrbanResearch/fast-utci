@@ -15,6 +15,7 @@ venv/
 
 # IDE
 .playwright-mcp
+.cursor/
 
 # Project specific
 cache/
@@ -52,3 +53,4 @@ site/
 !data/analyses/*.json
 !data/analyses/*.bin
 !data/analyses/manifest.json
+.cursor/plans/weather-api-integration.plan.md

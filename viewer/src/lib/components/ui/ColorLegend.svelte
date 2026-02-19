@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { analysisStore } from '$lib/stores/analysisStore';
-	import { viewerStore, setMetricType } from '$lib/stores/viewerStore';
-	import { 
-		LADYBUG_NUANCED_COLORS, 
+	import { analysisStore } from "$lib/stores/analysisStore";
+	import { viewerStore, setMetricType } from "$lib/stores/viewerStore";
+	import {
+		LADYBUG_NUANCED_COLORS,
 		SHADING_INDEX_COLORS,
-		createShadingIndexLegendData 
-	} from '$lib/services/colorScale';
-	import type { MetricType } from '$lib/types/viewer';
+		createShadingIndexLegendData,
+	} from "$lib/services/colorScale";
+	import type { MetricType } from "$lib/types/viewer";
 
 	let utciMin = 0;
 	let utciMax = 100;
@@ -14,12 +14,15 @@
 	let shadingIndexMax = 1;
 
 	$: if ($analysisStore) {
-		if ($viewerStore.metricType === 'utci') {
-			if ($viewerStore.colorMode === 'normalized') {
+		if ($viewerStore.metricType === "utci") {
+			if ($viewerStore.colorMode === "normalized") {
 				utciMin = $analysisStore.metadata.utci_range.min;
 				utciMax = $analysisStore.metadata.utci_range.max;
 			} else {
-				const hourStat = $analysisStore.metadata.hour_statistics?.[$viewerStore.currentHour];
+				const hourStat =
+					$analysisStore.metadata.hour_statistics?.[
+						$viewerStore.currentHour
+					];
 				if (hourStat) {
 					utciMin = hourStat.min;
 					utciMax = hourStat.max;
@@ -31,48 +34,66 @@
 		} else {
 			// Shading Index
 			if ($analysisStore.metadata.shading_index_range) {
-				shadingIndexMin = $analysisStore.metadata.shading_index_range.min;
-				shadingIndexMax = $analysisStore.metadata.shading_index_range.max;
+				shadingIndexMin =
+					$analysisStore.metadata.shading_index_range.min;
+				shadingIndexMax =
+					$analysisStore.metadata.shading_index_range.max;
 			}
 		}
 	}
 
 	// Make these reactive to ensure updates
-	$: isUTCI = $viewerStore.metricType === 'utci';
-	$: isShadingIndex = $viewerStore.metricType === 'shading_index';
+	$: isUTCI = $viewerStore.metricType === "utci";
+	$: isShadingIndex = $viewerStore.metricType === "shading_index";
 	$: hasShadingIndex = $analysisStore?.metadata.has_shading_index ?? false;
 
 	function selectUTCI() {
 		if (!isUTCI) {
-			setMetricType('utci');
+			setMetricType("utci");
 		}
 	}
 
 	function selectShadingIndex() {
 		if (!isShadingIndex && hasShadingIndex) {
-			setMetricType('shading_index');
+			setMetricType("shading_index");
 		}
 	}
 
 	// Create UTCI gradient (reactive to metricType to force update)
-	$: utciGradient = $viewerStore.metricType === 'utci' ? [...LADYBUG_NUANCED_COLORS].reverse().map((color, i) => {
-		const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
-		const start = (i * stepSize).toFixed(2);
-		const end = ((i + 1) * stepSize).toFixed(2);
-		return `${color} ${start}%, ${color} ${end}%`;
-	}).join(', ') : '';
+	$: utciGradient =
+		$viewerStore.metricType === "utci"
+			? [...LADYBUG_NUANCED_COLORS]
+					.reverse()
+					.map((color, i) => {
+						const stepSize = 100 / LADYBUG_NUANCED_COLORS.length;
+						const start = (i * stepSize).toFixed(2);
+						const end = ((i + 1) * stepSize).toFixed(2);
+						return `${color} ${start}%, ${color} ${end}%`;
+					})
+					.join(", ")
+			: "";
 
 	// Create Shading Index gradient (reactive to metricType to force update)
 	// Reverse the gradient so high values (excellent, green) are at top, low values (poor, red) at bottom
-	$: shadingIndexGradient = $viewerStore.metricType === 'shading_index' ? [...createShadingIndexLegendData()].reverse().map((item, i) => {
-		const stepSize = 100 / 4; // 4 categories
-		const start = (i * stepSize).toFixed(2);
-		const end = ((i + 1) * stepSize).toFixed(2);
-		return `${item.color} ${start}%, ${item.color} ${end}%`;
-	}).join(', ') : '';
+	$: shadingIndexGradient =
+		$viewerStore.metricType === "shading_index"
+			? [...createShadingIndexLegendData()]
+					.reverse()
+					.map((item, i) => {
+						const stepSize = 100 / 4; // 4 categories
+						const start = (i * stepSize).toFixed(2);
+						const end = ((i + 1) * stepSize).toFixed(2);
+						return `${item.color} ${start}%, ${item.color} ${end}%`;
+					})
+					.join(", ")
+			: "";
 
-	$: shadingIndexLabels = $viewerStore.metricType === 'shading_index' ? createShadingIndexLegendData() : [];
-	$: shadingIndexLabelsReversed = shadingIndexLabels.length > 0 ? [...shadingIndexLabels].reverse() : [];
+	$: shadingIndexLabels =
+		$viewerStore.metricType === "shading_index"
+			? createShadingIndexLegendData()
+			: [];
+	$: shadingIndexLabelsReversed =
+		shadingIndexLabels.length > 0 ? [...shadingIndexLabels].reverse() : [];
 </script>
 
 {#if $analysisStore}
@@ -96,7 +117,8 @@
 					></div>
 					<div class="labels">
 						{#each Array(6) as _, i}
-							{@const temp = utciMax - (i * (utciMax - utciMin) / 5)}
+							{@const temp =
+								utciMax - (i * (utciMax - utciMin)) / 5}
 							{@const position = (i / 5) * 100}
 							<div class="label" style="top: {position}%">
 								{temp.toFixed(1)}°C
@@ -112,25 +134,15 @@
 						{#if shadingIndexLabels.length > 0}
 							<!-- Show all category boundaries: 1.0, 0.9, 0.7, 0.5, 0.0 -->
 							<!-- Top: 1.0 (excellent max) -->
-							<div class="label" style="top: 0%">
-								1.0
-							</div>
+							<div class="label" style="top: 0%">1.0</div>
 							<!-- 0.9 (boundary between excellent and good) -->
-							<div class="label" style="top: 25%">
-								0.9
-							</div>
+							<div class="label" style="top: 25%">0.9</div>
 							<!-- 0.7 (boundary between good and acceptable) -->
-							<div class="label" style="top: 50%">
-								0.7
-							</div>
+							<div class="label" style="top: 50%">0.7</div>
 							<!-- 0.5 (boundary between acceptable and poor) -->
-							<div class="label" style="top: 75%">
-								0.5
-							</div>
+							<div class="label" style="top: 75%">0.5</div>
 							<!-- Bottom: 0.0 (poor min) -->
-							<div class="label" style="top: 100%">
-								0.0
-							</div>
+							<div class="label" style="top: 100%">0.0</div>
 						{/if}
 					</div>
 				{/if}
@@ -141,7 +153,11 @@
 					<div class="mode-caption">
 						<span>Metric Type</span>
 					</div>
-					<div class="mode-toggle-vertical" aria-label="Metric type" role="toolbar">
+					<div
+						class="mode-toggle-vertical"
+						aria-label="Metric type"
+						role="toolbar"
+					>
 						<button
 							type="button"
 							class="mode-pill-vertical"
@@ -162,8 +178,7 @@
 							<span class="mode-pill-label">Shading</span>
 						</button>
 					</div>
-					<div class="mode-help">
-					</div>
+					<div class="mode-help"></div>
 				</div>
 			{/if}
 		</div>
@@ -185,7 +200,7 @@
 
 	.title {
 		font-weight: 600;
-		font-size: 14px;
+		font-size: var(--font-md);
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--color-text-primary);
@@ -196,20 +211,6 @@
 		align-items: baseline;
 		justify-content: space-between;
 		margin-bottom: var(--spacing-sm);
-	}
-
-	.range {
-		font-size: 12px;
-	}
-
-	.range-values {
-		color: var(--color-text-primary);
-	}
-
-	.hour-label {
-		font-size: 11px;
-		color: var(--color-text-secondary);
-		margin-left: 4px;
 	}
 
 	.gradient-row {
@@ -232,7 +233,7 @@
 		width: 35px;
 		height: 250px;
 		border-radius: 5px;
-		box-shadow: 
+		box-shadow:
 			inset 0 0 5px rgba(0, 0, 0, 0.1),
 			0 0 0 1px rgba(148, 163, 184, 0.2);
 		flex-shrink: 0;
@@ -249,7 +250,7 @@
 		position: absolute;
 		right: 0px;
 		transform: translateY(-50%);
-		font-size: 12px;
+		font-size: var(--font-xs);
 		font-weight: 500;
 		white-space: nowrap;
 		color: var(--color-text-primary);
@@ -270,15 +271,13 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		font-size: 12px;
+		font-size: var(--font-xs);
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--color-text-secondary);
 		line-height: 1.1;
 		text-align: center;
 	}
-
-
 
 	.mode-toggle-vertical {
 		display: flex;
@@ -297,7 +296,7 @@
 		border: none;
 		background: transparent;
 		color: var(--color-text-secondary);
-		font-size: 12px;
+		font-size: var(--font-xs);
 		padding: 6px 12px;
 		border-radius: 999px;
 		cursor: pointer;
@@ -305,6 +304,7 @@
 		transition:
 			background 0.16s ease,
 			color 0.16s ease;
+		font-family: var(--font-family);
 	}
 
 	.mode-pill-vertical:hover {
@@ -312,7 +312,11 @@
 	}
 
 	.mode-pill-vertical-active {
-		background: linear-gradient(to bottom, rgba(56, 189, 248, 0.24), rgba(56, 189, 248, 0.55));
+		background: linear-gradient(
+			to bottom,
+			rgba(56, 189, 248, 0.24),
+			rgba(56, 189, 248, 0.55)
+		);
 		color: var(--color-bg-elevated);
 	}
 
@@ -329,7 +333,7 @@
 	}
 
 	.mode-help {
-		font-size: 12px;
+		font-size: var(--font-xs);
 		color: var(--color-text-muted);
 		line-height: 1.4;
 		min-height: 2.8em;
@@ -339,5 +343,3 @@
 		justify-content: center;
 	}
 </style>
-
-
