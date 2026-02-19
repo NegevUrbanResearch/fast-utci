@@ -6,9 +6,17 @@
 
 :root {
 	/* Typography */
-	--font-family: 'Arimo', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+	--font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
 		Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji',
 		'Segoe UI Emoji';
+
+	/* Font Sizes (Bumped up for better readability) */
+	--font-xxs: 11px;
+	--font-xs: 12px;
+	--font-sm: 13px;
+	--font-md: 14px;
+	--font-lg: 16px;
+	--font-xl: 20px;
 
 	/* Spacing */
 	--spacing-xs: 4px;
@@ -87,4 +95,3 @@
 	--color-accent-soft: rgba(14, 165, 233, 0.14);
 	--shadow-panel: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
-

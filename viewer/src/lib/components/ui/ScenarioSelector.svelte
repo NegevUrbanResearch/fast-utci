@@ -6,51 +6,54 @@
 	 * When a scenario is selected, it triggers comparison mode instead of replacing
 	 * the base analysis, allowing side-by-side comparison with a curtain slider.
 	 */
-	import { loadAnalysisData } from '$lib/stores/analysisStore';
-	import { cameraStore, focusCameraOnModel } from '$lib/stores/cameraStore';
+	import { loadAnalysisData } from "$lib/stores/analysisStore";
+	import { cameraStore, focusCameraOnModel } from "$lib/stores/cameraStore";
 	import {
 		comparisonStore,
-		startComparison
-	} from '$lib/stores/comparisonStore';
-	import { get } from 'svelte/store';
-	import type { Writable } from 'svelte/store';
+		startComparison,
+	} from "$lib/stores/comparisonStore";
+	import { get } from "svelte/store";
+	import type { Writable } from "svelte/store";
 
 	let isExpanded = false;
-	let selectedCategory = '';
+	let selectedCategory = "";
 	let selectedVariant = 1;
 
 	const categories = [
 		{
-			value: 'existing_buildings',
-			label: 'Existing buildings with added mass',
-			description: 'Current buildings made higher'
+			value: "existing_buildings",
+			label: "Existing buildings with added mass",
+			description: "Current buildings made higher",
 		},
 		{
-			value: 'existing_trees',
-			label: 'Existing Tree Cover',
-			description: 'From no trees up to current canopy'
+			value: "existing_trees",
+			label: "Existing Tree Cover",
+			description: "From no trees up to current canopy",
 		},
 		{
-			value: 'new_high_buildings',
-			label: 'New Highrise Buildings',
-			description: 'Adds more tall buildings to the site'
+			value: "new_high_buildings",
+			label: "New Highrise Buildings",
+			description: "Adds more tall buildings to the site",
 		},
 		{
-			value: 'new_low_buildings',
-			label: 'New Lowrise Buildings',
-			description: 'Adds more low and mid-rise buildings'
+			value: "new_low_buildings",
+			label: "New Lowrise Buildings",
+			description: "Adds more low and mid-rise buildings",
 		},
 		{
-			value: 'new_trees',
-			label: 'New Tree Cover',
-			description: 'Adds more tree cover'
-		}
+			value: "new_trees",
+			label: "New Tree Cover",
+			description: "Adds more tree cover",
+		},
 	];
 
 	// Export selected category label for use by parent components
 	export function getSelectedCategoryLabel(): string {
-		if (!selectedCategory) return '';
-		return categories.find((c) => c.value === selectedCategory)?.label ?? 'Custom';
+		if (!selectedCategory) return "";
+		return (
+			categories.find((c) => c.value === selectedCategory)?.label ??
+			"Custom"
+		);
 	}
 
 	// Export selected variant for use by parent components
@@ -60,8 +63,10 @@
 
 	// Get scenario name for comparison curtain label
 	export function getScenarioName(): string {
-		if (!selectedCategory) return 'Comparison';
-		const label = categories.find((c) => c.value === selectedCategory)?.label ?? 'Comparison';
+		if (!selectedCategory) return "Comparison";
+		const label =
+			categories.find((c) => c.value === selectedCategory)?.label ??
+			"Comparison";
 		return `${label} #${selectedVariant}`;
 	}
 
@@ -92,7 +97,7 @@
 	async function loadScenario(category: string, variant: number) {
 		try {
 			// Construct analysis ID: category/category_variant (e.g., "existing_buildings/existing_buildings_01")
-			const variantStr = variant.toString().padStart(2, '0');
+			const variantStr = variant.toString().padStart(2, "0");
 			const analysisId = `${category}/${category}_${variantStr}`;
 
 			console.log(`[SCENARIO] Starting comparison: ${analysisId}`);
@@ -101,7 +106,7 @@
 			// This loads the comparison analysis and enables the curtain slider
 			await startComparison(analysisId);
 		} catch (error) {
-			console.error('[SCENARIO] Failed to load scenario:', error);
+			console.error("[SCENARIO] Failed to load scenario:", error);
 		}
 	}
 
@@ -111,7 +116,7 @@
 
 	// Reset selection when comparison is exited (via curtain or any other means)
 	$: if (!isComparing && selectedCategory) {
-		selectedCategory = '';
+		selectedCategory = "";
 		selectedVariant = 1;
 	}
 </script>
@@ -129,7 +134,8 @@
 			{#if isLoading}
 				Loading scenario...
 			{:else if selectedCategory}
-				{categories.find((c) => c.value === selectedCategory)?.label ?? 'Custom'} · Variant&nbsp;{selectedVariant}
+				{categories.find((c) => c.value === selectedCategory)?.label ??
+					"Custom"} · Variant&nbsp;{selectedVariant}
 			{:else}
 				No scenario selected
 			{/if}
@@ -138,8 +144,10 @@
 
 	<button class="scenario-toggle" type="button" on:click={togglePanel}>
 		<span class="toggle-title">Browse variants</span>
-		<span class="toggle-meta">{isExpanded ? 'Hide options' : 'Compare design scenarios'}</span>
-		<span class="chevron" aria-hidden="true">{isExpanded ? '▴' : '▾'}</span>
+		<span class="toggle-meta"
+			>{isExpanded ? "Hide options" : "Compare design scenarios"}</span
+		>
+		<span class="chevron" aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
 	</button>
 
 	{#if isExpanded}
@@ -149,14 +157,19 @@
 					<button
 						type="button"
 						class="category-item"
-						class:category-item-active={selectedCategory === category.value}
+						class:category-item-active={selectedCategory ===
+							category.value}
 						on:click={() => applyCategory(category.value)}
 					>
 						<div class="category-content">
 							<div class="category-header">
-								<div class="category-title">{category.label}</div>
+								<div class="category-title">
+									{category.label}
+								</div>
 							</div>
-							<div class="category-description">{category.description}</div>
+							<div class="category-description">
+								{category.description}
+							</div>
 						</div>
 					</button>
 				{/each}
@@ -168,7 +181,11 @@
 						<div class="variant-title">Variant</div>
 						<span class="variant-badge">#{selectedVariant}</span>
 					</div>
-					<div class="variant-grid" role="group" aria-label="Select variant">
+					<div
+						class="variant-grid"
+						role="group"
+						aria-label="Select variant"
+					>
 						{#each Array(10) as _, idx}
 							<button
 								type="button"
@@ -212,9 +229,12 @@
 		border: none;
 		border-radius: var(--radius-control);
 		cursor: pointer;
-		font-size: 13px;
+		font-size: var(--font-sm);
 		font-weight: 500;
-		transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+		transition:
+			background 0.15s ease,
+			box-shadow 0.15s ease,
+			transform 0.1s ease;
 		font-family: var(--font-family);
 		display: flex;
 		align-items: center;
@@ -232,12 +252,12 @@
 	.toggle-title {
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		color: var(--color-text-secondary);
 	}
 
 	.toggle-meta {
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		color: var(--color-text-muted);
 		margin-left: 8px;
 		flex: 1;
@@ -256,7 +276,7 @@
 	}
 
 	.summary-label {
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--color-text-secondary);
@@ -264,7 +284,7 @@
 	}
 
 	.summary-value {
-		font-size: 13px;
+		font-size: var(--font-sm);
 		color: var(--color-text-primary);
 		min-height: 2.6em;
 		height: auto;
@@ -321,7 +341,7 @@
 	}
 
 	.category-item::before {
-		content: '';
+		content: "";
 		position: absolute;
 		left: 0;
 		top: 0;
@@ -371,7 +391,7 @@
 	}
 
 	.category-title {
-		font-size: 13px;
+		font-size: var(--font-sm);
 		font-weight: 600;
 		letter-spacing: 0.02em;
 		color: var(--color-text-primary);
@@ -383,7 +403,7 @@
 	}
 
 	.category-description {
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		color: var(--color-text-secondary);
 		line-height: 1.4;
 		margin-top: 2px;
@@ -413,14 +433,14 @@
 
 	.variant-title {
 		font-weight: 600;
-		font-size: 12px;
+		font-size: var(--font-xs);
 		color: var(--color-text-primary);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
 
 	.variant-badge {
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		padding: 2px 8px;
 		border-radius: 999px;
 		background: var(--color-accent-soft);
@@ -445,9 +465,11 @@
 		background: var(--color-bg-panel);
 		color: var(--color-text-primary);
 		font-weight: 600;
-		font-size: 12px;
+		font-size: var(--font-xs);
 		cursor: pointer;
-		transition: background 0.15s ease, transform 0.1s ease;
+		transition:
+			background 0.15s ease,
+			transform 0.1s ease;
 	}
 
 	.variant-grid button:hover {
@@ -466,8 +488,7 @@
 		display: flex;
 		justify-content: space-between;
 		width: 100%;
-		font-size: 10px;
+		font-size: var(--font-xxs); /* Really small hints */
 		color: var(--color-text-muted);
 	}
-
 </style>

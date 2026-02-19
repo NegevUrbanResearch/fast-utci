@@ -1,12 +1,17 @@
 <script lang="ts">
-	import { layerStore, toggleLayer, discoveredLayersStore } from '$lib/stores/layerStore';
-	import { STANDARD_LAYER_TYPES } from '$lib/types/layerMaterials';
-	import { LAYER_MATERIALS } from '$lib/types/layerMaterials';
-	import { viewerStore, setUtciVisible } from '$lib/stores/viewerStore';
-	import type { MetricType } from '$lib/types/viewer';
+	import {
+		layerStore,
+		toggleLayer,
+		discoveredLayersStore,
+	} from "$lib/stores/layerStore";
+	import { STANDARD_LAYER_TYPES } from "$lib/types/layerMaterials";
+	import { LAYER_MATERIALS } from "$lib/types/layerMaterials";
+	import { viewerStore, setUtciVisible } from "$lib/stores/viewerStore";
+
+	export let placement: "header" | "sidebar" = "header";
 
 	// Layers to hide from UI (we don't care about them currently)
-	const HIDDEN_LAYERS = ['base', 'road', 'sidewalk', 'unknown'];
+	const HIDDEN_LAYERS = ["base", "road", "sidewalk", "unknown"];
 
 	function handleToggle(layerId: string) {
 		toggleLayer(layerId);
@@ -17,7 +22,7 @@
 	}
 </script>
 
-<div class="layer-controls">
+<div class="layer-controls" data-placement={placement}>
 	{#each STANDARD_LAYER_TYPES as layer}
 		{#if $discoveredLayersStore.includes(layer.id) && !HIDDEN_LAYERS.includes(layer.id)}
 			<button
@@ -28,15 +33,19 @@
 				aria-label="Toggle {layer.displayName} layer visibility"
 				aria-pressed={$layerStore[layer.id] ?? layer.defaultVisible}
 			>
-				<div class="layer-color" style="background-color: {LAYER_MATERIALS[layer.id]?.color || '#95a5a6'};"></div>
+				<div
+					class="layer-color"
+					style="background-color: {LAYER_MATERIALS[layer.id]
+						?.color || '#95a5a6'};"
+				></div>
 				<span class="layer-label">{layer.displayName}</span>
 			</button>
 		{/if}
 	{/each}
-	
+
 	<!-- Show any discovered layers that aren't in the standard list and aren't hidden -->
 	{#each $discoveredLayersStore as layerId}
-		{#if !STANDARD_LAYER_TYPES.some(l => l.id === layerId) && !HIDDEN_LAYERS.includes(layerId)}
+		{#if !STANDARD_LAYER_TYPES.some((l) => l.id === layerId) && !HIDDEN_LAYERS.includes(layerId)}
 			<button
 				type="button"
 				class="layer-button"
@@ -45,24 +54,34 @@
 				aria-label="Toggle {layerId} layer visibility"
 				aria-pressed={$layerStore[layerId] ?? true}
 			>
-				<div class="layer-color" style="background-color: {LAYER_MATERIALS[layerId]?.color || '#95a5a6'};"></div>
-				<span class="layer-label">{layerId.charAt(0).toUpperCase() + layerId.slice(1)}</span>
+				<div
+					class="layer-color"
+					style="background-color: {LAYER_MATERIALS[layerId]?.color ||
+						'#95a5a6'};"
+				></div>
+				<span class="layer-label"
+					>{layerId.charAt(0).toUpperCase() + layerId.slice(1)}</span
+				>
 			</button>
 		{/if}
 	{/each}
-	
+
 	<!-- UTCI/Shading Index Data Layer -->
 	<button
 		type="button"
 		class="layer-button"
 		class:active={$viewerStore.utciVisible}
 		on:click={handleUtciToggle}
-		aria-label="Toggle {$viewerStore.metricType === 'shading_index' ? 'Shading Index' : 'UTCI'} data layer visibility"
+		aria-label="Toggle {$viewerStore.metricType === 'shading_index'
+			? 'Shading Index'
+			: 'UTCI'} data layer visibility"
 		aria-pressed={$viewerStore.utciVisible}
 	>
 		<div class="layer-color utci-gradient"></div>
 		<span class="layer-label">
-			{$viewerStore.metricType === 'shading_index' ? 'Shading Index Data' : 'UTCI Data'}
+			{$viewerStore.metricType === "shading_index"
+				? "Shading Index Data"
+				: "UTCI Data"}
 		</span>
 	</button>
 </div>
@@ -74,6 +93,7 @@
 		align-items: center;
 		gap: 6px;
 		font-family: var(--font-family);
+		min-width: 0;
 	}
 
 	.layer-button {
@@ -94,14 +114,16 @@
 			opacity 0.15s ease,
 			transform 0.08s ease;
 		opacity: 0.7;
-		font-size: 11px;
+		font-size: var(--font-xxs);
 		font-weight: 500;
 		color: var(--color-text-secondary);
 		user-select: none;
 		-webkit-user-select: none;
 		-moz-user-select: none;
 		-ms-user-select: none;
+		-ms-user-select: none;
 		white-space: nowrap;
+		font-family: var(--font-family);
 	}
 
 	.layer-button.active {
@@ -158,16 +180,44 @@
 		flex-shrink: 0;
 	}
 
+	.layer-controls[data-placement="sidebar"] {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 8px;
+	}
+
+	.layer-controls[data-placement="sidebar"] .layer-button {
+		width: 100%;
+		min-width: 0;
+		height: 32px;
+		padding: 8px 12px;
+		font-size: var(--font-xs);
+	}
+
+	.layer-controls[data-placement="sidebar"] .layer-button:hover {
+		transform: none;
+	}
+
+	.layer-controls[data-placement="sidebar"] .layer-button:active {
+		transform: translateY(1px);
+	}
+
+	.layer-controls[data-placement="sidebar"] .layer-label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
 	.utci-gradient {
-		background: linear-gradient(to bottom, 
-			#d73027 0%, 
-			#fc8d59 20%, 
-			#fee08b 40%, 
-			#d9ef8b 60%, 
-			#91cf60 80%, 
+		background: linear-gradient(
+			to bottom,
+			#d73027 0%,
+			#fc8d59 20%,
+			#fee08b 40%,
+			#d9ef8b 60%,
+			#91cf60 80%,
 			#1a9850 100%
 		);
 	}
 </style>
-
-

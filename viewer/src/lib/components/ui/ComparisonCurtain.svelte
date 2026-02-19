@@ -10,18 +10,18 @@
 	 * - Double-click to snap to center
 	 * - Labels showing base vs comparison scenario names
 	 */
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy } from "svelte";
 	import {
 		comparisonStore,
 		setCurtainPosition,
 		snapCurtainToAnchor,
 		nudgeCurtain,
-		stopComparison
-	} from '$lib/stores/comparisonStore';
+		stopComparison,
+	} from "$lib/stores/comparisonStore";
 
 	// Props
 	export let containerElement: HTMLElement | null = null;
-	export let comparisonScenarioName: string = 'Comparison';
+	export let comparisonScenarioName: string = "Comparison";
 
 	// Local state
 	let isDragging = false;
@@ -41,7 +41,7 @@
 		const rect = container.getBoundingClientRect();
 
 		let clientX: number;
-		if ('touches' in event) {
+		if ("touches" in event) {
 			clientX = event.touches[0].clientX;
 		} else {
 			clientX = event.clientX;
@@ -73,13 +73,15 @@
 		isDragging = true;
 
 		// Add global listeners
-		if ('touches' in event) {
-			document.addEventListener('touchmove', handlePointerMove, { passive: false });
-			document.addEventListener('touchend', handlePointerUp);
-			document.addEventListener('touchcancel', handlePointerUp);
+		if ("touches" in event) {
+			document.addEventListener("touchmove", handlePointerMove, {
+				passive: false,
+			});
+			document.addEventListener("touchend", handlePointerUp);
+			document.addEventListener("touchcancel", handlePointerUp);
 		} else {
-			document.addEventListener('mousemove', handlePointerMove);
-			document.addEventListener('mouseup', handlePointerUp);
+			document.addEventListener("mousemove", handlePointerMove);
+			document.addEventListener("mouseup", handlePointerUp);
 		}
 	}
 
@@ -102,18 +104,18 @@
 		isDragging = false;
 
 		// Remove global listeners
-		document.removeEventListener('mousemove', handlePointerMove);
-		document.removeEventListener('mouseup', handlePointerUp);
-		document.removeEventListener('touchmove', handlePointerMove);
-		document.removeEventListener('touchend', handlePointerUp);
-		document.removeEventListener('touchcancel', handlePointerUp);
+		document.removeEventListener("mousemove", handlePointerMove);
+		document.removeEventListener("mouseup", handlePointerUp);
+		document.removeEventListener("touchmove", handlePointerMove);
+		document.removeEventListener("touchend", handlePointerUp);
+		document.removeEventListener("touchcancel", handlePointerUp);
 	}
 
 	/**
 	 * Handle double-click on handle to snap to center
 	 */
 	function handleDoubleClick(): void {
-		snapCurtainToAnchor('center');
+		snapCurtainToAnchor("center");
 	}
 
 	/**
@@ -123,23 +125,23 @@
 		if (!handleElement?.contains(document.activeElement)) return;
 
 		switch (event.key) {
-			case 'ArrowLeft':
+			case "ArrowLeft":
 				event.preventDefault();
-				nudgeCurtain('left');
+				nudgeCurtain("left");
 				break;
-			case 'ArrowRight':
+			case "ArrowRight":
 				event.preventDefault();
-				nudgeCurtain('right');
+				nudgeCurtain("right");
 				break;
-			case 'Home':
+			case "Home":
 				event.preventDefault();
-				snapCurtainToAnchor('left');
+				snapCurtainToAnchor("left");
 				break;
-			case 'End':
+			case "End":
 				event.preventDefault();
-				snapCurtainToAnchor('right');
+				snapCurtainToAnchor("right");
 				break;
-			case 'Escape':
+			case "Escape":
 				event.preventDefault();
 				stopComparison();
 				break;
@@ -149,17 +151,17 @@
 	/**
 	 * Handle anchor click
 	 */
-	function handleAnchorClick(anchor: 'left' | 'right'): void {
+	function handleAnchorClick(anchor: "left" | "right"): void {
 		snapCurtainToAnchor(anchor);
 	}
 
 	// Add keyboard listener
 	onMount(() => {
-		document.addEventListener('keydown', handleKeyDown);
+		document.addEventListener("keydown", handleKeyDown);
 	});
 
 	onDestroy(() => {
-		document.removeEventListener('keydown', handleKeyDown);
+		document.removeEventListener("keydown", handleKeyDown);
 		handlePointerUp(); // Clean up any active drag
 	});
 
@@ -176,7 +178,7 @@
 		type="button"
 		class="anchor anchor-left"
 		class:active={$comparisonStore.curtainPosition === 0}
-		on:click={() => handleAnchorClick('left')}
+		on:click={() => handleAnchorClick("left")}
 		aria-label="Show base only"
 	>
 		<span class="anchor-label">Base</span>
@@ -213,7 +215,7 @@
 		type="button"
 		class="anchor anchor-right"
 		class:active={$comparisonStore.curtainPosition === 1}
-		on:click={() => handleAnchorClick('right')}
+		on:click={() => handleAnchorClick("right")}
 		aria-label="Show comparison only"
 	>
 		<span class="anchor-label">{comparisonScenarioName}</span>
@@ -239,7 +241,9 @@
 		left: calc(var(--curtain-position) * 100%);
 		z-index: var(--z-panel);
 		pointer-events: none;
+		pointer-events: none;
 		transform: translateX(-50%);
+		font-family: var(--font-family);
 	}
 
 	.curtain-line {
@@ -270,7 +274,9 @@
 		align-items: center;
 		justify-content: center;
 		box-shadow: var(--shadow-panel);
-		transition: transform 0.1s ease, box-shadow 0.15s ease;
+		transition:
+			transform 0.1s ease,
+			box-shadow 0.15s ease;
 	}
 
 	.curtain-handle:hover {
@@ -310,8 +316,11 @@
 		padding: 4px 8px;
 		cursor: pointer;
 		pointer-events: auto;
-		transition: background 0.15s ease, transform 0.1s ease;
+		transition:
+			background 0.15s ease,
+			transform 0.1s ease;
 		box-shadow: var(--shadow-panel);
+		font-family: var(--font-family);
 	}
 
 	.anchor:hover {
@@ -338,7 +347,7 @@
 	}
 
 	.anchor-label {
-		font-size: 10px;
+		font-size: var(--font-xxs);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
@@ -360,8 +369,11 @@
 		padding: 6px 10px;
 		cursor: pointer;
 		pointer-events: auto;
-		transition: background 0.15s ease, border-color 0.15s ease;
+		transition:
+			background 0.15s ease,
+			border-color 0.15s ease;
 		box-shadow: var(--shadow-panel);
+		font-family: var(--font-family);
 	}
 
 	.exit-button:hover {
@@ -370,17 +382,19 @@
 	}
 
 	.exit-icon {
-		font-size: 12px;
+		font-size: var(--font-xs);
 		font-weight: 700;
 		color: var(--color-danger);
 		line-height: 1;
 	}
 
 	.exit-text {
-		font-size: 10px;
+		font-size: var(--font-xxs);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
+		letter-spacing: 0.06em;
 		color: var(--color-text-secondary);
+		font-family: var(--font-family);
 	}
 </style>

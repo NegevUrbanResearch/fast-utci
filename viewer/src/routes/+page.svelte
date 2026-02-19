@@ -5,41 +5,53 @@
 	 * ABOUTME: The main viewer page that integrates the 3D scene, UI panels, and comparison features.
 	 * When comparison mode is active, renders both base and comparison scenes with a curtain slider.
 	 */
-	import { onMount, onDestroy } from 'svelte';
-	import { page } from '$app/stores';
-	import { base } from '$app/paths';
-	import { analysisStore, loadAnalysisData } from '$lib/stores/analysisStore';
-	import { viewerStore, setAnalysisId, setLoading, setError } from '$lib/stores/viewerStore';
-	import { cameraStore, focusCameraOnModel } from '$lib/stores/cameraStore';
-	import { setDiscoveredLayers } from '$lib/stores/layerStore';
-	import { comparisonStore, comparisonAnalysis } from '$lib/stores/comparisonStore';
-	import { calculateModelBounds, calculateModelCenter, calculateModelSize } from '$lib/utils/bounds';
-	import Scene from '$lib/components/scene/Scene.svelte';
-	import Camera from '$lib/components/scene/Camera.svelte';
-	import Lights from '$lib/components/scene/Lights.svelte';
-	import GridHelper from '$lib/components/scene/GridHelper.svelte';
-	import Model from '$lib/components/scene/Model.svelte';
-	import UTCIPointCloud from '$lib/components/scene/UTCIPointCloud.svelte';
-	import ComparisonRenderer from '$lib/components/scene/ComparisonRenderer.svelte';
-	import ComparisonCurtain from '$lib/components/ui/ComparisonCurtain.svelte';
-	import RadialTimePicker from '$lib/components/ui/RadialTimePicker.svelte';
-	import LayerControls from '$lib/components/ui/LayerControls.svelte';
-	import ColorLegend from '$lib/components/ui/ColorLegend.svelte';
-	import ScenarioSelector from '$lib/components/ui/ScenarioSelector.svelte';
-	import AnalyticsPanel from '$lib/components/ui/AnalyticsPanel.svelte';
-	import MetricTooltip from '$lib/components/ui/MetricTooltip.svelte';
-	import '$lib/styles/variables.css';
-	import nurLogo from '$lib/assets/Nur Logo white.svg';
-	import mitLogo from '$lib/assets/MIT.svg';
-	import bguLogo from '$lib/assets/bgu-logo.svg';
-	import sceLogo from '$lib/assets/sce-logo.svg';
-	import * as THREE from 'three';
-	import type { Group, Mesh, PerspectiveCamera } from 'three';
-	import { getTooltipData } from '$lib/services/tooltipService';
+	import { onMount, onDestroy } from "svelte";
+	import { page } from "$app/stores";
+	import { base } from "$app/paths";
+	import { analysisStore, loadAnalysisData } from "$lib/stores/analysisStore";
+	import {
+		viewerStore,
+		setAnalysisId,
+		setLoading,
+		setError,
+	} from "$lib/stores/viewerStore";
+	import { cameraStore, focusCameraOnModel } from "$lib/stores/cameraStore";
+	import { setDiscoveredLayers } from "$lib/stores/layerStore";
+	import {
+		comparisonStore,
+		comparisonAnalysis,
+	} from "$lib/stores/comparisonStore";
+	import {
+		calculateModelBounds,
+		calculateModelCenter,
+		calculateModelSize,
+	} from "$lib/utils/bounds";
+	import Scene from "$lib/components/scene/Scene.svelte";
+	import Camera from "$lib/components/scene/Camera.svelte";
+	import Lights from "$lib/components/scene/Lights.svelte";
+	import GridHelper from "$lib/components/scene/GridHelper.svelte";
+	import Model from "$lib/components/scene/Model.svelte";
+	import UTCIPointCloud from "$lib/components/scene/UTCIPointCloud.svelte";
+	import ComparisonRenderer from "$lib/components/scene/ComparisonRenderer.svelte";
+	import ComparisonCurtain from "$lib/components/ui/ComparisonCurtain.svelte";
+	import RadialTimePicker from "$lib/components/ui/RadialTimePicker.svelte";
+	import LayerControls from "$lib/components/ui/LayerControls.svelte";
+	import ColorLegend from "$lib/components/ui/ColorLegend.svelte";
+	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
+	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
+	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
+	import "$lib/styles/variables.css";
+	import nurLogo from "$lib/assets/Nur Logo white.svg";
+	import mitLogo from "$lib/assets/MIT.svg";
+	import bguLogo from "$lib/assets/bgu-logo.svg";
+	import sceLogo from "$lib/assets/sce-logo.svg";
+	import * as THREE from "three";
+	import type { Group, Mesh, PerspectiveCamera } from "three";
+	import { getTooltipData } from "$lib/services/tooltipService";
 
 	const getDataBasePath = () => {
-		const basePath = base || '';
-		return basePath.replace(/\/viewer\/build$/, '');
+		const basePath = base || "";
+		return basePath.replace(/\/viewer\/build$/, "");
 	};
 
 	let model: Group | null = null;
@@ -50,7 +62,7 @@
 	let hasFitOnce = false;
 	let lastModelFile: string | null = null;
 
-	let analysisId: string = '20250815_grid_2m_fullday';
+	let analysisId: string = "20250815_grid_2m_fullday";
 	let mounted = false;
 
 	// Tooltip state
@@ -78,9 +90,10 @@
 
 	// Reactive scenario name for comparison curtain label
 	// Watch comparisonAnalysisId to trigger updates when scenarios change
-	$: comparisonScenarioName = (isComparing && scenarioSelector && $comparisonStore.comparisonAnalysisId)
-		? scenarioSelector.getScenarioName()
-		: 'Comparison';
+	$: comparisonScenarioName =
+		isComparing && scenarioSelector && $comparisonStore.comparisonAnalysisId
+			? scenarioSelector.getScenarioName()
+			: "Comparison";
 
 	async function loadAnalysis(id: string) {
 		try {
@@ -97,26 +110,32 @@
 				focusCameraOnModel(center, size);
 			}
 		} catch (error) {
-			console.error('[ERROR] Failed to load analysis:', error);
-			setError(error instanceof Error ? error.message : 'Failed to load analysis');
+			console.error("[ERROR] Failed to load analysis:", error);
+			setError(
+				error instanceof Error
+					? error.message
+					: "Failed to load analysis",
+			);
 		} finally {
 			setLoading(false);
 		}
 	}
 
 	onMount(() => {
-		if (typeof window !== 'undefined') {
+		if (typeof window !== "undefined") {
 			const params = new URLSearchParams(window.location.search);
-			analysisId = params.get('analysis') || '20250815_grid_2m_fullday';
+			analysisId = params.get("analysis") || "20250815_grid_2m_fullday";
 
-			console.log('[OK] Viewer initialized');
+			console.log("[OK] Viewer initialized");
 			mounted = true;
 			loadAnalysis(analysisId);
 		}
 	});
 
-	$: if (typeof window !== 'undefined' && $page.url.searchParams && mounted) {
-		const newAnalysisId = $page.url.searchParams.get('analysis') || '20250815_grid_2m_fullday';
+	$: if (typeof window !== "undefined" && $page.url.searchParams && mounted) {
+		const newAnalysisId =
+			$page.url.searchParams.get("analysis") ||
+			"20250815_grid_2m_fullday";
 		if (newAnalysisId !== analysisId) {
 			analysisId = newAnalysisId;
 			loadAnalysis(analysisId);
@@ -144,7 +163,13 @@
 		}
 		lastTooltipUpdate = now;
 
-		if (!utciMesh || !$analysisStore || !$viewerStore.utciVisible || !canvasElement || !cameraRef) {
+		if (
+			!utciMesh ||
+			!$analysisStore ||
+			!$viewerStore.utciVisible ||
+			!canvasElement ||
+			!cameraRef
+		) {
 			tooltipVisible = false;
 			return;
 		}
@@ -158,12 +183,14 @@
 
 		if (isComparing && mainViewportElement) {
 			const viewportRect = mainViewportElement.getBoundingClientRect();
-			const mouseXRelative = (event.clientX - viewportRect.left) / viewportRect.width;
+			const mouseXRelative =
+				(event.clientX - viewportRect.left) / viewportRect.width;
 			const curtainPos = $comparisonStore.curtainPosition;
 
 			// If mouse is on the right side of the curtain, use comparison data
 			if (mouseXRelative > curtainPos) {
-				const comparisonMesh = comparisonRenderer?.getComparisonUtciMesh();
+				const comparisonMesh =
+					comparisonRenderer?.getComparisonUtciMesh();
 				if (comparisonMesh && $comparisonAnalysis) {
 					meshToRaycast = comparisonMesh;
 					analysisToUse = $comparisonAnalysis;
@@ -178,7 +205,7 @@
 			analysisToUse,
 			$viewerStore.metricType,
 			$viewerStore.currentHour,
-			canvasRect
+			canvasRect,
 		);
 
 		if (tooltipData) {
@@ -200,43 +227,49 @@
 
 	$: if (canvasElement && mounted && !eventListenersAttached) {
 		const canvas = canvasElement;
-		canvas.addEventListener('mousemove', handleMouseMove, { passive: true });
-		canvas.addEventListener('mouseleave', handleMouseLeave, { passive: true });
+		canvas.addEventListener("mousemove", handleMouseMove, {
+			passive: true,
+		});
+		canvas.addEventListener("mouseleave", handleMouseLeave, {
+			passive: true,
+		});
 		eventListenersAttached = true;
 	}
 
 	onDestroy(() => {
 		if (canvasElement && eventListenersAttached) {
-			canvasElement.removeEventListener('mousemove', handleMouseMove);
-			canvasElement.removeEventListener('mouseleave', handleMouseLeave);
+			canvasElement.removeEventListener("mousemove", handleMouseMove);
+			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
 			eventListenersAttached = false;
 		}
 	});
-
 </script>
+
+<svelte:head></svelte:head>
 
 <div class="viewer-shell">
 	<header class="app-header">
 		<div class="header-left">
-			<div class="header-title">
-				<div class="title-kicker">CityScope</div>
-				<div class="title-main">Urban Comfort Lab</div>
-			</div>
-		</div>
-		<div class="header-center">
-			<div class="layers-section">
-				<div class="layers-title">Layers</div>
-				<LayerControls />
-			</div>
-		</div>
-		<div class="header-right">
 			<div class="partner-logos">
-				<img src={nurLogo} alt="NUR Negev Urban Research" class="logo logo-nur" />
+				<img
+					src={nurLogo}
+					alt="NUR Negev Urban Research"
+					class="logo logo-nur"
+				/>
 				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
 				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
 				<img src={sceLogo} alt="SCE" class="logo logo-sce" />
 			</div>
 		</div>
+		<div class="header-center">
+			<div class="header-title">
+				<div class="logo-final">
+					<div class="text">ScorCH</div>
+					<div class="underline-grad"></div>
+				</div>
+			</div>
+		</div>
+		<div class="header-right"></div>
 	</header>
 
 	<div class="app-body">
@@ -260,10 +293,17 @@
 				{/if}
 			</div>
 
-			{#if $analysisStore && $analysisStore.metadata.analysis_type === 'full_day' && $viewerStore.metricType === 'utci'}
+			<div class="sidebar-section layers-sidebar-section">
+				<div class="section-header">Layers</div>
+				<LayerControls placement="sidebar" />
+			</div>
+
+			{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
 				<div class="sidebar-section">
 					<div class="section-header">Time of Day</div>
-					<div class="section-subtitle">Select analysis hour for UTCI</div>
+					<div class="section-subtitle">
+						Select analysis hour for UTCI
+					</div>
 					<RadialTimePicker />
 				</div>
 			{/if}
@@ -288,24 +328,34 @@
 			{/if}
 
 			{#if $viewerStore.error}
-				<div class="overlay-message error">Error: {$viewerStore.error}</div>
+				<div class="overlay-message error">
+					Error: {$viewerStore.error}
+				</div>
 			{/if}
 
 			{#if modelLoading || ($comparisonStore.isComparing && $comparisonStore.modelLoading)}
-				<div 
-					class="model-loading-backdrop" 
-					class:comparison-mode={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading}
-					style={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading 
-						? `--curtain-position: ${$comparisonStore.curtainPosition}` 
-						: ''}
+				<div
+					class="model-loading-backdrop"
+					class:comparison-mode={$comparisonStore.isComparing &&
+						$comparisonStore.modelLoading &&
+						!modelLoading}
+					style={$comparisonStore.isComparing &&
+					$comparisonStore.modelLoading &&
+					!modelLoading
+						? `--curtain-position: ${$comparisonStore.curtainPosition}`
+						: ""}
 					aria-hidden="true"
 				></div>
-				<div 
-					class="model-loading-overlay" 
-					class:comparison-mode={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading}
-					style={$comparisonStore.isComparing && $comparisonStore.modelLoading && !modelLoading 
-						? `--curtain-position: ${$comparisonStore.curtainPosition}` 
-						: ''}
+				<div
+					class="model-loading-overlay"
+					class:comparison-mode={$comparisonStore.isComparing &&
+						$comparisonStore.modelLoading &&
+						!modelLoading}
+					style={$comparisonStore.isComparing &&
+					$comparisonStore.modelLoading &&
+					!modelLoading
+						? `--curtain-position: ${$comparisonStore.curtainPosition}`
+						: ""}
 					aria-live="polite"
 				>
 					<div class="spinner"></div>
@@ -314,20 +364,23 @@
 			{/if}
 
 			<Scene
-				backgroundColor={$viewerStore.theme === 'light' ? 0x4b5563 : 0x111827}
-				bind:canvasElement={canvasElement}
+				backgroundColor={$viewerStore.theme === "light"
+					? 0x4b5563
+					: 0x111827}
+				bind:canvasElement
 			>
-				<Camera bind:cameraRef={cameraRef} />
+				<Camera bind:cameraRef />
 				<Lights />
 
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
 						<Model
 							modelPath={$analysisStore.metadata.model_file.replace(
-								'data/',
-								`${getDataBasePath()}/data/`
+								"data/",
+								`${getDataBasePath()}/data/`,
 							)}
-							coordinateSystem={$analysisStore.metadata.coordinate_system || 'xy_ground'}
+							coordinateSystem={$analysisStore.metadata
+								.coordinate_system || "xy_ground"}
 							metadata={$analysisStore.metadata}
 							on:modelLoaded={(e) => {
 								model = e.detail;
@@ -337,13 +390,25 @@
 									const center = calculateModelCenter(model);
 									const size = calculateModelSize(model);
 									// Bird's-eye, closer top-down fit
-									const maxDim = Math.max(size.x, size.y, size.z);
+									const maxDim = Math.max(
+										size.x,
+										size.y,
+										size.z,
+									);
 									const distance = maxDim * 1.05;
-									const position = center.clone().add(new THREE.Vector3(0, distance, 0.01));
+									const position = center
+										.clone()
+										.add(
+											new THREE.Vector3(
+												0,
+												distance,
+												0.01,
+											),
+										);
 									cameraStore.update((state) => ({
 										...state,
 										position,
-										target: center.clone()
+										target: center.clone(),
 									}));
 									hasFitOnce = true;
 								}
@@ -358,14 +423,17 @@
 						<GridHelper {model} visible={gridVisible} />
 						<UTCIPointCloud
 							analysis={$analysisStore}
-							model={model}
+							{model}
 							bind:utciSurface={utciMesh}
 						/>
 					{/if}
 
 					<!-- Comparison renderer (only active when comparing) -->
 					{#if isComparing}
-						<ComparisonRenderer bind:this={comparisonRenderer} baseCamera={cameraRef} />
+						<ComparisonRenderer
+							bind:this={comparisonRenderer}
+							baseCamera={cameraRef}
+						/>
 					{/if}
 				{/if}
 			</Scene>
@@ -374,7 +442,7 @@
 			{#if isComparing}
 				<ComparisonCurtain
 					containerElement={mainViewportElement}
-					comparisonScenarioName={comparisonScenarioName}
+					{comparisonScenarioName}
 				/>
 			{/if}
 		</main>
@@ -398,15 +466,18 @@
 		height: 100vh;
 		display: flex;
 		flex-direction: column;
-		background:
-			radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 55%),
+		background: radial-gradient(
+				circle at top left,
+				rgba(56, 189, 248, 0.18),
+				transparent 55%
+			),
 			var(--color-bg-page);
 	}
 
 	.app-header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		justify-content: space-between;
 		padding: 8px 18px;
 		background: var(--color-bg-header);
 		backdrop-filter: blur(16px);
@@ -418,107 +489,126 @@
 	.header-left {
 		display: flex;
 		align-items: center;
-		gap: 14px;
+		flex: 1 1 0;
+		min-width: 0;
+		justify-content: flex-start;
+		overflow: hidden;
 	}
 
 	.header-title {
 		display: flex;
-		flex-direction: column;
-		gap: 2px;
+		align-items: center;
+		padding: 0;
+		background: transparent;
+		border: none;
+		box-shadow: none;
 	}
 
-	.header-title .title-kicker {
-		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.16em;
-		color: var(--color-text-secondary);
+	/* Final Design: Space Grotesk + UTCI Gradient */
+	.logo-final {
+		position: relative;
+		font-family: "Space Grotesk", sans-serif;
 	}
 
-	.header-title .title-main {
-		font-size: 16px;
-		font-weight: 600;
-		letter-spacing: 0.02em;
+	.logo-final .text {
+		font-size: 34px; /* Requested "a bit bigger" (was 22px in old design, ~26px in lab) */
+		font-weight: 700;
+		color: var(--color-text-primary);
+		letter-spacing: -0.03em;
+		padding-bottom: 2px;
+	}
+
+	.logo-final .underline-grad {
+		position: absolute;
+		bottom: -2px;
+		left: 0;
+		right: 0;
+		height: 4px; /* Slightly thicker for the larger text */
+		/* 11-point UTCI Color Scale */
+		background: linear-gradient(
+			90deg,
+			#313695,
+			#4575b4,
+			#74add1,
+			#abd9e9,
+			#e0f3f8,
+			#ffffbf,
+			#fee090,
+			#fdae61,
+			#f46d43,
+			#d73027,
+			#a50026
+		);
+		border-radius: 2px;
+		opacity: 0.9;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 	}
 
 	.header-center {
 		display: flex;
 		align-items: center;
-		flex: 1;
+		flex: 0 0 auto;
 		justify-content: center;
 		min-width: 0;
-	}
-
-	.layers-section {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		justify-content: center;
-		gap: 4px;
-	}
-
-	.layers-title {
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--color-text-secondary);
-		line-height: 1.2;
-		margin: 0;
 	}
 
 	.header-right {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		flex: 1 1 0;
+		min-width: 0;
+		justify-content: flex-end;
 	}
 
 	.partner-logos {
 		display: flex;
 		align-items: center;
 		gap: 12px;
+		flex-wrap: nowrap;
+		max-width: 100%;
 	}
 
 	.logo {
-		height: 39px;
+		height: 40px;
 		object-fit: contain;
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
 		display: block;
 	}
 
 	.logo-nur {
-		height: 39px;
+		height: 45px;
 	}
 
 	.logo-bgu {
-		height: 39px;
+		height: 50px;
 	}
 
-	:global(html[data-theme='dark'] .logo-nur) {
+	:global(html[data-theme="dark"] .logo-nur) {
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
 	}
 
-	:global(html[data-theme='light'] .logo-nur) {
+	:global(html[data-theme="light"] .logo-nur) {
 		filter: brightness(0) drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
 	}
 
-	:global(html[data-theme='dark'] .logo-bgu) {
+	:global(html[data-theme="dark"] .logo-bgu) {
 		filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
 	}
 
-	:global(html[data-theme='light'] .logo-bgu) {
+	:global(html[data-theme="light"] .logo-bgu) {
 		filter: drop-shadow(0 0 3px rgba(15, 23, 42, 0.45));
 	}
 
-	:global(html[data-theme='dark'] .logo-mit) {
+	:global(html[data-theme="dark"] .logo-mit) {
 		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
 	}
 
-	:global(html[data-theme='light'] .logo-mit) {
+	:global(html[data-theme="light"] .logo-mit) {
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
 	}
 
 	.logo-sce {
-		height: 39px;
+		height: 44px;
 		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
 	}
 
@@ -526,7 +616,7 @@
 		flex: 1;
 		display: grid;
 		grid-template-columns: minmax(320px, 320px) 1fr;
-		grid-template-areas: 'sidebar main';
+		grid-template-areas: "sidebar main";
 		height: 100%;
 		overflow: hidden;
 		position: relative;
@@ -566,14 +656,14 @@
 		box-sizing: border-box;
 	}
 
-	:global(html[data-theme='dark'] .app-sidebar .sidebar-section) {
+	:global(html[data-theme="dark"] .app-sidebar .sidebar-section) {
 		box-shadow:
 			0 14px 30px rgba(15, 23, 42, 0.7),
 			0 0 0 1px rgba(248, 250, 252, 0.03);
 	}
 
 	.section-header {
-		font-size: 12px;
+		font-size: var(--font-xs);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
@@ -582,7 +672,7 @@
 	}
 
 	.section-subtitle {
-		font-size: 13px;
+		font-size: var(--font-sm);
 		color: var(--color-text-muted);
 		margin-bottom: 8px;
 	}
@@ -597,6 +687,8 @@
 		border: none;
 		padding: 0;
 		cursor: pointer;
+		color: var(--color-text-secondary);
+		font-family: var(--font-family);
 	}
 
 	.analytics-section {
@@ -605,6 +697,61 @@
 
 	.analytics-section .section-header {
 		margin-bottom: 4px;
+	}
+
+	@media (max-width: 1400px) {
+		.app-header {
+			padding: 8px 14px;
+			gap: 14px;
+		}
+
+		.partner-logos {
+			gap: 8px;
+		}
+
+		.logo {
+			height: 30px;
+		}
+
+		.logo-nur {
+			height: 35px;
+		}
+
+		.logo-bgu {
+			height: 39px;
+		}
+
+		.logo-sce {
+			height: 32px;
+		}
+
+		.logo-final .text {
+			font-size: 28px;
+		}
+	}
+
+	@media (max-width: 1100px) {
+		.app-header {
+			gap: 10px;
+		}
+
+		.partner-logos {
+			gap: 6px;
+		}
+
+		.logo-mit,
+		.logo-sce {
+			display: none;
+		}
+
+		.header-title {
+			padding: 3px 10px;
+		}
+
+		.logo-final .text {
+			font-size: 24px;
+			letter-spacing: -0.02em;
+		}
 	}
 
 	.chevron {
@@ -721,5 +868,4 @@
 			transform: rotate(360deg);
 		}
 	}
-
 </style>
