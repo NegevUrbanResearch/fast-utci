@@ -162,6 +162,8 @@ export function applyLayerMaterials(model: THREE.Group): THREE.Group {
 			delete layerStats['unknown'];
 		}
 	}
+
+	const onlyBaseLayer = Object.keys(layerStats).length === 1 && layerStats['base'];
 	
 	// Merge geometries by layer type for massive performance improvement
 	console.log('[PERF] Merging geometries by layer type...');
@@ -175,6 +177,21 @@ export function applyLayerMaterials(model: THREE.Group): THREE.Group {
 			// Single mesh - keep it
 			finalMeshesByLayer.set(layerType, meshes);
 		}
+	}
+
+	// If the model only has a base layer, make it fully visible
+	if (onlyBaseLayer) {
+		const baseMaterial = getMaterial('base').clone();
+		(baseMaterial as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean; polygonOffset?: boolean }).opacity = 1;
+		(baseMaterial as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean; polygonOffset?: boolean }).transparent = false;
+		(baseMaterial as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean; polygonOffset?: boolean }).depthWrite = true;
+		(baseMaterial as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean; polygonOffset?: boolean }).polygonOffset = false;
+
+		model.traverse((child) => {
+			if (child.isMesh && child.userData.layerType === 'base') {
+				child.material = baseMaterial;
+			}
+		});
 	}
 	
 	return model;

@@ -20,7 +20,8 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			$lib: resolve('./src/lib')
+			$lib: resolve('./src/lib'),
+			'$app/paths': resolve('./tests/mocks/app-paths.ts')
 		}
 	}
 });

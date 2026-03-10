@@ -15,6 +15,8 @@
 	import { get } from "svelte/store";
 	import type { Writable } from "svelte/store";
 
+	export let projectId: string = "Ben-Gurion";
+
 	let isExpanded = false;
 	let selectedCategory = "";
 	let selectedVariant = 1;
@@ -75,6 +77,7 @@
 	}
 
 	async function applyCategory(category: string) {
+		if (projectId !== "Ben-Gurion") return;
 		selectedCategory = category;
 
 		if (selectedCategory) {
@@ -85,11 +88,13 @@
 	}
 
 	async function handleCategoryChange(event: Event) {
+		if (projectId !== "Ben-Gurion") return;
 		const target = event.target as HTMLSelectElement;
 		await applyCategory(target.value);
 	}
 
 	async function handleVariantClick(variant: number) {
+		if (projectId !== "Ben-Gurion") return;
 		selectedVariant = variant;
 		await loadScenario(selectedCategory, selectedVariant);
 	}
@@ -98,7 +103,7 @@
 		try {
 			// Construct analysis ID: category/category_variant (e.g., "existing_buildings/existing_buildings_01")
 			const variantStr = variant.toString().padStart(2, "0");
-			const analysisId = `${category}/${category}_${variantStr}`;
+			const analysisId = `Ben-Gurion/${category}/${category}_${variantStr}`;
 
 			console.log(`[SCENARIO] Starting comparison: ${analysisId}`);
 
@@ -113,6 +118,7 @@
 	// Check if currently comparing
 	$: isComparing = $comparisonStore.isComparing;
 	$: isLoading = $comparisonStore.isLoading;
+	$: isProjectSupported = projectId === "Ben-Gurion";
 
 	// Reset selection when comparison is exited (via curtain or any other means)
 	$: if (!isComparing && selectedCategory) {
@@ -152,30 +158,36 @@
 
 	{#if isExpanded}
 		<div class="scenario-content">
-			<div class="category-list" role="list">
-				{#each categories as category}
-					<button
-						type="button"
-						class="category-item"
-						class:category-item-active={selectedCategory ===
-							category.value}
-						on:click={() => applyCategory(category.value)}
-					>
-						<div class="category-content">
-							<div class="category-header">
-								<div class="category-title">
-									{category.label}
+			{#if isProjectSupported}
+				<div class="category-list" role="list">
+					{#each categories as category}
+						<button
+							type="button"
+							class="category-item"
+							class:category-item-active={selectedCategory ===
+								category.value}
+							on:click={() => applyCategory(category.value)}
+						>
+							<div class="category-content">
+								<div class="category-header">
+									<div class="category-title">
+										{category.label}
+									</div>
+								</div>
+								<div class="category-description">
+									{category.description}
 								</div>
 							</div>
-							<div class="category-description">
-								{category.description}
-							</div>
-						</div>
-					</button>
-				{/each}
-			</div>
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<div class="scenario-empty">
+					Scenarios are only available for Ben-Gurion right now.
+				</div>
+			{/if}
 
-			{#if selectedCategory}
+			{#if selectedCategory && isProjectSupported}
 				<div class="variant-buttons">
 					<div class="variant-header">
 						<div class="variant-title">Variant</div>
@@ -310,6 +322,14 @@
 		min-width: 0;
 		max-width: 100%;
 		box-sizing: border-box;
+	}
+
+	.scenario-empty {
+		padding: 10px 12px;
+		font-size: var(--font-xs);
+		color: var(--color-text-muted);
+		background: var(--color-bg-panel);
+		border-radius: var(--radius-control);
 	}
 
 	.category-list {

@@ -414,6 +414,7 @@ def export_utci_for_viewer(
     target_hours: Optional[List[int]] = None,
     output_dir: str = "data/analyses",
     coordinate_system: str = "xy_ground",
+    project: Optional[str] = None,  # NEW: project for per-project output
     category: Optional[str] = None,  # NEW: category for subdirectory
     shading_indices: Optional[np.ndarray] = None  # NEW: optional Shading Index array
 ) -> tuple[str, str]:
@@ -430,15 +431,17 @@ def export_utci_for_viewer(
         analysis_period: Optional Ladybug AnalysisPeriod object
         target_hours: Optional list of target hours
         output_dir: Output directory for exported files
+        project: Optional project name (e.g., "Ben-Gurion")
         
     Returns:
         Tuple of (binary_path, metadata_path)
     """
     # Determine output directory
+    output_path = Path(output_dir)
+    if project:
+        output_path = output_path / project
     if category:
-        output_path = Path(output_dir) / category
-    else:
-        output_path = Path(output_dir)
+        output_path = output_path / category
     
     output_path.mkdir(parents=True, exist_ok=True)
     

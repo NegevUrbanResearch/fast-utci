@@ -22,14 +22,14 @@
 		"@testing-library/jest-dom": "^6.6.3",
 		"@testing-library/svelte": "^4.1.2",
 		"@types/node": "^20.0.0",
-		"@vitest/ui": "^2.1.8",
+		"@vitest/ui": "^4.0.18",
 		"cross-env": "^10.1.0",
 		"jsdom": "^25.0.1",
 		"svelte": "^5.41.0",
 		"svelte-check": "^4.3.3",
 		"typescript": "^5.9.3",
 		"vite": "^7.1.10",
-		"vitest": "^2.1.8"
+		"vitest": "^4.0.18"
 	},
 	"dependencies": {
 		"@threlte/core": "^8.1.8",

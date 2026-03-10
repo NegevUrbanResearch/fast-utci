@@ -82,5 +82,12 @@ describe('layerStore', () => {
 		expect(store.building).toBeDefined();
 		expect(store.new_building).toBeDefined();
 	});
+
+	it('should show base when it is the only discovered layer', () => {
+		setDiscoveredLayers(['base']);
+		const store = get(layerStore);
+
+		expect(store.base).toBe(true);
+	});
 });
 

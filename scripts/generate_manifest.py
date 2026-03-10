@@ -71,8 +71,15 @@ def load_analysis_metadata(analysis_path):
         with open(analysis_path, 'r') as f:
             metadata = json.load(f)
         
+        num_positions = metadata.get('num_positions', metadata.get('positions', 0))
+
         return {
-            'positions': metadata.get('positions', 0),
+            'analysis_id': metadata.get('analysis_id', ''),
+            'analysis_type': metadata.get('analysis_type', ''),
+            'date': metadata.get('date', ''),
+            'grid_size': metadata.get('grid_size', 0),
+            'num_positions': num_positions,
+            'positions': num_positions,
             'runtime_seconds': metadata.get('runtime_seconds', 0),
             'utci_min': metadata.get('utci_min', 0),
             'utci_max': metadata.get('utci_max', 0),
@@ -102,19 +109,29 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
         print(f"[ERROR] Analyses directory not found: {analyses_dir}")
         return False
     
-    # Find all analysis JSON files in root and subdirectories
+    # Find all analysis JSON files in root and project subdirectories
     analysis_files = []
     
-    # Root level files
+    # Root level files (legacy)
     root_files = [f for f in analyses_dir.glob('*.json') if f.name != 'manifest.json']
-    analysis_files.extend([(f, None) for f in root_files])
+    analysis_files.extend([(f, None, None) for f in root_files])
     
-    # Subdirectory files (category-based)
-    for subdir in analyses_dir.iterdir():
-        if subdir.is_dir():
-            category = subdir.name
-            for json_file in subdir.glob('*.json'):
-                analysis_files.append((json_file, category))
+    # Project-level files and categories
+    for project_dir in analyses_dir.iterdir():
+        if not project_dir.is_dir():
+            continue
+        project = project_dir.name
+        
+        # Project root files
+        for json_file in project_dir.glob('*.json'):
+            analysis_files.append((json_file, project, None))
+        
+        # Category subdirectories
+        for category_dir in project_dir.iterdir():
+            if category_dir.is_dir():
+                category = category_dir.name
+                for json_file in category_dir.glob('*.json'):
+                    analysis_files.append((json_file, project, category))
     
     if not analysis_files:
         print(f"[WARN] No analysis files found in {analyses_dir}")
@@ -126,36 +143,46 @@ def generate_manifest(analyses_dir='data/analyses', output_path='data/analyses/m
     else:
         analyses = []
         
-        for analysis_file, category in sorted(analysis_files):
+        for analysis_file, project, category in sorted(analysis_files):
             filename = analysis_file.stem  # Remove .json extension
+            rel_id = analysis_file.relative_to(analyses_dir).with_suffix('').as_posix()
             
             # Parse filename to get basic metadata
             parsed = parse_analysis_filename(filename)
-            if not parsed:
-                print(f"[WARN] Could not parse filename: {filename}")
-                continue
             
             # Load additional metadata from JSON file
             additional_metadata = load_analysis_metadata(analysis_file)
             
-            # Combine parsed and loaded metadata
+            if parsed:
+                title = parsed['title']
+                analysis_type = parsed['type']
+                date = parsed['date']
+                grid_size = parsed['grid_size']
+                description = parsed['description']
+            else:
+                title = additional_metadata.get('analysis_id') or filename
+                analysis_type = additional_metadata.get('analysis_type', 'unknown')
+                date = additional_metadata.get('date', '')
+                grid_size = additional_metadata.get('grid_size', 0)
+                description = f"Analysis {title}"
+            
             analysis_entry = {
-                'id': f"{category}/{filename}" if category else filename,
-                'title': parsed['title'],
-                'type': parsed['type'],
-                'date': parsed['date'],
-                'grid_size': parsed['grid_size'],
-                'description': parsed['description'],
-                **additional_metadata  # Add loaded metadata
+                'id': rel_id,
+                'title': title,
+                'type': analysis_type,
+                'date': date,
+                'grid_size': grid_size,
+                'description': description,
+                **additional_metadata
             }
             
-            # Add category and path for subdirectory analyses
+            if project:
+                analysis_entry['project'] = project
+                analysis_entry['path'] = rel_id
             if category:
                 analysis_entry['category'] = category
-                analysis_entry['path'] = f"{category}/{filename}"
             
-            # Add hour for single hour analyses
-            if parsed['type'] == 'single_hour':
+            if parsed and parsed['type'] == 'single_hour':
                 analysis_entry['hour'] = parsed['hour']
             
             analyses.append(analysis_entry)

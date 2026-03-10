@@ -65,12 +65,13 @@ def run_analysis_core(
     month: int = DEFAULT_MONTH,
     day: int = DEFAULT_DAY,
     grid_size: float = DEFAULT_GRID_SIZE,
-    model_file: str = "data/3d_models/100_test.glb",
+    model_file: str = "data/3d_models/Ben-Gurion/original_with_layers.glb",
     epw_file: str = "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
     embree_quality: str = "low",
     intersects_any: bool = True,
     export_csv: bool = False,
     verbose: bool = True,
+    project: str = "Ben-Gurion",
     category: Optional[str] = None  # NEW: category for subdirectory organization
 ) -> Dict[str, Any]:
     """
@@ -463,6 +464,7 @@ def run_analysis_core(
             analysis_period=analysis_period,
             target_hours=target_hours,
             coordinate_system=coordinate_system,
+            project=project,
             category=category,  # NEW: pass category for subdirectory organization
             shading_indices=shading_indices  # NEW: pass Shading Index data
         )

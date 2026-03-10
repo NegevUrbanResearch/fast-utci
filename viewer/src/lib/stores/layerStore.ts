@@ -45,8 +45,12 @@ export const discoveredLayersStore: Writable<string[]> = writable<string[]>([]);
  */
 export function setDiscoveredLayers(layerTypes: string[]): void {
 	discoveredLayersStore.set(layerTypes);
+	const onlyBaseLayer =
+		layerTypes.length === 1 &&
+		(layerTypes[0] === 'base' || layerTypes[0] === 'unknown');
 	
 	// Initialize visibility for discovered layers (use defaults from STANDARD_LAYER_TYPES)
+	let nextState: LayerVisibility | null = null;
 	layerStore.update((state) => {
 		const newState = { ...state };
 		layerTypes.forEach((layerId) => {
@@ -55,8 +59,19 @@ export function setDiscoveredLayers(layerTypes: string[]): void {
 				newState[layerId] = standardLayer.defaultVisible;
 			}
 		});
+		if (onlyBaseLayer) {
+			newState[layerTypes[0]] = true;
+		}
+		nextState = newState;
 		return newState;
 	});
+
+	// Apply visibility to meshes now that layers are known
+	if (nextState) {
+		layerTypes.forEach((layerId) => {
+			toggleLayerVisibility(layerId, nextState?.[layerId] ?? false);
+		});
+	}
 }
 
 /**
@@ -115,5 +130,3 @@ export function getLayerVisible(layerId: string): boolean {
 export function resetLayerVisibility(): void {
 	layerStore.set(initializeLayerVisibility());
 }
-
-

@@ -13,6 +13,15 @@
 	// Layers to hide from UI (we don't care about them currently)
 	const HIDDEN_LAYERS = ["base", "road", "sidewalk", "unknown"];
 
+	$: onlyBaseLayer =
+		$discoveredLayersStore.length === 1 &&
+		$discoveredLayersStore[0] === "base";
+
+	function shouldHideLayer(layerId: string) {
+		if (layerId === "base" && onlyBaseLayer) return false;
+		return HIDDEN_LAYERS.includes(layerId);
+	}
+
 	function handleToggle(layerId: string) {
 		toggleLayer(layerId);
 	}
@@ -24,7 +33,7 @@
 
 <div class="layer-controls" data-placement={placement}>
 	{#each STANDARD_LAYER_TYPES as layer}
-		{#if $discoveredLayersStore.includes(layer.id) && !HIDDEN_LAYERS.includes(layer.id)}
+		{#if $discoveredLayersStore.includes(layer.id) && !shouldHideLayer(layer.id)}
 			<button
 				type="button"
 				class="layer-button"
@@ -45,7 +54,7 @@
 
 	<!-- Show any discovered layers that aren't in the standard list and aren't hidden -->
 	{#each $discoveredLayersStore as layerId}
-		{#if !STANDARD_LAYER_TYPES.some((l) => l.id === layerId) && !HIDDEN_LAYERS.includes(layerId)}
+		{#if !STANDARD_LAYER_TYPES.some((l) => l.id === layerId) && !shouldHideLayer(layerId)}
 			<button
 				type="button"
 				class="layer-button"
