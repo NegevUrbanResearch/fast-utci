@@ -24,6 +24,29 @@ export function applyCoordinateTransform(
 }
 
 /**
+ * Detect if the model already includes an embedded Z-up -> Y-up transform.
+ * Some GLB exports include a root node named "TransformZUpToYUp".
+ */
+export function hasEmbeddedZUpTransform(object: THREE.Object3D): boolean {
+	return object.getObjectByName('TransformZUpToYUp') !== undefined;
+}
+
+/**
+ * Apply coordinate transform for models, skipping if the model already
+ * includes a Z-up -> Y-up transform node.
+ */
+export function applyModelCoordinateTransform(
+	object: THREE.Object3D,
+	coordinateSystem: 'xy_ground' | 'xz_ground'
+): void {
+	if (coordinateSystem === 'xy_ground' && hasEmbeddedZUpTransform(object)) {
+		console.log('[COORD] Skipping Z-up transform; model already contains TransformZUpToYUp');
+		return;
+	}
+	applyCoordinateTransform(object, coordinateSystem);
+}
+
+/**
  * Calculate scenario origin from metadata bounds
  * Returns the center point of the bounds in the original coordinate system
  * @param metadata - Analysis metadata with bounds

@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import { GLTF } from '@threlte/extras';
-	import { applyCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
+	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
 	import { createEventDispatcher, onDestroy } from 'svelte';
 	import type { Group } from 'three';
 	import type { AnalysisMetadata } from '$lib/types/analysis';
@@ -106,7 +106,7 @@
 			
 			// Apply coordinate transform AFTER materials (to preserve layer info)
 			if (gltfGroup && coordinateSystem) {
-				applyCoordinateTransform(gltfGroup, coordinateSystem);
+				applyModelCoordinateTransform(gltfGroup, coordinateSystem);
 			}
 			
 			// Cache the processed scene (before normalization)
@@ -203,7 +203,7 @@
 
 	// Apply coordinate transformation when coordinate system changes
 	$: if (gltfGroup && coordinateSystem) {
-		applyCoordinateTransform(gltfGroup, coordinateSystem);
+		applyModelCoordinateTransform(gltfGroup, coordinateSystem);
 	}
 
 	// Cleanup on destroy

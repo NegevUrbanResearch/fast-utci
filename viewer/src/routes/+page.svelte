@@ -7,6 +7,7 @@
 	 */
 	import { onMount, onDestroy } from "svelte";
 	import { page } from "$app/stores";
+	import { goto } from "$app/navigation";
 	import { base } from "$app/paths";
 	import { analysisStore, loadAnalysisData } from "$lib/stores/analysisStore";
 	import {
@@ -38,9 +39,13 @@
 	import LayerControls from "$lib/components/ui/LayerControls.svelte";
 	import ColorLegend from "$lib/components/ui/ColorLegend.svelte";
 	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
+	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
 	import "$lib/styles/variables.css";
+	import { getDefaultAnalysisId } from "$lib/config/projects";
+	import { resolveModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
+	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
 	import nurLogo from "$lib/assets/Nur Logo white.svg";
 	import mitLogo from "$lib/assets/MIT.svg";
 	import bguLogo from "$lib/assets/bgu-logo.svg";
@@ -62,7 +67,8 @@
 	let hasFitOnce = false;
 	let lastModelFile: string | null = null;
 
-	let analysisId: string = "20250815_grid_2m_fullday";
+	const DEFAULT_ANALYSIS_ID = getDefaultAnalysisId();
+	let analysisId: string = DEFAULT_ANALYSIS_ID;
 	let mounted = false;
 
 	// Tooltip state
@@ -87,6 +93,7 @@
 
 	// Track comparison mode
 	$: isComparing = $comparisonStore.isComparing;
+	$: currentProjectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
 
 	// Reactive scenario name for comparison curtain label
 	// Watch comparisonAnalysisId to trigger updates when scenarios change
@@ -121,10 +128,26 @@
 		}
 	}
 
+	async function handleProjectSelection(newAnalysisId: string) {
+		if (!newAnalysisId || newAnalysisId === analysisId) return;
+		analysisId = newAnalysisId;
+		if (typeof window !== "undefined") {
+			const url = new URL(window.location.href);
+			url.searchParams.set("analysis", newAnalysisId);
+			goto(`${url.pathname}?${url.searchParams.toString()}`, {
+				replaceState: true,
+				noScroll: true,
+			});
+		}
+		await loadAnalysis(newAnalysisId);
+	}
+
 	onMount(() => {
 		if (typeof window !== "undefined") {
-			const params = new URLSearchParams(window.location.search);
-			analysisId = params.get("analysis") || "20250815_grid_2m_fullday";
+			analysisId = getInitialAnalysisId(
+				window.location.search,
+				DEFAULT_ANALYSIS_ID,
+			);
 
 			console.log("[OK] Viewer initialized");
 			mounted = true;
@@ -133,9 +156,10 @@
 	});
 
 	$: if (typeof window !== "undefined" && $page.url.searchParams && mounted) {
-		const newAnalysisId =
-			$page.url.searchParams.get("analysis") ||
-			"20250815_grid_2m_fullday";
+		const newAnalysisId = getInitialAnalysisId(
+			`?${$page.url.searchParams.toString()}`,
+			DEFAULT_ANALYSIS_ID,
+		);
 		if (newAnalysisId !== analysisId) {
 			analysisId = newAnalysisId;
 			loadAnalysis(analysisId);
@@ -264,19 +288,29 @@
 		<div class="header-center">
 			<div class="header-title">
 				<div class="logo-final">
-					<div class="text">ScorCH</div>
+					<div class="text">Scor.CH</div>
 					<div class="underline-grad"></div>
 				</div>
 			</div>
 		</div>
-		<div class="header-right"></div>
+		<div class="header-right">
+			{#key analysisId}
+				<ProjectSelector
+					analysisId={analysisId}
+					onSelect={handleProjectSelection}
+				/>
+			{/key}
+		</div>
 	</header>
 
 	<div class="app-body">
 		<aside class="app-sidebar">
 			<div class="sidebar-section">
 				<div class="section-header">Scenario</div>
-				<ScenarioSelector bind:this={scenarioSelector} />
+				<ScenarioSelector
+					bind:this={scenarioSelector}
+					projectId={currentProjectId}
+				/>
 			</div>
 
 			<div class="sidebar-section analytics-section">
@@ -375,10 +409,10 @@
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
 						<Model
-							modelPath={$analysisStore.metadata.model_file.replace(
-								"data/",
-								`${getDataBasePath()}/data/`,
-							)}
+							modelPath={resolveModelPath(
+								$analysisStore.metadata.model_file,
+								analysisId,
+							).replace("data/", `${getDataBasePath()}/data/`)}
 							coordinateSystem={$analysisStore.metadata
 								.coordinate_system || "xy_ground"}
 							metadata={$analysisStore.metadata}
@@ -569,18 +603,18 @@
 	}
 
 	.logo {
-		height: 40px;
+		height: 30px;
 		object-fit: contain;
 		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
 		display: block;
 	}
 
 	.logo-nur {
-		height: 45px;
+		height: 50px;
 	}
 
 	.logo-bgu {
-		height: 50px;
+		height: 35px;
 	}
 
 	:global(html[data-theme="dark"] .logo-nur) {
@@ -608,7 +642,7 @@
 	}
 
 	.logo-sce {
-		height: 44px;
+		height: 30px;
 		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
 	}
 

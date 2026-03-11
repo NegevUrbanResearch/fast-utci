@@ -2,42 +2,34 @@
 
 <script lang="ts">
 	import { analysisStore } from "$lib/stores/analysisStore";
+	import { viewerStore, setCurrentHour } from "$lib/stores/viewerStore";
+	import { getDayRingConicGradient } from "$lib/utils/dayGradient";
 	import {
-		viewerStore,
-		setCurrentHour,
-		setColorMode,
-	} from "$lib/stores/viewerStore";
-	import type { Analysis } from "$lib/types/analysis";
+		normalizeHourEntries,
+		derivePhaseMarkers,
+		getDayStateForIndex,
+		getPositionForIndex,
+		getIndexFromPointerEvent,
+		DIAL_SIZE_PX,
+		DIAL_CENTER,
+		HANDLE_RADIUS,
+		LABEL_RADIUS,
+	} from "$lib/utils/radialTimePickerState";
+	import ColorModeToggle from "./ColorModeToggle.svelte";
 
-	const BASE_RADIUS = 100;
-	const TICK_RADIUS_INNER_MAJOR = 78;
-	const TICK_RADIUS_INNER_MINOR = 88;
-	const TICK_RADIUS_OUTER = 96;
-
+	const dayRingGradient = getDayRingConicGradient();
+	/** Handle stops short of the hour labels (at 110) so it doesn’t sit on the text */
 	let dialEl: HTMLDivElement | null = null;
 	let isDragging = false;
-	let analysis: Analysis | null = null;
-	let hours: unknown[] = [];
+	let isHoveringDial = false;
 
-	type HourEntry = {
-		value: number;
-		label: string;
-	};
-
-	let normalizedHours: HourEntry[] = [];
-	let totalHours = 0;
-	let hourValues: number[] = [];
-	let maxIndex = 0;
-	let currentHourIndex = 0;
-	let currentHourLabel = "--:--";
-	let phaseMarkers: PhaseMarker[] = [];
+	$: showLabels = isDragging || isHoveringDial;
 
 	$: analysis = $analysisStore;
 	$: hours = analysis?.metadata.hours ?? [];
 	$: normalizedHours = normalizeHourEntries(hours);
 	$: totalHours = normalizedHours.length;
-	$: hourValues = normalizedHours.map((entry) => entry.value);
-
+	$: hourValues = normalizedHours.map((e) => e.value);
 	$: maxIndex = Math.max(totalHours - 1, 0);
 	$: currentHourIndex = Math.min($viewerStore.currentHour, maxIndex);
 	$: currentHourLabel =
@@ -45,316 +37,26 @@
 			? (normalizedHours[currentHourIndex]?.label ??
 				`${currentHourIndex.toString().padStart(2, "0")}:00`)
 			: "--:--";
-
-	$: currentState = getDayStateForIndex(currentHourIndex, phaseMarkers);
-	$: phaseMarkers = derivePhaseMarkers();
-	$: circumference = 2 * Math.PI * BASE_RADIUS;
+	$: phaseMarkers = derivePhaseMarkers(analysis, totalHours, hourValues);
+	$: currentState = getDayStateForIndex(
+		currentHourIndex,
+		phaseMarkers,
+		hourValues,
+		totalHours,
+	);
+	$: circumference = 2 * Math.PI * HANDLE_RADIUS;
 	$: progressDash =
 		totalHours > 0 ? (currentHourIndex / totalHours) * circumference : 0;
 
-	type DayStateKey = "night" | "morning" | "afternoon" | "evening";
-
-	type PhaseMarker = {
-		key: DayStateKey;
-		hourValue: number;
-		label: string;
-		color: string;
-		icon: "moon" | "sunrise" | "sun" | "sunset";
-	};
-
-	const DAY_STATE_META: Record<
-		DayStateKey,
-		{
-			label: string;
-			color: string;
-			icon: "moon" | "sunrise" | "sun" | "sunset";
-		}
-	> = {
-		night: { label: "Night", color: "#6366f1", icon: "moon" },
-		morning: { label: "Morning", color: "#f59e0b", icon: "sunrise" },
-		afternoon: { label: "Afternoon", color: "#facc15", icon: "sun" },
-		evening: { label: "Evening", color: "#f54900", icon: "sunset" },
-	};
-
-	const ICON_MAP = {
-		sun: "#radial-sun-icon",
-		sunrise: "#radial-sunrise-icon",
-		sunset: "#radial-sunset-icon",
-		moon: "#radial-moon-icon",
-	} as const;
-
-	function buildFallbackPhaseMarkers(): PhaseMarker[] {
-		const fallbackTargets: Array<{ key: DayStateKey; hour: number }> = [
-			{ key: "night", hour: 0 },
-			{ key: "morning", hour: 6 },
-			{ key: "afternoon", hour: 12 },
-			{ key: "evening", hour: 18 },
-		];
-
-		return fallbackTargets
-			.map((target) => createPhaseMarker(target.key, target.hour))
-			.filter((marker): marker is PhaseMarker => Boolean(marker));
-	}
-
-	const FALLBACK_PHASE_MARKERS = buildFallbackPhaseMarkers();
-
-	function derivePhaseMarkers(): PhaseMarker[] {
-		if (totalHours === 0) return [];
-
-		const fallback = FALLBACK_PHASE_MARKERS;
-		const sunPositions = analysis?.metadata.sun_positions;
-
-		if (!sunPositions || sunPositions.length !== totalHours) {
-			return fallback;
-		}
-
-		const hourValueForIndex = (index: number) =>
-			normalizeHourNumber(hourValues[index] ?? index);
-
-		const markers: PhaseMarker[] = [];
-		const nightMarker = createPhaseMarker("night", hourValueForIndex(0));
-		if (nightMarker) markers.push(nightMarker);
-
-		const sunriseIndex = sunPositions.findIndex(
-			(position) => position.is_up,
-		);
-		if (sunriseIndex !== -1) {
-			const sunriseMarker = createPhaseMarker(
-				"morning",
-				hourValueForIndex(sunriseIndex),
-			);
-			if (sunriseMarker) markers.push(sunriseMarker);
-		}
-
-		let middayIndex = 0;
-		let maxAltitude = -Infinity;
-		sunPositions.forEach((position, index) => {
-			if (position.altitude > maxAltitude) {
-				maxAltitude = position.altitude;
-				middayIndex = index;
-			}
-		});
-		const middayMarker = createPhaseMarker(
-			"afternoon",
-			hourValueForIndex(middayIndex),
-		);
-		if (middayMarker) markers.push(middayMarker);
-
-		let sunsetIndex = -1;
-		if (sunriseIndex !== -1) {
-			for (let i = sunriseIndex + 1; i < sunPositions.length; i += 1) {
-				if (!sunPositions[i].is_up) {
-					sunsetIndex = i;
-					break;
-				}
-			}
-			if (sunsetIndex === -1) {
-				sunsetIndex = sunPositions.length - 1;
-			}
-		} else {
-			// If the sun never rises, treat the highest altitude as sunset start
-			sunsetIndex = middayIndex;
-		}
-
-		if (sunsetIndex !== -1) {
-			const sunsetMarker = createPhaseMarker(
-				"evening",
-				hourValueForIndex(sunsetIndex),
-			);
-			if (sunsetMarker) markers.push(sunsetMarker);
-		}
-
-		return mergeAndSortPhaseMarkers(markers, fallback);
-	}
-
-	function getDayStateForIndex(index: number, markers: PhaseMarker[]) {
-		if (totalHours === 0 || markers.length === 0) {
-			return { key: "night" as DayStateKey, ...DAY_STATE_META.night };
-		}
-
-		const hourValue = normalizeHourNumber(hourValues[index] ?? index);
-
-		// Default to the last marker to handle wrap-around before the first transition
-		let activeMarker = markers[markers.length - 1];
-
-		for (const marker of markers) {
-			if (hourValue >= marker.hourValue) {
-				activeMarker = marker;
-			} else {
-				break;
-			}
-		}
-
-		return {
-			key: activeMarker.key,
-			...DAY_STATE_META[activeMarker.key],
-		};
-	}
-
-	function normalizeHourEntries(entries: unknown[]): HourEntry[] {
-		return entries.map((entry, index) => {
-			const fallbackValue = index % 24;
-			const fallbackLabel = `${String(fallbackValue).padStart(2, "0")}:00`;
-
-			if (typeof entry === "number" && Number.isFinite(entry)) {
-				const numeric = ((entry % 24) + 24) % 24;
-				return {
-					value: numeric,
-					label: `${String(entry).padStart(2, "0")}:00`,
-				};
-			}
-
-			if (typeof entry === "string") {
-				const trimmed = entry.trim();
-				const match = trimmed.match(/(\d{1,2})/);
-				let numeric = Number(match?.[1]);
-				if (!Number.isFinite(numeric)) {
-					numeric = fallbackValue;
-				}
-				numeric = ((numeric % 24) + 24) % 24;
-				const label = trimmed.includes(":")
-					? trimmed
-					: `${String(numeric).padStart(2, "0")}:00`;
-
-				return {
-					value: numeric,
-					label,
-				};
-			}
-
-			if (typeof entry === "object" && entry !== null) {
-				const candidateHour =
-					typeof (entry as Record<string, unknown>).hour === "number"
-						? (entry as Record<string, number>).hour
-						: typeof (entry as Record<string, unknown>).hour ===
-							  "string"
-							? Number((entry as Record<string, string>).hour)
-							: typeof (entry as Record<string, unknown>)
-										.value === "number"
-								? (entry as Record<string, number>).value
-								: typeof (entry as Record<string, unknown>)
-											.index === "number"
-									? (entry as Record<string, number>).index
-									: null;
-
-				let numeric = Number(candidateHour);
-				if (!Number.isFinite(numeric)) {
-					numeric = fallbackValue;
-				}
-				numeric = ((numeric % 24) + 24) % 24;
-
-				const candidateLabel =
-					typeof (entry as Record<string, unknown>).label === "string"
-						? ((entry as Record<string, string>).label ?? "")
-						: typeof (entry as Record<string, unknown>).time ===
-							  "string"
-							? ((entry as Record<string, string>).time ?? "")
-							: "";
-
-				const label =
-					candidateLabel && candidateLabel.trim().length > 0
-						? candidateLabel.trim()
-						: `${String(numeric).padStart(2, "0")}:00`;
-
-				return {
-					value: numeric,
-					label,
-				};
-			}
-
-			return {
-				value: fallbackValue,
-				label: fallbackLabel,
-			};
-		});
-	}
-
-	function getAngleForIndex(index: number) {
-		if (totalHours === 0) return -90;
-		return (index / totalHours) * 360 - 90;
-	}
-
-	function getPositionForIndex(index: number, radius: number) {
-		const angle = (getAngleForIndex(index) * Math.PI) / 180;
-		return {
-			x: 120 + Math.cos(angle) * radius,
-			y: 120 + Math.sin(angle) * radius,
-		};
-	}
-
-	function getPositionForHourValue(hour: number, radius: number) {
-		const angle = (getAngleForHour(hour) * Math.PI) / 180;
-		return {
-			x: 120 + Math.cos(angle) * radius,
-			y: 120 + Math.sin(angle) * radius,
-		};
-	}
-
-	function getAngleForHour(hour: number) {
-		return normalizeHourNumber(hour) * (360 / 24) - 90;
-	}
-
-	function normalizeHourNumber(hour: number) {
-		return ((hour % 24) + 24) % 24;
-	}
-
-	function createPhaseMarker(
-		key: DayStateKey,
-		hourValue?: number | null,
-	): PhaseMarker | null {
-		if (
-			hourValue === undefined ||
-			hourValue === null ||
-			Number.isNaN(hourValue)
-		) {
-			return null;
-		}
-		const normalized = normalizeHourNumber(hourValue);
-		return {
-			key,
-			hourValue: normalized,
-			label: DAY_STATE_META[key].label,
-			color: DAY_STATE_META[key].color,
-			icon: DAY_STATE_META[key].icon,
-		};
-	}
-
-	function mergeAndSortPhaseMarkers(
-		customMarkers: PhaseMarker[],
-		fallbackMarkers: PhaseMarker[],
-	): PhaseMarker[] {
-		const markerMap = new Map<DayStateKey, PhaseMarker>();
-
-		// Start with fallback to guarantee each key exists
-		fallbackMarkers.forEach((marker) => {
-			markerMap.set(marker.key, marker);
-		});
-
-		customMarkers.forEach((marker) => {
-			if (marker) {
-				markerMap.set(marker.key, marker);
-			}
-		});
-
-		return [...markerMap.values()].sort(
-			(a, b) => a.hourValue - b.hourValue,
-		);
-	}
 	function updateHourFromPointer(event: PointerEvent) {
 		if (!dialEl || totalHours === 0) return;
-
 		const rect = dialEl.getBoundingClientRect();
-		const centerX = rect.left + rect.width / 2;
-		const centerY = rect.top + rect.height / 2;
-		const x = event.clientX - centerX;
-		const y = event.clientY - centerY;
-
-		let angle = (Math.atan2(y, x) * 180) / Math.PI;
-		angle = (angle + 450) % 360; // align 0 at top
-
-		let targetIndex = Math.round((angle / 360) * totalHours);
-		if (targetIndex >= totalHours) targetIndex = 0;
-
+		const targetIndex = getIndexFromPointerEvent(
+			rect,
+			event.clientX,
+			event.clientY,
+			totalHours,
+		);
 		if (targetIndex !== $viewerStore.currentHour) {
 			setCurrentHour(targetIndex);
 		}
@@ -373,12 +75,27 @@
 		updateHourFromPointer(event);
 	}
 
-	function handlePointerUp(event: PointerEvent) {
+		function handlePointerUp(event: PointerEvent) {
 		if (!dialEl) return;
 		isDragging = false;
 		if (dialEl.hasPointerCapture(event.pointerId)) {
 			dialEl.releasePointerCapture(event.pointerId);
 		}
+		// Hide labels when drag ends and pointer is outside the dial
+		const rect = dialEl.getBoundingClientRect();
+		const inside =
+			event.clientX >= rect.left &&
+			event.clientX <= rect.right &&
+			event.clientY >= rect.top &&
+			event.clientY <= rect.bottom;
+		if (!inside) isHoveringDial = false;
+	}
+
+	function handlePointerEnter() {
+		isHoveringDial = true;
+	}
+	function handlePointerLeave() {
+		if (!isDragging) isHoveringDial = false;
 	}
 
 	function handleKeyDown(event: KeyboardEvent) {
@@ -404,31 +121,13 @@
 	$: if (totalHours > 0 && $viewerStore.currentHour !== currentHourIndex) {
 		setCurrentHour(currentHourIndex);
 	}
-
-	// Color mode toggle (only for UTCI, not Shading Index)
-	const isFullDayMode = () => $viewerStore.colorMode === "normalized";
-	const isPerHourMode = () => $viewerStore.colorMode === "discrete";
-	const showColorModeToggle = () =>
-		$analysisStore?.metadata.analysis_type === "full_day" &&
-		$viewerStore.metricType === "utci";
-
-	function selectFullDayMode() {
-		if (!isFullDayMode()) {
-			setColorMode("normalized");
-		}
-	}
-
-	function selectPerHourMode() {
-		if (!isPerHourMode()) {
-			setColorMode("discrete");
-		}
-	}
 </script>
 
 <div class="radial-wrapper">
 	<div class="radial-panel">
 		<div
 			class="radial-dial"
+			style="--dial-size-px: {DIAL_SIZE_PX}px; --dial-center-px: {DIAL_CENTER}px;"
 			role="slider"
 			tabindex={totalHours > 0 ? 0 : -1}
 			aria-valuemin="0"
@@ -440,230 +139,146 @@
 			on:pointerdown={handlePointerDown}
 			on:pointermove={handlePointerMove}
 			on:pointerup={handlePointerUp}
+			on:pointerenter={handlePointerEnter}
+			on:pointerleave={handlePointerLeave}
 			on:keydown={handleKeyDown}
 		>
+			<!-- Full dial face: one conic gradient from center to edge (inner and outer as one) -->
+			<div
+				class="day-ring"
+				style="width: {DIAL_SIZE_PX}px; height: {DIAL_SIZE_PX}px; background: {dayRingGradient};"
+				aria-hidden="true"
+			></div>
+
 			<svg
-				width="240"
-				height="240"
+				width={DIAL_SIZE_PX}
+				height={DIAL_SIZE_PX}
 				class="dial-viewport"
-				viewBox="0 0 240 240"
+				viewBox="0 0 {DIAL_SIZE_PX} {DIAL_SIZE_PX}"
 			>
-				<circle
-					cx="120"
-					cy="120"
-					r="110"
-					fill="none"
-					stroke="rgba(148, 163, 184, 0.08)"
-					stroke-width="2"
-				/>
+				<defs>
+					<filter id="label-drop-shadow" x="-30%" y="-30%" width="160%" height="160%">
+						<feDropShadow
+							dx="0"
+							dy="1"
+							stdDeviation="2.5"
+							flood-color="#000"
+							flood-opacity="0.5"
+						/>
+					</filter>
+					{#if totalHours > 0}
+						{@const linePos = getPositionForIndex(
+							currentHourIndex,
+							totalHours,
+							HANDLE_RADIUS,
+						)}
+						<linearGradient
+							id="handle-line-gradient"
+							gradientUnits="userSpaceOnUse"
+							x1={DIAL_CENTER}
+							y1={DIAL_CENTER}
+							x2={linePos.x}
+							y2={linePos.y}
+						>
+							<!-- Fade in from center, stay bright through mid, fade out as it reaches the knob/labels -->
+							<stop offset="0%" stop-color="rgba(255, 255, 255, 0)" />
+							<stop offset="20%" stop-color="rgba(255, 255, 255, 1)" />
+							<stop offset="65%" stop-color="rgba(255, 255, 255, 0.7)" />
+							<stop offset="100%" stop-color="rgba(255, 255, 255, 0)" />
+						</linearGradient>
+					{/if}
+				</defs>
 
 				{#if totalHours > 0}
-					{#each Array(totalHours) as _, index}
-						{@const angle = (index / totalHours) * 360 - 90}
-						{@const rad = (angle * Math.PI) / 180}
-						{@const isMajor =
-							index %
-								Math.max(Math.round(totalHours / 6) || 1, 1) ===
-							0}
-						<line
-							x1={120 +
-								Math.cos(rad) *
-									(isMajor
-										? TICK_RADIUS_INNER_MAJOR
-										: TICK_RADIUS_INNER_MINOR)}
-							y1={120 +
-								Math.sin(rad) *
-									(isMajor
-										? TICK_RADIUS_INNER_MAJOR
-										: TICK_RADIUS_INNER_MINOR)}
-							x2={120 + Math.cos(rad) * TICK_RADIUS_OUTER}
-							y2={120 + Math.sin(rad) * TICK_RADIUS_OUTER}
-							stroke={isMajor
-								? "rgba(148, 163, 184, 0.6)"
-								: "rgba(148, 163, 184, 0.25)"}
-							stroke-width={isMajor ? 2 : 1}
-						/>
-					{/each}
+					<!-- Hour labels: visible on hover or while dragging, smooth fade + scale -->
+					<g
+						class="hour-labels"
+						class:visible={showLabels}
+						filter="url(#label-drop-shadow)"
+						aria-hidden="true"
+					>
+						{#each Array(24) as _, i}
+							{@const pos = getPositionForIndex(i, 24, LABEL_RADIUS)}
+							<text
+								x={pos.x}
+								y={pos.y}
+								text-anchor="middle"
+								dominant-baseline="middle"
+								class="hour-label"
+							>
+								{String(i).padStart(2, "0")}
+							</text>
+						{/each}
+					</g>
 
-					{#each phaseMarkers as marker (marker.key)}
-						{@const pos = getPositionForHourValue(
-							marker.hourValue,
-							62,
-						)}
-						<g
-							class="phase-marker"
-							transform={`translate(${pos.x}, ${pos.y})`}
-							style={`color: ${marker.color};`}
-							aria-hidden="true"
-						>
-							<circle r="9" class="phase-ring" />
-							<circle r="5" class="phase-ring-inner" />
-						</g>
-					{/each}
-
+					{@const knobPos = getPositionForIndex(
+						currentHourIndex,
+						totalHours,
+						HANDLE_RADIUS,
+					)}
+					{@const linePos = getPositionForIndex(
+						currentHourIndex,
+						totalHours,
+						HANDLE_RADIUS,
+					)}
+					<!-- Progress trail: single soft arc that blends with the dial (refined, minimal) -->
+					<g class="progress-trail">
 					<circle
-						cx="120"
-						cy="120"
-						r={BASE_RADIUS}
+						cx={DIAL_CENTER}
+						cy={DIAL_CENTER}
+						r={HANDLE_RADIUS}
 						fill="none"
-						stroke={currentState.color}
-						stroke-width="8"
+						stroke="rgba(255, 255, 255, 0.35)"
+						stroke-width="1.5"
 						stroke-dasharray={`${progressDash} ${circumference}`}
+							stroke-linecap="round"
+							transform="rotate(-90 {DIAL_CENTER} {DIAL_CENTER})"
+							class="progress-arc"
+							class:animate-transition={!isDragging}
+						/>
+					</g>
+					<!-- Figma-style hand: line fades in from center so it's less pronounced over ":" -->
+					<line
+						x1={DIAL_CENTER}
+						y1={DIAL_CENTER}
+						x2={linePos.x}
+						y2={linePos.y}
+						stroke="url(#handle-line-gradient)"
+						stroke-width="2.5"
 						stroke-linecap="round"
-						transform="rotate(-90 120 120)"
+						class="dial-handle-line"
 						class:animate-transition={!isDragging}
 					/>
-
 					<circle
-						cx={getPositionForIndex(currentHourIndex, BASE_RADIUS)
-							.x}
-						cy={getPositionForIndex(currentHourIndex, BASE_RADIUS)
-							.y}
-						r="9"
-						fill={currentState.color}
-						stroke="white"
-						stroke-width="2"
+						cx={knobPos.x}
+						cy={knobPos.y}
+						r="6"
+						fill="#ffffff"
+						stroke="rgba(0, 0, 0, 0.12)"
+						stroke-width="1"
 						class="dial-handle"
 					/>
 				{/if}
 			</svg>
 
 			<div class="center-display">
-				<div class="state-icon" style={`color: ${currentState.color};`}>
-					<svg viewBox="0 0 24 24" width="32" height="32">
-						<use href={ICON_MAP[currentState.icon]} />
-					</svg>
-				</div>
 				<div class="current-time">{currentHourLabel}</div>
 				<div class="state-label">{currentState.label}</div>
 			</div>
 		</div>
 
-		{#if showColorModeToggle()}
-			<div class="color-mode-section">
-				<div class="mode-caption">
-					<span>Color scale Mode</span>
-				</div>
-				<div
-					class="mode-toggle-vertical"
-					aria-label="Color scale mode"
-					role="toolbar"
-				>
-					<button
-						type="button"
-						class="mode-pill-vertical"
-						class:mode-pill-vertical-active={isFullDayMode()}
-						on:click={selectFullDayMode}
-						aria-pressed={isFullDayMode()}
-					>
-						<span class="mode-pill-label">Full day</span>
-					</button>
-					<button
-						type="button"
-						class="mode-pill-vertical"
-						class:mode-pill-vertical-active={isPerHourMode()}
-						on:click={selectPerHourMode}
-						aria-pressed={isPerHourMode()}
-					>
-						<span class="mode-pill-label">Per hour</span>
-					</button>
-				</div>
-				<div class="mode-help">
-					Switch between the full‑day range and the range for the
-					selected hour.
-				</div>
-			</div>
-		{/if}
+		<ColorModeToggle />
 	</div>
 </div>
 
 <svelte:window on:pointerup={() => (isDragging = false)} />
-
-<svg
-	class="icon-defs"
-	aria-hidden="true"
-	focusable="false"
-	width="0"
-	height="0"
-	style="position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;display:none;"
->
-	<defs>
-		<symbol
-			id="radial-sun-icon"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<circle cx="12" cy="12" r="4" />
-			<path d="M12 2v2" />
-			<path d="M12 20v2" />
-			<path d="m4.93 4.93 1.41 1.41" />
-			<path d="m17.66 17.66 1.41 1.41" />
-			<path d="M2 12h2" />
-			<path d="M20 12h2" />
-			<path d="m6.34 17.66-1.41 1.41" />
-			<path d="m19.07 4.93-1.41 1.41" />
-		</symbol>
-		<symbol
-			id="radial-sunrise-icon"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<path d="M12 2v8" />
-			<path d="m4.93 10.93 1.41 1.41" />
-			<path d="M2 18h2" />
-			<path d="M20 18h2" />
-			<path d="m19.07 10.93-1.41 1.41" />
-			<path d="M22 22H2" />
-			<path d="m8 6 4-4 4 4" />
-			<path d="M16 18a4 4 0 0 0-8 0" />
-		</symbol>
-		<symbol
-			id="radial-sunset-icon"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<path d="M12 10V2" />
-			<path d="m4.93 10.93 1.41 1.41" />
-			<path d="M2 18h2" />
-			<path d="M20 18h2" />
-			<path d="m19.07 10.93-1.41 1.41" />
-			<path d="M22 22H2" />
-			<path d="m16 6-4 4-4-4" />
-			<path d="M16 18a4 4 0 0 0-8 0" />
-		</symbol>
-		<symbol
-			id="radial-moon-icon"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="2"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-		>
-			<path
-				d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"
-			/>
-		</symbol>
-	</defs>
-</svg>
 
 <style>
 	.radial-wrapper {
 		width: 100%;
 	}
 
+	/* Task 5: panel stays distinct; dial face is the gradient ring */
 	.radial-panel {
 		background: var(--color-bg-panel-soft);
 		padding: var(--spacing-lg);
@@ -675,8 +290,8 @@
 
 	.radial-dial {
 		position: relative;
-		width: 240px;
-		height: 240px;
+		width: var(--dial-size-px);
+		height: var(--dial-size-px);
 		border-radius: 50%;
 		cursor: pointer;
 		outline: none;
@@ -690,6 +305,15 @@
 		box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35);
 	}
 
+	.day-ring {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		border-radius: 50%;
+		pointer-events: none;
+	}
+
 	.dial-viewport {
 		position: absolute;
 		top: 0;
@@ -697,6 +321,29 @@
 		bottom: 0;
 		left: 0;
 		pointer-events: none;
+	}
+
+	/* Hour labels: show on hover/drag, smooth fade + scale (200–300ms per ui-ux-pro-max) */
+	.hour-labels {
+		opacity: 0;
+		transform: scale(0.92);
+		transform-origin: var(--dial-center-px) var(--dial-center-px);
+		pointer-events: none;
+		transition:
+			opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+			transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+	.hour-labels.visible {
+		opacity: 1;
+		transform: scale(1);
+	}
+	.hour-label {
+		font-family: var(--font-family);
+		font-size: 9px;
+		font-weight: 300;
+		fill: #ffffff;
+		letter-spacing: 0.02em;
+		user-select: none;
 	}
 
 	.center-display {
@@ -710,141 +357,54 @@
 		pointer-events: none;
 	}
 
+	/* Fixed-width time so digits (e.g. 9 vs 10) don’t shift layout when handle crosses text */
 	.current-time {
-		font-size: 32px; /* Bump up */
+		font-size: 32px;
 		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.02em;
-	}
-
-	.state-label {
-		font-size: var(--font-md);
-		color: var(--color-text-secondary, rgba(148, 163, 184, 0.9));
-	}
-
-	.state-icon svg {
-		width: 32px;
-		height: 32px;
-		fill: none;
-		stroke: currentColor;
-		stroke-linecap: round;
-		stroke-linejoin: round;
-		stroke-width: 1.8;
-	}
-
-	.phase-marker {
-		transition:
-			transform 0.2s ease,
-			opacity 0.2s ease;
-		opacity: 0.7;
-	}
-
-	.phase-marker .phase-ring {
-		fill: currentColor;
-		opacity: 0.32;
-	}
-
-	.phase-marker .phase-ring-inner {
-		fill: currentColor;
-		opacity: 0.5;
-	}
-
-	.radial-dial:focus-visible .phase-marker,
-	.radial-dial:hover .phase-marker {
-		opacity: 1;
-	}
-
-	.dial-handle {
-		transition:
-			transform 0.15s ease,
-			fill 0.2s ease;
-	}
-
-	.animate-transition {
-		transition:
-			stroke-dasharray 0.25s ease,
-			stroke 0.25s ease;
-	}
-
-	.icon-defs {
-		position: absolute;
-		width: 0;
-		height: 0;
-		overflow: hidden;
-		pointer-events: none;
-	}
-
-	.color-mode-section {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: 8px;
-		margin-top: var(--spacing-lg);
-		padding-top: var(--spacing-lg);
-		border-top: 1px solid rgba(148, 163, 184, 0.2);
-	}
-
-	.mode-caption {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		font-size: var(--font-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--color-text-secondary);
-		line-height: 1.1;
-	}
-
-	.mode-toggle-vertical {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		background: var(--color-bg-panel);
-		border-radius: 18px;
-		padding: 4px;
-		gap: 2px;
-		border: 1px solid rgba(148, 163, 184, 0.45);
-		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
-		overflow: hidden;
-	}
-
-	.mode-pill-vertical {
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		font-size: var(--font-xs);
-		padding: 6px 12px;
-		border-radius: 999px;
-		cursor: pointer;
+		min-width: 5ch;
 		text-align: center;
-		transition:
-			background 0.16s ease,
-			color 0.16s ease;
-		font-family: var(--font-family);
+		color: var(--color-text-primary, #1e293b);
+		text-shadow:
+			0 0 12px rgba(255, 255, 255, 0.9),
+			0 1px 3px rgba(0, 0, 0, 0.2);
 	}
 
-	.mode-pill-vertical:hover {
-		background: rgba(148, 163, 184, 0.08);
+	/* White state label with strong drop shadow so it reads on any gradient and stays elegant */
+	.state-label {
+		font-size: 15px;
+		font-weight: 600;
+		color: #ffffff;
+		text-shadow:
+			0 2px 4px rgba(0, 0, 0, 0.45),
+			0 4px 12px rgba(0, 0, 0, 0.35),
+			0 0 24px rgba(0, 0, 0, 0.25),
+			0 0 1px rgba(0, 0, 0, 0.5);
 	}
 
-	.mode-pill-vertical-active {
-		background: linear-gradient(
-			to bottom,
-			rgba(56, 189, 248, 0.24),
-			rgba(56, 189, 248, 0.55)
-		);
-		color: var(--color-bg-elevated);
+	/* Figma-style hand: line + circle at end */
+	.dial-handle-line {
+		transition: none;
+	}
+	.dial-handle-line.animate-transition {
+		transition: stroke 0.2s ease;
+	}
+	.dial-handle {
+		transition: transform 0.15s ease;
+		filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
+	}
+	.radial-dial:focus-visible .dial-handle {
+		filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8))
+			drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
 	}
 
-	.mode-pill-label {
-		display: inline-block;
-		font-weight: 500;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+	/* Progress trail: blends with gradient (overlay), 200ms per ui-ux-pro-max */
+	.progress-trail {
+		mix-blend-mode: overlay;
+		isolation: isolate;
 	}
-
-	.mode-help {
-		font-size: var(--font-xs);
-		color: var(--color-text-muted);
-		line-height: 1.4;
+	.animate-transition {
+		transition: stroke-dasharray 0.2s ease, stroke 0.2s ease;
 	}
 </style>

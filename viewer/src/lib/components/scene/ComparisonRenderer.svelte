@@ -32,7 +32,8 @@
 		createUtciSurfaceMesh,
 		updateUtciSurfaceTexture
 	} from '$lib/services/pointCloudService';
-	import { applyCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
+	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
+	import { resolveModelPath } from '$lib/utils/analysisPaths';
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 	import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 	import * as THREE from 'three';
@@ -226,8 +227,11 @@
 			return;
 		}
 
-		const modelPath = analysis.metadata.model_file.replace('data/', `${getDataBasePath()}/data/`);
 		const analysisId = $comparisonStore.comparisonAnalysisId;
+		const modelPath = resolveModelPath(
+			analysis.metadata.model_file,
+			analysisId
+		).replace('data/', `${getDataBasePath()}/data/`);
 		
 		// Verify the analysis matches the current store request to prevent stale loads
 		// This handles race conditions when switching scenarios rapidly
@@ -367,7 +371,7 @@
 
 		// Apply coordinate transform
 		const coordinateSystem = analysis?.metadata.coordinate_system || 'xy_ground';
-		applyCoordinateTransform(modelGroup, coordinateSystem);
+		applyModelCoordinateTransform(modelGroup, coordinateSystem);
 
 		// Cache the processed scene (before normalization)
 		if (!hasModelInCache(modelPath)) {

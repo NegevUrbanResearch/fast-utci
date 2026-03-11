@@ -16,6 +16,10 @@ venv/
 # IDE
 .playwright-mcp
 .cursor/
+.agent/
+.agents/
+.claude/
+video/
 
 # Project specific
 cache/
@@ -36,6 +40,7 @@ viewer/.env
 viewer/.env.*
 !viewer/.env.example
 !viewer/.env.test
+.env
 
 # Viewer Vite timestamps
 viewer/vite.config.js.timestamp-*

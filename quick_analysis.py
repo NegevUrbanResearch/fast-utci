@@ -22,10 +22,12 @@ ANALYSIS_CONFIGS = [
         "month": 8,
         "day": 15,
         "grid_size": 2.0,
-        "model_file": "data/3d_models/original_with_layers.glb",
-        "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
+        "model_file": "data/3d_models/Ness-Tziona/nes_tziona_unblock_2.glb",
+        "epw_file": "data/weather/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx.epw",
         "export_csv": False,
-        "verbose": True
+        "verbose": True,
+        "project": "Ness-Tziona",
+        "category": "exploded"
     },
     # Uncomment below to run multiple analyses:
     # {
