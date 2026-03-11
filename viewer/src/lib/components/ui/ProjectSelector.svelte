@@ -29,15 +29,6 @@
 		}
 	}
 
-	function handleModelChange(event: Event) {
-		const target = event.target as HTMLSelectElement;
-		selectedModelId = target.value;
-		const project = projects.find((p) => p.id === selectedProjectId);
-		const model = project?.models.find((m) => m.id === selectedModelId);
-		if (model && onSelect) {
-			onSelect(model.analysisId);
-		}
-	}
 </script>
 
 <div class="project-selector">
@@ -51,19 +42,6 @@
 	>
 		{#each projects as project}
 			<option value={project.id}>{project.label}</option>
-		{/each}
-	</select>
-
-	<label class="selector-label" for="model-select">Model</label>
-	<select
-		id="model-select"
-		data-testid="model-select"
-		class="selector-select"
-		bind:value={selectedModelId}
-		on:change={handleModelChange}
-	>
-		{#each projects.find((p) => p.id === selectedProjectId)?.models ?? [] as model}
-			<option value={model.id}>{model.label}</option>
 		{/each}
 	</select>
 </div>
