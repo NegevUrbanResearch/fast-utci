@@ -167,7 +167,7 @@
 						/>
 					</filter>
 					{#if totalHours > 0}
-						{@const handlePos = getPositionForIndex(
+						{@const linePos = getPositionForIndex(
 							currentHourIndex,
 							totalHours,
 							HANDLE_RADIUS,
@@ -177,12 +177,14 @@
 							gradientUnits="userSpaceOnUse"
 							x1={DIAL_CENTER}
 							y1={DIAL_CENTER}
-							x2={handlePos.x}
-							y2={handlePos.y}
+							x2={linePos.x}
+							y2={linePos.y}
 						>
+							<!-- Fade in from center, stay bright through mid, fade out as it reaches the knob/labels -->
 							<stop offset="0%" stop-color="rgba(255, 255, 255, 0)" />
-							<stop offset="18%" stop-color="rgba(255, 255, 255, 0)" />
-							<stop offset="100%" stop-color="rgba(255, 255, 255, 0.95)" />
+							<stop offset="20%" stop-color="rgba(255, 255, 255, 1)" />
+							<stop offset="65%" stop-color="rgba(255, 255, 255, 0.7)" />
+							<stop offset="100%" stop-color="rgba(255, 255, 255, 0)" />
 						</linearGradient>
 					{/if}
 				</defs>
@@ -196,7 +198,7 @@
 						aria-hidden="true"
 					>
 						{#each Array(24) as _, i}
-							{@const pos = getPositionForIndex(i, 24, 110)}
+							{@const pos = getPositionForIndex(i, 24, LABEL_RADIUS)}
 							<text
 								x={pos.x}
 								y={pos.y}
@@ -209,7 +211,12 @@
 						{/each}
 					</g>
 
-					{@const handlePos = getPositionForIndex(
+					{@const knobPos = getPositionForIndex(
+						currentHourIndex,
+						totalHours,
+						HANDLE_RADIUS,
+					)}
+					{@const linePos = getPositionForIndex(
 						currentHourIndex,
 						totalHours,
 						HANDLE_RADIUS,
@@ -234,8 +241,8 @@
 					<line
 						x1={DIAL_CENTER}
 						y1={DIAL_CENTER}
-						x2={handlePos.x}
-						y2={handlePos.y}
+						x2={linePos.x}
+						y2={linePos.y}
 						stroke="url(#handle-line-gradient)"
 						stroke-width="2.5"
 						stroke-linecap="round"
@@ -243,8 +250,8 @@
 						class:animate-transition={!isDragging}
 					/>
 					<circle
-						cx={handlePos.x}
-						cy={handlePos.y}
+						cx={knobPos.x}
+						cy={knobPos.y}
 						r="6"
 						fill="#ffffff"
 						stroke="rgba(0, 0, 0, 0.12)"
@@ -399,80 +406,5 @@
 	}
 	.animate-transition {
 		transition: stroke-dasharray 0.2s ease, stroke 0.2s ease;
-	}
-
-	.color-mode-section {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: 8px;
-		margin-top: var(--spacing-lg);
-		padding-top: var(--spacing-lg);
-		border-top: 1px solid rgba(148, 163, 184, 0.2);
-	}
-
-	.mode-caption {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		font-size: var(--font-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--color-text-secondary);
-		line-height: 1.1;
-	}
-
-	.mode-toggle-vertical {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		background: var(--color-bg-panel);
-		border-radius: 18px;
-		padding: 4px;
-		gap: 2px;
-		border: 1px solid rgba(148, 163, 184, 0.45);
-		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
-		overflow: hidden;
-	}
-
-	.mode-pill-vertical {
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		font-size: var(--font-xs);
-		padding: 6px 12px;
-		border-radius: 999px;
-		cursor: pointer;
-		text-align: center;
-		transition:
-			background 0.16s ease,
-			color 0.16s ease;
-		font-family: var(--font-family);
-	}
-
-	.mode-pill-vertical:hover {
-		background: rgba(148, 163, 184, 0.08);
-	}
-
-	.mode-pill-vertical-active {
-		background: linear-gradient(
-			to bottom,
-			rgba(56, 189, 248, 0.24),
-			rgba(56, 189, 248, 0.55)
-		);
-		color: var(--color-bg-elevated);
-	}
-
-	.mode-pill-label {
-		display: inline-block;
-		font-weight: 500;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.mode-help {
-		font-size: var(--font-xs);
-		color: var(--color-text-muted);
-		line-height: 1.4;
 	}
 </style>

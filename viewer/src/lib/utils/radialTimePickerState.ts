@@ -30,12 +30,15 @@ export const DAY_STATE_META: Record<
 	evening: { label: "Evening", color: "#f54900", icon: "sunset" },
 };
 
-/** Dial layout: size, center, handle and label radii (single source of truth for SVG/layout). */
+/** Dial layout: size, center, handle/line/label radii (single source of truth for SVG/layout). */
 export const DIAL_SIZE_PX = 240;
 export const DIAL_CENTER = 120;
-/** Handle stops short of the hour labels so it doesn't sit on the text. */
-export const HANDLE_RADIUS = 95;
-export const LABEL_RADIUS = 110;
+/** Handle knob traces near the outer rim of the clock. */
+export const HANDLE_RADIUS = 114;
+/** Handle line stops clearly before labels so it doesn't run through the text. */
+export const HANDLE_LINE_RADIUS = 96;
+/** Hour labels sit slightly inside the rim, below the handle knob. */
+export const LABEL_RADIUS = 102;
 
 const FALLBACK_PHASE_HOURS: Array<{ key: DayStateKey; hour: number }> = [
 	{ key: "night", hour: 0 },
