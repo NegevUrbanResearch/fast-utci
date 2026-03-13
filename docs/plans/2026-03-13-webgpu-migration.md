@@ -1206,3 +1206,24 @@ git commit -m "feat: add geometry editing (add/move/remove objects)"
 | 21 | Threlte v8.1.8 supports WebGPU | §17.1 |
 | 22 | No custom GLSL to port | §17.2 |
 | 26 | Phased implementation | §18 |
+
+---
+
+## Phase 1 Implementation Review Summary
+
+After implementing Phase 1 Tasks 1–11 in the viewer, a focused code review surfaced a few important clarifications that affect how we approach Phase 2 and UI wiring:
+
+- **Coordinate system:**  
+  Sunpath and Tregenza vectors currently use a Z‑up convention, while the Three.js scene, BVH, and grid generator use Y‑up. Before relying on WebGPU exposure results, we must adopt a single convention (likely Y‑up) and consistently transform vectors when populating GPU buffers. Tests should verify at least one known sun direction in world space.
+
+- **Grid semantics:**  
+  The existing `generateGridFromMesh` behaves like a surface grid (raycasting + slope filter) rather than the rectangular bbox grid described for Task 7. For Python parity and `.bin` comparisons, we either need a separate rectangular grid generator that mirrors `grid.py:create_rectangular_grid`, or we must explicitly commit to surface grids on both Python and TS sides and update this plan accordingly.
+
+- **SolarCal and MRT (Phase 1 scope):**  
+  SolarCal is implemented in TypeScript, but the current WGSL shader treats `mrt_longwave` ≈ air temperature and ignores shortwave contributions. This is acceptable for Phase 1 architectural work, but all WebGPU UTCI comparisons should assume they are **not** yet physically equivalent to the Python pipeline until SolarCal is wired into WGSL and validated.
+
+- **Tregenza weights & sky exposure:**  
+  Tregenza weights in the viewer currently sum to ≈145 and `sky_exposure` accumulates raw weights for visible patches. We must decide whether we want a normalized sky view factor in [0,1] (and normalize accordingly) or keep this as an “equivalent patch count” representation and normalize only when computing MRT.
+
+Full details and rationale are recorded in `docs/webgpu-migration-analysis.md` §20 “Phase 1 Implementation Review Notes”.
+

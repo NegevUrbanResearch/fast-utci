@@ -1,3 +1,54 @@
+
+---
+
+## 20. Phase 1 Implementation Review Notes
+
+> **Status:** After implementing Phase 1 Tasks 1–11 in the viewer, a code review identified a few important clarifications and follow-ups. These notes capture the current state so future work (Phase 2 validation + UI wiring) can proceed with clear assumptions.
+
+### 20.1 Coordinate System Conventions
+
+- **Current implementation:**
+  - Sun vectors (`viewer/src/lib/compute/sunpath.ts`) and Tregenza dome vectors (`viewer/src/lib/compute/tregenza.ts`) are effectively defined in a **Z‑up convention** (X = East, Y = North, Z = Up), consistent with the Python/ladybug world.
+  - The Three.js scene, BVH, and grid generator (`viewer/src/lib/compute/grid-generator.ts`) use Three’s default **Y‑up** convention (Y = Up).
+  - `ComputeManager` (`viewer/src/lib/compute/compute-manager.ts`) currently forwards grid points and sun/Tregenza vectors into GPU buffers without transforming between these frames.
+- **Risk:** If left as‑is, solar and sky rays will be oriented incorrectly relative to scene geometry in WebGPU compute, and exposure results will not be physically meaningful.
+- **Follow-up decision:** Adopt a **single global convention for the viewer and GPU** — likely Three’s Y‑up — and:
+  - Rotate sun and Tregenza vectors into the Y‑up world frame when packing GPU buffers (or generate them directly in that frame).
+  - Document the chosen convention and add targeted tests that verify a known sun direction is correct in world coordinates for a simple model.
+
+### 20.2 Grid Semantics vs Python Reference
+
+- **Plan assumption:** Task 7 and §13.2 assume a **rectangular grid** over the model bounding box, matching `grid.py:create_rectangular_grid` (axis‑aligned, regular spacing, normals up).
+- **Current TS implementation:**
+  - `generateGridFromMesh` raycasts downward from above the world‑space bounding box onto the mesh, filters by slope (`maxSlopeDegrees`), and places sensor points above “walkable” intersections with normals `(0, 1, 0)`.
+  - This behavior is closer to Python’s **surface grid** mode than the rectangular grid described in the plan.
+- **Implication:** Comparing GPU results against Python `.bin` outputs that used a rectangular grid will mix differences in **point sampling** with differences in **physics/compute**, making parity harder to interpret.
+- **Follow-up decision:** Either:
+  - Implement a separate **rectangular grid generator** in TS that mirrors `grid.py:create_rectangular_grid` 1:1 for parity tests, keeping the current raycasted grid as a “surface grid” mode; or
+  - Explicitly switch the validation strategy to use surface grids on both Python and TS sides and update this analysis + the plan accordingly.
+
+### 20.3 SolarCal and MRT in Phase 1
+
+- **TS implementation:** `viewer/src/lib/compute/solarcal.ts` implements a SolarCal‑style ERF/MRT calculation using EPW direct/diffuse radiation and horiz IR, sky view factor, ground reflectance, and a non‑linear \(T^4\) combination of longwave and shortwave.
+- **WGSL implementation (current Phase 1):**
+  - `viewer/src/lib/compute/shaders/mrt_utci.wgsl` currently:
+    - Treats `WeatherSample.mrt_longwave` as the full MRT and ignores SolarCal shortwave contributions.
+    - In `ComputeManager`, `mrt_longwave` is approximated as **air temperature** as a placeholder.
+  - The full UTCI polynomial is implemented in WGSL and matches the TS implementation, but the MRT fed into it is longwave‑only ≈ air temperature.
+- **Implication:** For Phase 1, WebGPU UTCI values correspond roughly to `UTCI(ta, ta, v, rh)`, not to the Python pipeline’s MRT (which includes SolarCal effects).
+- **Follow-up decision:**
+  - Use `computeSolarCal` + `calculateUTCI` as the CPU reference for validation against Python (ladybug‑comfort + pythermalcomfort).
+  - Once validated, **port SolarCal logic into `mrt_utci.wgsl`**, reading from `solar_exposure`, `sky_exposure`, EPW radiation fields, and horiz IR, and update `WeatherSample` / `ComputeManager` packing accordingly.
+
+### 20.4 Tregenza Weights & Sky Exposure Interpretation
+
+- **Current data:** `TREGENZA_WEIGHTS` in `viewer/src/lib/compute/tregenza.ts` sum to approximately 145, and `exposure_sky.wgsl` accumulates weights for visible patches into `sky_exposure[point]`.
+- **Plan expectation:** Analysis §4.2 describes Tregenza weights as **solid‑angle fractions** that conceptually sum to ≈1.0 over the sky hemisphere.
+- **Implication:** As implemented, `sky_exposure` is effectively an “equivalent visible patch count” rather than a normalized [0,1] sky view factor, unless a later stage normalizes by the total weight.
+- **Follow-up decision:** Decide whether the GPU pipeline should:
+  - Store a **normalized sky view factor** (normalize weights or divide by total in MRT/UTCI stage), or
+  - Intentionally keep the “equivalent patch count” representation and normalize only when needed for MRT computations or diagnostics.
+
 # WebGPU Migration Analysis: Moving MRT/UTCI Computation to Three.js GPU
 
 > **Date:** 2026-03-13  
