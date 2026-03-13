@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Canvas } from '@threlte/core';
+import { Canvas } from '@threlte/core';
 	import * as THREE from 'three';
 	import { WebGPURenderer } from 'three/webgpu';
 	import SceneBackground from './SceneBackground.svelte';
@@ -12,20 +12,21 @@
 
 	let canvasElement: HTMLCanvasElement | null = null;
 
-	async function createRenderer(canvas: HTMLCanvasElement) {
+function createRenderer(canvas: HTMLCanvasElement) {
 		canvasElement = canvas;
 		const renderer = new WebGPURenderer({
 			canvas,
-			antialias: true
+			antialias: true,
+			alpha: false
 		});
-		// WebGPURenderer requires async initialization before first use
-		if (typeof renderer.init === 'function') {
-			// Threlte supports async createRenderer returning a Promise
-			// eslint-disable-next-line @typescript-eslint/await-thenable
-			await renderer.init();
+		// WebGPURenderer requires async initialization before first use. We fire
+		// and forget here; the renderer will still be usable for subsequent
+		// frames once init resolves.
+		if (typeof (renderer as any).init === 'function') {
+			// eslint-disable-next-line @typescript-eslint/no-floating-promises
+			(renderer as any).init();
 		}
-		renderer.toneMapping = THREE.NoToneMapping;
-		renderer.toneMappingExposure = 1.0;
+		// Let <Canvas> drive tone mapping via its props.
 		return renderer;
 	}
 

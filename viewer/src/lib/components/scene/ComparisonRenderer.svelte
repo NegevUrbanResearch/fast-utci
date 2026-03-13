@@ -7,7 +7,7 @@
 	 * scene renders on the right side (curtain position to end). Camera and layers are synced.
 	 */
 	import { onMount, onDestroy } from 'svelte';
-	import { useThrelte } from '@threlte/core';
+	import { useThrelte, useTask } from '@threlte/core';
 	import { T } from '@threlte/core';
 	import { comparisonStore, curtainPosition, comparisonAnalysis, unifiedUtciRange, setComparisonModelLoading } from '$lib/stores/comparisonStore';
 	import { cameraStore } from '$lib/stores/cameraStore';
@@ -42,7 +42,7 @@
 	// Props
 	export let baseCamera: PerspectiveCamera | undefined = undefined;
 
-	const { renderer, scene, invalidate } = useThrelte();
+	const { renderer, scene, invalidate, autoRender, renderStage } = useThrelte();
 
 	// Comparison scene (separate from base scene)
 	let comparisonScene: THREE.Scene | null = null;
@@ -504,17 +504,13 @@
 		restoreBaseOnlyLayers();
 	}
 
-	// Store original render function
-	let originalAutoRender: boolean | undefined;
-	let renderLoopActive = false;
-
-	/**
-	 * Custom render loop with scissor-test rendering
-	 */
-	function customRenderLoop(): void {
-		if (!renderer || !$comparisonStore.isComparing || !comparisonScene || !comparisonCamera) {
-			return;
-		}
+	// Comparison render task: replaces Threlte's default auto-render while this
+	// component is mounted (i.e. while comparison mode is active) so we can
+	// fully control scissor-based passes.
+	function renderComparison() {
+		if (!renderer) return;
+		if (!$comparisonStore.isComparing) return;
+		if (!comparisonScene || !comparisonCamera) return;
 
 		// Use baseCamera prop which is passed from the parent component
 		const actualCamera = baseCamera;
@@ -528,20 +524,30 @@
 		}
 		comparisonCamera.updateProjectionMatrix();
 
-		// Get canvas dimensions
-		const canvas = renderer.domElement;
-		const width = canvas.clientWidth;
-		const height = canvas.clientHeight;
+		// Use renderer size rather than DOM element size for WebGPU safety
+		const size = new THREE.Vector2();
+		renderer.getSize(size);
+		const width = size.x;
+		const height = size.y;
+		if (width === 0 || height === 0) return;
 
 		// Calculate scissor positions based on curtain position
 		const curtain = $curtainPosition;
 		const curtainX = Math.floor(width * curtain);
 
-		// Store original state
-		const originalScissorTest = renderer.getScissorTest();
+		// Store original state (WebGLRenderer) if the API exists. WebGPURenderer
+		// does not currently expose setScissorTest / getScissorTest, but still
+		// supports setScissor + setViewport.
+		const canToggleScissorTest =
+			typeof (renderer as any).getScissorTest === 'function' &&
+			typeof (renderer as any).setScissorTest === 'function';
+		const originalScissorTest = canToggleScissorTest
+			? (renderer as any).getScissorTest()
+			: undefined;
 
-		// Enable scissor test
-		renderer.setScissorTest(true);
+		if (canToggleScissorTest) {
+			(renderer as any).setScissorTest(true);
+		}
 
 		// Clear entire canvas first
 		renderer.setViewport(0, 0, width, height);
@@ -563,55 +569,23 @@
 			renderer.render(comparisonScene, comparisonCamera);
 		}
 
-		// Restore scissor test state
-		renderer.setScissorTest(originalScissorTest);
-	}
-
-	// Animation frame ID for cleanup
-	let animationFrameId: number | null = null;
-
-	/**
-	 * Start custom render loop
-	 */
-	function startRenderLoop(): void {
-		if (renderLoopActive) return;
-
-		renderLoopActive = true;
-		const loop = () => {
-			if (!renderLoopActive) return;
-			customRenderLoop();
-			animationFrameId = requestAnimationFrame(loop);
-		};
-		animationFrameId = requestAnimationFrame(loop);
-	}
-
-	/**
-	 * Stop custom render loop and restore normal rendering
-	 */
-	function stopRenderLoop(): void {
-		renderLoopActive = false;
-		if (animationFrameId !== null) {
-			cancelAnimationFrame(animationFrameId);
-			animationFrameId = null;
+		// Restore scissor test state if supported
+		if (canToggleScissorTest && originalScissorTest !== undefined) {
+			(renderer as any).setScissorTest(originalScissorTest);
 		}
-
-		// Reset renderer scissor state to allow normal rendering
-		if (renderer) {
-			renderer.setScissorTest(false);
-			
-			// Reset viewport to full canvas size
-			const canvas = renderer.domElement;
-			const width = canvas.clientWidth;
-			const height = canvas.clientHeight;
-			renderer.setViewport(0, 0, width, height);
-			renderer.setScissor(0, 0, width, height);
-			
-			console.log(`[COMPARISON RENDERER] Renderer state reset, triggering re-render`);
-		}
-
-		// Trigger a re-render of the base scene to update the view immediately
-		invalidate();
 	}
+
+	// Drive the comparison renderer as a dedicated render task. While this
+	// component is mounted we disable Threlte's autoRender so this task becomes
+	// the only render path, then restore the previous behavior on destroy.
+	const { start: startComparisonRender, stop: stopComparisonRender } = useTask(renderComparison, {
+		autoStart: false,
+		autoInvalidate: false,
+		stage: renderStage
+	});
+
+	let comparisonRenderActive = false;
+	let previousAutoRender: boolean | null = null;
 
 	// React to comparison analysis changes
 	$: if ($comparisonStore.isComparing && $comparisonAnalysis) {
@@ -655,20 +629,32 @@
 	// Note: No need to invalidate() on curtain position changes - the custom render loop
 	// already runs continuously via requestAnimationFrame when comparison is active
 
-	// Start/stop render loop based on comparison state
-	$: if ($comparisonStore.isComparing && comparisonScene && comparisonCamera) {
-		startRenderLoop();
-	} else {
-		stopRenderLoop();
-	}
-
 	onMount(() => {
 		console.log('[COMPARISON RENDERER] Mounted');
+
+		// Take over rendering while comparison mode is active (this component
+		// is only mounted when comparing). We disable Threlte's autoRender
+		// and run our custom scissor-based task instead.
+		previousAutoRender = autoRender.current;
+		autoRender.set(false);
+		startComparisonRender();
+		comparisonRenderActive = true;
 	});
 
 	onDestroy(() => {
 		console.log('[COMPARISON RENDERER] Destroying');
-		stopRenderLoop();
+
+		// Stop comparison render task and restore original autoRender state so
+		// the base scene resumes normal rendering.
+		if (comparisonRenderActive) {
+			stopComparisonRender();
+			comparisonRenderActive = false;
+		}
+		if (previousAutoRender !== null) {
+			autoRender.set(previousAutoRender);
+			previousAutoRender = null;
+		}
+
 		cleanupComparison();
 
 		if (comparisonScene) {

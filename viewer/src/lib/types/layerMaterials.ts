@@ -31,7 +31,8 @@ export const LAYER_MATERIALS: Record<string, LayerMaterialConfig> = {
 		color: '#38ff8c',  // Brighter green than existing vegetation
 		opacity: 0.9,
 		displayName: 'New Trees',
-		materialType: 'standard'
+		materialType: 'standard',
+		polygonOffset: true
 	},
 	base: {
 		color: '#BDC3C7',
@@ -56,7 +57,8 @@ export const LAYER_MATERIALS: Record<string, LayerMaterialConfig> = {
 		color: '#27AE60',
 		opacity: 0.9,
 		displayName: 'Trees',
-		materialType: 'standard'
+		materialType: 'standard',
+		polygonOffset: true
 	},
 	water: {
 		color: '#3498DB',

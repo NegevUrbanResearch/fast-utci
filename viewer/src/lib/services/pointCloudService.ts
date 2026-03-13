@@ -12,9 +12,11 @@ import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 
-const VISUAL_LAYER_OFFSET = 0.04;
-const POLYGON_OFFSET_FACTOR = -0.75;
-const POLYGON_OFFSET_UNITS = -0.75;
+// Vertical separation between the UTCI overlay and underlying geometry.
+// Use a small negative offset so the UTCI plane sits just below the sampled
+// ground grid; it will still be visible through the semi-transparent base
+// mesh but remain behind buildings in depth.
+const VISUAL_LAYER_OFFSET = -0.05;
 const DEFAULT_OPACITY = 0.9;
 const TEXTURE_ALPHA = 255;
 
@@ -257,9 +259,9 @@ export function createUtciSurfaceMesh(
 		side: THREE.DoubleSide,
 		depthTest: true,
 		depthWrite: false,
-		polygonOffset: true,
-		polygonOffsetFactor: POLYGON_OFFSET_FACTOR,
-		polygonOffsetUnits: POLYGON_OFFSET_UNITS,
+		// No polygon offset: we rely on geometry placement (slightly below
+		// ground) plus the semi-transparent base mesh for visual layering.
+		polygonOffset: false,
 		toneMapped: false
 	});
 
@@ -418,7 +420,11 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	const colorBuffer = new Uint8Array(width * height * 4);
 	const centerX = minX + ((width - 1) * gridSize) / 2;
 	const centerZ = minZ + ((height - 1) * gridSize) / 2;
-	const baseY = (minY + maxY) / 2 + VISUAL_LAYER_OFFSET;
+	// Anchor the UTCI surface just above the lowest analysis elevation so it
+	// "hugs" the ground grid instead of slicing through taller geometry. This
+	// minimizes intersections with buildings/trees while still separating the
+	// overlay from the base mesh.
+	const baseY = minY + VISUAL_LAYER_OFFSET;
 
 	return {
 		width,

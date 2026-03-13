@@ -53,14 +53,27 @@ export function getMaterial(layerType: string): THREE.Material {
 			side: THREE.DoubleSide,
 			roughness: 0.7,
 			metalness: 0.1,
-			depthWrite: config.opacity > 0.5
+			// Ground ('base') should still write depth even when semi-transparent
+			// so that overlays can rely on a stable depth buffer.
+			depthWrite: layerType === 'base' ? true : config.opacity > 0.5
 		});
 
-		// Apply polygon offset for base layer (prevents z-fighting with UTCI overlay)
+		// Apply polygon offset for layers that request it.
 		if (config.polygonOffset) {
 			mat.polygonOffset = true;
-			mat.polygonOffsetFactor = 1;
-			mat.polygonOffsetUnits = 1;
+			if (layerType === 'base') {
+				// Stronger bias for ground to sit slightly behind overlays in depth.
+				mat.polygonOffsetFactor = 2;
+				mat.polygonOffsetUnits = 2;
+			} else if (layerType === 'vegetation' || layerType === 'new_vegetation') {
+				// Small bias for vegetation layers to reduce z-fighting with buildings
+				// without materially changing their perceived position.
+				mat.polygonOffsetFactor = 0.5;
+				mat.polygonOffsetUnits = 0.5;
+			} else {
+				mat.polygonOffsetFactor = 1;
+				mat.polygonOffsetUnits = 1;
+			}
 		}
 
 		material = mat;

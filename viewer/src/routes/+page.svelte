@@ -53,6 +53,10 @@
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
+import {
+	sceneConfigStore,
+	updateSceneConfigFromBounds,
+} from "$lib/stores/sceneConfigStore";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -403,7 +407,11 @@
 					: 0x111827}
 				bind:canvasElement
 			>
-				<Camera bind:cameraRef />
+				<Camera
+					bind:cameraRef
+					near={$sceneConfigStore.cameraNear}
+					far={$sceneConfigStore.cameraFar}
+				/>
 				<Lights />
 
 				{#if $analysisStore}
@@ -419,32 +427,40 @@
 							on:modelLoaded={(e) => {
 								model = e.detail;
 								modelLoading = false;
-								if (!hasFitOnce && model) {
+								if (model) {
 									const bounds = calculateModelBounds(model);
 									const center = calculateModelCenter(model);
 									const size = calculateModelSize(model);
-									// Bird's-eye, closer top-down fit
-									const maxDim = Math.max(
-										size.x,
-										size.y,
-										size.z,
-									);
-									const distance = maxDim * 1.05;
-									const position = center
-										.clone()
-										.add(
-											new THREE.Vector3(
-												0,
-												distance,
-												0.01,
-											),
+
+									// Update scene config (radius / camera near/far) from bounds.
+									updateSceneConfigFromBounds(bounds);
+
+									// Preserve the existing top-down fit behavior, but the
+									// camera distance will now be consistent with the
+									// scene radius used for near/far.
+									if (!hasFitOnce) {
+										const maxDim = Math.max(
+											size.x,
+											size.y,
+											size.z,
 										);
-									cameraStore.update((state) => ({
-										...state,
-										position,
-										target: center.clone(),
-									}));
-									hasFitOnce = true;
+										const distance = maxDim * 1.05;
+										const position = center
+											.clone()
+											.add(
+												new THREE.Vector3(
+													0,
+													distance,
+													0.01,
+												),
+											);
+										cameraStore.update((state) => ({
+											...state,
+											position,
+											target: center.clone(),
+										}));
+										hasFitOnce = true;
+									}
 								}
 							}}
 							on:layersDiscovered={(e) => {

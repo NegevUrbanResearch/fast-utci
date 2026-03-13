@@ -222,6 +222,13 @@ export function mergeLayerMeshes(
 		const geometry = mesh.geometry.clone();
 		mesh.updateWorldMatrix(true, false);
 		geometry.applyMatrix4(mesh.matrixWorld);
+
+		// Ensure normals exist on each source geometry so that the merged
+		// result has a stable "normal" attribute for lit materials / TSL.
+		if (!geometry.getAttribute('normal')) {
+			geometry.computeVertexNormals();
+		}
+
 		geometries.push(geometry);
 		
 		// Remove original mesh from scene
@@ -234,6 +241,12 @@ export function mergeLayerMeshes(
 	const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
 	
 	if (merged) {
+		// Some GLBs may not provide normals on every mesh; after merging we
+		// guarantee a "normal" attribute for all lighting-aware materials.
+		if (!merged.getAttribute('normal')) {
+			merged.computeVertexNormals();
+		}
+
 		// Create single mesh for this layer (using material from pool)
 		const material = getMaterial(layerType);
 		const mergedMesh = new THREE.Mesh(merged, material);

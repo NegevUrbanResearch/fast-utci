@@ -6,8 +6,9 @@
 	import { onMount, onDestroy } from 'svelte';
 
 	export let fov: number = 60;
-	export let near: number = 0.1;
-	export let far: number = 5000;
+	// Default depth range; typically overridden with scene-specific values.
+	export let near: number = 1;
+	export let far: number = 1000;
 
 	// Expose camera ref for tooltip raycasting
 	export let cameraRef: THREE.PerspectiveCamera | undefined;
