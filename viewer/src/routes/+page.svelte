@@ -288,7 +288,7 @@
 		<div class="header-center">
 			<div class="header-title">
 				<div class="logo-final">
-					<div class="text">Scor.CH</div>
+					<div class="text">Score.CH</div>
 					<div class="underline-grad"></div>
 				</div>
 			</div>
