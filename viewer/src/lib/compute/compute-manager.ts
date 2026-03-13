@@ -19,11 +19,22 @@ function rotateZUpToYUp(vec: [number, number, number]): [number, number, number]
 export interface ComputeManagerConfig {
 	numMonths: number;
 	numHoursPerDay: number;
+	/**
+	 * Starting month index (1–12) for representative-day sampling.
+	 * When numMonths > 1, subsequent months are sampled as startMonth + i.
+	 */
+	startMonth: number;
+	/**
+	 * Representative day of month used for sun/EPW sampling.
+	 */
+	representativeDay: number;
 }
 
 const DEFAULT_CONFIG: ComputeManagerConfig = {
 	numMonths: 12,
-	numHoursPerDay: 24
+	numHoursPerDay: 24,
+	startMonth: 1,
+	representativeDay: 15
 };
 
 /**
@@ -61,6 +72,8 @@ export class ComputeManager {
 		const { mesh, epwContent, gridResolution, zHeight } = params;
 		const numMonths = this.config.numMonths;
 		const numHours = this.config.numHoursPerDay;
+		const startMonth = this.config.startMonth;
+		const representativeDay = this.config.representativeDay;
 
 		// 1. Generate grid from the mesh
 		const grid = generateGridFromMesh(mesh, gridResolution, zHeight);
@@ -83,11 +96,12 @@ export class ComputeManager {
 		};
 
 		const sunVectors = new Float32Array(numMonths * numHours * 3);
-		for (let month = 1; month <= numMonths; month++) {
-			const day = 15;
+		for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
+			const month = Math.min(12, Math.max(1, startMonth + monthOffset));
+			const day = representativeDay;
 			const { sunVectors: dayVectors } = getSunVectors(location, month, day);
 			for (let hour = 0; hour < numHours; hour++) {
-				const idx = (month - 1) * numHours + hour;
+				const idx = monthOffset * numHours + hour;
 				const v = rotateZUpToYUp(dayVectors[hour]);
 				sunVectors[idx * 3] = v[0];
 				sunVectors[idx * 3 + 1] = v[1];
@@ -100,10 +114,11 @@ export class ComputeManager {
 		// refine this based on epw.horizInfrared and SolarCal.
 		const weatherStride = 4;
 		const weather = new Float32Array(numMonths * numHours * weatherStride);
-		for (let month = 1; month <= numMonths; month++) {
-			const day = 15;
+		for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
+			const month = Math.min(12, Math.max(1, startMonth + monthOffset));
+			const day = representativeDay;
 			for (let hour = 0; hour < numHours; hour++) {
-				const idx = (month - 1) * numHours + hour;
+				const idx = monthOffset * numHours + hour;
 				const hourData = epw.getHourData(month, day, hour + 1);
 				if (!hourData) continue;
 

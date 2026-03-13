@@ -113,23 +113,33 @@ export function hexToThreeColor(hexColor: string): RGBColor {
  * @returns RGB color object normalized to 0-1
  */
 export function mapUTCIToColor(utciValue: number, utciMin: number, utciMax: number): RGBColor {
+	// Guard against degenerate or invalid ranges to prevent NaNs propagating
+	// into the color lookup (which would break hex parsing).
+	if (
+		!Number.isFinite(utciValue) ||
+		!Number.isFinite(utciMin) ||
+		!Number.isFinite(utciMax) ||
+		utciMax <= utciMin
+	) {
+		// Fallback to the "comfortable" mid-scale color.
+		return hexToThreeColor(LADYBUG_NUANCED_COLORS[5]);
+	}
+
 	// Normalize value to 0-1 range
 	const normalized = (utciValue - utciMin) / (utciMax - utciMin);
-	
+
 	// Clamp to 0-1
 	const clamped = Math.max(0, Math.min(1, normalized));
-	
+
 	// Map to color index (0-10 for 11 colors)
 	const colorIndex = clamped * 10;
 	const lowerIndex = Math.floor(colorIndex);
 	const upperIndex = Math.min(10, Math.ceil(colorIndex));
 	const fraction = colorIndex - lowerIndex;
-	
-	// Get colors
+
 	const lowerColor = hexToThreeColor(LADYBUG_NUANCED_COLORS[lowerIndex]);
 	const upperColor = hexToThreeColor(LADYBUG_NUANCED_COLORS[upperIndex]);
-	
-	// Interpolate
+
 	return {
 		r: lowerColor.r + (upperColor.r - lowerColor.r) * fraction,
 		g: lowerColor.g + (upperColor.g - lowerColor.g) * fraction,

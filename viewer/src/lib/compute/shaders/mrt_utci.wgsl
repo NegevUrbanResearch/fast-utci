@@ -2,11 +2,11 @@
 // Reads solar and sky exposure plus per-hour weather and writes UTCI values.
 
 struct WeatherSample {
-	air_temp: f32;
-	mrt_longwave: f32;
-	wind_speed: f32;
-	rel_humidity: f32;
-}
+	air_temp: f32,
+	mrt_longwave: f32,
+	wind_speed: f32,
+	rel_humidity: f32,
+};
 
 @group(0) @binding(0)
 var<storage, read> solar_exposure: array<f32>;
@@ -21,9 +21,9 @@ var<storage, read> weather_data: array<WeatherSample>;
 var<storage, read_write> utci_results: array<f32>;
 
 struct MRTParams {
-	num_points: u32;
-	num_time_steps: u32;
-}
+	num_points: u32,
+	num_time_steps: u32,
+};
 
 @group(0) @binding(4)
 var<uniform> params: MRTParams;
