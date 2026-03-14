@@ -287,7 +287,7 @@
 					);
 				});
 
-				modelGroup = processLoadedModel(gltf.scene, analysis, modelPath);
+				modelGroup = await processLoadedModel(gltf.scene, analysis, modelPath);
 			}
 
 			// Add new model to comparison scene FIRST (before removing old one)
@@ -357,17 +357,17 @@
 	}
 
 	/**
-	 * Process a freshly loaded model
+	 * Process a freshly loaded model (async so layer merge can yield and avoid main-thread freeze).
 	 */
-	function processLoadedModel(
+	async function processLoadedModel(
 		loadedScene: Group,
 		analysis: typeof $comparisonAnalysis,
 		modelPath: string
-	): Group {
+	): Promise<Group> {
 		const modelGroup = loadedScene;
 
-		// Apply layer materials
-		applyLayerMaterials(modelGroup);
+		// Apply layer materials (yields between layers for large models)
+		await applyLayerMaterials(modelGroup);
 
 		// Apply coordinate transform
 		const coordinateSystem = analysis?.metadata.coordinate_system || 'xy_ground';

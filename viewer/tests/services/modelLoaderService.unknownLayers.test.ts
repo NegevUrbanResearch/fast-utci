@@ -11,7 +11,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 	});
 
 	describe('Unknown layer remapping', () => {
-		it('should remap unknown layer to base when no base layer exists', () => {
+		it('should remap unknown layer to base when no base layer exists', async () => {
 			// Create model with only unknown layer
 			const unknownParent = new THREE.Group();
 			unknownParent.name = 'SomeUnknownLayer';
@@ -20,7 +20,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(unknownParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify the mesh was remapped to 'base'
 			mesh.traverse((child) => {
@@ -37,7 +37,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			expect(layers).not.toContain('unknown');
 		});
 
-		it('should keep unknown layer when base layer already exists', () => {
+		it('should keep unknown layer when base layer already exists', async () => {
 			// Create model with both unknown and base layers
 			const baseParent = new THREE.Group();
 			baseParent.name = 'ground';
@@ -53,7 +53,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(unknownParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify base mesh stays as base
 			baseMesh.traverse((child) => {
@@ -78,7 +78,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			expect(layers).toContain('unknown');
 		});
 
-		it('should remap multiple unknown meshes to base', () => {
+		it('should remap multiple unknown meshes to base', async () => {
 			// Create model with multiple meshes in unknown layer
 			const unknownParent = new THREE.Group();
 			unknownParent.name = 'UnknownLayerGroup';
@@ -93,7 +93,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(unknownParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify all meshes were remapped to 'base'
 			let baseMeshCount = 0;
@@ -115,7 +115,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			expect(layers).not.toContain('unknown');
 		});
 
-		it('should handle model with no unknown layers', () => {
+		it('should handle model with no unknown layers', async () => {
 			// Create model with only standard layers
 			const buildingParent = new THREE.Group();
 			buildingParent.name = 'Building';
@@ -131,7 +131,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(vegetationParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify layers are correctly identified
 			buildingMesh.traverse((child) => {
@@ -154,7 +154,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			expect(layers).not.toContain('unknown');
 		});
 
-		it('should apply correct material when remapping unknown to base', () => {
+		it('should apply correct material when remapping unknown to base', async () => {
 			// Create model with unknown layer
 			const unknownParent = new THREE.Group();
 			unknownParent.name = 'mystery_layer';
@@ -163,7 +163,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(unknownParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify the mesh has base material properties
 			mesh.traverse((child) => {
@@ -178,7 +178,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 	});
 
 	describe('Complex scenarios', () => {
-		it('should handle model with unknown, base, and other standard layers', () => {
+		it('should handle model with unknown, base, and other standard layers', async () => {
 			// Create a complex model
 			const baseParent = new THREE.Group();
 			baseParent.name = 'ground';
@@ -200,7 +200,7 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			model.add(buildingParent);
 
 			// Process the model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify all layers are correctly identified
 			initializeLayerManager(model);
@@ -212,9 +212,9 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			expect(layers.length).toBe(3);
 		});
 
-		it('should handle empty model gracefully', () => {
+		it('should handle empty model gracefully', async () => {
 			// Process empty model
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			// Verify no layers are discovered
 			initializeLayerManager(model);

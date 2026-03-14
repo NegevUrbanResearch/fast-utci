@@ -16,9 +16,7 @@
 	import { cameraStore, focusCameraOnModel } from "$lib/stores/cameraStore";
 	import { setDiscoveredLayers } from "$lib/stores/layerStore";
 	import {
-		calculateModelBounds,
-		calculateModelCenter,
-		calculateModelSize,
+		getBoundsCenterAndSize,
 	} from "$lib/utils/bounds";
 	import Scene from "$lib/components/scene/Scene.svelte";
 	import Camera from "$lib/components/scene/Camera.svelte";
@@ -46,6 +44,13 @@
 	import sceLogo from "$lib/assets/sce-logo.svg";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
+	import { mergeSceneMeshes } from "$lib/compute/meshMerger";
+	import {
+		prepareMeshPayloadForWorkerAsync,
+		runMergeAndBvhInWorker,
+		MAX_TRIANGLES_FOR_MAIN_THREAD,
+		MAX_GRID_POINTS_GUARD,
+	} from "$lib/compute/mergeAndBvhWorkerClient";
 	import { getTooltipData } from "$lib/services/tooltipService";
 	import {
 		sceneConfigStore,
@@ -54,8 +59,10 @@
 	import type { Analysis } from "$lib/types/analysis";
 import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
 import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
+import type { UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
 import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
 import { get } from "svelte/store";
+import { emitComputeTelemetry } from "$lib/compute/telemetry";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -76,8 +83,17 @@ import { get } from "svelte/store";
 	let gridVisible = false;
 
 	let modelLoading = true;
+	/** Full-screen overlay until model is loaded and live UTCI has finished or failed. */
+	$: showFullLoadOverlay =
+		modelLoading || (model != null && liveAnalysis === null && liveError === null);
 	let hasFitOnce = false;
 	let lastModelFile: string | null = null;
+	/** Model file path that the current `model` was loaded for. Used to avoid running compute with a stale model after project switch. */
+	let modelFileForLoadedModel: string | null = null;
+	/** Last WebGPU pipeline instance; disposed before creating a new one and on page destroy to avoid leaks/crashes. */
+	let lastPipeline: UTCIComputePipeline | null = null;
+	/** AbortController for the current live run; aborted when project/model changes so only one run is active. */
+	let liveAbortController: AbortController | null = null;
 
 	const DEFAULT_ANALYSIS_ID = getDefaultAnalysisId();
 	let analysisId: string = DEFAULT_ANALYSIS_ID;
@@ -105,13 +121,7 @@ import { get } from "svelte/store";
 	let lastLiveKey: string | null = null;
 
 	function selectSampleMesh(group: Group): Mesh | null {
-		let firstMesh: Mesh | null = null;
-		group.traverse((child) => {
-			if (child instanceof THREE.Mesh && !firstMesh) {
-				firstMesh = child;
-			}
-		});
-		return firstMesh;
+		return mergeSceneMeshes(group);
 	}
 
 	async function loadAnalysis(id: string) {
@@ -123,9 +133,7 @@ import { get } from "svelte/store";
 			await loadAnalysisData(id);
 
 			if (model && $analysisStore) {
-				const bounds = calculateModelBounds(model);
-				const center = calculateModelCenter(model);
-				const size = calculateModelSize(model);
+				const { center, size } = getBoundsCenterAndSize(model);
 				focusCameraOnModel(center, size);
 			}
 		} catch (error) {
@@ -178,32 +186,37 @@ import { get } from "svelte/store";
 		}
 	}
 
-	// Trigger model loading overlay when the model file changes
+	// Trigger model loading overlay when the model file changes; clear which model we have so we don't run compute with a stale model.
 	$: if ($analysisStore && $analysisStore.metadata?.model_file) {
 		const currentModelFile = $analysisStore.metadata.model_file;
 		if (currentModelFile !== lastModelFile) {
 			modelLoading = true;
 			lastModelFile = currentModelFile;
+			modelFileForLoadedModel = null;
+			liveAnalysis = null;
+			lastLiveKey = null;
+			liveAbortController?.abort();
 		}
 	}
 
 	// Live analysis trigger: when base analysis or model changes, recompute.
+	// Only run when the loaded model is for the current analysis's model_file (avoids Ben Gurion grid on Nes Ziona after project switch).
 	async function computeLiveAnalysis() {
+		if (liveLoading) return;
 		const base = $analysisStore;
 		if (!base || !model) {
 			liveAnalysis = null;
 			liveError = null;
 			return;
 		}
+		if (modelFileForLoadedModel !== base.metadata.model_file) {
+			return;
+		}
 
 		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
 		const epwUrl = getEpwUrlForProject(projectId);
-		const sampleMesh = selectSampleMesh(model);
-		if (!sampleMesh) {
-			console.warn("[DEBUG UTCI] Could not find sample mesh for live grid.");
-			liveAnalysis = null;
-			return;
-		}
+		const gridResolution = base.metadata.grid_size || 2;
+		const zHeight = 0.9;
 
 		const liveKey = `${base.metadata.model_file}|${base.metadata.grid_size}|${analysisId}`;
 		if (liveKey === lastLiveKey && liveAnalysis) {
@@ -213,8 +226,31 @@ import { get } from "svelte/store";
 		lastLiveKey = liveKey;
 		liveLoading = true;
 		liveError = null;
+		emitComputeTelemetry("live.compute.start", {
+			data: { gridResolution, zHeight }
+		});
+
+		liveAbortController?.abort();
+		liveAbortController = new AbortController();
+		const signal = liveAbortController.signal;
 
 		try {
+			// Single-pass preflight + payload prep with cooperative yielding.
+			const { meshes, totalTriangles, preflight } = await prepareMeshPayloadForWorkerAsync(model, {
+				signal,
+				gridResolution,
+				numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
+				numMonths: 1,
+				hasWorkerSupport: typeof Worker !== "undefined",
+			});
+			emitComputeTelemetry("live.preflight.done", {
+				data: {
+					totalTriangles,
+					estimatedGridPoints: preflight.estimatedGridPoints,
+					estimatedBytes: preflight.estimatedBytes,
+				},
+			});
+
 			const response = await fetch(epwUrl);
 			if (!response.ok) {
 				throw new Error(
@@ -223,20 +259,67 @@ import { get } from "svelte/store";
 			}
 			const epwContent = await response.text();
 
+			lastPipeline?.dispose?.();
+			lastPipeline = null;
 			const pipeline = await createWebgpuUtciPipeline();
+			lastPipeline = pipeline;
+
+			// Try worker first when available; fall back to main-thread only for smaller models.
+			let workerResult: { gridPoints: Float32Array; serializedBvh: import("$lib/compute/gpu-pipeline").SerializedBvhForGpu } | null = null;
+			if (typeof Worker !== "undefined") {
+				try {
+					workerResult = await runMergeAndBvhInWorker({
+						meshes,
+						gridResolution,
+						zHeight,
+						signal,
+						maxGridPoints: MAX_GRID_POINTS_GUARD,
+					});
+				} catch (workerErr) {
+					if (workerErr instanceof DOMException && workerErr.name === "AbortError") {
+						throw workerErr;
+					}
+					if (totalTriangles > MAX_TRIANGLES_FOR_MAIN_THREAD) {
+						throw new Error(
+							`Worker failed and model is too large for main thread (${(totalTriangles / 1e6).toFixed(1)}M triangles): ${workerErr instanceof Error ? workerErr.message : String(workerErr)}`,
+						);
+					}
+					// Fall back to main-thread merge + grid
+				}
+			}
+
+			const sampleMesh = workerResult ? null : selectSampleMesh(model);
+			if (!workerResult && !sampleMesh) {
+				throw new Error(
+					"No safe compute path available: worker did not produce geometry and main-thread merge was refused.",
+				);
+			}
+
+			const analysisParams = workerResult
+				? {
+						analysisId,
+						baseMetadata: base.metadata,
+						workerResult,
+						epwContent,
+						gridResolution,
+						zHeight,
+						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
+						startMonth: 8,
+					}
+				: {
+						analysisId,
+						baseMetadata: base.metadata,
+						sampleMesh: sampleMesh as Mesh,
+						epwContent,
+						gridResolution,
+						zHeight,
+						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
+						startMonth: 8,
+					};
 
 			const result = await createLiveUtciAnalysisFromCompute(
-				{
-					analysisId,
-					baseMetadata: base.metadata,
-					sampleMesh,
-					epwContent,
-					gridResolution: base.metadata.grid_size || 2,
-					zHeight: 1.5,
-					numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-					startMonth: 8,
-				},
-				{ pipeline },
+				analysisParams,
+				{ pipeline, signal },
 			);
 
 			liveAnalysis = result;
@@ -250,20 +333,38 @@ import { get } from "svelte/store";
 				comparisonAnalysis: result,
 			}));
 		} catch (error) {
+			if (error instanceof DOMException && error.name === "AbortError") {
+				return;
+			}
 			console.error("[DEBUG UTCI] Failed to compute live UTCI:", error);
 			liveError =
 				error instanceof Error
 					? error.message
 					: "Failed to compute live UTCI";
+			emitComputeTelemetry("live.compute.error", {
+				data: {
+					message: error instanceof Error ? error.message : String(error),
+				},
+			});
 			liveAnalysis = null;
 		} finally {
 			liveLoading = false;
+			emitComputeTelemetry("live.compute.finish");
 		}
 	}
 
-	$: if ($analysisStore && model && mounted) {
-		// Fire and forget; internal guards prevent excessive recomputation.
-		void computeLiveAnalysis();
+	$: if ($analysisStore && model && mounted && modelFileForLoadedModel === $analysisStore?.metadata?.model_file) {
+		// Defer by one frame so the first paint after model load can run before sync triangle count and payload prep.
+		requestAnimationFrame(() => {
+			if (
+				$analysisStore &&
+				model &&
+				mounted &&
+				modelFileForLoadedModel === $analysisStore?.metadata?.model_file
+			) {
+				void computeLiveAnalysis();
+			}
+		});
 	}
 
 	// Tooltip: support hover on both .bin (left) and live WebGPU (right) UTCI.
@@ -342,11 +443,15 @@ import { get } from "svelte/store";
 	}
 
 	onDestroy(() => {
+		liveAbortController?.abort();
+		liveAbortController = null;
 		if (canvasElement && eventListenersAttached) {
 			canvasElement.removeEventListener("mousemove", handleMouseMove);
 			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
 			eventListenersAttached = false;
 		}
+		lastPipeline?.dispose?.();
+		lastPipeline = null;
 	});
 
 	$: currentProjectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
@@ -449,7 +554,7 @@ import { get } from "svelte/store";
 				</div>
 			{/if}
 
-			{#if modelLoading}
+			{#if showFullLoadOverlay}
 				<div
 					class="model-loading-backdrop"
 					aria-hidden="true"
@@ -459,7 +564,9 @@ import { get } from "svelte/store";
 					aria-live="polite"
 				>
 					<div class="spinner"></div>
-					<div class="loading-text">Preparing model…</div>
+					<div class="loading-text">
+						{modelLoading ? "Preparing model…" : "Computing UTCI…"}
+					</div>
 				</div>
 			{/if}
 
@@ -488,35 +595,38 @@ import { get } from "svelte/store";
 							metadata={$analysisStore.metadata}
 							on:modelLoaded={(e) => {
 								model = e.detail;
+								modelFileForLoadedModel = $analysisStore?.metadata?.model_file ?? null;
 								modelLoading = false;
 								if (model) {
-									const bounds = calculateModelBounds(model);
-									const center = calculateModelCenter(model);
-									const size = calculateModelSize(model);
-									updateSceneConfigFromBounds(bounds);
-									if (!hasFitOnce) {
-										const maxDim = Math.max(
-											size.x,
-											size.y,
-											size.z,
-										);
-										const distance = maxDim * 1.05;
-										const position = center
-											.clone()
-											.add(
-												new THREE.Vector3(
-													0,
-													distance,
-													0.01,
-												),
+									// Defer bounds/camera off the sync path so computeLiveAnalysis can start without blocking (code-review C3).
+									requestAnimationFrame(() => {
+										if (!model) return;
+										const { bounds, center, size } = getBoundsCenterAndSize(model);
+										updateSceneConfigFromBounds(bounds);
+										if (!hasFitOnce) {
+											const maxDim = Math.max(
+												size.x,
+												size.y,
+												size.z,
 											);
-										cameraStore.update((state) => ({
-											...state,
-											position,
-											target: center.clone(),
-										}));
-										hasFitOnce = true;
-									}
+											const distance = maxDim * 1.05;
+											const position = center
+												.clone()
+												.add(
+													new THREE.Vector3(
+														0,
+														distance,
+														0.01,
+													),
+												);
+											cameraStore.update((state) => ({
+												...state,
+												position,
+												target: center.clone(),
+											}));
+											hasFitOnce = true;
+										}
+									});
 								}
 							}}
 							on:layersDiscovered={(e) => {
@@ -849,4 +959,3 @@ import { get } from "svelte/store";
 		}
 	}
 </style>
-

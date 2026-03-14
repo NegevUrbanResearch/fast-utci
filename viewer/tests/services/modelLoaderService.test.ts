@@ -150,68 +150,68 @@ describe('Model Loader Service', () => {
 			model = new THREE.Group();
 		});
 
-		it('should apply materials to meshes based on layer type', () => {
+		it('should apply materials to meshes based on layer type', async () => {
 			const buildingParent = new THREE.Group();
 			buildingParent.name = 'Building';
 			const buildingMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
 			buildingParent.add(buildingMesh);
 			model.add(buildingParent);
 
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			expect(buildingMesh.material).toBeInstanceOf(THREE.Material);
 			expect(buildingMesh.userData.layerType).toBeDefined();
 		});
 
-	it('should mark meshes with unknown layer names as "unknown" (remapped to base)', () => {
+	it('should mark meshes with unknown layer names as "unknown" (remapped to base)', async () => {
 		const unknownParent = new THREE.Group();
 		unknownParent.name = 'UnknownLayer';
 		const unknownMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
 		unknownParent.add(unknownMesh);
 		model.add(unknownParent);
 
-		applyLayerMaterials(model);
+		await applyLayerMaterials(model);
 
 		// Unknown layers are now remapped to 'base' when no base layer exists (Issue #5)
 		expect(unknownMesh.userData.layerType).toBe('base');
 	});
 
-		it('should store layer name in userData', () => {
+		it('should store layer name in userData', async () => {
 			const buildingParent = new THREE.Group();
 			buildingParent.name = 'Building';
 			const buildingMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
 			buildingParent.add(buildingMesh);
 			model.add(buildingParent);
 
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			expect(buildingMesh.userData.layerName).toBe('Building');
 			expect(buildingMesh.userData.layerType).toBe('building');
 		});
 
-		it('should remove line objects that are not building edges', () => {
+		it('should remove line objects that are not building edges', async () => {
 			const lineGeometry = new THREE.BufferGeometry();
 			const line = new THREE.Line(lineGeometry);
 			line.name = 'SomeLine';
 			model.add(line);
 
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			expect(model.children).not.toContain(line);
 		});
 
-		it('should keep building edge lines', () => {
+		it('should keep building edge lines', async () => {
 			const lineGeometry = new THREE.BufferGeometry();
 			const line = new THREE.Line(lineGeometry);
 			line.name = 'building_edges';
 			model.add(line);
 
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			expect(model.children).toContain(line);
 		});
 
-		it('should handle models with multiple layer types', () => {
+		it('should handle models with multiple layer types', async () => {
 			const buildingParent = new THREE.Group();
 			buildingParent.name = 'Building';
 			const buildingMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
@@ -225,7 +225,7 @@ describe('Model Loader Service', () => {
 			model.add(buildingParent);
 			model.add(vegetationParent);
 
-			applyLayerMaterials(model);
+			await applyLayerMaterials(model);
 
 			expect(buildingMesh.userData.layerType).toBe('building');
 			expect(vegetationMesh.userData.layerType).toBe('vegetation');

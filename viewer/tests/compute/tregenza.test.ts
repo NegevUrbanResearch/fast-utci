@@ -28,6 +28,13 @@ describe('Tregenza Dome', () => {
     expect(sum).toBeCloseTo(145.0, 1);
   });
 
+  it('weights should sum to approximately 145.25 for SVF normalization', () => {
+    const dome = getTregenzaDome();
+    const sum = dome.weights.reduce((a, b) => a + b, 0);
+    expect(sum).toBeGreaterThan(144);
+    expect(sum).toBeLessThan(146);
+  });
+
   it('all vectors should point upward (z > 0)', () => {
     const dome = getTregenzaDome();
     dome.vectors.forEach(v => {

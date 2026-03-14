@@ -13,6 +13,8 @@ export interface SunPosition {
 export interface DaySunVectors {
   sunVectors: [number, number, number][]; // 24 hours
   isSunUp: boolean[];                     // 24 hours
+  /** Solar altitude in degrees, 0 for nighttime. */
+  altitudes: number[];
 }
 
 /**
@@ -96,12 +98,13 @@ export function calculateSunPosition(loc: LocationData, month: number, day: numb
 export function getSunVectors(loc: LocationData, month: number, day: number): DaySunVectors {
   const sunVectors: [number, number, number][] = [];
   const isSunUp: boolean[] = [];
+  const altitudes: number[] = [];
 
   for (let hour = 0; hour < 24; hour++) {
-    // We sample at exactly the hour (or maybe hour + 0.5 per some meteorological standards, 
-    // but we use hour here). Let's use hour + 0.5 for sun vector representative of the hour.
-    const pos = calculateSunPosition(loc, month, day, hour + 0.5);
+    // Sample at exact hour boundaries to align with Python hourly datetimes.
+    const pos = calculateSunPosition(loc, month, day, hour);
     isSunUp.push(pos.isSunUp);
+    altitudes.push(pos.isSunUp ? pos.altitude : 0);
 
     if (pos.isSunUp) {
       const alt_rad = pos.altitude * Math.PI / 180;
@@ -119,5 +122,5 @@ export function getSunVectors(loc: LocationData, month: number, day: number): Da
     }
   }
 
-  return { sunVectors, isSunUp };
+  return { sunVectors, isSunUp, altitudes };
 }

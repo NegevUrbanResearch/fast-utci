@@ -43,6 +43,21 @@ export interface DispatchDimensions {
 }
 
 /**
+ * Compute flat UTCI index for point-major layout:
+ * flatIndex = pointIndex * totalTimeSteps + timeIndex
+ */
+export function getUtciFlatIndex(
+	pointIndex: number,
+	timeIndex: number,
+	totalTimeSteps: number
+): number {
+	if (pointIndex < 0 || timeIndex < 0 || totalTimeSteps <= 0) {
+		throw new Error('pointIndex and timeIndex must be >= 0, totalTimeSteps must be > 0');
+	}
+	return pointIndex * totalTimeSteps + timeIndex;
+}
+
+/**
  * Calculate 2D dispatch dimensions for a (points, hours×months) layout.
  * Workgroups are sized along X; Y is the time dimension.
  */
@@ -70,6 +85,14 @@ export function calculateDispatch(
  * The concrete WebGPU implementation lives in browser-only code; tests can
  * provide a fake implementation that conforms to this interface.
  */
+/** Pre-serialized BVH from a worker (merge + BVH + grid off main thread). */
+export interface SerializedBvhForGpu {
+	bvhNodeBuffer: ArrayBuffer;
+	bvhIndexBuffer: ArrayBuffer;
+	vertexBuffer: Float32Array;
+	indexBuffer: Uint32Array;
+}
+
 export interface UTCIComputePipeline {
 	/**
 	 * Upload static data required for all dispatches.
@@ -78,7 +101,12 @@ export interface UTCIComputePipeline {
 	uploadStaticData(params: {
 		gridPoints: Float32Array; // vec3<f32>[numPoints]
 		sunVectors: Float32Array; // vec3<f32>[numMonths * numHours]
+		sunAltitudes?: Float32Array; // f32[numMonths * numHours] in radians, for MRT shader
 		weather: Float32Array; // packed per-hour weather structs
+		domeVectors?: Float32Array; // Tregenza 145 patches, Y-up, for sky exposure
+		domeWeights?: Float32Array; // 145 weights
+		mesh?: { geometry: unknown }; // optional; when set, BVH is serialized from mesh for GPU exposure
+		serializedBvh?: SerializedBvhForGpu; // when set (e.g. from worker), BVH is used directly; mesh not needed for BVH
 	}): Promise<void>;
 
 	/**
@@ -104,6 +132,11 @@ export interface UTCIComputePipeline {
 		numHours: number;
 		numMonths: number;
 	}): Promise<Float32Array>;
-}
 
+	/**
+	 * Release GPU resources. Call before discarding the pipeline (e.g. when
+	 * switching projects or on page unload). Optional so test fakes can omit it.
+	 */
+	dispose?(): void;
+}
 

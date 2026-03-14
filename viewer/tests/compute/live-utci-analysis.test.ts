@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import { createLiveUtciAnalysisFromCompute } from '$lib/compute/liveUtciAnalysis';
+import { generateGridFromMesh } from '$lib/compute/grid-generator';
 import type { AnalysisMetadata } from '$lib/types/analysis';
+import {
+	clearComputeTelemetryHistory,
+	getComputeTelemetryHistory
+} from '$lib/compute/telemetry';
 
 // Minimal EPW content: 8 header lines + 24 data lines for a single representative day
 const buildMinimalEpw = () => {
@@ -63,6 +68,37 @@ const createFakePipeline = () => {
 };
 
 describe('liveUtciAnalysis adapter', () => {
+	it('emits telemetry stages for pipeline upload and UTCI readback', async () => {
+		clearComputeTelemetryHistory();
+		const { pipeline } = createFakePipeline();
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: ['00:00', '01:00'],
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb'
+		};
+
+		await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'Test/telemetry',
+				baseMetadata,
+				sampleMesh: createTestMesh(),
+				epwContent: buildMinimalEpw(),
+				gridResolution: 2,
+				numHours: 2,
+				startMonth: 8
+			},
+			{ pipeline }
+		);
+
+		const events = getComputeTelemetryHistory();
+		expect(events.some((e) => e.stage === 'pipeline.upload.done')).toBe(true);
+		expect(events.some((e) => e.stage === 'utci.readback.done')).toBe(true);
+	});
+
 	it('produces an Analysis-like structure for a simple grid', async () => {
 		const { pipeline, uploadStaticData, runAll, readUtcisSlice } = createFakePipeline();
 
@@ -131,3 +167,58 @@ describe('liveUtciAnalysis adapter', () => {
 	});
 });
 
+describe('grid position sanity', () => {
+	it('grid positions should fall within model bounding box (world space)', () => {
+		const mesh = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 30));
+		mesh.position.set(100, 0, 200);
+		mesh.updateMatrixWorld(true);
+
+		const grid = generateGridFromMesh(mesh, 5, 1.5);
+
+		mesh.geometry.computeBoundingBox();
+		const bbox = mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
+
+		for (const point of grid.points) {
+			expect(point.x).toBeGreaterThanOrEqual(bbox.min.x - 1);
+			expect(point.x).toBeLessThanOrEqual(bbox.max.x + 1);
+			expect(point.z).toBeGreaterThanOrEqual(bbox.min.z - 1);
+			expect(point.z).toBeLessThanOrEqual(bbox.max.z + 1);
+		}
+	});
+
+	it('uses parity default zHeight of 0.9m when zHeight is not provided', async () => {
+		const { pipeline } = createFakePipeline();
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb'
+		};
+
+		const analysis = await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'Test/default-zheight',
+				baseMetadata,
+				sampleMesh: createTestMesh(),
+				epwContent: buildMinimalEpw(),
+				gridResolution: 2,
+				numHours: 1,
+				startMonth: 8
+			},
+			{ pipeline }
+		);
+
+		// For xy_ground mapping, world Y (sensor height) maps to analysis Z.
+		const positions = analysis.data.positions;
+		let sumZ = 0;
+		for (let i = 2; i < positions.length; i += 3) {
+			sumZ += positions[i];
+		}
+		const meanZ = sumZ / (positions.length / 3);
+		expect(meanZ).toBeCloseTo(0.9, 3);
+	});
+});

@@ -30,8 +30,7 @@ struct Params {
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-// Placeholder declaration – actual implementation is provided by three-mesh-bvh/webgpu TSL.
-fn bvh_intersects_any(origin: vec3<f32>, direction: vec3<f32>) -> bool;
+// When this shader is concatenated with bvh_raycast.wgsl, @group(1) and bvh_intersects_any are provided there.
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -53,12 +52,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		sun_vectors[time_idx].y,
 		sun_vectors[time_idx].z
 	);
+	let flat_index = point_idx * params.num_time_steps + time_idx;
+
+	// Skip BVH traversal for nighttime/invalid vectors.
+	let sun_len2 = dot(sun, sun);
+	if (sun_len2 < 1e-10 || sun.y <= 0.0) {
+		solar_exposure[flat_index] = 0.0;
+		return;
+	}
 
 	// Small offset to avoid self-intersection with the surface
 	let ray_origin = origin + sun * 0.01;
 	let hit = bvh_intersects_any(ray_origin, sun);
 
-	let flat_index = point_idx * params.num_time_steps + time_idx;
 	solar_exposure[flat_index] = select(1.0, 0.0, hit);
 }
-

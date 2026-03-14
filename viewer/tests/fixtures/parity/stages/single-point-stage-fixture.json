@@ -1,0 +1,24 @@
+{
+  "name": "single-point-stage-fixture",
+  "inputs": {
+    "monthIndex": 0,
+    "hourIndex": 12,
+    "numPoints": 1,
+    "numHours": 24,
+    "numMonths": 1
+  },
+  "expected": {
+    "sunVectors": [[0.0, 0.8, -0.6]],
+    "solarExposure": [1.0],
+    "skyExposure": [0.7],
+    "mrt": [36.0],
+    "utci": [34.5],
+    "tolerances": {
+      "sunVectors": 0.0001,
+      "solarExposure": 0.05,
+      "skyExposure": 0.05,
+      "mrt": 1.0,
+      "utci": 1.0
+    }
+  }
+}

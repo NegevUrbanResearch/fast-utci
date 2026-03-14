@@ -7,9 +7,39 @@
  */
 
 import * as THREE from 'three';
+
+function yieldToMain(): Promise<void> {
+	return new Promise((resolve) => {
+		if (typeof requestAnimationFrame !== 'undefined') {
+			requestAnimationFrame(() => resolve());
+		} else {
+			setTimeout(() => resolve(), 0);
+		}
+	});
+}
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { getMaterial } from './materialPool';
 import { LAYER_NAME_MAPPING } from '$lib/types/layerMaterials';
+
+/** Above this triangle count per layer we skip merge on the main thread to avoid freeze/crash. */
+const MAX_TRIANGLES_PER_LAYER_DISPLAY = 500_000;
+/** When layer is over this count we merge in batches with yields between batches. */
+const BATCH_MERGE_THRESHOLD_TRIANGLES = 50_000;
+const BATCH_TRIANGLE_TARGET = 50_000;
+const BATCH_MESH_MAX = 20;
+
+function countTrianglesForMeshes(meshes: THREE.Mesh[]): number {
+	let total = 0;
+	for (const mesh of meshes) {
+		const geom = mesh.geometry;
+		if (!geom) continue;
+		const idx = geom.getIndex();
+		const pos = geom.getAttribute('position');
+		if (idx) total += idx.count / 3;
+		else if (pos) total += pos.count / 3;
+	}
+	return total;
+}
 
 /**
  * Get layer name from scene graph by traversing parent chain
@@ -76,14 +106,16 @@ export function mapLayerNameToType(layerName: string): string {
  * Also groups meshes by layer type for performance optimization.
  * 
  * @param model - Loaded GLTF model
- * @returns Model with applied materials and array of final meshes (for layer manager)
+ * @returns Model with applied materials (Promise so we can yield between layer merges and avoid main-thread freeze).
  */
-export function applyLayerMaterials(model: THREE.Group): THREE.Group {
+export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Group> {
+	await yieldToMain();
+
 	const meshesByLayer = new Map<string, THREE.Mesh[]>();  // Group meshes by layer type for merging
 	const layerStats: Record<string, { count: number; layerName: string }> = {};
 	const itemsToRemove: THREE.Object3D[] = [];  // Track non-mesh items to remove
 	const finalMeshesByLayer = new Map<string, THREE.Mesh[]>();  // Track final meshes (merged or single)
-	
+
 	model.traverse((child) => {
 		// Remove lines/curves that aren't needed (not building edges we add)
 		if (child.isLine || child.isLineSegments) {
@@ -124,7 +156,9 @@ export function applyLayerMaterials(model: THREE.Group): THREE.Group {
 			mesh.receiveShadow = true;
 		}
 	});
-	
+
+	await yieldToMain();
+
 	// Remove unwanted lines/curves
 	itemsToRemove.forEach(item => {
 		if (item.parent) {
@@ -165,14 +199,28 @@ export function applyLayerMaterials(model: THREE.Group): THREE.Group {
 
 	const onlyBaseLayer = Object.keys(layerStats).length === 1 && layerStats['base'];
 	
-	// Merge geometries by layer type for massive performance improvement
+	// Merge geometries by layer type for massive performance improvement.
+	// Yield between layers so the main thread stays responsive (avoids freeze/crash on large models).
+	// Skip merge for layers over the cap to prevent one huge sync merge on the main thread.
 	console.log('[PERF] Merging geometries by layer type...');
 	for (const [layerType, meshes] of meshesByLayer.entries()) {
 		if (meshes.length > 1) {
-			const mergedMesh = mergeLayerMeshes(model, layerType, meshes);
-			if (mergedMesh) {
-				finalMeshesByLayer.set(layerType, [mergedMesh]);
+			const layerTriangles = countTrianglesForMeshes(meshes);
+			if (layerTriangles > MAX_TRIANGLES_PER_LAYER_DISPLAY) {
+				console.warn(
+					`[PERF] Skipping merge for ${layerType} (${(layerTriangles / 1e6).toFixed(2)}M triangles > ${MAX_TRIANGLES_PER_LAYER_DISPLAY / 1e6}M cap)`
+				);
+				finalMeshesByLayer.set(layerType, meshes);
+			} else {
+				const mergedMesh =
+					layerTriangles > BATCH_MERGE_THRESHOLD_TRIANGLES
+						? await mergeLayerMeshesBatched(model, layerType, meshes)
+						: mergeLayerMeshes(model, layerType, meshes);
+				if (mergedMesh) {
+					finalMeshesByLayer.set(layerType, [mergedMesh]);
+				}
 			}
+			await yieldToMain();
 		} else {
 			// Single mesh - keep it
 			finalMeshesByLayer.set(layerType, meshes);
@@ -288,5 +336,91 @@ export function mergeLayerMeshes(
 		console.warn(`[PERF] Failed to merge ${layerType} geometry`);
 		return null;
 	}
+}
+
+/**
+ * Merge a large layer in batches with yields between batches to keep the main thread responsive.
+ * Used when layer triangle count is over BATCH_MERGE_THRESHOLD_TRIANGLES but under the display cap.
+ */
+async function mergeLayerMeshesBatched(
+	model: THREE.Group,
+	layerType: string,
+	meshes: THREE.Mesh[]
+): Promise<THREE.Mesh | null> {
+	function meshTriCount(m: THREE.Mesh): number {
+		const g = m.geometry;
+		if (!g) return 0;
+		const idx = g.getIndex();
+		const pos = g.getAttribute('position');
+		return idx ? idx.count / 3 : pos ? pos.count / 3 : 0;
+	}
+
+	const batches: THREE.Mesh[][] = [];
+	let current: THREE.Mesh[] = [];
+	let currentTri = 0;
+
+	for (const mesh of meshes) {
+		const tri = meshTriCount(mesh);
+		if (current.length >= BATCH_MESH_MAX || (currentTri + tri > BATCH_TRIANGLE_TARGET && current.length > 0)) {
+			batches.push(current);
+			current = [];
+			currentTri = 0;
+		}
+		current.push(mesh);
+		currentTri += tri;
+	}
+	if (current.length > 0) batches.push(current);
+
+	const batchGeometries: THREE.BufferGeometry[] = [];
+
+	for (const batch of batches) {
+		const geometries: THREE.BufferGeometry[] = [];
+		for (const mesh of batch) {
+			const geometry = mesh.geometry.clone();
+			mesh.updateWorldMatrix(true, false);
+			geometry.applyMatrix4(mesh.matrixWorld);
+			if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+			geometries.push(geometry);
+			if (mesh.parent) mesh.parent.remove(mesh);
+		}
+		const mergedBatch = BufferGeometryUtils.mergeGeometries(geometries, false);
+		if (mergedBatch) batchGeometries.push(mergedBatch);
+		await yieldToMain();
+	}
+
+	if (batchGeometries.length === 0) return null;
+	const merged = batchGeometries.length === 1 ? batchGeometries[0] : BufferGeometryUtils.mergeGeometries(batchGeometries, false);
+	if (!merged) return null;
+
+	if (!merged.getAttribute('normal')) merged.computeVertexNormals();
+
+	const material = getMaterial(layerType);
+	const mergedMesh = new THREE.Mesh(merged, material);
+	mergedMesh.name = `${layerType}_merged`;
+	mergedMesh.userData.layerType = layerType;
+	mergedMesh.userData.layerName = layerType;
+
+	if (layerType === 'vegetation') {
+		mergedMesh.castShadow = false;
+		mergedMesh.receiveShadow = true;
+	} else {
+		mergedMesh.castShadow = true;
+		mergedMesh.receiveShadow = true;
+	}
+
+	model.add(mergedMesh);
+
+	const vertexCount = (merged.attributes.position.count / 1000).toFixed(1);
+	console.log(`[PERF] ${layerType}: ${meshes.length} meshes -> 1 mesh (${vertexCount}k vertices, batched)`);
+
+	if (layerType === 'building' || layerType === 'new_building') {
+		const edges = new THREE.EdgesGeometry(merged, 15);
+		const lineMaterial = new THREE.LineBasicMaterial({ color: 0x888888, linewidth: 1 });
+		const lineSegments = new THREE.LineSegments(edges, lineMaterial);
+		lineSegments.name = `${layerType}_edges`;
+		mergedMesh.add(lineSegments);
+	}
+
+	return mergedMesh;
 }
 

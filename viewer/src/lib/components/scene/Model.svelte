@@ -49,8 +49,8 @@
 	// Only used when not using cache
 	let currentModelVersion = 0;
 
-	// Process a loaded scene (from cache or GLTF loader)
-	function processScene(scene: Group, fromCache: boolean = false) {
+	// Process a loaded scene (from cache or GLTF loader). Async when !fromCache so we can yield during merge.
+	async function processScene(scene: Group, fromCache: boolean = false) {
 		// Always reset layer manager when loading a new model (even if path seems same)
 		// This ensures clean state when switching scenarios
 		resetLayerManager();
@@ -86,9 +86,8 @@
 			gltfGroup = scene;
 			lastModelPath = modelPath;
 			
-			// Apply layer materials FIRST (before coordinate transform)
-			// This discovers layers, applies materials, and merges geometries
-			applyLayerMaterials(gltfGroup);
+			// Apply layer materials FIRST (before coordinate transform). Async with yields to avoid main-thread freeze.
+			await applyLayerMaterials(gltfGroup);
 			
 			// IMPORTANT: Initialize layer manager AFTER merging is complete
 			// This ensures we track the merged meshes, not the original ones
@@ -164,7 +163,7 @@
             return;
         }
         
-        processScene(gltf.scene, false);
+        void processScene(gltf.scene, false);
 	}
 	
 	// React to modelPath changes - check cache first, then load if needed
@@ -178,8 +177,8 @@
 			console.log(`[MODEL] Using cached model: ${modelPath}`);
 			useCache = true;
 			cachedScene = cached.scene;
-			// Process cached scene
-			processScene(cached.scene, true);
+			// Process cached scene (async for API consistency; no heavy merge when from cache)
+			void processScene(cached.scene, true);
 		} else {
 			// Not in cache, load via GLTF
 			console.log(`[MODEL] Loading model from file: ${modelPath}`);
@@ -201,9 +200,18 @@
 	// Reactive load handler that updates when sequence changes
 	$: onloadHandler = createLoadHandler();
 
-	// Apply coordinate transformation when coordinate system changes
-	$: if (gltfGroup && coordinateSystem) {
-		applyModelCoordinateTransform(gltfGroup, coordinateSystem);
+	// Apply coordinate transformation only when coordinateSystem *changes* (not when gltfGroup is first set).
+	// This prevents double-apply: processScene applies once after merge; we re-apply here only if user changes coord system.
+	let previousCoordinateSystem: typeof coordinateSystem | undefined = undefined;
+	let prevGltfGroup: Group | undefined = undefined;
+	$: if (gltfGroup) {
+		if (prevGltfGroup !== gltfGroup) {
+			prevGltfGroup = gltfGroup;
+			previousCoordinateSystem = coordinateSystem;
+		} else if (coordinateSystem !== previousCoordinateSystem) {
+			applyModelCoordinateTransform(gltfGroup, coordinateSystem);
+			previousCoordinateSystem = coordinateSystem;
+		}
 	}
 
 	// Cleanup on destroy

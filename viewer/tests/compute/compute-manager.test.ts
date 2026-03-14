@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
+import * as sunpath from '$lib/compute/sunpath';
 
 // Minimal EPW content: 8 header lines + 24 data lines for month=1, day=15
 const buildMinimalEpw = () => {
@@ -80,18 +81,28 @@ describe('ComputeManager', () => {
 		expect(result.numMonths).toBe(1);
 		expect(result.numHours).toBe(24);
 
-		// Verify pipeline was called with correctly sized arrays
+		// Verify pipeline was called with correctly sized arrays and BVH/dome data
 		expect(uploadStaticData).toHaveBeenCalledTimes(1);
 		const args = uploadStaticData.mock.calls[0][0];
 		expect(args.gridPoints).toBeInstanceOf(Float32Array);
 		expect(args.sunVectors).toBeInstanceOf(Float32Array);
 		expect(args.weather).toBeInstanceOf(Float32Array);
+		expect(args.mesh).toBe(mesh);
+		expect(args.domeVectors).toBeInstanceOf(Float32Array);
+		expect(args.domeWeights).toBeInstanceOf(Float32Array);
+		expect(args.domeVectors.length).toBe(145 * 3);
+		expect(args.domeWeights.length).toBe(145);
 
 		// sunVectors: numMonths * numHours * 3
 		expect(args.sunVectors.length).toBe(1 * 24 * 3);
 
-		// weather: numMonths * numHours * 4 (air, mrt_lw, wind, rh)
-		expect(args.weather.length).toBe(1 * 24 * 4);
+		// sunAltitudes: numMonths * numHours (radians)
+		expect(args.sunAltitudes).toBeInstanceOf(Float32Array);
+		expect(args.sunAltitudes!.length).toBe(1 * 24);
+
+		// weather: numMonths * numHours * 7
+		// (air, mrt_lw, wind, rh, direct_normal, diffuse_horizontal, horiz_infrared)
+		expect(args.weather.length).toBe(1 * 24 * 7);
 
 		// runAll should be called once with matching counts
 		expect(runAll).toHaveBeenCalledTimes(1);
@@ -141,5 +152,112 @@ describe('ComputeManager', () => {
 		expect(readUtcisSlice).toHaveBeenCalledTimes(1);
 		expect(slice.length).toBe(10);
 	});
-});
 
+	it('must not compute UTCI on CPU when reading slices', async () => {
+		const { pipeline, readUtcisSlice } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+
+		// The manager exposes only a GPU-oriented API for UTCI slices; there is
+		// no public CPU shortcut. This test locks in that contract by asserting
+		// that all reads delegate to the injected pipeline implementation.
+		const slice = await manager.getUtcisForMonthHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			numPoints: 5,
+			numMonths: 1,
+			numHours: 24
+		});
+
+		expect(readUtcisSlice).toHaveBeenCalledTimes(1);
+		expect(slice.length).toBe(5);
+
+		// If a future refactor tried to introduce a CPU-computed UTCI path here,
+		// this assertion would start failing because the fake pipeline would no
+		// longer be consulted.
+	});
+
+	it('initFromModelAndWeather should return grid points', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const mesh = createTestMesh();
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			mesh,
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5
+		});
+
+		expect(result.gridPoints).toBeDefined();
+		expect(result.gridPoints).toBeInstanceOf(Float32Array);
+		expect(result.gridPoints!.length).toBe(result.numPoints * 3);
+	});
+
+	it('should rotate ENU north vector to negative world Z for XY-ground parity', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const mesh = createTestMesh();
+		const epw = buildMinimalEpw();
+
+		const sunVectors = Array.from({ length: 24 }, () => [0, 1, 0] as [number, number, number]);
+		const altitudes = Array.from({ length: 24 }, () => 45);
+		const isSunUp = Array.from({ length: 24 }, () => true);
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors').mockReturnValue({
+			sunVectors,
+			altitudes,
+			isSunUp
+		});
+
+		try {
+			await manager.initFromModelAndWeather({
+				mesh,
+				epwContent: epw,
+				gridResolution: 2,
+				zHeight: 1.5
+			});
+		} finally {
+			spy.mockRestore();
+		}
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunVectors[0]).toBeCloseTo(0, 6);
+		expect(args.sunVectors[1]).toBeCloseTo(0, 6);
+		expect(args.sunVectors[2]).toBeCloseTo(-1, 6);
+	});
+
+	it('should use fixture sun vectors directly when parity fixture mode is provided', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const mesh = createTestMesh();
+		const epw = buildMinimalEpw();
+
+		const fixtureVectors = new Float32Array(24 * 3);
+		const fixtureAltitudes = new Float32Array(24);
+		for (let i = 0; i < 24; i++) {
+			fixtureVectors[i * 3] = 0.1;
+			fixtureVectors[i * 3 + 1] = 0.9;
+			fixtureVectors[i * 3 + 2] = -0.2;
+			fixtureAltitudes[i] = 0.5;
+		}
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors');
+		await manager.initFromModelAndWeather({
+			mesh,
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			sunVectorsFixture: {
+				sunVectors: fixtureVectors,
+				sunAltitudes: fixtureAltitudes
+			}
+		});
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunVectors).toBe(fixtureVectors);
+		expect(args.sunAltitudes).toBe(fixtureAltitudes);
+		expect(spy).not.toHaveBeenCalled();
+		spy.mockRestore();
+	});
+});

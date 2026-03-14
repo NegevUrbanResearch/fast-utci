@@ -32,8 +32,7 @@ struct SkyParams {
 @group(0) @binding(4)
 var<uniform> params: SkyParams;
 
-// Placeholder – provided by three-mesh-bvh/webgpu TSL in real pipeline
-fn bvh_intersects_any(origin: vec3<f32>, direction: vec3<f32>) -> bool;
+// When this shader is concatenated with bvh_raycast.wgsl, @group(1) and bvh_intersects_any are provided there.
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {

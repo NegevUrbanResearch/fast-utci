@@ -2,10 +2,22 @@
 // Reads solar and sky exposure plus per-hour weather and writes UTCI values.
 
 struct WeatherSample {
+	// Air temperature in °C
 	air_temp: f32,
+	// Longwave MRT baseline in °C (can be used as a fallback or for
+	// validation; current GPU path derives MRT primarily from SolarCal
+	// inputs and horizInfrared but keeps this for parity/debugging).
 	mrt_longwave: f32,
+	// Wind speed in m/s
 	wind_speed: f32,
+	// Relative humidity in %
 	rel_humidity: f32,
+	// Direct normal solar radiation (W/m²)
+	direct_normal: f32,
+	// Diffuse horizontal radiation (W/m²)
+	diffuse_horizontal: f32,
+	// Horizontal infrared radiation intensity (W/m²)
+	horiz_infrared: f32,
 };
 
 @group(0) @binding(0)
@@ -28,11 +40,81 @@ struct MRTParams {
 @group(0) @binding(4)
 var<uniform> params: MRTParams;
 
-// For Phase 1 we treat MRT as the longwave MRT provided via weather_data and
-// ignore shortwave SolarCal contributions in the GPU shader. Solar exposure
-// and sky view are still computed and available for future refinement.
-fn compute_outdoor_mrt(base_mrt: f32) -> f32 {
-	return base_mrt;
+@group(0) @binding(5)
+var<storage, read> sun_altitudes: array<f32>;
+
+// SolarCal-style MRT computation ported from solarcal.ts / ASHRAE-55.
+// This uses:
+// - solar_exposure[flat_index] as the direct beam exposure fraction
+// - sky_exposure[point_idx] as an effective sky view factor proxy
+// - WeatherSample direct/diffuse/horiz_infrared + air_temp to derive outdoor MRT.
+fn compute_outdoor_mrt(
+	point_idx: u32,
+	time_idx: u32,
+	base_mrt_longwave: f32,
+	w: WeatherSample,
+	num_time_steps: u32,
+) -> f32 {
+	// Constants for SolarCal (human body)
+	let f_eff: f32 = 0.725;
+	let a_sw: f32 = 0.7;
+	let a_lw: f32 = 0.95;
+	let sigma: f32 = 5.6697e-8;
+
+	// Tregenza weights sum to ~145.25; divide to get normalized [0,1] SVF.
+	let total_tregenza_weight: f32 = 145.2488;
+	var sky_vf = clamp(sky_exposure[point_idx] / total_tregenza_weight, 0.0, 1.0);
+
+	// Ground view factor (person sees roughly half ground, half sky)
+	let f_g: f32 = 0.5;
+
+	// Simple ground reflectance approximation; kept in sync with solarcal.ts.
+	let ground_reflectance: f32 = 0.25;
+
+	// Solar exposure fraction for this point/time (0–1), from solar_exposure buffer.
+	let flat_index: u32 = point_idx * num_time_steps + time_idx;
+	let solar_exp: f32 = clamp(solar_exposure[flat_index], 0.0, 1.0);
+
+	// Real solar altitude for this timestep (radians), from CPU sunpath.
+	let alt_rad: f32 = sun_altitudes[time_idx];
+
+	// Projected area factor (standing person), simplified cylinder approximation.
+	var f_p: f32 = 0.308 * cos(alt_rad);
+	if (alt_rad <= 0.0) {
+		f_p = 0.0;
+	}
+
+	// 2. Shortwave ERF (Effective Radiant Field)
+	let f_svv: f32 = 0.5 * sky_vf;
+
+	// Global horizontal radiation approximation
+	var i_th: f32 = w.diffuse_horizontal;
+	if (alt_rad > 0.0 && w.direct_normal > 0.0) {
+		i_th = i_th + w.direct_normal * sin(alt_rad);
+	}
+
+	let erf_diffuse: f32 = f_svv * w.diffuse_horizontal;
+	let erf_ground: f32 = f_g * i_th * ground_reflectance;
+	let erf_direct: f32 = f_p * w.direct_normal * solar_exp;
+
+	let erf_sw: f32 = (erf_diffuse + erf_ground + erf_direct) * (a_sw / a_lw);
+
+	// 3. Longwave MRT base using horizontal infrared.
+	// T_sky = (horiz_infrared / sigma)^(1/4) - 273.15
+	// MRT_lw = T_sky * f_svv + air_temp * (1 - f_svv)
+	let t_sky_k: f32 = pow(w.horiz_infrared / sigma, 0.25);
+	let t_sky: f32 = t_sky_k - 273.15;
+	let mrt_lw: f32 = t_sky * f_svv + w.air_temp * (1.0 - f_svv);
+
+	// 4. Combine longwave baseline and shortwave ERF into outdoor MRT.
+	let base_k: f32 = mrt_lw + 273.15;
+	let mrt_k: f32 = pow(pow(base_k, 4.0) + erf_sw / (f_eff * sigma * a_lw), 0.25);
+	let outdoor_mrt: f32 = mrt_k - 273.15;
+
+	// Preserve the ability to fall back to the longwave baseline if needed.
+	// For now we trust the SolarCal-style formulation but keep base_mrt_longwave
+	// available for debugging parity against previous implementations.
+	return outdoor_mrt;
 }
 
 // UTCI polynomial ported from utci.ts / Bröde et al. (2012)
@@ -300,8 +382,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let flat_index = point_idx * params.num_time_steps + time_idx;
 
 	let w = weather_data[time_idx];
-	let mrt = compute_outdoor_mrt(w.mrt_longwave);
+	let mrt0 = compute_outdoor_mrt(point_idx, time_idx, w.mrt_longwave, w, params.num_time_steps);
+	let utci0 = compute_utci(w.air_temp, mrt0, w.wind_speed, w.rel_humidity);
 
-	let utci = compute_utci(w.air_temp, mrt, w.wind_speed, w.rel_humidity);
-	utci_results[flat_index] = utci;
+	// Boundary-averaged UTCI semantics:
+	// For all but the last time step, average UTCI at the current and next
+	// hour; for the last time step, fall back to the single-hour UTCI. This
+	// mirrors the behavior of the TypeScript boundary-averaging helper and
+	// Python's BoundaryAveragingCalculator at the level of "one UTCI per time
+	// index" while preserving the flat buffer shape.
+	var utci_value = utci0;
+	if (time_idx + 1u < params.num_time_steps) {
+		let next_idx = time_idx + 1u;
+		let w1 = weather_data[next_idx];
+		let mrt1 = compute_outdoor_mrt(point_idx, next_idx, w1.mrt_longwave, w1, params.num_time_steps);
+		let utci1 = compute_utci(w1.air_temp, mrt1, w1.wind_speed, w1.rel_humidity);
+		utci_value = 0.5 * (utci0 + utci1);
+	}
+
+	utci_results[flat_index] = utci_value;
 }

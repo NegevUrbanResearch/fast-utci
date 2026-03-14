@@ -1259,6 +1259,14 @@ viewer/src/lib/compute/
 
 ## Appendix B: Research Sources
 
+## Appendix C: Post-Review Execution Notes (2026-03-14)
+- Runtime sampling was aligned to exact hour boundaries in `sunpath.ts` (removed `hour + 0.5` shift for parity mode workflows).
+- Safety preflight now enforces estimated-byte limits and grid-point guard before heavy payload copying.
+- Worker compute path now supports staged progress and cooperative cancellation.
+- Solar exposure shader now skips BVH traversal for nighttime vectors.
+- WebGPU compute pipelines now compile asynchronously and device-loss clears cached device state.
+- UTCI readback now uses gathered hour slices instead of keeping a full CPU-side UTCI cache.
+
 ### WebGPU & Compute Shader Architecture
 - [WebGPU Fundamentals: Compute Shaders](https://webgpufundamentals.org/) — workgroup structure, dispatch patterns
 - [SitePoint: WebGPU Compute Shader Performance Patterns](https://www.sitepoint.com/) — serial await anti-pattern, batching dispatches in single command buffer (2.1x speedup), double-buffering, three-timeline concurrency model

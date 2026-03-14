@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createPipelineConfig, calculateDispatch } from '$lib/compute/gpu-pipeline';
+import { createPipelineConfig, calculateDispatch, getUtciFlatIndex } from '$lib/compute/gpu-pipeline';
 
 describe('GPU Compute Pipeline', () => {
 	it('should create pipeline config with correct buffer sizes', () => {
@@ -40,11 +40,39 @@ describe('GPU Compute Pipeline', () => {
 		expect(dispatch.y).toBe(24 * 12);
 	});
 
+	it('should compute flat UTCI index for point-major layout', () => {
+		const totalTimeSteps = 24;
+		expect(getUtciFlatIndex(0, 0, totalTimeSteps)).toBe(0);
+		expect(getUtciFlatIndex(1, 0, totalTimeSteps)).toBe(24);
+		expect(getUtciFlatIndex(2, 5, totalTimeSteps)).toBe(53);
+	});
+
+	it('should validate flat index inputs', () => {
+		expect(() => getUtciFlatIndex(-1, 0, 24)).toThrowError();
+		expect(() => getUtciFlatIndex(0, -1, 24)).toThrowError();
+		expect(() => getUtciFlatIndex(0, 0, 0)).toThrowError();
+	});
+
 	it('should validate inputs for dispatch calculation', () => {
 		expect(() => calculateDispatch(0, 24, 1, 64)).toThrowError();
 		expect(() => calculateDispatch(10_000, 0, 1, 64)).toThrowError();
 		expect(() => calculateDispatch(10_000, 24, 0, 64)).toThrowError();
 		expect(() => calculateDispatch(10_000, 24, 1, 0)).toThrowError();
 	});
-});
 
+	it('should match exposure pass dispatch convention (solar 2D, sky 1D)', () => {
+		const numPoints = 500;
+		const numHours = 24;
+		const numMonths = 12;
+		const workgroupSize = 64;
+
+		// Solar: (ceil(points/64), numMonths*numHours, 1)
+		const solarDispatch = calculateDispatch(numPoints, numHours, numMonths, workgroupSize);
+		expect(solarDispatch.x).toBe(Math.ceil(numPoints / workgroupSize));
+		expect(solarDispatch.y).toBe(numMonths * numHours);
+
+		// Sky: (ceil(points/64), 1, 1) — 1D over points only
+		const skyWorkgroupsX = Math.ceil(numPoints / workgroupSize);
+		expect(skyWorkgroupsX).toBe(8);
+	});
+});

@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { generateGridFromMesh } from '$lib/compute/grid-generator';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { Analysis, AnalysisMetadata, FullDayData, HourStatistics } from '$lib/types/analysis';
 import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
+import { emitComputeTelemetry } from '$lib/compute/telemetry';
 
 function worldToAnalysisCoords(
 	x: number,
@@ -35,10 +35,15 @@ export interface LiveUtciAnalysisParams {
 	 */
 	baseMetadata: AnalysisMetadata;
 	/**
-	 * Simplified mesh representing the sampling surface for grid generation.
-	 * This should be aligned with the model's world coordinates.
+	 * Simplified mesh for grid generation (main-thread path).
+	 * Omit when using workerResult (merge + BVH + grid computed in a worker).
 	 */
-	sampleMesh: THREE.Mesh;
+	sampleMesh?: THREE.Mesh;
+	/**
+	 * Pre-computed grid and BVH from a Web Worker (avoids main-thread freeze on large models).
+	 * When set, sampleMesh is not used for init.
+	 */
+	workerResult?: { gridPoints: Float32Array; serializedBvh: import('$lib/compute/gpu-pipeline').SerializedBvhForGpu };
 	/**
 	 * Raw EPW file contents for the project location.
 	 */
@@ -49,7 +54,7 @@ export interface LiveUtciAnalysisParams {
 	gridResolution?: number;
 	/**
 	 * Height offset above the sampling surface (in meters).
-	 * Defaults to 1.5m for pedestrian head height.
+	 * Defaults to 0.9m (parity-aligned debug default).
 	 */
 	zHeight?: number;
 	/**
@@ -70,6 +75,18 @@ export interface LiveUtciAnalysisOptions {
 	 * In production this should be a WebGPU-backed pipeline; in tests a fake can be injected.
 	 */
 	pipeline: UTCIComputePipeline;
+	/**
+	 * Optional AbortSignal to cancel the run when the user switches project/model.
+	 * When aborted, the promise rejects with DOMException('Aborted', 'AbortError').
+	 */
+	signal?: AbortSignal;
+}
+
+function yieldToMain(): Promise<void> {
+	if (typeof requestAnimationFrame !== 'undefined') {
+		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+	}
+	return Promise.resolve();
 }
 
 /**
@@ -85,9 +102,10 @@ export async function createLiveUtciAnalysisFromCompute(
 		analysisId,
 		baseMetadata,
 		sampleMesh,
+		workerResult,
 		epwContent,
 		gridResolution = baseMetadata.grid_size || 2,
-		zHeight = 1.5,
+		zHeight = 0.9,
 		numHours = baseMetadata.hours?.length ?? 24,
 		startMonth = 8 // August 15th to match existing .bin analyses
 	} = params;
@@ -100,35 +118,44 @@ export async function createLiveUtciAnalysisFromCompute(
 		startMonth
 	});
 
-	// 1. Initialize the compute pipeline from the sampling mesh and EPW
-	const { numPoints } = await computeManager.initFromModelAndWeather({
-		mesh: sampleMesh,
-		epwContent,
-		gridResolution,
-		zHeight
+	const signal = options.signal;
+	if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+	// 1. Initialize the compute pipeline (worker path: grid+BVH already done; main-thread: from mesh)
+	const initStartedAt = performance.now();
+	const result = workerResult
+		? await computeManager.initFromModelAndWeather({
+				gridPoints: workerResult.gridPoints,
+				serializedBvh: workerResult.serializedBvh,
+				epwContent,
+				gridResolution,
+				zHeight,
+				signal
+			})
+		: sampleMesh
+			? await computeManager.initFromModelAndWeather({
+					mesh: sampleMesh,
+					epwContent,
+					gridResolution,
+					zHeight,
+					signal
+				})
+			: (() => {
+					throw new Error('createLiveUtciAnalysisFromCompute: provide sampleMesh or workerResult');
+				})();
+	emitComputeTelemetry('pipeline.upload.done', {
+		ms: performance.now() - initStartedAt,
+		data: { numPoints: result.numPoints, numHours, numMonths }
 	});
 
-	// 2. Rebuild the grid positions so we can populate Analysis.data.positions.
-	//    This mirrors the internal grid generation used by ComputeManager.
-	const grid = generateGridFromMesh(sampleMesh, gridResolution, zHeight);
-	if (grid.points.length !== numPoints) {
-		// This should not happen in normal operation; log and clamp if it does.
-		console.warn(
-			`[liveUtciAnalysis] Grid/compute mismatch for ${analysisId}: ` +
-				`${grid.points.length} points from grid, ${numPoints} from compute. Using the smaller count.`
-		);
-	}
-
-	const effectiveNumPoints = Math.min(grid.points.length, numPoints);
+	const { numPoints, gridPoints: gridPointsFlat } = result;
+	const effectiveNumPoints = numPoints;
 	const positions = new Float32Array(effectiveNumPoints * 3);
 	const coordinateSystem =
 		(baseMetadata.coordinate_system as 'xy_ground' | 'xz_ground') ?? 'xy_ground';
 
-	// Live grid points are generated from a model that has already had the
-	// normalization offset applied. To keep parity with .bin analyses (which
-	// store positions in the original analysis frame and rely on
-	// buildUtciGridLayout to apply normalization once), we remove the same
-	// normalization offset here before converting back to analysis coordinates.
+	// 2. Use the grid points from the compute pipeline (no second grid generation).
+	//    Apply normalization offset and convert to analysis coordinates for parity with .bin analyses.
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
 	if (isNormalizationEnabled()) {
 		const scenarioOrigin = calculateScenarioOrigin(baseMetadata as any);
@@ -149,10 +176,9 @@ export async function createLiveUtciAnalysisFromCompute(
 	}
 
 	for (let i = 0; i < effectiveNumPoints; i++) {
-		const p = grid.points[i];
-		const worldX = p.x - normalizationOffset.x;
-		const worldY = p.y - normalizationOffset.y;
-		const worldZ = p.z - normalizationOffset.z;
+		const worldX = gridPointsFlat[i * 3] - normalizationOffset.x;
+		const worldY = gridPointsFlat[i * 3 + 1] - normalizationOffset.y;
+		const worldZ = gridPointsFlat[i * 3 + 2] - normalizationOffset.z;
 		const [ax, ay, az] = worldToAnalysisCoords(worldX, worldY, worldZ, coordinateSystem);
 		positions[i * 3] = ax;
 		positions[i * 3 + 1] = ay;
@@ -167,6 +193,8 @@ export async function createLiveUtciAnalysisFromCompute(
 	let globalMax = Number.NEGATIVE_INFINITY;
 
 	for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
+		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+		const hourReadStartedAt = performance.now();
 		const slice = await computeManager.getUtcisForMonthHour({
 			monthIndex: 0,
 			hourIndex,
@@ -182,6 +210,7 @@ export async function createLiveUtciAnalysisFromCompute(
 		let hourMin = Number.POSITIVE_INFINITY;
 		let hourMax = Number.NEGATIVE_INFINITY;
 		let sum = 0;
+		const CHUNK_SIZE = 20_000;
 
 		for (let i = 0; i < effectiveNumPoints; i++) {
 			const value = effectiveSlice[i];
@@ -189,6 +218,10 @@ export async function createLiveUtciAnalysisFromCompute(
 			if (value < hourMin) hourMin = value;
 			if (value > hourMax) hourMax = value;
 			sum += value;
+			if (i > 0 && i % CHUNK_SIZE === 0) {
+				if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+				await yieldToMain();
+			}
 		}
 
 		if (!Number.isFinite(hourMin) || !Number.isFinite(hourMax)) {
@@ -208,6 +241,10 @@ export async function createLiveUtciAnalysisFromCompute(
 		});
 
 		utciByHour.push(effectiveSlice);
+		emitComputeTelemetry('utci.readback.done', {
+			ms: performance.now() - hourReadStartedAt,
+			data: { hourIndex, numPoints: effectiveNumPoints }
+		});
 	}
 
 	if (!Number.isFinite(globalMin) || !Number.isFinite(globalMax) || globalMin === globalMax) {
@@ -256,4 +293,3 @@ export async function createLiveUtciAnalysisFromCompute(
 
 	return analysis;
 }
-
