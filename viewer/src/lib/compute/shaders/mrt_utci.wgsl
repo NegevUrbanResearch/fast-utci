@@ -43,6 +43,9 @@ var<uniform> params: MRTParams;
 @group(0) @binding(5)
 var<storage, read> sun_altitudes: array<f32>;
 
+@group(0) @binding(6)
+var<storage, read_write> mrt_results: array<f32>;
+
 // SolarCal-style MRT computation ported from solarcal.ts / ASHRAE-55.
 // This uses:
 // - solar_exposure[flat_index] as the direct beam exposure fraction
@@ -383,6 +386,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 	let w = weather_data[time_idx];
 	let mrt0 = compute_outdoor_mrt(point_idx, time_idx, w.mrt_longwave, w, params.num_time_steps);
+	mrt_results[flat_index] = mrt0;
 	let utci0 = compute_utci(w.air_temp, mrt0, w.wind_speed, w.rel_humidity);
 
 	// Boundary-averaged UTCI semantics:

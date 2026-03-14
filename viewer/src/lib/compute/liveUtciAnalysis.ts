@@ -35,15 +35,15 @@ export interface LiveUtciAnalysisParams {
 	 */
 	baseMetadata: AnalysisMetadata;
 	/**
-	 * Simplified mesh for grid generation (main-thread path).
-	 * Omit when using workerResult (merge + BVH + grid computed in a worker).
+	 * Simplified mesh for BVH (main-thread fallback when worker fails).
+	 * Grid is always from analysis bounds; mesh is only used to build the BVH for exposure.
 	 */
 	sampleMesh?: THREE.Mesh;
 	/**
-	 * Pre-computed grid and BVH from a Web Worker (avoids main-thread freeze on large models).
-	 * When set, sampleMesh is not used for init.
+	 * BVH from Web Worker (avoids main-thread merge). Grid is built from analysis bounds.
+	 * When set, sampleMesh is not used.
 	 */
-	workerResult?: { gridPoints: Float32Array; serializedBvh: import('$lib/compute/gpu-pipeline').SerializedBvhForGpu };
+	workerResult?: { serializedBvh: import('$lib/compute/gpu-pipeline').SerializedBvhForGpu; gridPoints?: Float32Array };
 	/**
 	 * Raw EPW file contents for the project location.
 	 */
@@ -67,6 +67,11 @@ export interface LiveUtciAnalysisParams {
 	 * Defaults to 8 (August) to match existing .bin analyses.
 	 */
 	startMonth?: number;
+	/**
+	 * Use a rectangular grid from analysis bounds (same-grid-as-.bin). Default true when bounds exist.
+	 * @deprecated Grid is always from bounds; this is kept for backward compatibility.
+	 */
+	useRectangularGridFromBounds?: boolean;
 }
 
 export interface LiveUtciAnalysisOptions {
@@ -121,46 +126,12 @@ export async function createLiveUtciAnalysisFromCompute(
 	const signal = options.signal;
 	if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-	// 1. Initialize the compute pipeline (worker path: grid+BVH already done; main-thread: from mesh)
-	const initStartedAt = performance.now();
-	const result = workerResult
-		? await computeManager.initFromModelAndWeather({
-				gridPoints: workerResult.gridPoints,
-				serializedBvh: workerResult.serializedBvh,
-				epwContent,
-				gridResolution,
-				zHeight,
-				signal
-			})
-		: sampleMesh
-			? await computeManager.initFromModelAndWeather({
-					mesh: sampleMesh,
-					epwContent,
-					gridResolution,
-					zHeight,
-					signal
-				})
-			: (() => {
-					throw new Error('createLiveUtciAnalysisFromCompute: provide sampleMesh or workerResult');
-				})();
-	emitComputeTelemetry('pipeline.upload.done', {
-		ms: performance.now() - initStartedAt,
-		data: { numPoints: result.numPoints, numHours, numMonths }
-	});
-
-	const { numPoints, gridPoints: gridPointsFlat } = result;
-	const effectiveNumPoints = numPoints;
-	const positions = new Float32Array(effectiveNumPoints * 3);
-	const coordinateSystem =
-		(baseMetadata.coordinate_system as 'xy_ground' | 'xz_ground') ?? 'xy_ground';
-
-	// 2. Use the grid points from the compute pipeline (no second grid generation).
-	//    Apply normalization offset and convert to analysis coordinates for parity with .bin analyses.
+	const coordinateSystem = (baseMetadata.coordinate_system as 'xy_ground' | 'xz_ground') ?? 'xy_ground';
+	// Normalization offset: displayed model is at this offset in viewer world. Rect grid from bounds is in analysis-origin viewer space; add this so grid matches BVH space when normalization is on.
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
 	if (isNormalizationEnabled()) {
 		const scenarioOrigin = calculateScenarioOrigin(baseMetadata as any);
 		const anchorOffset = getAnchorOffset();
-
 		let transformedOrigin: THREE.Vector3;
 		if (coordinateSystem === 'xy_ground') {
 			transformedOrigin = new THREE.Vector3(
@@ -171,15 +142,52 @@ export async function createLiveUtciAnalysisFromCompute(
 		} else {
 			transformedOrigin = scenarioOrigin.clone();
 		}
-
 		normalizationOffset = anchorOffset.clone().sub(transformedOrigin);
 	}
+	const gridOriginOffset =
+		normalizationOffset.lengthSq() > 0.001
+			? { x: normalizationOffset.x, y: normalizationOffset.y, z: normalizationOffset.z }
+			: undefined;
 
+	// 1. Initialize the compute pipeline. When using rect grid with normalization, gridOriginOffset shifts grid into BVH (viewer world) space.
+	const initStartedAt = performance.now();
+	const bounds = baseMetadata.bounds as
+		| { x_min: number; x_max: number; y_min: number; y_max: number; z?: number }
+		| undefined;
+
+	if (!bounds || (!workerResult && !sampleMesh)) {
+		throw new Error(
+			'createLiveUtciAnalysisFromCompute: analysis metadata must have bounds and provide workerResult (BVH) or sampleMesh for BVH.'
+		);
+	}
+
+	const result = await computeManager.initFromModelAndWeather({
+		...(workerResult ? { serializedBvh: workerResult.serializedBvh } : {}),
+		...(sampleMesh && !workerResult ? { mesh: sampleMesh } : {}),
+		useRectangularGridFromBounds: true,
+		analysisBounds: bounds,
+		coordinateSystem,
+		gridOriginOffset,
+		epwContent,
+		gridResolution,
+		zHeight,
+		signal
+	});
+	emitComputeTelemetry('pipeline.upload.done', {
+		ms: performance.now() - initStartedAt,
+		data: { numPoints: result.numPoints, numHours, numMonths }
+	});
+
+	const { numPoints, gridPoints: gridPointsFlat } = result;
+	const effectiveNumPoints = numPoints;
+	const positions = new Float32Array(effectiveNumPoints * 3);
+
+	// Stored positions: pipeline grid is in viewer world (BVH space). Store analysis = worldToAnalysisCoords(viewer - offset) so display (transform+offset) is correct.
 	for (let i = 0; i < effectiveNumPoints; i++) {
-		const worldX = gridPointsFlat[i * 3] - normalizationOffset.x;
-		const worldY = gridPointsFlat[i * 3 + 1] - normalizationOffset.y;
-		const worldZ = gridPointsFlat[i * 3 + 2] - normalizationOffset.z;
-		const [ax, ay, az] = worldToAnalysisCoords(worldX, worldY, worldZ, coordinateSystem);
+		const wx = gridPointsFlat[i * 3] - normalizationOffset.x;
+		const wy = gridPointsFlat[i * 3 + 1] - normalizationOffset.y;
+		const wz = gridPointsFlat[i * 3 + 2] - normalizationOffset.z;
+		const [ax, ay, az] = worldToAnalysisCoords(wx, wy, wz, coordinateSystem);
 		positions[i * 3] = ax;
 		positions[i * 3 + 1] = ay;
 		positions[i * 3 + 2] = az;

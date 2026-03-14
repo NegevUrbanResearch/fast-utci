@@ -36,6 +36,9 @@ const createTestMesh = () => {
 	return new THREE.Mesh(geometry);
 };
 
+/** Bounds for the 4x4 test plane (analysis xy_ground: x/z span ±2, z = sensor height). */
+const TEST_BOUNDS = { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 };
+
 const createFakePipeline = () => {
 	const uploadStaticData = vi.fn().mockResolvedValue(undefined);
 	const runAll = vi.fn().mockResolvedValue(undefined);
@@ -73,7 +76,9 @@ describe('ComputeManager', () => {
 			mesh,
 			epwContent: epw,
 			gridResolution: 2,
-			zHeight: 1.5
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS
 		});
 
 		// Expect some grid points to have been generated
@@ -186,7 +191,9 @@ describe('ComputeManager', () => {
 			mesh,
 			epwContent: epw,
 			gridResolution: 2,
-			zHeight: 1.5
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS
 		});
 
 		expect(result.gridPoints).toBeDefined();
@@ -215,7 +222,9 @@ describe('ComputeManager', () => {
 				mesh,
 				epwContent: epw,
 				gridResolution: 2,
-				zHeight: 1.5
+				zHeight: 1.5,
+				useRectangularGridFromBounds: true,
+				analysisBounds: TEST_BOUNDS
 			});
 		} finally {
 			spy.mockRestore();
@@ -248,6 +257,8 @@ describe('ComputeManager', () => {
 			epwContent: epw,
 			gridResolution: 2,
 			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
 			sunVectorsFixture: {
 				sunVectors: fixtureVectors,
 				sunAltitudes: fixtureAltitudes

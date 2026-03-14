@@ -5,6 +5,7 @@ export interface PipelineConfig {
 	solarExposureBufferSize: number;
 	skyExposureBufferSize: number;
 	utciResultBufferSize: number;
+	mrtResultBufferSize: number;
 }
 
 /**
@@ -33,7 +34,9 @@ export function createPipelineConfig(params: {
 		// Single sky view factor per point
 		skyExposureBufferSize: numPoints * 4,
 		// f32 per point × hour × month
-		utciResultBufferSize: numPoints * totalTimeSteps * 4
+		utciResultBufferSize: numPoints * totalTimeSteps * 4,
+		// f32 per point × hour × month (same layout as UTCI for MRT readback)
+		mrtResultBufferSize: numPoints * totalTimeSteps * 4
 	};
 }
 
@@ -132,6 +135,51 @@ export interface UTCIComputePipeline {
 		numHours: number;
 		numMonths: number;
 	}): Promise<Float32Array>;
+
+	/**
+	 * Read full solar exposure buffer (point-major: [p0_h0..p0_h23, p1_h0..], one month only).
+	 * Optional; only WebGPU implementation provides this (for intermediate parity).
+	 */
+	readSolarExposureFull?(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<Float32Array>;
+
+	/**
+	 * Read full sky exposure buffer (one value per point).
+	 * Optional; only WebGPU implementation provides this (for intermediate parity).
+	 */
+	readSkyExposure?(params: { numPoints: number }): Promise<Float32Array>;
+
+	/**
+	 * Read full MRT buffer (point-major: [p0_h0..p0_h23, p1_h0..], one month).
+	 * Optional; only WebGPU implementation provides this (for intermediate parity).
+	 */
+	readMrtFull?(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<Float32Array>;
+
+	/**
+	 * Return last-uploaded sun vector samples (hours 0, 12, 23) for debugging exposure zeros.
+	 * Optional; only WebGPU implementation provides this.
+	 */
+	getSunVectorSamples?(): number[] | null;
+
+	/**
+	 * Return first N hours of uploaded weather as objects (air_temp, direct_normal, etc.) for parity comparison.
+	 * Optional; only WebGPU implementation provides this.
+	 */
+	getWeatherSample?(numHours?: number): Array<{
+		air_temp: number;
+		direct_normal: number;
+		diffuse_horizontal: number;
+		horiz_infrared: number;
+		wind_speed: number;
+		rel_humidity: number;
+	}>;
 
 	/**
 	 * Release GPU resources. Call before discarding the pipeline (e.g. when

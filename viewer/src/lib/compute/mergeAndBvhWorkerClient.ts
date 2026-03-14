@@ -351,8 +351,18 @@ export function runMergeAndBvhInWorker(params: {
 	maxSlopeDegrees?: number;
 	signal?: AbortSignal;
 	maxGridPoints?: number;
+	/** When true, worker returns only serializedBvh and empty gridPoints (for parity mode). */
+	bvhOnly?: boolean;
 }): Promise<MergeAndBvhResult> {
-	const { meshes, gridResolution, zHeight, maxSlopeDegrees = 45, signal, maxGridPoints = MAX_GRID_POINTS_GUARD } = params;
+	const {
+		meshes,
+		gridResolution,
+		zHeight,
+		maxSlopeDegrees = 45,
+		signal,
+		maxGridPoints = MAX_GRID_POINTS_GUARD,
+		bvhOnly = false
+	} = params;
 
 	return new Promise((resolve, reject) => {
 		const startedAt = performance.now();
@@ -414,14 +424,32 @@ export function runMergeAndBvhInWorker(params: {
 			reject(new Error(err.message || 'Merge + BVH worker failed'));
 		};
 
+		// Clone payload so each buffer is unique: postMessage rejects if the same ArrayBuffer
+		// appears in the message (or transfer list) more than once.
+		const seen = new Set<ArrayBufferLike>();
+		const meshesToSend: MeshPayload[] = [];
 		const transferList: Transferable[] = [];
 		for (const m of meshes) {
-			transferList.push(m.position.buffer);
-			if (m.index) transferList.push(m.index.buffer);
+			const position = new Float32Array(m.position.length);
+			position.set(m.position);
+			const index = m.index ? new Uint32Array(m.index) : null;
+			meshesToSend.push({
+				position,
+				index,
+				matrixWorld: m.matrixWorld
+			});
+			if (!seen.has(position.buffer)) {
+				seen.add(position.buffer);
+				transferList.push(position.buffer);
+			}
+			if (index && !seen.has(index.buffer)) {
+				seen.add(index.buffer);
+				transferList.push(index.buffer);
+			}
 		}
 
 		worker.postMessage(
-			{ type: 'start', meshes, gridResolution, zHeight, maxSlopeDegrees, maxGridPoints },
+			{ type: 'start', meshes: meshesToSend, gridResolution, zHeight, maxSlopeDegrees, maxGridPoints, bvhOnly },
 			transferList
 		);
 	});

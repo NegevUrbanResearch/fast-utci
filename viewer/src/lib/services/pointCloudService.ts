@@ -408,8 +408,49 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		if (row > maxRow) maxRow = row;
 	}
 
-	const width = maxCol + 1;
-	const height = maxRow + 1;
+	let width = Math.max(1, maxCol + 1);
+	let height = Math.max(1, maxRow + 1);
+
+	// Guard against invalid layout (e.g. NaN positions or wrong coordinate space)
+	let layoutValid =
+		Number.isFinite(minX) &&
+		Number.isFinite(maxX) &&
+		Number.isFinite(minZ) &&
+		Number.isFinite(maxZ) &&
+		Number.isFinite(minY) &&
+		Number.isFinite(maxY);
+
+	// Fallback for live/WebGPU rectangular grid: use metadata.bounds so overlay is placed in scene
+	const bounds = metadata.bounds as { x_min: number; x_max: number; y_min: number; y_max: number; z?: number } | undefined;
+	if (!layoutValid && bounds && (analysis as any).__source === 'webgpu') {
+		if (coordinateSystem === 'xy_ground') {
+			minX = bounds.x_min;
+			maxX = bounds.x_max;
+			minZ = -bounds.y_max;
+			maxZ = -bounds.y_min;
+			minY = maxY = bounds.z ?? 0;
+		} else {
+			minX = bounds.x_min;
+			maxX = bounds.x_max;
+			minZ = bounds.y_min;
+			maxZ = bounds.y_max;
+			minY = maxY = bounds.z ?? 0;
+		}
+		// Recompute width/height from bounds so plane size matches grid
+		const spanX = maxX - minX;
+		const spanZ = maxZ - minZ;
+		width = Math.max(1, Math.round(spanX / gridSize) + 1);
+		height = Math.max(1, Math.round(spanZ / gridSize) + 1);
+		layoutValid = true;
+		console.log('[UTCI] Using metadata.bounds fallback for live overlay placement.', { minX, maxX, minZ, maxZ, width, height });
+	} else if (!layoutValid) {
+		const source = (analysis as any).__source;
+		console.warn(
+			'[UTCI] Invalid grid layout (non-finite bounds) – overlay may not show. Source:',
+			source ?? 'unknown',
+			{ minX, maxX, minZ, maxZ, minY, maxY }
+		);
+	}
 
 	for (let i = 0; i < numPositions; i++) {
 		const flippedRow = height - 1 - rows[i];
@@ -418,13 +459,10 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	}
 
 	const colorBuffer = new Uint8Array(width * height * 4);
-	const centerX = minX + ((width - 1) * gridSize) / 2;
-	const centerZ = minZ + ((height - 1) * gridSize) / 2;
-	// Anchor the UTCI surface just above the lowest analysis elevation so it
-	// "hugs" the ground grid instead of slicing through taller geometry. This
-	// minimizes intersections with buildings/trees while still separating the
-	// overlay from the base mesh.
-	const baseY = minY + VISUAL_LAYER_OFFSET;
+	// centerX/Z and baseY are in viewer space: we already applied transformToWorld(analysis)+normalizationOffset above to get min/max.
+	const centerX = layoutValid ? minX + ((width - 1) * gridSize) / 2 : 0;
+	const centerZ = layoutValid ? minZ + ((height - 1) * gridSize) / 2 : 0;
+	const baseY = layoutValid ? minY + VISUAL_LAYER_OFFSET : 0;
 
 	return {
 		width,

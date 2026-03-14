@@ -3,7 +3,7 @@ import type { UTCIComputePipeline, SerializedBvhForGpu } from '$lib/compute/gpu-
 import { parseEPW } from '$lib/compute/epw-parser';
 import { getSunVectors } from '$lib/compute/sunpath';
 import { getTregenzaDome } from '$lib/compute/tregenza';
-import { generateGridFromMesh } from '$lib/compute/grid-generator';
+import { analysisBoundsToRectangularGrid } from '$lib/compute/analysisGridFromBounds';
 import type * as THREE from 'three';
 
 /**
@@ -62,11 +62,10 @@ export class ComputeManager {
 
 	/**
 	 * Prepare GPU buffers and run the full compute pipeline.
-	 * Either pass a mesh (main-thread merge + grid) or pre-computed gridPoints + serializedBvh (worker path).
+	 * Grid is always built from analysis bounds; BVH comes from mesh (main-thread) or serializedBvh (worker).
 	 */
 	async initFromModelAndWeather(params: {
 		mesh?: THREE.Mesh;
-		gridPoints?: Float32Array;
 		serializedBvh?: SerializedBvhForGpu;
 		sunVectorsFixture?: {
 			sunVectors: Float32Array;
@@ -76,13 +75,30 @@ export class ComputeManager {
 		gridResolution: number;
 		zHeight: number;
 		signal?: AbortSignal;
+		useRectangularGridFromBounds: boolean;
+		analysisBounds: { x_min: number; x_max: number; y_min: number; y_max: number; z?: number };
+		coordinateSystem?: 'xy_ground' | 'xz_ground';
+		/** Add to each grid point so rays use the same viewer world as the BVH (displayed model at this offset). */
+		gridOriginOffset?: { x: number; y: number; z: number };
 	}): Promise<{
 		numPoints: number;
 		numMonths: number;
 		numHours: number;
 		gridPoints: Float32Array;
 	}> {
-		const { mesh, gridPoints: workerGridPoints, serializedBvh, sunVectorsFixture, epwContent, gridResolution, zHeight, signal } = params;
+		const {
+			mesh,
+			serializedBvh,
+			sunVectorsFixture,
+			epwContent,
+			gridResolution,
+			zHeight,
+			signal,
+			useRectangularGridFromBounds,
+			analysisBounds,
+			coordinateSystem = 'xy_ground',
+			gridOriginOffset
+		} = params;
 		const numMonths = this.config.numMonths;
 		const numHours = this.config.numHoursPerDay;
 		const startMonth = this.config.startMonth;
@@ -91,30 +107,29 @@ export class ComputeManager {
 		let numPoints: number;
 		let gridPoints: Float32Array;
 
-		if (workerGridPoints && serializedBvh) {
-			// Worker path: use pre-computed grid and BVH
-			numPoints = workerGridPoints.length / 3;
-			gridPoints = workerGridPoints;
-		} else if (mesh) {
-			// Main-thread path: generate grid from mesh (BVH built once; pipeline will serialize it)
-			await yieldToMain();
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
-			const grid = generateGridFromMesh(mesh, gridResolution, zHeight);
-
-			await yieldToMain();
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-			numPoints = grid.points.length;
-
-			gridPoints = new Float32Array(numPoints * 3);
-			for (let i = 0; i < numPoints; i++) {
-				const p = grid.points[i];
-				gridPoints[i * 3] = p.x;
-				gridPoints[i * 3 + 1] = p.y;
-				gridPoints[i * 3 + 2] = p.z;
-			}
-		} else {
-			throw new Error('initFromModelAndWeather: provide either mesh or (gridPoints + serializedBvh)');
+		if (!useRectangularGridFromBounds || !analysisBounds || (!serializedBvh && !mesh)) {
+			throw new Error(
+				'initFromModelAndWeather: useRectangularGridFromBounds, analysisBounds, and (serializedBvh or mesh) are required.'
+			);
+		}
+		const { points } = analysisBoundsToRectangularGrid({
+			bounds: analysisBounds,
+			gridSize: gridResolution,
+			coordinateSystem
+		});
+		numPoints = points.length;
+		if (numPoints === 0) {
+			throw new Error('Rectangular grid from bounds produced 0 points; check analysis bounds and gridResolution.');
+		}
+		gridPoints = new Float32Array(numPoints * 3);
+		const ox = gridOriginOffset?.x ?? 0;
+		const oy = gridOriginOffset?.y ?? 0;
+		const oz = gridOriginOffset?.z ?? 0;
+		for (let i = 0; i < numPoints; i++) {
+			const p = points[i];
+			gridPoints[i * 3] = p.x + ox;
+			gridPoints[i * 3 + 1] = p.y + oy;
+			gridPoints[i * 3 + 2] = p.z + oz;
 		}
 
 		// 2. Parse EPW and compute sun vectors for 12 representative days (15th)

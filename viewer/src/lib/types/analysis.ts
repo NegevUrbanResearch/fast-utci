@@ -92,6 +92,8 @@ export interface AnalysisMetadata {
 	date?: string;
 	has_shading_index?: boolean; // Whether Shading Index data is available
 	shading_index_range?: ShadingIndexRange; // Shading Index value range
+	/** Analysis bounds for grid generation (x_min, x_max, y_min, y_max, z). Grid is always built from these bounds. */
+	bounds?: { x_min: number; x_max: number; y_min: number; y_max: number; z?: number };
 }
 
 /**

@@ -31,6 +31,8 @@ struct Params {
 var<uniform> params: Params;
 
 // When this shader is concatenated with bvh_raycast.wgsl, @group(1) and bvh_intersects_any are provided there.
+// Set to true to force-write 0.5 at (0,0) to verify the compute buffer is the one we read back (debug zeros).
+const PROBE_FORCE_WRITE: bool = false;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -38,6 +40,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let time_idx = global_id.y;
 
 	if (point_idx >= params.num_points || time_idx >= params.num_time_steps) {
+		return;
+	}
+
+	let flat_index = point_idx * params.num_time_steps + time_idx;
+	if (PROBE_FORCE_WRITE && point_idx == 0u && time_idx == 0u) {
+		solar_exposure[flat_index] = 0.5;
 		return;
 	}
 
@@ -52,7 +60,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		sun_vectors[time_idx].y,
 		sun_vectors[time_idx].z
 	);
-	let flat_index = point_idx * params.num_time_steps + time_idx;
 
 	// Skip BVH traversal for nighttime/invalid vectors.
 	let sun_len2 = dot(sun, sun);
@@ -61,8 +68,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		return;
 	}
 
-	// Small offset to avoid self-intersection with the surface
-	let ray_origin = origin + sun * 0.01;
+	// Offset along ray to avoid self-intersection with the surface (0.01 was too small; rays hit own geometry).
+	let ray_origin = origin + sun * 0.1;
 	let hit = bvh_intersects_any(ray_origin, sun);
 
 	solar_exposure[flat_index] = select(1.0, 0.0, hit);

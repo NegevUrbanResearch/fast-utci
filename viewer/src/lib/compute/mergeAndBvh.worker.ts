@@ -1,14 +1,12 @@
 /**
- * Web Worker: merge scene meshes, build BVH, generate grid.
- * Runs off the main thread to prevent UI freezes on large models.
+ * Web Worker: merge scene meshes and build BVH for exposure.
+ * Grid is built from analysis bounds on the main thread; this worker only produces the BVH.
  */
 
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { computeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { serializeBvhForGpu } from './bvhGpuUpload';
-import { generateGridFromMesh } from './grid-generator';
-import { MAX_GRID_POINTS_GUARD } from './mergeAndBvhWorkerClient';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
@@ -22,10 +20,12 @@ export interface MeshPayload {
 interface StartRequest {
 	type: 'start';
 	meshes: MeshPayload[];
-	gridResolution: number;
-	zHeight: number;
+	gridResolution?: number;
+	zHeight?: number;
 	maxSlopeDegrees?: number;
 	maxGridPoints?: number;
+	/** @deprecated Grid is always built from bounds; worker only returns BVH. */
+	bvhOnly?: boolean;
 }
 
 interface CancelRequest {
@@ -80,7 +80,7 @@ function buildGeometryFromPayload(p: MeshPayload): THREE.BufferGeometry {
 
 async function handleStart(req: StartRequest) {
 	const t0 = performance.now();
-	const { meshes, gridResolution, zHeight, maxSlopeDegrees = 45, maxGridPoints = MAX_GRID_POINTS_GUARD } = req;
+	const { meshes } = req;
 	if (!meshes?.length) {
 		workerScope.postMessage({ type: 'error', error: 'No meshes' });
 		return;
@@ -109,33 +109,7 @@ async function handleStart(req: StartRequest) {
 	await yieldWorker();
 	ensureNotCancelled();
 
-	const gridStart = performance.now();
-	const mesh = new THREE.Mesh(merged);
-	mesh.matrixWorld.identity();
-	const grid = generateGridFromMesh(mesh, gridResolution, zHeight, maxSlopeDegrees);
-	if (grid.points.length > maxGridPoints) {
-		workerScope.postMessage({
-			type: 'error',
-			error: `Grid too dense (${grid.points.length.toLocaleString()} points) exceeds safety cap (${maxGridPoints.toLocaleString()})`
-		});
-		return;
-	}
-	postProgress('grid', performance.now() - gridStart, grid.points.length);
-
-	await yieldWorker();
-	ensureNotCancelled();
-
-	const numPoints = grid.points.length;
-	const gridPoints = new Float32Array(numPoints * 3);
-	for (let i = 0; i < numPoints; i++) {
-		ensureNotCancelled();
-		gridPoints[i * 3] = grid.points[i].x;
-		gridPoints[i * 3 + 1] = grid.points[i].y;
-		gridPoints[i * 3 + 2] = grid.points[i].z;
-		if (i > 0 && i % 50_000 === 0) {
-			await yieldWorker();
-		}
-	}
+	postProgress('grid', 0, 0);
 
 	const bvhStart = performance.now();
 	const serialized = serializeBvhForGpu(merged, { zeroCopy: true });
@@ -144,7 +118,14 @@ async function handleStart(req: StartRequest) {
 	await yieldWorker();
 	ensureNotCancelled();
 
-	postProgress('transfer', performance.now() - t0, numPoints);
+	const gridPoints = new Float32Array(0);
+	postProgress('transfer', performance.now() - t0, 0);
+	const transferList: Transferable[] = [
+		serialized.bvhNodeBuffer,
+		serialized.bvhIndexBuffer,
+		serialized.vertexBuffer.buffer,
+		serialized.indexBuffer.buffer
+	];
 	workerScope.postMessage(
 		{
 			gridPoints,
@@ -155,13 +136,7 @@ async function handleStart(req: StartRequest) {
 				indexBuffer: serialized.indexBuffer
 			}
 		},
-		[
-			gridPoints.buffer,
-			serialized.bvhNodeBuffer,
-			serialized.bvhIndexBuffer,
-			serialized.vertexBuffer.buffer,
-			serialized.indexBuffer.buffer
-		]
+		transferList
 	);
 }
 

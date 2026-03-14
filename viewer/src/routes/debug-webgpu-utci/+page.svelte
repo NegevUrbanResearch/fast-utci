@@ -59,6 +59,7 @@
 	import type { Analysis } from "$lib/types/analysis";
 import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
 import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
+import { normalizeSkyExposureToViewFactor } from "$lib/parity/skyScale";
 import type { UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
 import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
 import { get } from "svelte/store";
@@ -199,6 +200,8 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		}
 	}
 
+	// Validation: expose __parityIntermediates__ after every successful compute for statistical e2e checks (grid sizes not required to match).
+
 	// Live analysis trigger: when base analysis or model changes, recompute.
 	// Only run when the loaded model is for the current analysis's model_file (avoids Ben Gurion grid on Nes Ziona after project switch).
 	async function computeLiveAnalysis() {
@@ -264,8 +267,8 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 			const pipeline = await createWebgpuUtciPipeline();
 			lastPipeline = pipeline;
 
-			// Try worker first when available; fall back to main-thread only for smaller models.
 			let workerResult: { gridPoints: Float32Array; serializedBvh: import("$lib/compute/gpu-pipeline").SerializedBvhForGpu } | null = null;
+
 			if (typeof Worker !== "undefined") {
 				try {
 					workerResult = await runMergeAndBvhInWorker({
@@ -274,6 +277,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						zHeight,
 						signal,
 						maxGridPoints: MAX_GRID_POINTS_GUARD,
+						bvhOnly: true,
 					});
 				} catch (workerErr) {
 					if (workerErr instanceof DOMException && workerErr.name === "AbortError") {
@@ -295,6 +299,9 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 				);
 			}
 
+			// Grid is always from analysis bounds (same as .bin); worker only builds BVH.
+			const useRectangularGrid = base.metadata?.bounds != null;
+
 			const analysisParams = workerResult
 				? {
 						analysisId,
@@ -305,6 +312,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						zHeight,
 						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
 						startMonth: 8,
+						...(useRectangularGrid ? { useRectangularGridFromBounds: true } : {}),
 					}
 				: {
 						analysisId,
@@ -315,6 +323,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						zHeight,
 						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
 						startMonth: 8,
+						...(useRectangularGrid ? { useRectangularGridFromBounds: true } : {}),
 					};
 
 			const result = await createLiveUtciAnalysisFromCompute(
@@ -332,6 +341,96 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 				isComparing: true,
 				comparisonAnalysis: result,
 			}));
+
+			// Expose results and intermediates for e2e validation (statistical comparison; grid sizes may differ).
+			if (result.data && "utciByHour" in result.data) {
+				const win = window as unknown as {
+					__parityResults__?: unknown;
+					__parityIntermediates__?: {
+						solarExposure: number[];
+						skyExposure: number[];
+						mrt?: number[];
+						numPoints: number;
+						numHours: number;
+					};
+				};
+				win.__parityResults__ = {
+					utciByHour: result.data.utciByHour.map((arr) => Array.from(arr)),
+					positions: Array.from(result.data.positions),
+					numPoints: result.data.numPositions,
+					numHours: result.data.utciByHour.length,
+				};
+				if (
+					pipeline.readSolarExposureFull &&
+					pipeline.readSkyExposure &&
+					lastPipeline === pipeline
+				) {
+					const numPoints = result.data.numPositions;
+					const numHours = result.data.utciByHour.length;
+					const numMonths = 1;
+					try {
+						const readPromises: [
+							Promise<Float32Array>,
+							Promise<Float32Array>,
+							Promise<Float32Array>?
+						] = [
+							pipeline.readSolarExposureFull({ numPoints, numHours, numMonths }),
+							pipeline.readSkyExposure({ numPoints }),
+						];
+						if (pipeline.readMrtFull) {
+							readPromises.push(pipeline.readMrtFull({ numPoints, numHours, numMonths }));
+						}
+						const results = await Promise.all(readPromises);
+						const solarExposure = Array.from(results[0]);
+						const skyExposure = normalizeSkyExposureToViewFactor(results[1]);
+						const mrtArray = results[2];
+						win.__parityIntermediates__ = {
+							solarExposure,
+							skyExposure,
+							...(mrtArray !== undefined ? { mrt: Array.from(mrtArray) } : {}),
+							numPoints,
+							numHours,
+						};
+						const debugWin = win as unknown as {
+							__parityDebug__?: {
+								sunVectorSamples: number[] | null;
+								mrt?: number[];
+								weatherSample?: Array<{
+									air_temp: number;
+									direct_normal: number;
+									diffuse_horizontal: number;
+									horiz_infrared: number;
+									wind_speed: number;
+									rel_humidity: number;
+								}>;
+							};
+						};
+						debugWin.__parityDebug__ = {
+							sunVectorSamples: pipeline.getSunVectorSamples?.() ?? null,
+							...(mrtArray !== undefined ? { mrt: Array.from(mrtArray) } : {}),
+							weatherSample: pipeline.getWeatherSample?.(3) ?? [],
+						};
+						// Validation: fail fast when readback is all zeros (exposure not computed or not visible to CPU).
+						const solarAllZero = solarExposure.length > 0 && solarExposure.every((v) => v === 0);
+						const skyAllZero = skyExposure.length > 0 && skyExposure.every((v) => v === 0);
+						if (solarAllZero && skyAllZero) {
+							(
+								window as unknown as { __parityIntermediatesError__?: string }
+							).__parityIntermediatesError__ =
+								'Exposure readback returned all zeros. Check: exposure passes ran (BVH present), buffers have COPY_SRC, queue.onSubmittedWorkDone before readback, and shader logic (sun vectors Y-up/daytime, BVH raycast). Run tests/e2e/inspect-intermediates.spec.ts for diagnostics.';
+						}
+					} catch (intermediateErr) {
+						console.warn("[validation] Failed to read back intermediates:", intermediateErr);
+						// Expose error for e2e so test fails with a clear message instead of timing out on zeros
+						(
+							window as unknown as {
+								__parityIntermediatesError__?: string;
+							}
+						).__parityIntermediatesError__ =
+							intermediateErr instanceof Error ? intermediateErr.message : String(intermediateErr);
+					}
+				}
+			}
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") {
 				return;
@@ -353,7 +452,12 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		}
 	}
 
-	$: if ($analysisStore && model && mounted && modelFileForLoadedModel === $analysisStore?.metadata?.model_file) {
+	$: if (
+		$analysisStore &&
+		model &&
+		mounted &&
+		modelFileForLoadedModel === $analysisStore?.metadata?.model_file
+	) {
 		// Defer by one frame so the first paint after model load can run before sync triangle count and payload prep.
 		requestAnimationFrame(() => {
 			if (

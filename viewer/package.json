@@ -12,9 +12,14 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest",
 		"test:ui": "vitest --ui",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"test:e2e": "playwright test",
+		"test:e2e:parity": "playwright test tests/e2e/parity-ben-gurion.spec.ts",
+		"parity:collect-webgpu": "playwright test tests/e2e/collect-webgpu-parity.spec.ts",
+		"parity:compare": "tsx scripts/compare-parity.ts"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.58.2",
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.47.1",
@@ -29,6 +34,7 @@
 		"svelte-check": "^4.3.3",
 		"typescript": "^5.9.3",
 		"vite": "^7.1.10",
+		"tsx": "^4.19.2",
 		"vitest": "^4.0.18"
 	},
 	"dependencies": {

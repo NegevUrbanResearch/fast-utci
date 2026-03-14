@@ -19,6 +19,9 @@ function createRenderer(canvas: HTMLCanvasElement) {
 			antialias: true,
 			alpha: false
 		});
+		// Guard so dispose() does not throw when this.info is undefined (e.g. if dispose runs before async init() completes).
+		const r = renderer as unknown as { info?: { dispose: () => void } };
+		if (!r.info) r.info = { dispose: () => {} };
 		// WebGPURenderer requires async initialization before first use. We fire
 		// and forget here; the renderer will still be usable for subsequent
 		// frames once init resolves.

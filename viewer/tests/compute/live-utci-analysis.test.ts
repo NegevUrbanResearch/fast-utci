@@ -78,7 +78,8 @@ describe('liveUtciAnalysis adapter', () => {
 			utci_range: { min: -10, max: 50 },
 			grid_size: 2,
 			coordinate_system: 'xy_ground',
-			model_file: 'test.glb'
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
 		};
 
 		await createLiveUtciAnalysisFromCompute(
@@ -109,7 +110,8 @@ describe('liveUtciAnalysis adapter', () => {
 			utci_range: { min: -10, max: 50 },
 			grid_size: 2,
 			coordinate_system: 'xy_ground',
-			model_file: 'test.glb'
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
 		};
 
 		const mesh = createTestMesh();
@@ -196,7 +198,8 @@ describe('grid position sanity', () => {
 			utci_range: { min: -10, max: 50 },
 			grid_size: 2,
 			coordinate_system: 'xy_ground',
-			model_file: 'test.glb'
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 0.9 }
 		};
 
 		const analysis = await createLiveUtciAnalysisFromCompute(

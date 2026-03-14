@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
 	prepareMeshPayloadForWorkerAsync,
+	runMergeAndBvhInWorker,
 	MAX_GRID_POINTS_GUARD
 } from '$lib/compute/mergeAndBvhWorkerClient';
 
@@ -54,4 +55,26 @@ describe('mergeAndBvhWorkerClient preflight', () => {
 			})
 		).rejects.toThrow(`${MAX_GRID_POINTS_GUARD.toLocaleString()}`);
 	});
+
+	it.skipIf(typeof Worker === 'undefined')(
+		'when bvhOnly is true, returns serializedBvh and empty gridPoints',
+		async () => {
+			const group = createPlane(10);
+			const { meshes } = await prepareMeshPayloadForWorkerAsync(group, {
+				gridResolution: 2,
+				numHours: 24,
+				numMonths: 1
+			});
+			const result = await runMergeAndBvhInWorker({
+				meshes,
+				gridResolution: 2,
+				zHeight: 0.9,
+				bvhOnly: true
+			});
+			expect(result.serializedBvh).toBeDefined();
+			expect(result.serializedBvh.bvhNodeBuffer).toBeDefined();
+			expect(result.serializedBvh.vertexBuffer).toBeDefined();
+			expect(result.gridPoints.length).toBe(0);
+		}
+	);
 });
