@@ -44,11 +44,9 @@
 	import sceLogo from "$lib/assets/sce-logo.svg";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
-	import { mergeSceneMeshes } from "$lib/compute/meshMerger";
 	import {
 		prepareMeshPayloadForWorkerAsync,
 		runMergeAndBvhInWorker,
-		MAX_TRIANGLES_FOR_MAIN_THREAD,
 		MAX_GRID_POINTS_GUARD,
 	} from "$lib/compute/mergeAndBvhWorkerClient";
 	import { getTooltipData } from "$lib/services/tooltipService";
@@ -120,10 +118,86 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 	let liveLoading = false;
 	let liveError: string | null = null;
 	let lastLiveKey: string | null = null;
+	const LIVE_COMPUTE_WATCHDOG_MS = 60_000;
+	let liveComputeWatchdog: ReturnType<typeof setTimeout> | null = null;
+	let liveRunCounter = 0;
+	type ParityCollectionPhase =
+		| "preflight"
+		| "epw"
+		| "worker"
+		| "pipelineInit"
+		| "runAll"
+		| "readback"
+		| "done";
 
-	function selectSampleMesh(group: Group): Mesh | null {
-		return mergeSceneMeshes(group);
-	}
+	type ParityCollectionStatus = {
+		runId: number;
+		state: "running" | "success" | "error" | "timeout";
+		phase: ParityCollectionPhase;
+		startedAt: number;
+		updatedAt: number;
+		message?: string;
+	};
+
+	type ParityCollectionLogEntry = {
+		runId: number;
+		state: "running" | "success" | "error" | "timeout";
+		phase: ParityCollectionPhase;
+		timestamp: number;
+		message?: string;
+	};
+
+	type ParityWindow = Window & {
+		__parityIntermediatesError__?: string;
+		__parityCollectionError__?: string;
+		__parityCollectionStatus__?: ParityCollectionStatus;
+		__parityCollectionLog__?: ParityCollectionLogEntry[];
+		__parityResults__?: unknown;
+		__parityIntermediates__?: unknown;
+	};
+
+	const getParityWindow = (): ParityWindow =>
+		window as unknown as ParityWindow;
+
+	const setParityStatus = (
+		runId: number,
+		state: "running" | "success" | "error" | "timeout",
+		phase: ParityCollectionPhase,
+		message?: string,
+	) => {
+		const now = Date.now();
+		const win = getParityWindow();
+		const startedAt =
+			win.__parityCollectionStatus__?.runId === runId
+				? win.__parityCollectionStatus__.startedAt
+				: now;
+		win.__parityCollectionStatus__ = {
+			runId,
+			state,
+			phase,
+			startedAt,
+			updatedAt: now,
+			...(message ? { message } : {}),
+		};
+		const log = win.__parityCollectionLog__ ?? [];
+		log.push({ runId, state, phase, timestamp: now, ...(message ? { message } : {}) });
+		win.__parityCollectionLog__ = log;
+		console.info(
+			`[parity:phase] run=${runId} state=${state} phase=${phase}${message ? ` msg=${message}` : ""}`,
+		);
+	};
+
+	const setParityError = (
+		runId: number,
+		phase: ParityCollectionPhase,
+		message: string,
+		state: "error" | "timeout" = "error",
+	) => {
+		const win = getParityWindow();
+		win.__parityCollectionError__ = message;
+		win.__parityIntermediatesError__ = message;
+		setParityStatus(runId, state, phase, message);
+	};
 
 	async function loadAnalysis(id: string) {
 		try {
@@ -219,7 +293,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
 		const epwUrl = getEpwUrlForProject(projectId);
 		const gridResolution = base.metadata.grid_size || 2;
-		const zHeight = 0.9;
+		const zHeight = base.metadata.bounds?.z ?? 0.9;
 
 		const liveKey = `${base.metadata.model_file}|${base.metadata.grid_size}|${analysisId}`;
 		if (liveKey === lastLiveKey && liveAnalysis) {
@@ -229,6 +303,14 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		lastLiveKey = liveKey;
 		liveLoading = true;
 		liveError = null;
+		const runId = ++liveRunCounter;
+		const parityWin = getParityWindow();
+		parityWin.__parityIntermediatesError__ = undefined;
+		parityWin.__parityCollectionError__ = undefined;
+		parityWin.__parityResults__ = undefined;
+		parityWin.__parityIntermediates__ = undefined;
+		parityWin.__parityCollectionLog__ = [];
+		setParityStatus(runId, "running", "preflight");
 		emitComputeTelemetry("live.compute.start", {
 			data: { gridResolution, zHeight }
 		});
@@ -236,8 +318,16 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		liveAbortController?.abort();
 		liveAbortController = new AbortController();
 		const signal = liveAbortController.signal;
+		if (liveComputeWatchdog) clearTimeout(liveComputeWatchdog);
+		liveComputeWatchdog = setTimeout(() => {
+			if (runId !== liveRunCounter) return;
+			const timeoutMessage = `Live compute exceeded ${LIVE_COMPUTE_WATCHDOG_MS}ms watchdog.`;
+			setParityError(runId, "done", timeoutMessage, "timeout");
+			liveAbortController?.abort();
+		}, LIVE_COMPUTE_WATCHDOG_MS);
 
 		try {
+			setParityStatus(runId, "running", "preflight");
 			// Single-pass preflight + payload prep with cooperative yielding.
 			const { meshes, totalTriangles, preflight } = await prepareMeshPayloadForWorkerAsync(model, {
 				signal,
@@ -254,6 +344,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 				},
 			});
 
+			setParityStatus(runId, "running", "epw");
 			const response = await fetch(epwUrl);
 			if (!response.ok) {
 				throw new Error(
@@ -262,6 +353,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 			}
 			const epwContent = await response.text();
 
+			setParityStatus(runId, "running", "pipelineInit");
 			lastPipeline?.dispose?.();
 			lastPipeline = null;
 			const pipeline = await createWebgpuUtciPipeline();
@@ -270,6 +362,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 			let workerResult: { gridPoints: Float32Array; serializedBvh: import("$lib/compute/gpu-pipeline").SerializedBvhForGpu } | null = null;
 
 			if (typeof Worker !== "undefined") {
+				setParityStatus(runId, "running", "worker");
 				try {
 					workerResult = await runMergeAndBvhInWorker({
 						meshes,
@@ -283,49 +376,36 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 					if (workerErr instanceof DOMException && workerErr.name === "AbortError") {
 						throw workerErr;
 					}
-					if (totalTriangles > MAX_TRIANGLES_FOR_MAIN_THREAD) {
-						throw new Error(
-							`Worker failed and model is too large for main thread (${(totalTriangles / 1e6).toFixed(1)}M triangles): ${workerErr instanceof Error ? workerErr.message : String(workerErr)}`,
-						);
-					}
-					// Fall back to main-thread merge + grid
+					throw new Error(
+						`Worker BVH generation failed; rectangular parity path requires workerResult.serializedBvh (triangles ${(totalTriangles / 1e6).toFixed(1)}M): ${workerErr instanceof Error ? workerErr.message : String(workerErr)}`,
+					);
 				}
 			}
 
-			const sampleMesh = workerResult ? null : selectSampleMesh(model);
-			if (!workerResult && !sampleMesh) {
+			if (!workerResult) {
 				throw new Error(
-					"No safe compute path available: worker did not produce geometry and main-thread merge was refused.",
+					"Worker did not produce BVH output; rectangular parity path requires workerResult.serializedBvh.",
 				);
 			}
 
-			// Grid is always from analysis bounds (same as .bin); worker only builds BVH.
-			const useRectangularGrid = base.metadata?.bounds != null;
+			if (!base.metadata?.bounds) {
+				throw new Error(
+					"Analysis metadata is missing bounds; rectangular parity path cannot build canonical grid.",
+				);
+			}
 
-			const analysisParams = workerResult
-				? {
-						analysisId,
-						baseMetadata: base.metadata,
-						workerResult,
-						epwContent,
-						gridResolution,
-						zHeight,
-						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-						startMonth: 8,
-						...(useRectangularGrid ? { useRectangularGridFromBounds: true } : {}),
-					}
-				: {
-						analysisId,
-						baseMetadata: base.metadata,
-						sampleMesh: sampleMesh as Mesh,
-						epwContent,
-						gridResolution,
-						zHeight,
-						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-						startMonth: 8,
-						...(useRectangularGrid ? { useRectangularGridFromBounds: true } : {}),
-					};
+			const analysisParams = {
+				analysisId,
+				baseMetadata: base.metadata,
+				workerResult,
+				epwContent,
+				gridResolution,
+				zHeight,
+				numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
+				startMonth: 8,
+			};
 
+			setParityStatus(runId, "running", "runAll");
 			const result = await createLiveUtciAnalysisFromCompute(
 				analysisParams,
 				{ pipeline, signal },
@@ -350,6 +430,10 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						solarExposure: number[];
 						skyExposure: number[];
 						mrt?: number[];
+						shortErf?: number[];
+						longErf?: number[];
+						shortDmrt?: number[];
+						longDmrt?: number[];
 						numPoints: number;
 						numHours: number;
 					};
@@ -365,6 +449,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 					pipeline.readSkyExposure &&
 					lastPipeline === pipeline
 				) {
+					setParityStatus(runId, "running", "readback");
 					const numPoints = result.data.numPositions;
 					const numHours = result.data.utciByHour.length;
 					const numMonths = 1;
@@ -384,10 +469,24 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						const solarExposure = Array.from(results[0]);
 						const skyExposure = normalizeSkyExposureToViewFactor(results[1]);
 						const mrtArray = results[2];
+						const mrtComponents =
+							pipeline.readMrtComponentsFull &&
+							(pipeline.supportsMrtComponentDiagnostics?.() ?? false) &&
+							mrtArray !== undefined
+								? await pipeline.readMrtComponentsFull({ numPoints, numHours, numMonths })
+								: undefined;
 						win.__parityIntermediates__ = {
 							solarExposure,
 							skyExposure,
 							...(mrtArray !== undefined ? { mrt: Array.from(mrtArray) } : {}),
+							...(mrtComponents
+								? {
+										shortErf: Array.from(mrtComponents.shortErf),
+										longErf: Array.from(mrtComponents.longErf),
+										shortDmrt: Array.from(mrtComponents.shortDmrt),
+										longDmrt: Array.from(mrtComponents.longDmrt)
+									}
+								: {}),
 							numPoints,
 							numHours,
 						};
@@ -395,6 +494,10 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 							__parityDebug__?: {
 								sunVectorSamples: number[] | null;
 								mrt?: number[];
+								shortErf?: number[];
+								longErf?: number[];
+								shortDmrt?: number[];
+								longDmrt?: number[];
 								weatherSample?: Array<{
 									air_temp: number;
 									direct_normal: number;
@@ -408,28 +511,39 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 						debugWin.__parityDebug__ = {
 							sunVectorSamples: pipeline.getSunVectorSamples?.() ?? null,
 							...(mrtArray !== undefined ? { mrt: Array.from(mrtArray) } : {}),
+							...(mrtComponents
+								? {
+										shortErf: Array.from(mrtComponents.shortErf),
+										longErf: Array.from(mrtComponents.longErf),
+										shortDmrt: Array.from(mrtComponents.shortDmrt),
+										longDmrt: Array.from(mrtComponents.longDmrt)
+									}
+								: {}),
 							weatherSample: pipeline.getWeatherSample?.(3) ?? [],
 						};
 						// Validation: fail fast when readback is all zeros (exposure not computed or not visible to CPU).
 						const solarAllZero = solarExposure.length > 0 && solarExposure.every((v) => v === 0);
 						const skyAllZero = skyExposure.length > 0 && skyExposure.every((v) => v === 0);
 						if (solarAllZero && skyAllZero) {
-							(
-								window as unknown as { __parityIntermediatesError__?: string }
-							).__parityIntermediatesError__ =
-								'Exposure readback returned all zeros. Check: exposure passes ran (BVH present), buffers have COPY_SRC, queue.onSubmittedWorkDone before readback, and shader logic (sun vectors Y-up/daytime, BVH raycast). Run tests/e2e/inspect-intermediates.spec.ts for diagnostics.';
+							setParityError(
+								runId,
+								"readback",
+								"Exposure readback returned all zeros. Check: exposure passes ran (BVH present), buffers have COPY_SRC, queue.onSubmittedWorkDone before readback, and shader logic (sun vectors Y-up/daytime, BVH raycast). Run tests/e2e/inspect-intermediates.spec.ts for diagnostics.",
+							);
 						}
 					} catch (intermediateErr) {
 						console.warn("[validation] Failed to read back intermediates:", intermediateErr);
 						// Expose error for e2e so test fails with a clear message instead of timing out on zeros
-						(
-							window as unknown as {
-								__parityIntermediatesError__?: string;
-							}
-						).__parityIntermediatesError__ =
-							intermediateErr instanceof Error ? intermediateErr.message : String(intermediateErr);
+						setParityError(
+							runId,
+							"readback",
+							intermediateErr instanceof Error
+								? intermediateErr.message
+								: String(intermediateErr),
+						);
 					}
 				}
+				setParityStatus(runId, "success", "done");
 			}
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") {
@@ -440,6 +554,13 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 				error instanceof Error
 					? error.message
 					: "Failed to compute live UTCI";
+			(
+				window as unknown as {
+					__parityIntermediatesError__?: string;
+					__parityCollectionError__?: string;
+				}
+			).__parityCollectionError__ = liveError;
+			setParityError(runId, "done", liveError, "error");
 			emitComputeTelemetry("live.compute.error", {
 				data: {
 					message: error instanceof Error ? error.message : String(error),
@@ -447,6 +568,10 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 			});
 			liveAnalysis = null;
 		} finally {
+			if (liveComputeWatchdog) {
+				clearTimeout(liveComputeWatchdog);
+				liveComputeWatchdog = null;
+			}
 			liveLoading = false;
 			emitComputeTelemetry("live.compute.finish");
 		}

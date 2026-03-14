@@ -18,6 +18,10 @@ export interface MrtReference {
 	numPositions: number;
 	numHours: number;
 	mrt: Float32Array;
+	short_erf?: Float32Array;
+	long_erf?: Float32Array;
+	short_dmrt?: Float32Array;
+	long_dmrt?: Float32Array;
 }
 
 /**
@@ -91,11 +95,25 @@ export async function loadReferenceIntermediatesFromFs(
 				`Invalid MRT reference in ${path}: mrt.length ${arr.length} !== numPositions * numHours (${expected})`
 			);
 		}
-		return {
+		const out: MrtReference = {
 			numPositions,
 			numHours,
 			mrt: new Float32Array(arr)
 		};
+		const rawObj = data as Record<string, unknown>;
+		if (Array.isArray(rawObj.short_erf) && rawObj.short_erf.length === expected) {
+			out.short_erf = new Float32Array(rawObj.short_erf as number[]);
+		}
+		if (Array.isArray(rawObj.long_erf) && rawObj.long_erf.length === expected) {
+			out.long_erf = new Float32Array(rawObj.long_erf as number[]);
+		}
+		if (Array.isArray(rawObj.short_dmrt) && rawObj.short_dmrt.length === expected) {
+			out.short_dmrt = new Float32Array(rawObj.short_dmrt as number[]);
+		}
+		if (Array.isArray(rawObj.long_dmrt) && rawObj.long_dmrt.length === expected) {
+			out.long_dmrt = new Float32Array(rawObj.long_dmrt as number[]);
+		}
+		return out;
 	}
 
 	// stage === 'sky'

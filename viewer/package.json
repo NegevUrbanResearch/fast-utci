@@ -15,7 +15,7 @@
 		"test:coverage": "vitest run --coverage",
 		"test:e2e": "playwright test",
 		"test:e2e:parity": "playwright test tests/e2e/parity-ben-gurion.spec.ts",
-		"parity:collect-webgpu": "playwright test tests/e2e/collect-webgpu-parity.spec.ts",
+		"parity:collect-webgpu": "playwright test --config=playwright.collect.config.ts tests/e2e/collect-webgpu-parity.spec.ts --project=chromium --workers=1",
 		"parity:compare": "tsx scripts/compare-parity.ts"
 	},
 	"devDependencies": {

@@ -5,8 +5,14 @@
 
 import { loadReferenceIntermediatesFromFs } from './loadReferenceIntermediatesFromFs';
 import { loadWebgpuCollectedFromFs } from './loadWebgpuCollectedFromFs';
+import { loadReferenceFromFs } from './loadReferenceFromFs';
 import { compareIntermediatesStats, analyzeDiffs } from './compareIntermediates';
 import { compareUtciRange } from './compareUtciRange';
+import {
+	computeSpatialComplexity,
+	inferRectGridShapeFromPositions,
+	type SpatialComplexityMetrics
+} from './spatialComplexity';
 import { readFileSync } from 'node:fs';
 
 export interface StageReport {
@@ -42,6 +48,12 @@ export interface ParityReport {
 	sky?: StageReport;
 	mrt?: StageReport;
 	utci?: StageReport;
+	utciComplexity?: {
+		ref: SpatialComplexityMetrics;
+		webgpu: SpatialComplexityMetrics;
+		delta: SpatialComplexityMetrics;
+		error?: string;
+	};
 }
 
 function loadRefMetadataUtciRange(basePath: string): { min: number; max: number; mean: number } | null {
@@ -199,6 +211,89 @@ export async function buildParityReport(basePath: string): Promise<ParityReport>
 		};
 	} else if (webgpu.utci) {
 		report.utci = { pass: true, error: 'no ref metadata utci_range' };
+	}
+
+	// UTCI spatial complexity
+	if (webgpu.utci) {
+		try {
+			const ref = await loadReferenceFromFs(basePath);
+			const refPositions = Array.from(ref.data.positions);
+			const webgpuPositions =
+				webgpu.utci.positions && webgpu.utci.positions.length === webgpu.utci.numPoints * 3
+					? webgpu.utci.positions
+					: null;
+			const refShape = inferRectGridShapeFromPositions(refPositions);
+			const wgShape = webgpuPositions ? inferRectGridShapeFromPositions(webgpuPositions) : null;
+			if (refShape && wgShape) {
+				const meanMetrics = (items: readonly SpatialComplexityMetrics[]): SpatialComplexityMetrics => {
+					if (items.length === 0) return { gradientEnergy: 0, variance: 0, entropy: 0 };
+					const totals = items.reduce(
+						(acc, curr) => {
+							acc.gradientEnergy += curr.gradientEnergy;
+							acc.variance += curr.variance;
+							acc.entropy += curr.entropy;
+							return acc;
+						},
+						{ gradientEnergy: 0, variance: 0, entropy: 0 }
+					);
+					return {
+						gradientEnergy: totals.gradientEnergy / items.length,
+						variance: totals.variance / items.length,
+						entropy: totals.entropy / items.length
+					};
+				};
+				const complexityByHour = (
+					values: readonly (readonly number[])[],
+					width: number,
+					height: number
+				): SpatialComplexityMetrics => {
+					const expectedLength = width * height;
+					const malformed = values
+						.map((arr, index) => ({ index, length: arr.length }))
+						.filter((h) => h.length !== expectedLength);
+					if (malformed.length > 0) {
+						throw new Error(
+							`UTCI hourly field shape mismatch: expected ${expectedLength}, malformed hours: ${malformed
+								.slice(0, 5)
+								.map((h) => `${h.index}:${h.length}`)
+								.join(', ')}${malformed.length > 5 ? ' ...' : ''}`
+						);
+					}
+					return meanMetrics(values.map((arr) => computeSpatialComplexity(arr, width, height)));
+				};
+				const refMetrics = complexityByHour(
+					ref.data.utciByHour.map((arr) => Array.from(arr)),
+					refShape.width,
+					refShape.height
+				);
+				const wgMetrics = complexityByHour(webgpu.utci.utciByHour, wgShape.width, wgShape.height);
+				report.utciComplexity = {
+					ref: refMetrics,
+					webgpu: wgMetrics,
+					delta: {
+						gradientEnergy: wgMetrics.gradientEnergy - refMetrics.gradientEnergy,
+						variance: wgMetrics.variance - refMetrics.variance,
+						entropy: wgMetrics.entropy - refMetrics.entropy
+					}
+				};
+			} else {
+				report.utciComplexity = {
+					ref: { gradientEnergy: 0, variance: 0, entropy: 0 },
+					webgpu: { gradientEnergy: 0, variance: 0, entropy: 0 },
+					delta: { gradientEnergy: 0, variance: 0, entropy: 0 },
+					error: webgpuPositions
+						? 'unable to infer rectangular grid shape from positions'
+						: 'webgpu_utci.json is missing valid positions (numPoints*3), cannot compute topology-aware complexity'
+				};
+			}
+		} catch (e) {
+			report.utciComplexity = {
+				ref: { gradientEnergy: 0, variance: 0, entropy: 0 },
+				webgpu: { gradientEnergy: 0, variance: 0, entropy: 0 },
+				delta: { gradientEnergy: 0, variance: 0, entropy: 0 },
+				error: e instanceof Error ? e.message : String(e)
+			};
+		}
 	}
 
 	report.summary = { pass: failCount === 0, failCount };

@@ -18,11 +18,16 @@ export interface WebgpuMrt {
 	numPositions: number;
 	numHours: number;
 	mrt: number[];
+	short_erf?: number[];
+	long_erf?: number[];
+	short_dmrt?: number[];
+	long_dmrt?: number[];
 }
 
 export interface WebgpuUtci {
 	numPoints: number;
 	numHours: number;
+	positions?: number[];
 	utciByHour: number[][];
 	utci_range: { min: number; max: number; mean: number };
 }

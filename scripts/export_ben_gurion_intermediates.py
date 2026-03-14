@@ -16,7 +16,7 @@ Reference format:
   *_solar.json: { "numPositions", "numHours", "solarExposure": number[] }
     Point-major flat: [p0_h0, p0_h1, ..., p0_h23, p1_h0, ...]
   *_sky.json:   { "numPositions", "skyExposure": number[] }
-  *_mrt.json:   { "numPositions", "numHours", "mrt": number[] }
+  *_mrt.json:   { "numPositions", "numHours", "mrt": number[], "short_erf"?, "long_erf"?, "short_dmrt"?, "long_dmrt"? }
     Point-major flat, same layout as solar (per-hour MRT in °C).
   *_weather_sample.json: { "numHours": 3, "weather": [ { "air_temp", ... }, ... ] }
 """
@@ -203,6 +203,10 @@ def main() -> None:
             ground_reflectance = getattr(config, "ground_reflectance", 0.25)
         body_params = create_solar_body_parameters()
         mrt_flat = []
+        short_erf_flat = []
+        long_erf_flat = []
+        short_dmrt_flat = []
+        long_dmrt_flat = []
         for i, exp in enumerate(results):
             if show_progress and (i + 1) % 10000 == 0:
                 print(f"  MRT {i + 1}/{num_positions}")
@@ -210,10 +214,22 @@ def main() -> None:
                 epw_data, exp, None, target_hours, ground_reflectance, body_params
             )
             mrt_flat.extend(mrt_result.mrt.tolist())
+            short_erf_flat.extend(mrt_result.short_erf.tolist())
+            long_erf_flat.extend(mrt_result.long_erf.tolist())
+            short_dmrt_flat.extend(mrt_result.short_dmrt.tolist())
+            long_dmrt_flat.extend(mrt_result.long_dmrt.tolist())
         out_path = Path(str(base_path) + "_mrt.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(
-                {"numPositions": num_positions, "numHours": num_hours, "mrt": mrt_flat},
+                {
+                    "numPositions": num_positions,
+                    "numHours": num_hours,
+                    "mrt": mrt_flat,
+                    "short_erf": short_erf_flat,
+                    "long_erf": long_erf_flat,
+                    "short_dmrt": short_dmrt_flat,
+                    "long_dmrt": long_dmrt_flat,
+                },
                 f,
                 separators=(",", ":"),
             )

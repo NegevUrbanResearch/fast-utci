@@ -10,4 +10,10 @@ describe('skyScale', () => {
 		expect(out[2]).toBeCloseTo(1);
 		expect(out[3]).toBeCloseTo(1);
 	});
+
+	it('is idempotent when input is already in 0..1', () => {
+		const once = normalizeSkyExposureToViewFactor([0, 0.5, 1]);
+		const twice = normalizeSkyExposureToViewFactor(once);
+		expect(twice).toEqual(once);
+	});
 });

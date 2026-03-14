@@ -4,14 +4,17 @@ export interface SolarCalInput {
   horizInfrared: number; // Needed for longwave MRT
   solarAltitude: number; // degrees
   solarExposure: number; // 0 to 1
-  skyViewFactor: number; // 0 to 1
+	skyViewFactor: number; // 0 to 1
   groundReflectance: number; // 0 to 1
   airTemp: number; // Celsius
+	surfaceTemp?: number; // Celsius, defaults to airTemp
 }
 
 export interface SolarCalResult {
-  erf: number;
-  deltaMRT: number;
+	shortwaveErf: number;
+	longwaveErf: number;
+	shortwaveDeltaMRT: number;
+	longwaveDeltaMRT: number;
   outdoorMRT: number;
 }
 
@@ -24,82 +27,63 @@ export function computeSolarCal(input: SolarCalInput): SolarCalResult {
     solarExposure,
     skyViewFactor,
     groundReflectance,
-    airTemp,
+		airTemp
   } = input;
+	const surfaceTemp = Number.isFinite(input.surfaceTemp) ? (input.surfaceTemp as number) : airTemp;
 
-  // Constants for SolarCal (human body)
-  const f_eff = 0.725; // effective fraction of body surface exposed to radiation
-  const a_sw = 0.7; // shortwave absorptivity
-  const a_lw = 0.95; // longwave emissivity/absorptivity
+	// Constants aligned with ladybug_comfort.solarcal defaults.
+	const f_eff = 0.725;
+	const rad_trans_coeff = 6.012;
+	const a_sw = 0.7;
+	const a_lw = 0.95;
   const sigma = 5.6697e-8; // Stefan-Boltzmann constant
 
-  // 1. Projected area factor (f_p)
-  // Projected area factor for a seated/standing person at solar altitude (alt_deg)
-  // Ladybug/ASHRAE 55 polynomial or simplified trig. 
-  // simplified: fp = 0.308 * cos(alt) + 0.082 * sin(alt) -- actually just use Ladybug's simplified
+	// Standing projection factor curve for SHARP=135 from Ladybug's spline table.
+	const fpSharp135 = [
+		0.22, 0.221, 0.222, 0.222, 0.223, 0.223, 0.224, 0.224, 0.224, 0.223, 0.223, 0.223,
+		0.222, 0.222, 0.221, 0.22, 0.219, 0.218, 0.217, 0.215, 0.214, 0.212, 0.211, 0.209,
+		0.207, 0.206, 0.204, 0.202, 0.2, 0.197, 0.195, 0.193, 0.191, 0.188, 0.186, 0.183,
+		0.181, 0.179, 0.176, 0.174, 0.171, 0.169, 0.166, 0.164, 0.161, 0.159, 0.157, 0.154,
+		0.152, 0.15, 0.148, 0.146, 0.144, 0.141, 0.139, 0.137, 0.135, 0.133, 0.13, 0.128,
+		0.126, 0.123, 0.121, 0.118, 0.116, 0.113, 0.111, 0.108, 0.105, 0.103, 0.1, 0.097,
+		0.095, 0.092, 0.09, 0.087, 0.085, 0.082, 0.08, 0.078, 0.076, 0.073, 0.071, 0.069,
+		0.068, 0.066, 0.064, 0.063, 0.061, 0.06
+	] as const;
+
   const alt_rad = (solarAltitude * Math.PI) / 180;
-  // ASHRAE 55 Standing person fp:
-  let f_p = 0.308 * Math.cos(alt_rad); // simple cylinder approx
-  
-  if (solarAltitude < 0) {
-    f_p = 0;
+	const isShortwaveActive = solarAltitude >= 2;
+	let f_p = 0;
+	if (isShortwaveActive) {
+		const idx = Math.ceil(Math.max(1, Math.min(90, solarAltitude))) - 1;
+		f_p = fpSharp135[idx] ?? 0;
   }
 
-  // 2. Shortwave ERF (Effective Radiant Field)
-  // ERF_sw = a_sw * (f_svv * I_diff + f_svv * I_TH * R_floor + f_p * I_dir)
-  // Using ladybug formulation:
-  
-  // Sky Vault View (f_svv): for a person, half the sphere is sky, half is ground.
-  // With urban context, f_svv = 0.5 * skyViewFactor.
-  const f_svv = 0.5 * skyViewFactor;
-  
-  // Ground View Factor: typically 0.5
-  const f_g = 0.5;
-
-  // Global horizontal radiation (I_TH)
-  // I_TH = I_diff + I_dir * sin(alt)
+	// Global horizontal radiation.
   let I_TH = diffuseHorizRad;
-  if (solarAltitude > 0) {
+	if (isShortwaveActive) {
     I_TH += directNormalRad * Math.sin(alt_rad);
   }
 
-  // Diffuse from sky: f_svv * I_diff
-  const erf_diffuse = f_svv * diffuseHorizRad;
-  
-  // Ground reflected: f_g * I_TH * R_floor
-  const erf_ground = f_g * I_TH * groundReflectance;
-  
-  // Direct solar: f_p * I_dir * solarExposure
-  const erf_direct = f_p * directNormalRad * solarExposure;
+	const shortFlux = isShortwaveActive
+		? f_p * solarExposure * directNormalRad +
+			0.5 * skyViewFactor * f_eff * diffuseHorizRad +
+			0.5 * skyViewFactor * f_eff * I_TH * groundReflectance
+		: 0;
+	const shortwaveErf = shortFlux * (a_sw / a_lw);
+	const shortwaveDeltaMRT = shortwaveErf / (f_eff * rad_trans_coeff);
 
-  // Total shortwave ERF (W/m2)
-  const erf_sw = (erf_diffuse + erf_ground + erf_direct) * (a_sw / a_lw);
+	const safeHorizIr = Math.max(horizInfrared, 0);
+	const skyTemp = Math.pow(safeHorizIr / (a_lw * sigma), 0.25) - 273.15;
+	const longwaveDeltaMRT = 0.5 * skyViewFactor * (skyTemp - surfaceTemp);
+	const longwaveErf = longwaveDeltaMRT * f_eff * rad_trans_coeff;
 
-  // 3. Longwave MRT base
-  // We need the baseline MRT from longwave exchange.
-  // MRT_lw = ( (horizInfrared / sigma) ) ^ 0.25 - 273.15?
-  // Actually, ladybug OutdoorSolarCal calculates longwave MRT using sky temp and surface temp.
-  // The simplest proxy when only horizIR and T_air are known:
-  // Sky Temp T_sky = (horizInfrared / sigma)^0.25 - 273.15
-  // MRT_lw = T_sky * f_svv + T_air * (1 - f_svv)
-  const T_sky_k = Math.pow(horizInfrared / sigma, 0.25);
-  const T_sky = T_sky_k - 273.15;
-  
-  // Base longwave MRT (Celsius)
-  const mrt_lw = T_sky * f_svv + airTemp * (1 - f_svv);
-
-  // 4. Delta MRT from Shortwave
-  // delta_MRT = ERF_sw / (f_eff * sigma * a_lw * 4 * (MRT_lw + 273.15)^3) ?
-  // wait, the linearization is 4 * sigma * T^3, but standard formula is:
-  // MRT = ( (MRT_lw + 273.15)^4 + ERF_sw / (f_eff * sigma * a_lw) )^0.25 - 273.15
-  const base_k = mrt_lw + 273.15;
-  const mrt_k = Math.pow((Math.pow(base_k, 4) + erf_sw / (f_eff * sigma * a_lw)), 0.25);
-  const outdoorMRT = mrt_k - 273.15;
-  const deltaMRT = outdoorMRT - mrt_lw;
+	const outdoorMRT = surfaceTemp + shortwaveDeltaMRT + longwaveDeltaMRT;
 
   return {
-    erf: erf_sw,
-    deltaMRT,
+		shortwaveErf,
+		longwaveErf,
+		shortwaveDeltaMRT,
+		longwaveDeltaMRT,
     outdoorMRT,
   };
 }

@@ -165,10 +165,14 @@ export function analyzeDiffs(params: {
 	}
 	const diffs: number[] = [];
 	let sumSq = 0;
+	let minDiff = Number.POSITIVE_INFINITY;
+	let maxDiff = Number.NEGATIVE_INFINITY;
 	for (let i = 0; i < n; i++) {
 		const d = webgpu[i] - ref[i];
 		diffs.push(d);
 		sumSq += d * d;
+		if (d < minDiff) minDiff = d;
+		if (d > maxDiff) maxDiff = d;
 	}
 	const mean = diffs.reduce((a, b) => a + b, 0) / n;
 	const std = n > 1 ? Math.sqrt(diffs.reduce((s, d) => s + (d - mean) ** 2, 0) / (n - 1)) : 0;
@@ -176,8 +180,8 @@ export function analyzeDiffs(params: {
 	const diffStats = {
 		mean,
 		std,
-		min: Math.min(...diffs),
-		max: Math.max(...diffs),
+		min: minDiff,
+		max: maxDiff,
 		rmse: Math.sqrt(sumSq / n),
 		p50: percentile(sorted, 50),
 		p95: percentile(sorted, 95),

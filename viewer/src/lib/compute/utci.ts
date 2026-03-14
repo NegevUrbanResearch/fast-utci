@@ -1,5 +1,25 @@
-export function calculateUTCI(tdb: number, mrt: number, v: number, rh: number): number {
-  if (tdb < -50 || tdb > 50 || mrt - tdb < -30 || mrt - tdb > 70) return NaN;
+export type UtciPolicy = 'strict-domain' | 'clamped-domain';
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+export function calculateUTCI(
+	tdb: number,
+	mrt: number,
+	v: number,
+	rh: number,
+	options: { policy?: UtciPolicy } = {}
+): number {
+  const policy = options.policy ?? 'clamped-domain';
+  const deltaRaw = mrt - tdb;
+  if (policy === 'strict-domain' && (tdb < -50 || tdb > 50 || deltaRaw < -30 || deltaRaw > 70)) return NaN;
+  if (policy === 'clamped-domain') {
+    const tdbClamped = clamp(tdb, -50, 50);
+    const deltaClamped = clamp(deltaRaw, -30, 70);
+    tdb = tdbClamped;
+    mrt = tdbClamped + deltaClamped;
+  }
   v = Math.max(0.5, Math.min(17.0, v));
   const delta_t_tr = mrt - tdb;
   const tk = tdb + 273.15;
@@ -30,8 +50,9 @@ export function calculateBoundaryAveragedUtciSeries(params: {
 	mrts: number[];
 	windSpeeds: number[];
 	relativeHumidities: number[];
+	policy?: UtciPolicy;
 }): number[] {
-	const { airTemps, mrts, windSpeeds, relativeHumidities } = params;
+	const { airTemps, mrts, windSpeeds, relativeHumidities, policy = 'clamped-domain' } = params;
 	const n = airTemps.length;
 	if (
 		mrts.length !== n ||
@@ -50,14 +71,14 @@ export function calculateBoundaryAveragedUtciSeries(params: {
 		const v0 = windSpeeds[i];
 		const rh0 = relativeHumidities[i];
 
-		const utci0 = calculateUTCI(tdb0, mrt0, v0, rh0);
+		const utci0 = calculateUTCI(tdb0, mrt0, v0, rh0, { policy });
 
 		if (i < n - 1) {
 			const tdb1 = airTemps[i + 1];
 			const mrt1 = mrts[i + 1];
 			const v1 = windSpeeds[i + 1];
 			const rh1 = relativeHumidities[i + 1];
-			const utci1 = calculateUTCI(tdb1, mrt1, v1, rh1);
+			const utci1 = calculateUTCI(tdb1, mrt1, v1, rh1, { policy });
 			out[i] = (utci0 + utci1) * 0.5;
 		} else {
 			out[i] = utci0;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { Analysis, AnalysisMetadata, FullDayData, HourStatistics } from '$lib/types/analysis';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
+import type { SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
@@ -24,6 +24,42 @@ function worldToAnalysisCoords(
 	return [x, y, z];
 }
 
+function buildSunVectorsFixtureFromMetadata(params: {
+	baseMetadata: AnalysisMetadata;
+	numHours: number;
+	numMonths: number;
+}): { sunVectors: Float32Array; sunAltitudes: Float32Array } | undefined {
+	const { baseMetadata, numHours, numMonths } = params;
+	const raw = (baseMetadata as unknown as { sun_positions?: unknown }).sun_positions;
+	if (!Array.isArray(raw) || raw.length < numHours) return undefined;
+
+	type SunPositionLike = {
+		vector?: [number, number, number];
+		altitude?: number;
+		is_up?: boolean;
+	};
+	const firstDay = raw as SunPositionLike[];
+	const sunVectors = new Float32Array(numMonths * numHours * 3);
+	const sunAltitudes = new Float32Array(numMonths * numHours);
+	for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
+		for (let hour = 0; hour < numHours; hour++) {
+			const src = firstDay[hour];
+			const vec = src?.vector;
+			const base = (monthOffset * numHours + hour) * 3;
+			if (vec && vec.length === 3) {
+				// Metadata vectors are Z-up (x east, y north, z up); pipeline expects Y-up.
+				sunVectors[base] = vec[0];
+				sunVectors[base + 1] = vec[2];
+				sunVectors[base + 2] = -vec[1];
+			}
+			const altitudeDeg = Number.isFinite(src?.altitude) ? (src?.altitude as number) : 0;
+			const isUp = src?.is_up === true || altitudeDeg > 0;
+			sunAltitudes[monthOffset * numHours + hour] = isUp ? (altitudeDeg * Math.PI) / 180 : 0;
+		}
+	}
+	return { sunVectors, sunAltitudes };
+}
+
 export interface LiveUtciAnalysisParams {
 	/**
 	 * Identifier for logging and debugging; typically matches the .bin analysis id.
@@ -35,15 +71,10 @@ export interface LiveUtciAnalysisParams {
 	 */
 	baseMetadata: AnalysisMetadata;
 	/**
-	 * Simplified mesh for BVH (main-thread fallback when worker fails).
-	 * Grid is always from analysis bounds; mesh is only used to build the BVH for exposure.
+	 * Precomputed BVH from worker serialization.
+	 * Rectangular parity compute requires this to avoid main-thread mesh fallbacks.
 	 */
-	sampleMesh?: THREE.Mesh;
-	/**
-	 * BVH from Web Worker (avoids main-thread merge). Grid is built from analysis bounds.
-	 * When set, sampleMesh is not used.
-	 */
-	workerResult?: { serializedBvh: import('$lib/compute/gpu-pipeline').SerializedBvhForGpu; gridPoints?: Float32Array };
+	workerResult?: { serializedBvh: SerializedBvhForGpu; gridPoints?: Float32Array };
 	/**
 	 * Raw EPW file contents for the project location.
 	 */
@@ -67,12 +98,9 @@ export interface LiveUtciAnalysisParams {
 	 * Defaults to 8 (August) to match existing .bin analyses.
 	 */
 	startMonth?: number;
-	/**
-	 * Use a rectangular grid from analysis bounds (same-grid-as-.bin). Default true when bounds exist.
-	 * @deprecated Grid is always from bounds; this is kept for backward compatibility.
-	 */
-	useRectangularGridFromBounds?: boolean;
 }
+
+const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
 
 export interface LiveUtciAnalysisOptions {
 	/**
@@ -106,7 +134,6 @@ export async function createLiveUtciAnalysisFromCompute(
 	const {
 		analysisId,
 		baseMetadata,
-		sampleMesh,
 		workerResult,
 		epwContent,
 		gridResolution = baseMetadata.grid_size || 2,
@@ -155,22 +182,31 @@ export async function createLiveUtciAnalysisFromCompute(
 		| { x_min: number; x_max: number; y_min: number; y_max: number; z?: number }
 		| undefined;
 
-	if (!bounds || (!workerResult && !sampleMesh)) {
+	if (!bounds || !workerResult) {
 		throw new Error(
-			'createLiveUtciAnalysisFromCompute: analysis metadata must have bounds and provide workerResult (BVH) or sampleMesh for BVH.'
+			'createLiveUtciAnalysisFromCompute: rectangular parity path requires analysis bounds and workerResult.serializedBvh.'
 		);
 	}
+	const baseGridHeight = bounds.z ?? zHeight;
+	// Python reference intermediates are computed from human sample points
+	// above the grid position (pt_count=1 at height/2 ~= 0.9 m).
+	const computeGridHeight = baseGridHeight + PARITY_SAMPLE_HEIGHT_OFFSET_M;
+	const sunVectorsFixture = buildSunVectorsFixtureFromMetadata({
+		baseMetadata,
+		numHours,
+		numMonths
+	});
 
 	const result = await computeManager.initFromModelAndWeather({
-		...(workerResult ? { serializedBvh: workerResult.serializedBvh } : {}),
-		...(sampleMesh && !workerResult ? { mesh: sampleMesh } : {}),
+		serializedBvh: workerResult.serializedBvh,
+		sunVectorsFixture,
 		useRectangularGridFromBounds: true,
 		analysisBounds: bounds,
 		coordinateSystem,
 		gridOriginOffset,
 		epwContent,
 		gridResolution,
-		zHeight,
+		zHeight: computeGridHeight,
 		signal
 	});
 	emitComputeTelemetry('pipeline.upload.done', {
@@ -185,7 +221,10 @@ export async function createLiveUtciAnalysisFromCompute(
 	// Stored positions: pipeline grid is in viewer world (BVH space). Store analysis = worldToAnalysisCoords(viewer - offset) so display (transform+offset) is correct.
 	for (let i = 0; i < effectiveNumPoints; i++) {
 		const wx = gridPointsFlat[i * 3] - normalizationOffset.x;
-		const wy = gridPointsFlat[i * 3 + 1] - normalizationOffset.y;
+		// Store positions at the analysis grid level (not elevated sample-point level)
+		// so .bin and live layers align visually and for topology comparisons.
+		const wy =
+			gridPointsFlat[i * 3 + 1] - normalizationOffset.y - PARITY_SAMPLE_HEIGHT_OFFSET_M;
 		const wz = gridPointsFlat[i * 3 + 2] - normalizationOffset.z;
 		const [ax, ay, az] = worldToAnalysisCoords(wx, wy, wz, coordinateSystem);
 		positions[i * 3] = ax;
@@ -211,9 +250,12 @@ export async function createLiveUtciAnalysisFromCompute(
 			numHours
 		});
 
-		// Clamp slice length if the pipeline returned more data than expected.
-		const effectiveSlice =
-			slice.length === effectiveNumPoints ? slice : slice.subarray(0, effectiveNumPoints);
+		if (slice.length !== effectiveNumPoints) {
+			throw new Error(
+				`UTCI slice length mismatch at hour ${hourIndex}: expected ${effectiveNumPoints}, got ${slice.length}.`
+			);
+		}
+		const effectiveSlice = slice;
 
 		let hourMin = Number.POSITIVE_INFINITY;
 		let hourMax = Number.NEGATIVE_INFINITY;

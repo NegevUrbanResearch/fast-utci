@@ -68,8 +68,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		return;
 	}
 
-	// Offset along ray to avoid self-intersection with the surface (0.01 was too small; rays hit own geometry).
-	let ray_origin = origin + sun * 0.1;
+	// Match Python semantics: launch rays from the sample point itself.
+	let ray_origin = origin;
 	let hit = bvh_intersects_any(ray_origin, sun);
 
 	solar_exposure[flat_index] = select(1.0, 0.0, hit);

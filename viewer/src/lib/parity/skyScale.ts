@@ -5,9 +5,19 @@
 export const TOTAL_TREGENZA_WEIGHT = 145.2488;
 
 export function normalizeSkyExposureToViewFactor(rawSky: number[] | Float32Array): number[] {
+	let alreadyNormalized = true;
+	for (let i = 0; i < rawSky.length; i++) {
+		const v = rawSky[i];
+		if (!Number.isFinite(v) || v < 0 || v > 1) {
+			alreadyNormalized = false;
+			break;
+		}
+	}
+
 	const out: number[] = [];
 	for (let i = 0; i < rawSky.length; i++) {
-		out.push(Math.max(0, Math.min(1, rawSky[i] / TOTAL_TREGENZA_WEIGHT)));
+		const v = alreadyNormalized ? rawSky[i] : rawSky[i] / TOTAL_TREGENZA_WEIGHT;
+		out.push(Math.max(0, Math.min(1, v)));
 	}
 	return out;
 }

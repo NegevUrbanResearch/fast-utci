@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as THREE from 'three';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import * as sunpath from '$lib/compute/sunpath';
@@ -22,18 +21,20 @@ const buildMinimalEpw = () => {
 		// year, month, day, hour, minute, ..., dryBulb(6), ..., relHum(8), ..., horizIR(12),
 		// ..., dirNorm(14), diffHoriz(15), ..., wind(21)
 		lines.push(
-			`2020,1,15,${hour},0,?,25.0,20.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
+			`2020,1,15,${hour},0,0,25.0,20.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
 		);
 	}
 
 	return `${header.join('\n')}\n${lines.join('\n')}`;
 };
 
-const createTestMesh = () => {
-	// Simple 4x4 plane at y=0, rotated to XZ ground plane (Y up)
-	const geometry = new THREE.PlaneGeometry(4, 4);
-	geometry.rotateX(-Math.PI / 2);
-	return new THREE.Mesh(geometry);
+const createSerializedBvhFixture = () => {
+	return {
+		bvhNodeBuffer: new ArrayBuffer(0),
+		bvhIndexBuffer: new ArrayBuffer(0),
+		vertexBuffer: new Float32Array(0),
+		indexBuffer: new Uint32Array(0)
+	};
 };
 
 /** Bounds for the 4x4 test plane (analysis xy_ground: x/z span ±2, z = sensor height). */
@@ -69,11 +70,10 @@ describe('ComputeManager', () => {
 		const { pipeline, uploadStaticData, runAll } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
 
-		const mesh = createTestMesh();
 		const epw = buildMinimalEpw();
 
 		const result = await manager.initFromModelAndWeather({
-			mesh,
+			serializedBvh: createSerializedBvhFixture(),
 			epwContent: epw,
 			gridResolution: 2,
 			zHeight: 1.5,
@@ -92,7 +92,7 @@ describe('ComputeManager', () => {
 		expect(args.gridPoints).toBeInstanceOf(Float32Array);
 		expect(args.sunVectors).toBeInstanceOf(Float32Array);
 		expect(args.weather).toBeInstanceOf(Float32Array);
-		expect(args.mesh).toBe(mesh);
+		expect(args.serializedBvh).toBeDefined();
 		expect(args.domeVectors).toBeInstanceOf(Float32Array);
 		expect(args.domeWeights).toBeInstanceOf(Float32Array);
 		expect(args.domeVectors.length).toBe(145 * 3);
@@ -184,11 +184,10 @@ describe('ComputeManager', () => {
 	it('initFromModelAndWeather should return grid points', async () => {
 		const { pipeline } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
-		const mesh = createTestMesh();
 		const epw = buildMinimalEpw();
 
 		const result = await manager.initFromModelAndWeather({
-			mesh,
+			serializedBvh: createSerializedBvhFixture(),
 			epwContent: epw,
 			gridResolution: 2,
 			zHeight: 1.5,
@@ -201,10 +200,28 @@ describe('ComputeManager', () => {
 		expect(result.gridPoints!.length).toBe(result.numPoints * 3);
 	});
 
+	it('uses provided zHeight for generated rectangular grid points', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 2.2,
+			useRectangularGridFromBounds: true,
+			analysisBounds: { ...TEST_BOUNDS, z: 0.9 }
+		});
+
+		for (let i = 1; i < result.gridPoints.length; i += 3) {
+			expect(result.gridPoints[i]).toBeCloseTo(2.2, 6);
+		}
+	});
+
 	it('should rotate ENU north vector to negative world Z for XY-ground parity', async () => {
 		const { pipeline, uploadStaticData } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
-		const mesh = createTestMesh();
 		const epw = buildMinimalEpw();
 
 		const sunVectors = Array.from({ length: 24 }, () => [0, 1, 0] as [number, number, number]);
@@ -219,7 +236,7 @@ describe('ComputeManager', () => {
 
 		try {
 			await manager.initFromModelAndWeather({
-				mesh,
+				serializedBvh: createSerializedBvhFixture(),
 				epwContent: epw,
 				gridResolution: 2,
 				zHeight: 1.5,
@@ -239,7 +256,6 @@ describe('ComputeManager', () => {
 	it('should use fixture sun vectors directly when parity fixture mode is provided', async () => {
 		const { pipeline, uploadStaticData } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
-		const mesh = createTestMesh();
 		const epw = buildMinimalEpw();
 
 		const fixtureVectors = new Float32Array(24 * 3);
@@ -253,7 +269,7 @@ describe('ComputeManager', () => {
 
 		const spy = vi.spyOn(sunpath, 'getSunVectors');
 		await manager.initFromModelAndWeather({
-			mesh,
+			serializedBvh: createSerializedBvhFixture(),
 			epwContent: epw,
 			gridResolution: 2,
 			zHeight: 1.5,

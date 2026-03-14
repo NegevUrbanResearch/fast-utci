@@ -50,6 +50,17 @@ const workerScope = self as unknown as {
 
 let cancelled = false;
 
+function uniqueTransferList(buffers: ArrayBuffer[]): Transferable[] {
+	const seen = new Set<ArrayBuffer>();
+	const transfer: Transferable[] = [];
+	for (const buffer of buffers) {
+		if (seen.has(buffer)) continue;
+		seen.add(buffer);
+		transfer.push(buffer);
+	}
+	return transfer;
+}
+
 function postProgress(stage: 'prepare' | 'merge' | 'grid' | 'bvh' | 'transfer', ms?: number, numPoints?: number) {
 	workerScope.postMessage({ type: 'progress', stage, ...(typeof ms === 'number' ? { ms } : {}), ...(typeof numPoints === 'number' ? { numPoints } : {}) });
 }
@@ -120,12 +131,12 @@ async function handleStart(req: StartRequest) {
 
 	const gridPoints = new Float32Array(0);
 	postProgress('transfer', performance.now() - t0, 0);
-	const transferList: Transferable[] = [
+	const transferList = uniqueTransferList([
 		serialized.bvhNodeBuffer,
 		serialized.bvhIndexBuffer,
 		serialized.vertexBuffer.buffer,
 		serialized.indexBuffer.buffer
-	];
+	]);
 	workerScope.postMessage(
 		{
 			gridPoints,

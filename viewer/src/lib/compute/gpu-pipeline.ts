@@ -163,6 +163,27 @@ export interface UTCIComputePipeline {
 	}): Promise<Float32Array>;
 
 	/**
+	 * Read SolarCal MRT component buffers (point-major, one month).
+	 * Optional; provided by the WebGPU implementation for parity diagnostics.
+	 */
+	readMrtComponentsFull?(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<{
+		shortErf: Float32Array;
+		longErf: Float32Array;
+		shortDmrt: Float32Array;
+		longDmrt: Float32Array;
+	}>;
+
+	/**
+	 * Whether this pipeline instance can expose MRT component diagnostics.
+	 * Adapters with low storage-buffer limits may disable this path.
+	 */
+	supportsMrtComponentDiagnostics?(): boolean;
+
+	/**
 	 * Return last-uploaded sun vector samples (hours 0, 12, 23) for debugging exposure zeros.
 	 * Optional; only WebGPU implementation provides this.
 	 */

@@ -25,9 +25,39 @@ test.describe('WebGPU live UTCI (Ben-Gurion base)', () => {
 		);
 
 		await page.waitForFunction(
-			() => (window as unknown as { __parityResults__?: unknown }).__parityResults__ != null,
+			() => {
+				const w = window as unknown as {
+					__parityResults__?: unknown;
+					__parityCollectionError__?: string;
+					__parityIntermediatesError__?: string;
+					__parityCollectionStatus__?: { state: 'running' | 'success' | 'error' | 'timeout' };
+				};
+				if (typeof w.__parityCollectionError__ === 'string') return true;
+				if (typeof w.__parityIntermediatesError__ === 'string') return true;
+				if (w.__parityCollectionStatus__?.state === 'error') return true;
+				if (w.__parityCollectionStatus__?.state === 'timeout') return true;
+				return w.__parityResults__ != null;
+			},
 			{ timeout: PARITY_WAIT_MS, polling: POLL_INTERVAL_MS }
 		);
+		const collectError = await page.evaluate(() => {
+			const w = window as unknown as {
+				__parityCollectionError__?: string;
+				__parityIntermediatesError__?: string;
+				__parityCollectionStatus__?: unknown;
+				__parityCollectionLog__?: unknown;
+			};
+			return {
+				error: w.__parityCollectionError__ ?? w.__parityIntermediatesError__ ?? null,
+				status: w.__parityCollectionStatus__ ?? null,
+				log: w.__parityCollectionLog__ ?? null
+			};
+		});
+		if (collectError.error) {
+			throw new Error(
+				`Parity compute failed before results: ${collectError.error}\nstatus=${JSON.stringify(collectError.status)}\nlog=${JSON.stringify(collectError.log)}`
+			);
+		}
 
 		const webgpu = (await page.evaluate(() => (window as unknown as { __parityResults__?: unknown }).__parityResults__)) as {
 			utciByHour: number[][];

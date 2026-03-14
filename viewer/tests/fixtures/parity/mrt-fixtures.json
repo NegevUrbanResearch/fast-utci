@@ -1,0 +1,59 @@
+{
+	"cases": [
+		{
+			"name": "summer_midday_direct_sun",
+			"solarExposure": 1.0,
+			"skyExposureRaw": 100.0,
+			"airTempC": 34.0,
+			"surfaceTempC": 34.0,
+			"directNormalWm2": 820.0,
+			"diffuseHorizontalWm2": 190.0,
+			"horizInfraredWm2": 430.0,
+			"solarAltitudeRad": 1.12
+		},
+		{
+			"name": "partially_shaded_hot",
+			"solarExposure": 0.35,
+			"skyExposureRaw": 62.0,
+			"airTempC": 33.0,
+			"surfaceTempC": 36.0,
+			"directNormalWm2": 760.0,
+			"diffuseHorizontalWm2": 165.0,
+			"horizInfraredWm2": 420.0,
+			"solarAltitudeRad": 0.96
+		},
+		{
+			"name": "morning_low_altitude",
+			"solarExposure": 0.75,
+			"skyExposureRaw": 88.0,
+			"airTempC": 29.0,
+			"surfaceTempC": 30.5,
+			"directNormalWm2": 520.0,
+			"diffuseHorizontalWm2": 140.0,
+			"horizInfraredWm2": 395.0,
+			"solarAltitudeRad": 0.44
+		},
+		{
+			"name": "nighttime_no_direct",
+			"solarExposure": 0.0,
+			"skyExposureRaw": 72.0,
+			"airTempC": 26.0,
+			"surfaceTempC": 24.0,
+			"directNormalWm2": 0.0,
+			"diffuseHorizontalWm2": 0.0,
+			"horizInfraredWm2": 360.0,
+			"solarAltitudeRad": -0.2
+		},
+		{
+			"name": "cutoff_boundary_no_shortwave_below_2deg",
+			"solarExposure": 1.0,
+			"skyExposureRaw": 110.0,
+			"airTempC": 27.0,
+			"surfaceTempC": 28.0,
+			"directNormalWm2": 600.0,
+			"diffuseHorizontalWm2": 120.0,
+			"horizInfraredWm2": 380.0,
+			"solarAltitudeRad": 0.034
+		}
+	]
+}

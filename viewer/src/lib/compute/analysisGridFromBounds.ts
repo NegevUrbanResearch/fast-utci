@@ -9,6 +9,35 @@ export interface AnalysisBounds {
 	z?: number;
 }
 
+export interface ViewerRectangularBounds {
+	minX: number;
+	maxX: number;
+	minZ: number;
+	maxZ: number;
+}
+
+export function analysisBoundsToViewerRectangularBounds(params: {
+	bounds: AnalysisBounds;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+}): ViewerRectangularBounds {
+	const { bounds, coordinateSystem } = params;
+	if (coordinateSystem === 'xy_ground') {
+		return {
+			minX: bounds.x_min,
+			maxX: bounds.x_max,
+			minZ: -bounds.y_max,
+			maxZ: -bounds.y_min
+		};
+	}
+
+	return {
+		minX: bounds.x_min,
+		maxX: bounds.x_max,
+		minZ: bounds.y_min,
+		maxZ: bounds.y_max
+	};
+}
+
 /**
  * Map analysis metadata bounds to a rectangular grid in viewer Y-up world coordinates.
  * For xy_ground: analysis (x, y) with fixed z → viewer X = x, Z = -y, Y = bounds.z.
@@ -18,28 +47,14 @@ export function analysisBoundsToRectangularGrid(params: {
 	bounds: AnalysisBounds;
 	gridSize: number;
 	coordinateSystem: 'xy_ground' | 'xz_ground';
+	gridZHeight?: number;
 }): { points: THREE.Vector3[]; normals: THREE.Vector3[] } {
-	const { bounds, gridSize, coordinateSystem } = params;
-	const zHeight = bounds.z ?? 0;
-
-	if (coordinateSystem === 'xy_ground') {
-		// Analysis grid is (x, y) with z = bounds.z. Viewer: X_world = x, Z_world = -y, Y_world = bounds.z.
-		const minX = bounds.x_min;
-		const maxX = bounds.x_max;
-		const minZ = -bounds.y_max;
-		const maxZ = -bounds.y_min;
-		return createRectangularGridFromBounds(
-			{ min: [minX, minZ], max: [maxX, maxZ] },
-			gridSize,
-			zHeight
-		);
-	}
-
-	// xz_ground: use bounds as (x_min, x_max), (y_min, y_max) as z range, Y = z height
-	const minX = bounds.x_min;
-	const maxX = bounds.x_max;
-	const minZ = bounds.y_min;
-	const maxZ = bounds.y_max;
+	const { bounds, gridSize, coordinateSystem, gridZHeight } = params;
+	const zHeight = gridZHeight ?? bounds.z ?? 0;
+	const { minX, maxX, minZ, maxZ } = analysisBoundsToViewerRectangularBounds({
+		bounds,
+		coordinateSystem
+	});
 	return createRectangularGridFromBounds(
 		{ min: [minX, minZ], max: [maxX, maxZ] },
 		gridSize,

@@ -112,8 +112,12 @@ export function getSunVectors(loc: LocationData, month: number, day: number): Da
 
       // Local ENU frame used throughout the Python pipeline:
       // X = East, Y = North, Z = Up (Z-up).
+      //
+      // NOTE: The NOAA azimuth branch above yields a mirrored north/south
+      // convention relative to the Python baseline vectors used for parity.
+      // Keep this sign to preserve pointwise parity with exported .bin data.
       const x = Math.sin(azi_rad) * Math.cos(alt_rad);
-      const y = Math.cos(azi_rad) * Math.cos(alt_rad);
+      const y = -Math.cos(azi_rad) * Math.cos(alt_rad);
       const z = Math.sin(alt_rad);
 
       sunVectors.push([x, y, z]);

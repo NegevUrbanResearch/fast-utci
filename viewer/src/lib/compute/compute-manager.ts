@@ -3,8 +3,7 @@ import type { UTCIComputePipeline, SerializedBvhForGpu } from '$lib/compute/gpu-
 import { parseEPW } from '$lib/compute/epw-parser';
 import { getSunVectors } from '$lib/compute/sunpath';
 import { getTregenzaDome } from '$lib/compute/tregenza';
-import { analysisBoundsToRectangularGrid } from '$lib/compute/analysisGridFromBounds';
-import type * as THREE from 'three';
+import { canonicalGridPoints } from '$lib/parity/gridCanonical';
 
 /**
  * Rotate a direction vector from the Python/ladybug Z-up convention
@@ -65,7 +64,6 @@ export class ComputeManager {
 	 * Grid is always built from analysis bounds; BVH comes from mesh (main-thread) or serializedBvh (worker).
 	 */
 	async initFromModelAndWeather(params: {
-		mesh?: THREE.Mesh;
 		serializedBvh?: SerializedBvhForGpu;
 		sunVectorsFixture?: {
 			sunVectors: Float32Array;
@@ -87,7 +85,6 @@ export class ComputeManager {
 		gridPoints: Float32Array;
 	}> {
 		const {
-			mesh,
 			serializedBvh,
 			sunVectorsFixture,
 			epwContent,
@@ -107,30 +104,23 @@ export class ComputeManager {
 		let numPoints: number;
 		let gridPoints: Float32Array;
 
-		if (!useRectangularGridFromBounds || !analysisBounds || (!serializedBvh && !mesh)) {
+		if (!useRectangularGridFromBounds || !analysisBounds || !serializedBvh) {
 			throw new Error(
-				'initFromModelAndWeather: useRectangularGridFromBounds, analysisBounds, and (serializedBvh or mesh) are required.'
+				'initFromModelAndWeather: rectangular parity path requires useRectangularGridFromBounds=true, analysisBounds, and serializedBvh.'
 			);
 		}
-		const { points } = analysisBoundsToRectangularGrid({
+		const canonicalGrid = canonicalGridPoints({
 			bounds: analysisBounds,
 			gridSize: gridResolution,
-			coordinateSystem
+			coordinateSystem,
+			zHeight,
+			originOffset: gridOriginOffset
 		});
-		numPoints = points.length;
+		numPoints = canonicalGrid.numPoints;
 		if (numPoints === 0) {
 			throw new Error('Rectangular grid from bounds produced 0 points; check analysis bounds and gridResolution.');
 		}
-		gridPoints = new Float32Array(numPoints * 3);
-		const ox = gridOriginOffset?.x ?? 0;
-		const oy = gridOriginOffset?.y ?? 0;
-		const oz = gridOriginOffset?.z ?? 0;
-		for (let i = 0; i < numPoints; i++) {
-			const p = points[i];
-			gridPoints[i * 3] = p.x + ox;
-			gridPoints[i * 3 + 1] = p.y + oy;
-			gridPoints[i * 3 + 2] = p.z + oz;
-		}
+		gridPoints = canonicalGrid.points;
 
 		// 2. Parse EPW and compute sun vectors for 12 representative days (15th)
 		const epw = parseEPW(epwContent);
@@ -168,6 +158,11 @@ export class ComputeManager {
 				const month = Math.min(12, Math.max(1, startMonth + monthOffset));
 				const day = representativeDay;
 				const { sunVectors: dayVectors, altitudes: dayAltitudes } = getSunVectors(location, month, day);
+				if (dayVectors.length < numHours || dayAltitudes.length < numHours) {
+					throw new Error(
+						`Sun vector contract mismatch for month=${month}, day=${day}: expected at least ${numHours} entries, got vectors=${dayVectors.length}, altitudes=${dayAltitudes.length}`
+					);
+				}
 				for (let hour = 0; hour < numHours; hour++) {
 					const idx = monthOffset * numHours + hour;
 					const v = rotateZUpToYUp(dayVectors[hour]);
@@ -196,8 +191,27 @@ export class ComputeManager {
 			const day = representativeDay;
 			for (let hour = 0; hour < numHours; hour++) {
 				const idx = monthOffset * numHours + hour;
-				const hourData = epw.getHourData(month, day, hour + 1);
-				if (!hourData) continue;
+				// EPW record hours are 1..24; pipeline hour index is 0..23.
+				// Contract: hour 0 maps to EPW hour 1, hour 23 maps to EPW hour 24.
+				const hourData =
+					epw.getHourData(month, day, hour + 1) ??
+					// Short synthetic EPW fixtures in tests may not contain a full-year index.
+					// In that case, fall back to contiguous records (monthOffset * numHours + hour).
+					(idx < epw.dryBulbTemp.length
+						? {
+							dryBulb: epw.dryBulbTemp[idx],
+							relHumidity: epw.relativeHumidity[idx],
+							directNormal: epw.directNormalRad[idx],
+							diffuseHoriz: epw.diffuseHorizRad[idx],
+							windSpeed: epw.windSpeed[idx],
+							horizIR: epw.horizInfrared[idx]
+						}
+						: undefined);
+				if (!hourData) {
+					throw new Error(
+						`Missing EPW hour data for month=${month}, day=${day}, hour=${hour + 1} (pipeline hour index ${hour})`
+					);
+				}
 
 				const base = idx * weatherStride;
 				weather[base] = hourData.dryBulb; // air_temp
@@ -221,13 +235,13 @@ export class ComputeManager {
 		}
 		const domeWeights = new Float32Array(dome.weights);
 
-		// 5. Upload to GPU pipeline (grid, sun, weather; BVH from mesh or pre-serialized, dome for sky exposure)
+		// 5. Upload to GPU pipeline (grid, sun, weather, serialized BVH, dome for sky exposure)
 		await this.pipeline.uploadStaticData({
 			gridPoints,
 			sunVectors,
 			sunAltitudes,
 			weather,
-			...(serializedBvh ? { serializedBvh } : mesh ? { mesh } : {}),
+			serializedBvh,
 			domeVectors,
 			domeWeights
 		});

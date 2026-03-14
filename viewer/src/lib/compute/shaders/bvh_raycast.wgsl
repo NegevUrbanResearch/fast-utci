@@ -38,19 +38,19 @@ fn ray_triangle_intersect(
 	let edge2 = v2 - v0;
 	let h = cross(ray_dir, edge2);
 	let a = dot(edge1, h);
-	let eps: f32 = 1e-6;
+	let eps: f32 = 1e-8;
 	if (abs(a) < eps) {
 		return false;
 	}
 	let f = 1.0 / a;
 	let s = ray_origin - v0;
 	let u = f * dot(s, h);
-	if (u < 0.0 || u > 1.0) {
+	if (u < -eps || u > 1.0 + eps) {
 		return false;
 	}
 	let q = cross(s, edge1);
 	let v = f * dot(ray_dir, q);
-	if (v < 0.0 || u + v > 1.0) {
+	if (v < -eps || u + v > 1.0 + eps) {
 		return false;
 	}
 	let t = f * dot(edge2, q);
@@ -64,13 +64,46 @@ fn read_vertex_at(i: u32) -> vec3<f32> {
 
 // Ray–AABB intersection. Returns true if ray hits the box (t in [0, inf)).
 fn ray_aabb_intersect(origin: vec3<f32>, dir: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> bool {
-	let inv_dir = 1.0 / dir;
-	let t1 = (bmin - origin) * inv_dir;
-	let t2 = (bmax - origin) * inv_dir;
-	let tmin = min(t1, t2);
-	let tmax = max(t1, t2);
-	let t_near = max(max(tmin.x, tmin.y), tmin.z);
-	let t_far = min(min(tmax.x, tmax.y), tmax.z);
+	let eps: f32 = 1e-8;
+	var t_near: f32 = -1e30;
+	var t_far: f32 = 1e30;
+
+	if (abs(dir.x) < eps) {
+		if (origin.x < bmin.x || origin.x > bmax.x) {
+			return false;
+		}
+	} else {
+		let inv_x = 1.0 / dir.x;
+		let tx1 = (bmin.x - origin.x) * inv_x;
+		let tx2 = (bmax.x - origin.x) * inv_x;
+		t_near = max(t_near, min(tx1, tx2));
+		t_far = min(t_far, max(tx1, tx2));
+	}
+
+	if (abs(dir.y) < eps) {
+		if (origin.y < bmin.y || origin.y > bmax.y) {
+			return false;
+		}
+	} else {
+		let inv_y = 1.0 / dir.y;
+		let ty1 = (bmin.y - origin.y) * inv_y;
+		let ty2 = (bmax.y - origin.y) * inv_y;
+		t_near = max(t_near, min(ty1, ty2));
+		t_far = min(t_far, max(ty1, ty2));
+	}
+
+	if (abs(dir.z) < eps) {
+		if (origin.z < bmin.z || origin.z > bmax.z) {
+			return false;
+		}
+	} else {
+		let inv_z = 1.0 / dir.z;
+		let tz1 = (bmin.z - origin.z) * inv_z;
+		let tz2 = (bmax.z - origin.z) * inv_z;
+		t_near = max(t_near, min(tz1, tz2));
+		t_far = min(t_far, max(tz1, tz2));
+	}
+
 	return t_near <= t_far && t_far >= 0.0;
 }
 

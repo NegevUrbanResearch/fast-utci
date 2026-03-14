@@ -1,7 +1,7 @@
 import { getUtciFlatIndex, type UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import { serializeBvhForGpu } from '$lib/compute/bvhGpuUpload';
 import * as THREE from 'three';
-import mrtUtciShader from '$lib/compute/shaders/mrt_utci.wgsl?raw';
+import mrtUtciShaderRaw from '$lib/compute/shaders/mrt_utci.wgsl?raw';
 import bvhRaycastWgsl from '$lib/compute/shaders/bvh_raycast.wgsl?raw';
 import exposureSolarWgsl from '$lib/compute/shaders/exposure_solar.wgsl?raw';
 import exposureSkyWgsl from '$lib/compute/shaders/exposure_sky.wgsl?raw';
@@ -14,6 +14,25 @@ interface RunConfig {
 
 const SOLAR_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSolarWgsl;
 const SKY_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSkyWgsl;
+const MRT_DECLS_PATTERN = /\/\/ MRT_COMPONENT_DECLS_START[\s\S]*?\/\/ MRT_COMPONENT_DECLS_END\n?/;
+const MRT_WRITES_PATTERN = /[ \t]*\/\/ MRT_COMPONENT_WRITES_START[\s\S]*?[ \t]*\/\/ MRT_COMPONENT_WRITES_END\n?/;
+
+function getMrtShaderCode(enableMrtComponents: boolean): string {
+	if (enableMrtComponents) return mrtUtciShaderRaw;
+	let code = mrtUtciShaderRaw.replace(MRT_DECLS_PATTERN, '').replace(MRT_WRITES_PATTERN, '');
+	const stillHasComponentBindings = /@group\(0\)\s*@binding\((7|8|9|10)\)/.test(code);
+	const stillHasComponentWrites =
+		code.includes('short_erf_results[') ||
+		code.includes('long_erf_results[') ||
+		code.includes('short_dmrt_results[') ||
+		code.includes('long_dmrt_results[');
+	if (stillHasComponentBindings || stillHasComponentWrites) {
+		throw new Error(
+			'Failed to build MRT shader without component diagnostics; marker replacement did not fully remove component bindings/writes.'
+		);
+	}
+	return code;
+}
 const GATHER_SLICE_SHADER = `
 struct Params {
 	num_points: u32,
@@ -43,6 +62,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private device: GPUDevice;
 	private queue: GPUQueue;
+	private supportsMrtComponents: boolean;
 
 	private weatherData: Float32Array | null = null;
 	private utciBuffer: GPUBuffer | null = null;
@@ -73,6 +93,14 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 	private mrtBuffer: GPUBuffer | null = null;
 	private mrtStagingBuffer: GPUBuffer | null = null;
+	private shortErfBuffer: GPUBuffer | null = null;
+	private longErfBuffer: GPUBuffer | null = null;
+	private shortDmrtBuffer: GPUBuffer | null = null;
+	private longDmrtBuffer: GPUBuffer | null = null;
+	private shortErfStagingBuffer: GPUBuffer | null = null;
+	private longErfStagingBuffer: GPUBuffer | null = null;
+	private shortDmrtStagingBuffer: GPUBuffer | null = null;
+	private longDmrtStagingBuffer: GPUBuffer | null = null;
 
 	private pipeline: GPUComputePipeline | null = null;
 	private solarPipeline: GPUComputePipeline | null = null;
@@ -90,15 +118,18 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	/** Last-uploaded sun vector samples (hour 0, 12, 23) for debugging; [x0,y0,z0, x12,y12,z12, x23,y23,z23]. */
 	private lastSunVectorSamples: number[] = [];
 
-	constructor(device: GPUDevice) {
+	constructor(device: GPUDevice, supportsMrtComponents: boolean) {
 		this.device = device;
 		this.queue = device.queue;
+		this.supportsMrtComponents = supportsMrtComponents;
 	}
 
 	private async ensurePipeline(): Promise<GPUComputePipeline> {
 		if (this.pipeline) return this.pipeline;
 		if (!this.pipelinePromise) {
-			const module = this.device.createShaderModule({ code: mrtUtciShader });
+			const module = this.device.createShaderModule({
+				code: getMrtShaderCode(this.supportsMrtComponents)
+			});
 			this.pipelinePromise = this.device
 				.createComputePipelineAsync({
 					layout: 'auto',
@@ -391,6 +422,36 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 			});
 		}
+		if (this.supportsMrtComponents) {
+			if (!this.shortErfBuffer || this.shortErfBuffer.size !== utciBytes) {
+				this.shortErfBuffer?.destroy();
+				this.shortErfBuffer = this.device.createBuffer({
+					size: utciBytes,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+				});
+			}
+			if (!this.longErfBuffer || this.longErfBuffer.size !== utciBytes) {
+				this.longErfBuffer?.destroy();
+				this.longErfBuffer = this.device.createBuffer({
+					size: utciBytes,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+				});
+			}
+			if (!this.shortDmrtBuffer || this.shortDmrtBuffer.size !== utciBytes) {
+				this.shortDmrtBuffer?.destroy();
+				this.shortDmrtBuffer = this.device.createBuffer({
+					size: utciBytes,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+				});
+			}
+			if (!this.longDmrtBuffer || this.longDmrtBuffer.size !== utciBytes) {
+				this.longDmrtBuffer?.destroy();
+				this.longDmrtBuffer = this.device.createBuffer({
+					size: utciBytes,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+				});
+			}
+		}
 
 		if (!this.paramsBuffer || this.paramsBuffer.size !== 16) {
 			this.paramsBuffer?.destroy();
@@ -457,20 +518,40 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			skyPass.end();
 		}
 
-		if (!this.solarExposureBuffer || !this.skyExposureBuffer || !this.weatherBuffer || !this.utciBuffer || !this.mrtBuffer || !this.paramsBuffer || !this.sunAltitudesBuffer) {
+		if (
+			!this.solarExposureBuffer ||
+			!this.skyExposureBuffer ||
+			!this.weatherBuffer ||
+			!this.utciBuffer ||
+			!this.mrtBuffer ||
+			!this.paramsBuffer ||
+			!this.sunAltitudesBuffer
+		) {
 			throw new Error('WebGPU UTCI pipeline: MRT bindings are not initialized');
+		}
+		const bindEntries: GPUBindGroupEntry[] = [
+			{ binding: 0, resource: { buffer: this.solarExposureBuffer } },
+			{ binding: 1, resource: { buffer: this.skyExposureBuffer } },
+			{ binding: 2, resource: { buffer: this.weatherBuffer } },
+			{ binding: 3, resource: { buffer: this.utciBuffer } },
+			{ binding: 4, resource: { buffer: this.paramsBuffer } },
+			{ binding: 5, resource: { buffer: this.sunAltitudesBuffer } },
+			{ binding: 6, resource: { buffer: this.mrtBuffer } }
+		];
+		if (this.supportsMrtComponents) {
+			if (!this.shortErfBuffer || !this.longErfBuffer || !this.shortDmrtBuffer || !this.longDmrtBuffer) {
+				throw new Error('WebGPU UTCI pipeline: MRT component buffers are not initialized');
+			}
+			bindEntries.push(
+				{ binding: 7, resource: { buffer: this.shortErfBuffer } },
+				{ binding: 8, resource: { buffer: this.longErfBuffer } },
+				{ binding: 9, resource: { buffer: this.shortDmrtBuffer } },
+				{ binding: 10, resource: { buffer: this.longDmrtBuffer } }
+			);
 		}
 		const bindGroup = this.device.createBindGroup({
 			layout: mrtPipeline.getBindGroupLayout(0),
-			entries: [
-				{ binding: 0, resource: { buffer: this.solarExposureBuffer } },
-				{ binding: 1, resource: { buffer: this.skyExposureBuffer } },
-				{ binding: 2, resource: { buffer: this.weatherBuffer } },
-				{ binding: 3, resource: { buffer: this.utciBuffer } },
-				{ binding: 4, resource: { buffer: this.paramsBuffer } },
-				{ binding: 5, resource: { buffer: this.sunAltitudesBuffer } },
-				{ binding: 6, resource: { buffer: this.mrtBuffer } }
-			]
+			entries: bindEntries
 		});
 
 		const pass = encoder.beginComputePass();
@@ -650,6 +731,102 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		return out;
 	}
 
+	async readMrtComponentsFull(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<{
+		shortErf: Float32Array;
+		longErf: Float32Array;
+		shortDmrt: Float32Array;
+		longDmrt: Float32Array;
+	}> {
+		if (!this.supportsMrtComponents) {
+			throw new Error(
+				'WebGPU adapter/device does not support MRT component diagnostics (requires maxStorageBuffersPerShaderStage >= 10).'
+			);
+		}
+		if (
+			!this.shortErfBuffer ||
+			!this.longErfBuffer ||
+			!this.shortDmrtBuffer ||
+			!this.longDmrtBuffer ||
+			!this.lastConfig
+		) {
+			throw new Error('WebGPU UTCI pipeline: MRT component buffers not available (run runAll first)');
+		}
+		await this.queue.onSubmittedWorkDone();
+		const { numPoints, numHours, numMonths } = params;
+		const totalTimeSteps = numHours * numMonths;
+		const bytes = numPoints * totalTimeSteps * 4;
+
+		if (!this.shortErfStagingBuffer || this.shortErfStagingBuffer.size !== bytes) {
+			this.shortErfStagingBuffer?.destroy();
+			this.shortErfStagingBuffer = this.device.createBuffer({
+				size: bytes,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+		if (!this.longErfStagingBuffer || this.longErfStagingBuffer.size !== bytes) {
+			this.longErfStagingBuffer?.destroy();
+			this.longErfStagingBuffer = this.device.createBuffer({
+				size: bytes,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+		if (!this.shortDmrtStagingBuffer || this.shortDmrtStagingBuffer.size !== bytes) {
+			this.shortDmrtStagingBuffer?.destroy();
+			this.shortDmrtStagingBuffer = this.device.createBuffer({
+				size: bytes,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+		if (!this.longDmrtStagingBuffer || this.longDmrtStagingBuffer.size !== bytes) {
+			this.longDmrtStagingBuffer?.destroy();
+			this.longDmrtStagingBuffer = this.device.createBuffer({
+				size: bytes,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+
+		const encoder = this.device.createCommandEncoder();
+		encoder.copyBufferToBuffer(this.shortErfBuffer, 0, this.shortErfStagingBuffer, 0, bytes);
+		encoder.copyBufferToBuffer(this.longErfBuffer, 0, this.longErfStagingBuffer, 0, bytes);
+		encoder.copyBufferToBuffer(this.shortDmrtBuffer, 0, this.shortDmrtStagingBuffer, 0, bytes);
+		encoder.copyBufferToBuffer(this.longDmrtBuffer, 0, this.longDmrtStagingBuffer, 0, bytes);
+		this.queue.submit([encoder.finish()]);
+
+		await this.shortErfStagingBuffer.mapAsync(GPUMapMode.READ);
+		await this.longErfStagingBuffer.mapAsync(GPUMapMode.READ);
+		await this.shortDmrtStagingBuffer.mapAsync(GPUMapMode.READ);
+		await this.longDmrtStagingBuffer.mapAsync(GPUMapMode.READ);
+
+		const shortErfMapped = new Float32Array(this.shortErfStagingBuffer.getMappedRange());
+		const longErfMapped = new Float32Array(this.longErfStagingBuffer.getMappedRange());
+		const shortDmrtMapped = new Float32Array(this.shortDmrtStagingBuffer.getMappedRange());
+		const longDmrtMapped = new Float32Array(this.longDmrtStagingBuffer.getMappedRange());
+
+		const shortErf = new Float32Array(shortErfMapped.length);
+		shortErf.set(shortErfMapped);
+		const longErf = new Float32Array(longErfMapped.length);
+		longErf.set(longErfMapped);
+		const shortDmrt = new Float32Array(shortDmrtMapped.length);
+		shortDmrt.set(shortDmrtMapped);
+		const longDmrt = new Float32Array(longDmrtMapped.length);
+		longDmrt.set(longDmrtMapped);
+
+		this.shortErfStagingBuffer.unmap();
+		this.longErfStagingBuffer.unmap();
+		this.shortDmrtStagingBuffer.unmap();
+		this.longDmrtStagingBuffer.unmap();
+
+		return { shortErf, longErf, shortDmrt, longDmrt };
+	}
+
+	supportsMrtComponentDiagnostics(): boolean {
+		return this.supportsMrtComponents;
+	}
+
 	getSunVectorSamples(): number[] | null {
 		return this.lastSunVectorSamples.length > 0 ? [...this.lastSunVectorSamples] : null;
 	}
@@ -737,6 +914,22 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.mrtBuffer = null;
 		this.mrtStagingBuffer?.destroy();
 		this.mrtStagingBuffer = null;
+		this.shortErfBuffer?.destroy();
+		this.shortErfBuffer = null;
+		this.longErfBuffer?.destroy();
+		this.longErfBuffer = null;
+		this.shortDmrtBuffer?.destroy();
+		this.shortDmrtBuffer = null;
+		this.longDmrtBuffer?.destroy();
+		this.longDmrtBuffer = null;
+		this.shortErfStagingBuffer?.destroy();
+		this.shortErfStagingBuffer = null;
+		this.longErfStagingBuffer?.destroy();
+		this.longErfStagingBuffer = null;
+		this.shortDmrtStagingBuffer?.destroy();
+		this.shortDmrtStagingBuffer = null;
+		this.longDmrtStagingBuffer?.destroy();
+		this.longDmrtStagingBuffer = null;
 
 		this.pipeline = null;
 		this.solarPipeline = null;
@@ -752,41 +945,58 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	}
 }
 
-async function getWebgpuDevice(): Promise<GPUDevice> {
+async function getWebgpuDevice(): Promise<{ device: GPUDevice; supportsMrtComponents: boolean }> {
 	if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
 		throw new Error('WebGPU not available in this environment');
 	}
 
-	const adapter = await (navigator as any).gpu.requestAdapter();
+	const gpu = (navigator as any).gpu;
+	let adapter = await gpu.requestAdapter();
 	if (!adapter) {
-		throw new Error('Failed to acquire WebGPU adapter');
+		adapter = await gpu.requestAdapter({ forceFallbackAdapter: true });
 	}
-
-	const device: GPUDevice = await adapter.requestDevice();
+	if (!adapter) {
+		throw new Error(
+			`Failed to acquire WebGPU adapter (secureContext=${String(window.isSecureContext)}, userAgent=${navigator.userAgent})`
+		);
+	}
+	const requiredStorageBuffersPerStage = 10;
+	const supportedStorageBuffersPerStage = adapter.limits.maxStorageBuffersPerShaderStage;
+	const supportsMrtComponents = supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage;
+	const device: GPUDevice = supportsMrtComponents
+		? await adapter.requestDevice({
+				requiredLimits: {
+					maxStorageBuffersPerShaderStage: requiredStorageBuffersPerStage
+				}
+			})
+		: await adapter.requestDevice();
 	device.lost.then(() => {
 		if (cachedDevicePromise && cachedDevice === device) {
 			cachedDevicePromise = null;
 			cachedDevice = null;
 		}
 	});
-	return device;
+	return { device, supportsMrtComponents };
 }
 
 let cachedDevicePromise: Promise<GPUDevice> | null = null;
 let cachedDevice: GPUDevice | null = null;
+let cachedSupportsMrtComponents = false;
 
 export async function createWebgpuUtciPipeline(): Promise<UTCIComputePipeline> {
 	if (!cachedDevicePromise) {
-		cachedDevicePromise = getWebgpuDevice().then((device) => {
+		cachedDevicePromise = getWebgpuDevice().then(({ device, supportsMrtComponents }) => {
 			cachedDevice = device;
+			cachedSupportsMrtComponents = supportsMrtComponents;
 			return device;
 		});
 	}
 	const device = await cachedDevicePromise;
-	return new WebgpuUtciComputePipeline(device);
+	return new WebgpuUtciComputePipeline(device, cachedSupportsMrtComponents);
 }
 
 export function __resetWebgpuDeviceCacheForTests(): void {
 	cachedDevicePromise = null;
 	cachedDevice = null;
+	cachedSupportsMrtComponents = false;
 }
