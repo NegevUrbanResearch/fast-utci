@@ -101,16 +101,48 @@ export async function loadReferenceIntermediatesFromFs(
 			mrt: new Float32Array(arr)
 		};
 		const rawObj = data as Record<string, unknown>;
-		if (Array.isArray(rawObj.short_erf) && rawObj.short_erf.length === expected) {
+		if (Object.prototype.hasOwnProperty.call(rawObj, 'short_erf')) {
+			if (!Array.isArray(rawObj.short_erf)) {
+				throw new Error(`Invalid MRT reference in ${path}: short_erf must be number[] when present`);
+			}
+			if (rawObj.short_erf.length !== expected) {
+				throw new Error(
+					`Invalid MRT reference in ${path}: short_erf.length ${rawObj.short_erf.length} !== numPositions * numHours (${expected})`
+				);
+			}
 			out.short_erf = new Float32Array(rawObj.short_erf as number[]);
 		}
-		if (Array.isArray(rawObj.long_erf) && rawObj.long_erf.length === expected) {
+		if (Object.prototype.hasOwnProperty.call(rawObj, 'long_erf')) {
+			if (!Array.isArray(rawObj.long_erf)) {
+				throw new Error(`Invalid MRT reference in ${path}: long_erf must be number[] when present`);
+			}
+			if (rawObj.long_erf.length !== expected) {
+				throw new Error(
+					`Invalid MRT reference in ${path}: long_erf.length ${rawObj.long_erf.length} !== numPositions * numHours (${expected})`
+				);
+			}
 			out.long_erf = new Float32Array(rawObj.long_erf as number[]);
 		}
-		if (Array.isArray(rawObj.short_dmrt) && rawObj.short_dmrt.length === expected) {
+		if (Object.prototype.hasOwnProperty.call(rawObj, 'short_dmrt')) {
+			if (!Array.isArray(rawObj.short_dmrt)) {
+				throw new Error(`Invalid MRT reference in ${path}: short_dmrt must be number[] when present`);
+			}
+			if (rawObj.short_dmrt.length !== expected) {
+				throw new Error(
+					`Invalid MRT reference in ${path}: short_dmrt.length ${rawObj.short_dmrt.length} !== numPositions * numHours (${expected})`
+				);
+			}
 			out.short_dmrt = new Float32Array(rawObj.short_dmrt as number[]);
 		}
-		if (Array.isArray(rawObj.long_dmrt) && rawObj.long_dmrt.length === expected) {
+		if (Object.prototype.hasOwnProperty.call(rawObj, 'long_dmrt')) {
+			if (!Array.isArray(rawObj.long_dmrt)) {
+				throw new Error(`Invalid MRT reference in ${path}: long_dmrt must be number[] when present`);
+			}
+			if (rawObj.long_dmrt.length !== expected) {
+				throw new Error(
+					`Invalid MRT reference in ${path}: long_dmrt.length ${rawObj.long_dmrt.length} !== numPositions * numHours (${expected})`
+				);
+			}
 			out.long_dmrt = new Float32Array(rawObj.long_dmrt as number[]);
 		}
 		return out;

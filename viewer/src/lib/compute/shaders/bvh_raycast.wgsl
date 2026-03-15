@@ -38,7 +38,7 @@ fn ray_triangle_intersect(
 	let edge2 = v2 - v0;
 	let h = cross(ray_dir, edge2);
 	let a = dot(edge1, h);
-	let eps: f32 = 1e-8;
+	let eps: f32 = 1e-6;
 	if (abs(a) < eps) {
 		return false;
 	}

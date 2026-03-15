@@ -10,6 +10,34 @@
 
 ---
 
+## Status Update (2026-03-15)
+
+Pointwise parity is now wired as the strict gate for all available collected stages:
+- `solar`, `sky`, `mrt` strict pointwise compare (existing strict comparator path)
+- `utci` strict **pointwise** compare (new primary gate), with `utci_range` retained as secondary diagnostics
+- `short_erf`, `long_erf`, `short_dmrt`, `long_dmrt` strict policy:
+  - both present -> pointwise compare
+  - both absent -> skip
+  - one present only -> fail with explicit reason
+
+Known current strict deltas on `Ben-Gurion/20250815_grid_2m_fullday`:
+- `solar` max error remains `1.0`
+- `mrt` remains high (`maxError ~18.89`)
+- `utci` pointwise remains above tolerance (`maxError ~3.0` at hour `8`, point `70273`)
+- ERF/DMRT currently fail policy as `present in webgpu only` on this dataset
+
+Reproduce current verification snapshot:
+- `cd viewer && npm run test -- tests/parity/compareUtciPointwise.test.ts`
+- `cd viewer && npm run test -- tests/parity/compareIntermediates-pointwise.test.ts`
+- `cd viewer && npm run test -- tests/parity/gridCanonical.test.ts`
+- `cd viewer && npm run test -- tests/compute/mrt-reference-vs-shader.test.ts`
+- `cd viewer && npm run test -- tests/compute/sun-vector-alignment.test.ts`
+- `cd viewer && npm run test -- tests/compute/weather-index-alignment.test.ts`
+- `cd viewer && npm run parity:collect-webgpu`
+- `cd viewer && npx tsx scripts/compare-parity.ts --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday --mode strict --report parity-report.json`
+
+---
+
 ### Task 1: Delete Mesh-Grid Path (Cleanup First)
 
 **Files:**

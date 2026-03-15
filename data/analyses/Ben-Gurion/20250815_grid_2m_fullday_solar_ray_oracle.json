@@ -1,0 +1,158 @@
+{
+  "basePath": "D:\\Projects\\Nur\\Shade\\fast-utci\\data\\analyses\\Ben-Gurion\\20250815_grid_2m_fullday",
+  "count": 2,
+  "rows": [
+    {
+      "flatIndex": 1686560,
+      "pointIndex": 70273,
+      "hourIndex": 8,
+      "hourValue": 8,
+      "pointX": -2970.616943359375,
+      "pointY": -593.2862548828125,
+      "pointZ": 1.5,
+      "refSolar": 0,
+      "webgpuSolar": 1,
+      "refSolarBinary": 0,
+      "webgpuSolarBinary": 1,
+      "refMarginToThreshold": -0.5,
+      "webgpuMarginToThreshold": 0.5,
+      "refShortErf": 57.392059326171875,
+      "webgpuShortErf": 134.15367126464844,
+      "shortErfDiff": 76.76161193847656,
+      "refShortDmrt": 13.167242050170898,
+      "webgpuShortDmrt": 30.778366088867188,
+      "shortDmrtDiff": 17.61112403869629,
+      "refLongErf": -18.363082885742188,
+      "webgpuLongErf": -18.01714515686035,
+      "longErfDiff": 0.34593772888183594,
+      "refLongDmrt": -4.212972164154053,
+      "webgpuLongDmrt": -4.133605003356934,
+      "longDmrtDiff": 0.07936716079711914,
+      "refMrt": 32.15427017211914,
+      "webgpuMrt": 51.044761657714844,
+      "mrtDiff": 18.890491485595703,
+      "refSkyAtPoint": 0.7786476016044617,
+      "webgpuSkyAtPoint": 0.7773129834888266,
+      "skyDiffAtPoint": -0.0013346181156350667,
+      "score": 94.37273597717285,
+      "modelBounds": {
+        "min": {
+          "x": -516.68359375,
+          "y": -1.6890172959492975,
+          "z": -231.1687469482422
+        },
+        "max": {
+          "x": 518.516357421875,
+          "y": 19.157154083140153,
+          "z": 226.831298828125
+        }
+      },
+      "pointInsideModelBounds": true,
+      "cpuHit": true,
+      "cpuFirstDistance": 0.9723292337289587,
+      "cpuFirstPoint": {
+        "x": 172.90441769685003,
+        "y": 1.289007186777758,
+        "z": 190.19760317895816
+      },
+      "cpuHitByVariant": {
+        "x_z_negY": true,
+        "x_z_posY": true,
+        "xyz_raw": true,
+        "x_negY_z": true
+      },
+      "cpuBruteByVariant": {
+        "x_z_negY": {
+          "hit": false,
+          "distance": null
+        },
+        "x_z_posY": {
+          "hit": false,
+          "distance": null
+        },
+        "xyz_raw": {
+          "hit": true,
+          "distance": 0.7794350847432735
+        },
+        "x_negY_z": {
+          "hit": true,
+          "distance": 0.7794350847432735
+        }
+      }
+    },
+    {
+      "flatIndex": 745913,
+      "pointIndex": 31079,
+      "hourIndex": 17,
+      "hourValue": 17,
+      "pointX": -3342.616943359375,
+      "pointY": -489.2862548828125,
+      "pointZ": 1.5,
+      "refSolar": 0,
+      "webgpuSolar": 1,
+      "refSolarBinary": 0,
+      "webgpuSolarBinary": 1,
+      "refMarginToThreshold": -0.5,
+      "webgpuMarginToThreshold": 0.5,
+      "refShortErf": 20.545873641967773,
+      "webgpuShortErf": 95.70834350585938,
+      "shortErfDiff": 75.1624698638916,
+      "refShortDmrt": 4.713761806488037,
+      "webgpuShortDmrt": 21.95800018310547,
+      "shortDmrtDiff": 17.24423837661743,
+      "refLongErf": -15.017805099487305,
+      "webgpuLongErf": -15.642952919006348,
+      "longErfDiff": -0.625147819519043,
+      "refLongDmrt": -3.4454779624938965,
+      "webgpuLongDmrt": -3.5889031887054443,
+      "longDmrtDiff": -0.14342522621154785,
+      "refMrt": 33.06828308105469,
+      "webgpuMrt": 49.169097900390625,
+      "mrtDiff": 16.100814819335938,
+      "refSkyAtPoint": 0.635520339012146,
+      "webgpuSkyAtPoint": 0.6344313912018175,
+      "skyDiffAtPoint": -0.0010889478103285333,
+      "score": 92.40670824050903,
+      "modelBounds": {
+        "min": {
+          "x": -516.68359375,
+          "y": -1.6890172959492975,
+          "z": -231.1687469482422
+        },
+        "max": {
+          "x": 518.516357421875,
+          "y": 19.157154083140153,
+          "z": 226.831298828125
+        }
+      },
+      "pointInsideModelBounds": true,
+      "cpuHit": false,
+      "cpuFirstDistance": null,
+      "cpuFirstPoint": null,
+      "cpuHitByVariant": {
+        "x_z_negY": false,
+        "x_z_posY": false,
+        "xyz_raw": true,
+        "x_negY_z": true
+      },
+      "cpuBruteByVariant": {
+        "x_z_negY": {
+          "hit": false,
+          "distance": null
+        },
+        "x_z_posY": {
+          "hit": false,
+          "distance": null
+        },
+        "xyz_raw": {
+          "hit": true,
+          "distance": 44.30795129269426
+        },
+        "x_negY_z": {
+          "hit": true,
+          "distance": 22.6966189618531
+        }
+      }
+    }
+  ]
+}

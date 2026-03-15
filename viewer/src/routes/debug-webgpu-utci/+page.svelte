@@ -54,14 +54,14 @@
 		sceneConfigStore,
 		updateSceneConfigFromBounds,
 	} from "$lib/stores/sceneConfigStore";
-	import type { Analysis } from "$lib/types/analysis";
-import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
-import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
-import { normalizeSkyExposureToViewFactor } from "$lib/parity/skyScale";
-import type { UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
-import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
-import { get } from "svelte/store";
-import { emitComputeTelemetry } from "$lib/compute/telemetry";
+	import type { Analysis, AnalysisMetadata } from "$lib/types/analysis";
+	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
+	import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
+	import { normalizeSkyExposureToViewFactor } from "$lib/parity/skyScale";
+	import type { UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
+	import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
+	import { get } from "svelte/store";
+	import { emitComputeTelemetry } from "$lib/compute/telemetry";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -154,6 +154,9 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		__parityCollectionLog__?: ParityCollectionLogEntry[];
 		__parityResults__?: unknown;
 		__parityIntermediates__?: unknown;
+		__parityMetadata__?: AnalysisMetadata;
+		__parityModel__?: Group | null;
+		__parityThree__?: typeof THREE;
 	};
 
 	const getParityWindow = (): ParityWindow =>
@@ -309,6 +312,7 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 		parityWin.__parityCollectionError__ = undefined;
 		parityWin.__parityResults__ = undefined;
 		parityWin.__parityIntermediates__ = undefined;
+		parityWin.__parityMetadata__ = base.metadata;
 		parityWin.__parityCollectionLog__ = [];
 		setParityStatus(runId, "running", "preflight");
 		emitComputeTelemetry("live.compute.start", {
@@ -441,6 +445,9 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 				win.__parityResults__ = {
 					utciByHour: result.data.utciByHour.map((arr) => Array.from(arr)),
 					positions: Array.from(result.data.positions),
+					computeGridPointsWorld:
+						(result as unknown as { __computeGridPointsWorld?: number[] })
+							.__computeGridPointsWorld ?? null,
 					numPoints: result.data.numPositions,
 					numHours: result.data.utciByHour.length,
 				};
@@ -824,6 +831,9 @@ import { emitComputeTelemetry } from "$lib/compute/telemetry";
 							metadata={$analysisStore.metadata}
 							on:modelLoaded={(e) => {
 								model = e.detail;
+								const parityWindow = getParityWindow();
+								parityWindow.__parityModel__ = model;
+								parityWindow.__parityThree__ = THREE;
 								modelFileForLoadedModel = $analysisStore?.metadata?.model_file ?? null;
 								modelLoading = false;
 								if (model) {

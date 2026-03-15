@@ -11,6 +11,7 @@ import { loadWebgpuCollectedFromFs } from '../src/lib/parity/loadWebgpuCollected
 import { loadReferenceFromFs } from '../src/lib/parity/loadReferenceFromFs';
 import { compareIntermediates, compareIntermediatesStats } from '../src/lib/parity/compareIntermediates';
 import { compareUtciRange } from '../src/lib/parity/compareUtciRange';
+import { compareUtciPointwise } from '../src/lib/parity/compareUtciPointwise';
 import { buildParityReport } from '../src/lib/parity/buildParityReport';
 import {
 	computeSpatialComplexity,
@@ -21,6 +22,7 @@ import {
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 const DEFAULT_BASE_PATH = 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday';
 type CompareMode = 'strict' | 'stats';
+const UTCI_POINTWISE_TOLERANCE = 2;
 
 function parseArgs(): { basePath: string; reportPath: string | null; mode: CompareMode } {
 	let basePath = process.env.PARITY_BASE_PATH ?? DEFAULT_BASE_PATH;
@@ -126,6 +128,10 @@ async function main(): Promise<void> {
 			console.log(
 				`utci: ${report.utci.pass ? 'PASS' : 'FAIL'} (minDiff=${report.utci.minDiff?.toFixed(3) ?? '—'}, maxDiff=${report.utci.maxDiff?.toFixed(3) ?? '—'}, meanDiff=${report.utci.meanDiff?.toFixed(3) ?? '—'})`
 			);
+		if (report.utciPointwise)
+			console.log(
+				`utci_pointwise: ${report.utciPointwise.pass ? 'PASS' : 'FAIL'} (rmse=${report.utciPointwise.rmse.toFixed(3)}, maxError=${report.utciPointwise.maxError.toFixed(3)}, meanDiff=${report.utciPointwise.meanDiff.toFixed(3)})`
+			);
 		if (report.utciComplexity?.error) {
 			console.log(`utci_complexity: skipped (${report.utciComplexity.error})`);
 		} else if (report.utciComplexity) {
@@ -136,6 +142,9 @@ async function main(): Promise<void> {
 		console.log('Report written to:', reportPath);
 		if (report.summary.failCount > 0)
 			console.log('Inspect .detail.worstIndices and .detail.diffStats in the report to dig into locations.');
+		if (report.utciPointwise && !report.utciPointwise.pass) {
+			console.log('Note: stats mode keeps UTCI pointwise as diagnostics; strict mode enforces UTCI pointwise pass/fail.');
+		}
 		process.exit(report.summary.failCount > 0 ? 1 : 0);
 		return;
 	}
@@ -250,21 +259,30 @@ async function main(): Promise<void> {
 			): boolean => {
 				const refArr = (ref as Record<string, unknown>)[label] as Float32Array | undefined;
 				const wgArrRaw = (webgpu.mrt as Record<string, unknown>)[label] as number[] | undefined;
-				if (!refArr || !wgArrRaw) {
-					console.log(`${label}: skipped (not available in both ref and webgpu files)`);
-					if (mode === 'strict') {
-						componentOut[label] = {
-							pass: true,
-							skipped: true,
-							reason: 'not available in both ref and webgpu files'
-						};
-					}
+				const hasRef = !!refArr;
+				const hasWebgpu = !!wgArrRaw;
+				if (!hasRef && !hasWebgpu) {
+					console.log(`${label}: skipped (missing in both ref and webgpu files)`);
+					componentOut[label] = {
+						pass: true,
+						skipped: true,
+						reason: 'missing in both ref and webgpu files'
+					};
 					return true;
 				}
+				if (hasRef !== hasWebgpu) {
+					const reason = hasRef ? 'present in ref only' : 'present in webgpu only';
+					console.log(`${label}: FAIL (${reason})`);
+					componentOut[label] = { pass: false, reason };
+					return false;
+				}
+				// Both are present here.
+				const refComponent = refArr as Float32Array;
+				const wgComponent = wgArrRaw as number[];
 				if (mode === 'strict') {
 					const result = compareIntermediates({
-						ref: refArr,
-						webgpu: new Float32Array(wgArrRaw),
+						ref: refComponent,
+						webgpu: new Float32Array(wgComponent),
 						tolerance: toleranceStrict
 					});
 					const pass = result.pass;
@@ -275,8 +293,8 @@ async function main(): Promise<void> {
 					return pass;
 				}
 				const result = compareIntermediatesStats({
-					ref: refArr,
-					webgpu: wgArrRaw,
+					ref: refComponent,
+					webgpu: wgComponent,
 					toleranceMean,
 					toleranceMax
 				});
@@ -332,30 +350,77 @@ async function main(): Promise<void> {
 		if (mode === 'strict') strictReport.mrt = { pass: true, skipped: true, reason: 'no webgpu file' };
 	}
 
-	// UTCI range
+	// UTCI strict pointwise (primary) + range diagnostics (secondary)
 	const refUtciRange = loadRefMetadataUtciRange(basePath);
-	if (webgpu.utci && refUtciRange) {
-		const result = compareUtciRange({
-			ref: refUtciRange,
-			webgpu: webgpu.utci.utci_range,
-			toleranceMin: 2,
-			toleranceMax: 2,
-			toleranceMean: 1,
-		});
-		const pass = result.pass;
-		if (!pass) failCount++;
+	if (webgpu.utci) {
 		if (mode === 'strict') {
-			strictReport.utci = {
-				pass,
-				minDiff: result.minDiff,
-				maxDiff: result.maxDiff,
-				meanDiff: result.meanDiff
-			};
+			try {
+				const ref = await loadReferenceFromFs(basePath);
+				const pointwise = compareUtciPointwise({
+					ref: ref.data.utciByHour.map((arr) => Array.from(arr)),
+					webgpu: webgpu.utci.utciByHour,
+					tolerance: UTCI_POINTWISE_TOLERANCE
+				});
+				const range = refUtciRange
+					? compareUtciRange({
+							ref: refUtciRange,
+							webgpu: webgpu.utci.utci_range,
+							toleranceMin: 2,
+							toleranceMax: 2,
+							toleranceMean: 1
+						})
+					: null;
+				const pass = pointwise.pass;
+				if (!pass) failCount++;
+				strictReport.utci = {
+					pass,
+					pointwise: {
+						rmse: pointwise.rmse,
+						maxError: pointwise.maxError,
+						meanDiff: pointwise.meanDiff,
+						tolerance: UTCI_POINTWISE_TOLERANCE,
+						worst: pointwise.worst
+					},
+					range: range
+						? { minDiff: range.minDiff, maxDiff: range.maxDiff, meanDiff: range.meanDiff, pass: range.pass }
+						: { skipped: true, reason: 'no ref metadata utci_range' }
+				};
+				console.log(
+					`utci: ${pass ? 'PASS' : 'FAIL'} (pointwise rmse=${pointwise.rmse.toFixed(3)}, maxError=${pointwise.maxError.toFixed(3)}, meanDiff=${pointwise.meanDiff.toFixed(3)}${
+						pointwise.worst
+							? `, worst=hour ${pointwise.worst.hour} point ${pointwise.worst.pointIndex} ref=${pointwise.worst.ref.toFixed(3)} webgpu=${pointwise.worst.webgpu.toFixed(3)} diff=${pointwise.worst.diff.toFixed(3)}`
+							: ''
+					})`
+				);
+				if (range) {
+					console.log(
+						`utci_range: ${range.pass ? 'PASS' : 'FAIL'} (minDiff=${range.minDiff.toFixed(3)}, maxDiff=${range.maxDiff.toFixed(3)}, meanDiff=${range.meanDiff.toFixed(3)})`
+					);
+				} else {
+					console.log('utci_range: skipped (no ref metadata utci_range)');
+				}
+			} catch (e) {
+				failCount++;
+				const msg = e instanceof Error ? e.message : String(e);
+				strictReport.utci = { pass: false, error: msg };
+				console.log('utci: FAIL (pointwise strict compare error)', msg);
+			}
+		} else if (refUtciRange) {
+			const result = compareUtciRange({
+				ref: refUtciRange,
+				webgpu: webgpu.utci.utci_range,
+				toleranceMin: 2,
+				toleranceMax: 2,
+				toleranceMean: 1
+			});
+			const pass = result.pass;
+			if (!pass) failCount++;
+			console.log(
+				`utci: ${pass ? 'PASS' : 'FAIL'} (minDiff=${result.minDiff.toFixed(3)}, maxDiff=${result.maxDiff.toFixed(3)}, meanDiff=${result.meanDiff.toFixed(3)})`
+			);
+		} else {
+			console.log('utci: skipped (no ref metadata utci_range)');
 		}
-		console.log(`utci: ${pass ? 'PASS' : 'FAIL'} (minDiff=${result.minDiff?.toFixed(3)}, maxDiff=${result.maxDiff?.toFixed(3)}, meanDiff=${result.meanDiff?.toFixed(3)})`);
-	} else if (webgpu.utci) {
-		console.log('utci: skipped (no ref metadata utci_range)');
-		if (mode === 'strict') strictReport.utci = { pass: true, skipped: true, reason: 'no ref metadata utci_range' };
 	} else {
 		console.log('utci: skipped (no webgpu file)');
 		if (mode === 'strict') strictReport.utci = { pass: true, skipped: true, reason: 'no webgpu file' };

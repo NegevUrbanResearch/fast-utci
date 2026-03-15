@@ -340,6 +340,8 @@ export async function createLiveUtciAnalysisFromCompute(
 
 	// Non-breaking debug marker for downstream consumers if needed.
 	(analysis as any).__source = 'webgpu';
+	// Debug-only: retain compute-space sample points (Y-up world) used for solar/sky ray origin.
+	(analysis as any).__computeGridPointsWorld = Array.from(gridPointsFlat);
 
 	return analysis;
 }

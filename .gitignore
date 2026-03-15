@@ -63,3 +63,6 @@ site/
 # WebGPU parity/debug generated artifacts
 data/analyses/**/*_webgpu_*.json
 viewer/parity-report*.json
+
+# Large parity baseline artifact (keep out future commits)
+data/analyses/Ben-Gurion/20250815_grid_2m_fullday_mrt.json

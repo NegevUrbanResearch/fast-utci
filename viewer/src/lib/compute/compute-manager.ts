@@ -36,6 +36,16 @@ const DEFAULT_CONFIG: ComputeManagerConfig = {
 	representativeDay: 15
 };
 
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function previousCalendarDay(month: number, day: number): { month: number; day: number } {
+	if (day > 1) {
+		return { month, day: day - 1 };
+	}
+	const prevMonth = month === 1 ? 12 : month - 1;
+	return { month: prevMonth, day: DAYS_IN_MONTH[prevMonth - 1] };
+}
+
 /** Yield to the event loop so the UI can update; avoids long main-thread freezes. */
 function yieldToMain(): Promise<void> {
 	if (typeof requestAnimationFrame !== 'undefined') {
@@ -191,10 +201,15 @@ export class ComputeManager {
 			const day = representativeDay;
 			for (let hour = 0; hour < numHours; hour++) {
 				const idx = monthOffset * numHours + hour;
-				// EPW record hours are 1..24; pipeline hour index is 0..23.
-				// Contract: hour 0 maps to EPW hour 1, hour 23 maps to EPW hour 24.
-				const hourData =
-					epw.getHourData(month, day, hour + 1) ??
+				// Thermal channels match Ladybug AnalysisPeriod(..., 0..23) used by Python baseline:
+				// hour 0 uses previous-day EPW hour 24; hours 1..23 use same-day EPW hours 1..23.
+				const prev = hour === 0 ? previousCalendarDay(month, day) : null;
+				const thermalMonth = prev?.month ?? month;
+				const thermalDay = prev?.day ?? day;
+				const thermalHour = hour === 0 ? 24 : hour;
+				// Shortwave channels stay aligned to same-day sun-vector hours.
+				const solarHour = hour + 1;
+				const fallbackData =
 					// Short synthetic EPW fixtures in tests may not contain a full-year index.
 					// In that case, fall back to contiguous records (monthOffset * numHours + hour).
 					(idx < epw.dryBulbTemp.length
@@ -207,20 +222,22 @@ export class ComputeManager {
 							horizIR: epw.horizInfrared[idx]
 						}
 						: undefined);
-				if (!hourData) {
+				const thermalData = epw.getHourData(thermalMonth, thermalDay, thermalHour) ?? fallbackData;
+				const solarData = epw.getHourData(month, day, solarHour) ?? fallbackData;
+				if (!thermalData || !solarData) {
 					throw new Error(
-						`Missing EPW hour data for month=${month}, day=${day}, hour=${hour + 1} (pipeline hour index ${hour})`
+						`Missing EPW hour data for thermal(${thermalMonth}-${thermalDay} h${thermalHour}) or solar(${month}-${day} h${solarHour})`
 					);
 				}
 
 				const base = idx * weatherStride;
-				weather[base] = hourData.dryBulb; // air_temp
-				weather[base + 1] = hourData.dryBulb; // mrt_longwave (approx for now)
-				weather[base + 2] = hourData.windSpeed;
-				weather[base + 3] = hourData.relHumidity;
-				weather[base + 4] = hourData.directNormal;
-				weather[base + 5] = hourData.diffuseHoriz;
-				weather[base + 6] = hourData.horizIR;
+				weather[base] = thermalData.dryBulb; // air_temp
+				weather[base + 1] = thermalData.dryBulb; // mrt_longwave (approx for now)
+				weather[base + 2] = thermalData.windSpeed;
+				weather[base + 3] = thermalData.relHumidity;
+				weather[base + 4] = solarData.directNormal;
+				weather[base + 5] = solarData.diffuseHoriz;
+				weather[base + 6] = thermalData.horizIR;
 			}
 		}
 

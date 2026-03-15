@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { loadReferenceFromFs } from '../../src/lib/parity/loadReferenceFromFs';
-import { compareParityFullDay } from '../../src/lib/parity/compareParity';
+import { compareUtciPointwise } from '../../src/lib/parity/compareUtciPointwise';
 
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 /** Wait up to 60s for compute (typically ~10s in browser). Poll every 1s to avoid hammering the page. */
@@ -74,18 +74,28 @@ test.describe('WebGPU live UTCI (Ben-Gurion base)', () => {
 		expect(webgpu.numHours).toBe(24);
 		expect(webgpu.numPoints).toBeGreaterThan(0);
 
-		// Optional: if grid sizes match, log UTCI comparison metrics (no assertion).
+		// If grid sizes match, assert pointwise UTCI parity with actionable diagnostics.
 		if (webgpu.numPoints === ref.data.numPositions) {
-			const utciWebgpuByHour = webgpu.utciByHour.map((arr) => new Float32Array(arr));
-			const { byHour, overallPass, worstHour } = compareParityFullDay({
-				utciRefByHour: ref.data.utciByHour,
-				utciWebgpuByHour,
-				toleranceC: 2,
+			const pointwise = compareUtciPointwise({
+				ref: ref.data.utciByHour.map((arr) => Array.from(arr)),
+				webgpu: webgpu.utciByHour,
+				tolerance: 2
 			});
-			const worst = byHour[worstHour];
-			console.log(
-				`[parity] Same grid: overallPass=${overallPass}, worstHour=${worstHour}, worstMaxError=${worst?.maxError?.toFixed(3)}°C, rmse=${worst?.rmse?.toFixed(3)}`
-			);
+			expect(
+				pointwise.pass,
+				[
+					`Pointwise UTCI parity failed`,
+					`phase=${(collectError.status as { phase?: string } | null)?.phase ?? 'unknown'}`,
+					`status=${JSON.stringify(collectError.status)}`,
+					`worstHour=${pointwise.worst?.hour ?? 'n/a'}`,
+					`worstPointIndex=${pointwise.worst?.pointIndex ?? 'n/a'}`,
+					`ref=${pointwise.worst?.ref?.toFixed(6) ?? 'n/a'}`,
+					`webgpu=${pointwise.worst?.webgpu?.toFixed(6) ?? 'n/a'}`,
+					`diff=${pointwise.worst?.diff?.toFixed(6) ?? 'n/a'}`,
+					`rmse=${pointwise.rmse.toFixed(6)}`,
+					`maxError=${pointwise.maxError.toFixed(6)}`
+				].join(' | ')
+			).toBe(true);
 		} else {
 			console.log(
 				`[parity] Grid mismatch (webgpu=${webgpu.numPoints}, ref=${ref.data.numPositions}); point-to-point comparison skipped. Focus on intermediate stages (solar, sky, MRT).`

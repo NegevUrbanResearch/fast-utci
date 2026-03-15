@@ -8,6 +8,7 @@ import { loadWebgpuCollectedFromFs } from './loadWebgpuCollectedFromFs';
 import { loadReferenceFromFs } from './loadReferenceFromFs';
 import { compareIntermediatesStats, analyzeDiffs } from './compareIntermediates';
 import { compareUtciRange } from './compareUtciRange';
+import { compareUtciPointwise } from './compareUtciPointwise';
 import {
 	computeSpatialComplexity,
 	inferRectGridShapeFromPositions,
@@ -48,6 +49,14 @@ export interface ParityReport {
 	sky?: StageReport;
 	mrt?: StageReport;
 	utci?: StageReport;
+	utciPointwise?: {
+		pass: boolean;
+		rmse: number;
+		maxError: number;
+		meanDiff: number;
+		worst: { hour: number; pointIndex: number; ref: number; webgpu: number; diff: number } | null;
+		error?: string;
+	};
 	utciComplexity?: {
 		ref: SpatialComplexityMetrics;
 		webgpu: SpatialComplexityMetrics;
@@ -211,6 +220,33 @@ export async function buildParityReport(basePath: string): Promise<ParityReport>
 		};
 	} else if (webgpu.utci) {
 		report.utci = { pass: true, error: 'no ref metadata utci_range' };
+	}
+	if (webgpu.utci) {
+		try {
+			const ref = await loadReferenceFromFs(basePath);
+			const pointwise = compareUtciPointwise({
+				ref: ref.data.utciByHour.map((arr) => Array.from(arr)),
+				webgpu: webgpu.utci.utciByHour,
+				tolerance: 2
+			});
+			report.utciPointwise = {
+				pass: pointwise.pass,
+				rmse: pointwise.rmse,
+				maxError: pointwise.maxError,
+				meanDiff: pointwise.meanDiff,
+				worst: pointwise.worst
+			};
+		} catch (e) {
+			failCount++;
+			report.utciPointwise = {
+				pass: false,
+				rmse: 0,
+				maxError: 0,
+				meanDiff: 0,
+				worst: null,
+				error: e instanceof Error ? e.message : String(e)
+			};
+		}
 	}
 
 	// UTCI spatial complexity

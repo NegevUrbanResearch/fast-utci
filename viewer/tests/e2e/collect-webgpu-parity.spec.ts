@@ -1,12 +1,17 @@
-import { test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 const DEFAULT_BASE_PATH = 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday';
 const PARITY_BASE_PATH = process.env.PARITY_BASE_PATH || DEFAULT_BASE_PATH;
 const basePath = resolve(REPO_ROOT, PARITY_BASE_PATH);
 const COLLECT_WAIT_MS = 180_000;
+
+function expectNumberArrayLength(arr: unknown, expected: number, label: string): asserts arr is number[] {
+	expect(Array.isArray(arr), `${label} should be number[]`).toBe(true);
+	expect((arr as unknown[]).length, `${label}.length mismatch`).toBe(expected);
+}
 
 /**
  * WebGPU collect: load debug page, wait for parity data, write _webgpu_*.json files to disk.
@@ -164,6 +169,24 @@ test.describe('Collect WebGPU parity to files', () => {
 			shortDmrt?: number[];
 			longDmrt?: number[];
 		};
+		const expectedPointwiseLen = parityIntermediates.numPoints * parityIntermediates.numHours;
+		expectNumberArrayLength(parityIntermediates.solarExposure, expectedPointwiseLen, 'solarExposure');
+		expectNumberArrayLength(parityIntermediates.skyExposure, parityIntermediates.numPoints, 'skyExposure');
+		if (parityIntermediates.mrt != null) {
+			expectNumberArrayLength(parityIntermediates.mrt, expectedPointwiseLen, 'mrt');
+		}
+		if (parityIntermediates.shortErf != null) {
+			expectNumberArrayLength(parityIntermediates.shortErf, expectedPointwiseLen, 'shortErf');
+		}
+		if (parityIntermediates.longErf != null) {
+			expectNumberArrayLength(parityIntermediates.longErf, expectedPointwiseLen, 'longErf');
+		}
+		if (parityIntermediates.shortDmrt != null) {
+			expectNumberArrayLength(parityIntermediates.shortDmrt, expectedPointwiseLen, 'shortDmrt');
+		}
+		if (parityIntermediates.longDmrt != null) {
+			expectNumberArrayLength(parityIntermediates.longDmrt, expectedPointwiseLen, 'longDmrt');
+		}
 
 		writeFileSync(
 			`${basePath}_webgpu_solar.json`,
@@ -251,6 +274,13 @@ test.describe('Collect WebGPU parity to files', () => {
 		};
 		const parityPositions = JSON.parse(positionsJson) as number[] | null;
 		const utciByHour = parityResults.utciByHour;
+		expect(utciByHour.length).toBe(parityResults.numHours);
+		for (let hourIdx = 0; hourIdx < utciByHour.length; hourIdx++) {
+			expectNumberArrayLength(utciByHour[hourIdx], parityResults.numPoints, `utciByHour[${hourIdx}]`);
+		}
+		if (parityPositions != null) {
+			expectNumberArrayLength(parityPositions, parityResults.numPoints * 3, 'positions');
+		}
 		let min = Infinity;
 		let max = -Infinity;
 		let sum = 0;
@@ -280,6 +310,33 @@ test.describe('Collect WebGPU parity to files', () => {
 				0
 			)
 		);
+		const writtenMrtPath = `${basePath}_webgpu_mrt.json`;
+		if (parityIntermediates.mrt != null) {
+			const writtenMrt = JSON.parse(readFileSync(writtenMrtPath, 'utf8')) as Record<string, unknown>;
+			expect(writtenMrt.numPositions).toBe(parityIntermediates.numPoints);
+			expect(writtenMrt.numHours).toBe(parityIntermediates.numHours);
+			expectNumberArrayLength(writtenMrt.mrt, expectedPointwiseLen, 'written mrt');
+			if (parityIntermediates.shortErf != null) {
+				expectNumberArrayLength(writtenMrt.short_erf, expectedPointwiseLen, 'written short_erf');
+			}
+			if (parityIntermediates.longErf != null) {
+				expectNumberArrayLength(writtenMrt.long_erf, expectedPointwiseLen, 'written long_erf');
+			}
+			if (parityIntermediates.shortDmrt != null) {
+				expectNumberArrayLength(writtenMrt.short_dmrt, expectedPointwiseLen, 'written short_dmrt');
+			}
+			if (parityIntermediates.longDmrt != null) {
+				expectNumberArrayLength(writtenMrt.long_dmrt, expectedPointwiseLen, 'written long_dmrt');
+			}
+		}
+		const writtenUtci = JSON.parse(readFileSync(`${basePath}_webgpu_utci.json`, 'utf8')) as Record<string, unknown>;
+		expect(writtenUtci.numPoints).toBe(parityResults.numPoints);
+		expect(writtenUtci.numHours).toBe(parityResults.numHours);
+		expect(Array.isArray(writtenUtci.utciByHour)).toBe(true);
+		expect((writtenUtci.utciByHour as unknown[]).length).toBe(parityResults.numHours);
+		if (parityPositions != null) {
+			expectNumberArrayLength(writtenUtci.positions, parityResults.numPoints * 3, 'written positions');
+		}
 		console.log(`[collect] wrote utci in ${Date.now() - t0}ms`);
 	});
 });
