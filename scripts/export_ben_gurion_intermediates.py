@@ -10,7 +10,7 @@ Usage (from repo root):
     --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday \\
     --model data/3d_models/Ben-Gurion/original_with_layers.glb \\
     [--stage solar] [--stage sky] [--stage mrt] [--stage weather]
-  Default: export solar and sky only.
+  Default: export solar, sky, and MRT.
 
 Reference format:
   *_solar.json: { "numPositions", "numHours", "solarExposure": number[] }
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+DEFAULT_STAGES = ["solar", "sky", "mrt"]
 
 # Add project root for imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -105,7 +107,7 @@ def main() -> None:
         choices=["solar", "sky", "mrt", "weather"],
         action="append",
         default=[],
-        help="Stage(s) to export (default: solar, sky)",
+        help="Stage(s) to export (default: solar, sky, mrt)",
     )
     parser.add_argument("--no-progress", action="store_true", help="Disable progress bars")
     args = parser.parse_args()
@@ -117,7 +119,7 @@ def main() -> None:
     if not model_path.is_absolute():
         model_path = (REPO_ROOT / model_path).resolve()
 
-    stages = args.stage if args.stage else ["solar", "sky"]
+    stages = args.stage if args.stage else DEFAULT_STAGES
     show_progress = not args.no_progress
     need_exposure = "solar" in stages or "sky" in stages or "mrt" in stages
 
