@@ -14,6 +14,7 @@ import {
 	inferRectGridShapeFromPositions,
 	type SpatialComplexityMetrics
 } from './spatialComplexity';
+import { pointwiseIndexFromFlat } from './pointwiseIndex';
 import { readFileSync } from 'node:fs';
 
 export interface StageReport {
@@ -83,6 +84,17 @@ function loadRefMetadataUtciRange(basePath: string): { min: number; max: number;
 	return null;
 }
 
+function enrichWorstIndices(
+	worstIndices: Array<{ index: number; ref: number; webgpu: number; diff: number }> | undefined,
+	numHours: number | undefined
+): Array<{ index: number; ref: number; webgpu: number; diff: number; hourIndex: number; pointIndex: number }> | undefined {
+	if (!worstIndices || numHours == null) return worstIndices as undefined;
+	return worstIndices.map((row) => ({
+		...row,
+		...pointwiseIndexFromFlat(row.index, numHours)
+	}));
+}
+
 export async function buildParityReport(basePath: string): Promise<ParityReport> {
 	const webgpu = await loadWebgpuCollectedFromFs(basePath);
 	let failCount = 0;
@@ -117,7 +129,7 @@ export async function buildParityReport(basePath: string): Promise<ParityReport>
 					sameLength: detail.sameLength,
 					n: detail.n,
 					diffStats: detail.diffStats,
-					worstIndices: detail.worstIndices
+					worstIndices: enrichWorstIndices(detail.worstIndices, ref.numHours)
 				}
 			};
 		} catch (e) {
@@ -189,7 +201,7 @@ export async function buildParityReport(basePath: string): Promise<ParityReport>
 					sameLength: detail.sameLength,
 					n: detail.n,
 					diffStats: detail.diffStats,
-					worstIndices: detail.worstIndices
+					worstIndices: enrichWorstIndices(detail.worstIndices, ref.numHours)
 				}
 			};
 		} catch (e) {

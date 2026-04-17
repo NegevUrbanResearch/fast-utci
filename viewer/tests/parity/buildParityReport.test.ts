@@ -65,4 +65,97 @@ describe('buildParityReport', () => {
 		expect(report.summary.pass).toBe(true);
 		expect(report.summary.failCount).toBe(0);
 	});
+
+	it('adds hourIndex and pointIndex to worst intermediate rows', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'parity-report-'));
+		tempDirs.push(dir);
+		const basePath = join(dir, 'sample');
+
+		writeFileSync(
+			`${basePath}.json`,
+			JSON.stringify({
+				num_positions: 2,
+				hours: [0, 1],
+				analysis_type: 'utci',
+				utci_range: { min: 20, max: 25, mean: 22.5 }
+			})
+		);
+		writeReferenceBin(`${basePath}.bin`, 2, 2, [0, 0, 0, 1, 0, 0], [10, 20, 30, 40]);
+		writeFileSync(
+			`${basePath}_solar.json`,
+			JSON.stringify({
+				numPositions: 2,
+				numHours: 2,
+				solarExposure: [10, 20, 30, 40]
+			})
+		);
+		writeFileSync(
+			`${basePath}_webgpu_solar.json`,
+			JSON.stringify({
+				numPositions: 2,
+				numHours: 2,
+				solarExposure: [10, 22, 32, 40]
+			})
+		);
+
+		const report = await buildParityReport(basePath);
+		const worst = report.solar?.detail?.worstIndices?.[0];
+		expect(worst).toMatchObject({
+			index: 1,
+			hourIndex: 1,
+			pointIndex: 0,
+			ref: 20,
+			webgpu: 22,
+			diff: 2
+		});
+	});
+
+	it('keeps sky worstIndices present for sky mismatches', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'parity-report-'));
+		tempDirs.push(dir);
+		const basePath = join(dir, 'sample');
+
+		writeFileSync(
+			`${basePath}.json`,
+			JSON.stringify({
+				num_positions: 2,
+				hours: [0],
+				analysis_type: 'utci',
+				utci_range: { min: 20, max: 25, mean: 22.5 }
+			})
+		);
+		writeReferenceBin(`${basePath}.bin`, 2, 1, [0, 0, 0, 1, 0, 0], [20, 20]);
+		writeFileSync(
+			`${basePath}_sky.json`,
+			JSON.stringify({
+				numPositions: 2,
+				skyExposure: [10, 20]
+			})
+		);
+		writeFileSync(
+			`${basePath}_webgpu_sky.json`,
+			JSON.stringify({
+				numPositions: 2,
+				skyExposure: [12, 20]
+			})
+		);
+
+		const report = await buildParityReport(basePath);
+		expect(report.sky?.detail?.worstIndices).toEqual([
+			{
+				index: 0,
+				ref: 10,
+				webgpu: 12,
+				diff: 2
+			},
+			{
+				index: 1,
+				ref: 20,
+				webgpu: 20,
+				diff: 0
+			}
+		]);
+		expect(report.sky?.detail?.worstIndices?.[0]).not.toHaveProperty('hourIndex');
+		expect(report.sky?.detail?.worstIndices?.[0]).not.toHaveProperty('pointIndex');
+	});
 });
