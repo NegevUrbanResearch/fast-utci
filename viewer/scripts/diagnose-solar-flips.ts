@@ -6,7 +6,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadReferenceIntermediatesFromFs } from '../src/lib/parity/loadReferenceIntermediatesFromFs';
 import { loadWebgpuCollectedFromFs } from '../src/lib/parity/loadWebgpuCollectedFromFs';
 import { pointwiseIndexFromFlat } from '../src/lib/parity/pointwiseIndex';
@@ -57,6 +57,11 @@ interface FlipCell {
 	refSkyAtPoint: number | null;
 	webgpuSkyAtPoint: number | null;
 	skyDiffAtPoint: number | null;
+	binaryFlipDirection: '0->1' | '1->0';
+	marginDelta: number;
+	shortWaveCompositeDelta: number | null;
+	longWaveCompositeDelta: number | null;
+	mismatchClass: string;
 	score: number;
 }
 
@@ -125,6 +130,33 @@ function safeValue(a: number[] | Float32Array | undefined, index: number): numbe
 		return null;
 	}
 	return a[index];
+}
+
+export function classifyMismatch(params: {
+	refBinary: 0 | 1;
+	webgpuBinary: 0 | 1;
+	refMarginToThreshold: number;
+	webgpuMarginToThreshold: number;
+	shortWaveCompositeDelta: number | null;
+	longWaveCompositeDelta: number | null;
+}): { binaryFlipDirection: '0->1' | '1->0'; marginDelta: number; mismatchClass: string } {
+	const binaryFlipDirection = params.refBinary === 0 ? '0->1' : '1->0';
+	const marginDelta = params.webgpuMarginToThreshold - params.refMarginToThreshold;
+	if (params.shortWaveCompositeDelta == null || params.longWaveCompositeDelta == null) {
+		return { binaryFlipDirection, marginDelta, mismatchClass: 'unknown' };
+	}
+	const shortWaveCompositeDelta = params.shortWaveCompositeDelta;
+	const longWaveCompositeDelta = params.longWaveCompositeDelta;
+	const compositeDelta = shortWaveCompositeDelta + longWaveCompositeDelta;
+	const mismatchClass =
+		params.refBinary === 0 && params.webgpuBinary === 1
+			? compositeDelta >= 0
+				? 'promotion-shortwave-dominant'
+				: 'promotion-longwave-dominant'
+			: compositeDelta <= 0
+				? 'demotion-shortwave-dominant'
+				: 'demotion-longwave-dominant';
+	return { binaryFlipDirection, marginDelta, mismatchClass };
 }
 
 async function main(): Promise<void> {
@@ -205,6 +237,18 @@ async function main(): Promise<void> {
 		const refSkyAtPoint = refSky?.skyExposure[pointIndex] ?? null;
 		const webgpuSkyAtPoint = webgpu.sky?.skyExposure?.[pointIndex] ?? null;
 		const skyDiffAtPoint = refSkyAtPoint == null || webgpuSkyAtPoint == null ? null : webgpuSkyAtPoint - refSkyAtPoint;
+		const shortWaveCompositeDelta =
+			shortErfDiff == null && shortDmrtDiff == null ? null : (shortErfDiff ?? 0) + (shortDmrtDiff ?? 0);
+		const longWaveCompositeDelta =
+			longErfDiff == null && longDmrtDiff == null ? null : (longErfDiff ?? 0) + (longDmrtDiff ?? 0);
+		const { binaryFlipDirection, marginDelta, mismatchClass } = classifyMismatch({
+			refBinary,
+			webgpuBinary,
+			refMarginToThreshold: refValue - binaryThreshold,
+			webgpuMarginToThreshold: webgpuValue - binaryThreshold,
+			shortWaveCompositeDelta,
+			longWaveCompositeDelta
+		});
 		const mrtDiff = webgpu.mrt.mrt[flatIndex] - refMrt.mrt[flatIndex];
 		const score =
 			shortErfDiff == null && shortDmrtDiff == null ? Math.abs(mrtDiff) : Math.abs(shortErfDiff ?? 0) + Math.abs(shortDmrtDiff ?? 0);
@@ -240,6 +284,11 @@ async function main(): Promise<void> {
 			refSkyAtPoint,
 			webgpuSkyAtPoint,
 			skyDiffAtPoint,
+			binaryFlipDirection,
+			marginDelta,
+			shortWaveCompositeDelta,
+			longWaveCompositeDelta,
+			mismatchClass,
 			score
 		});
 
@@ -292,7 +341,9 @@ async function main(): Promise<void> {
 	console.log('report written:', reportPath);
 }
 
-main().catch((error) => {
-	console.error(error);
-	process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	main().catch((error) => {
+		console.error(error);
+		process.exit(1);
+	});
+}
