@@ -17,6 +17,7 @@ export type MetricType = 'utci' | 'shading_index';
  */
 export interface ViewerState {
 	currentHour: number;
+	currentMonth: number;  // 0-11, 0=Jan, 7=Aug. Used only for multi-month live analysis.
 	colorMode: ColorMode;
 	metricType: MetricType;
 	utciVisible: boolean;

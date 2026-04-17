@@ -2,8 +2,9 @@
 
 <script lang="ts">
 	import { analysisStore } from "$lib/stores/analysisStore";
-	import { viewerStore, setCurrentHour } from "$lib/stores/viewerStore";
+	import { viewerStore, setCurrentHour, setCurrentMonth } from "$lib/stores/viewerStore";
 	import { getDayRingConicGradient } from "$lib/utils/dayGradient";
+	import { getYearRingConicGradient } from "$lib/utils/yearGradient";
 	import {
 		normalizeHourEntries,
 		derivePhaseMarkers,
@@ -18,6 +19,8 @@
 	import ColorModeToggle from "./ColorModeToggle.svelte";
 
 	const dayRingGradient = getDayRingConicGradient();
+	const yearRingGradient = getYearRingConicGradient();
+	let mode: "day" | "month" = "day";
 	/** Handle stops short of the hour labels (at 110) so it doesn’t sit on the text */
 	let dialEl: HTMLDivElement | null = null;
 	let isDragging = false;
@@ -25,18 +28,26 @@
 
 	$: showLabels = isDragging || isHoveringDial;
 
+	const MONTH_LABELS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+	const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
 	$: analysis = $analysisStore;
 	$: hours = analysis?.metadata.hours ?? [];
 	$: normalizedHours = normalizeHourEntries(hours);
 	$: totalHours = normalizedHours.length;
 	$: hourValues = normalizedHours.map((e) => e.value);
-	$: maxIndex = Math.max(totalHours - 1, 0);
-	$: currentHourIndex = Math.min($viewerStore.currentHour, maxIndex);
+	$: maxHourIndex = Math.max(totalHours - 1, 0);
+	$: currentHourIndex = Math.min($viewerStore.currentHour, maxHourIndex);
+	$: currentMonthIndex = Math.min(Math.max(0, $viewerStore.currentMonth ?? 7), 11);
+	$: totalSegments = mode === "day" ? totalHours : 12;
+	$: currentIndex = mode === "day" ? currentHourIndex : currentMonthIndex;
 	$: currentHourLabel =
 		totalHours > 0
 			? (normalizedHours[currentHourIndex]?.label ??
 				`${currentHourIndex.toString().padStart(2, "0")}:00`)
 			: "--:--";
+	$: currentMonthLabel = MONTH_NAMES[currentMonthIndex];
+	$: centerLabel = mode === "day" ? currentHourLabel : currentMonthLabel;
 	$: phaseMarkers = derivePhaseMarkers(analysis, totalHours, hourValues);
 	$: currentState = getDayStateForIndex(
 		currentHourIndex,
@@ -46,19 +57,22 @@
 	);
 	$: circumference = 2 * Math.PI * HANDLE_RADIUS;
 	$: progressDash =
-		totalHours > 0 ? (currentHourIndex / totalHours) * circumference : 0;
+		totalSegments > 0 ? (currentIndex / totalSegments) * circumference : 0;
+	$: ringGradient = mode === "day" ? dayRingGradient : yearRingGradient;
 
-	function updateHourFromPointer(event: PointerEvent) {
-		if (!dialEl || totalHours === 0) return;
+	function updateFromPointer(event: PointerEvent) {
+		if (!dialEl || totalSegments === 0) return;
 		const rect = dialEl.getBoundingClientRect();
 		const targetIndex = getIndexFromPointerEvent(
 			rect,
 			event.clientX,
 			event.clientY,
-			totalHours,
+			totalSegments,
 		);
-		if (targetIndex !== $viewerStore.currentHour) {
-			setCurrentHour(targetIndex);
+		if (mode === "day") {
+			if (targetIndex !== $viewerStore.currentHour) setCurrentHour(targetIndex);
+		} else {
+			if (targetIndex !== ($viewerStore.currentMonth ?? 7)) setCurrentMonth(targetIndex);
 		}
 	}
 
@@ -67,12 +81,12 @@
 		isDragging = true;
 		dialEl.setPointerCapture(event.pointerId);
 		event.preventDefault();
-		updateHourFromPointer(event);
+		updateFromPointer(event);
 	}
 
 	function handlePointerMove(event: PointerEvent) {
 		if (!isDragging) return;
-		updateHourFromPointer(event);
+		updateFromPointer(event);
 	}
 
 		function handlePointerUp(event: PointerEvent) {
@@ -99,27 +113,31 @@
 	}
 
 	function handleKeyDown(event: KeyboardEvent) {
-		if (totalHours === 0) return;
+		if (totalSegments === 0) return;
 		let nextIndex: number | null = null;
 
 		if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-			nextIndex = (currentHourIndex + 1) % totalHours;
+			nextIndex = (currentIndex + 1) % totalSegments;
 		} else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-			nextIndex = (currentHourIndex - 1 + totalHours) % totalHours;
+			nextIndex = (currentIndex - 1 + totalSegments) % totalSegments;
 		} else if (event.key === "Home") {
 			nextIndex = 0;
 		} else if (event.key === "End") {
-			nextIndex = totalHours - 1;
+			nextIndex = totalSegments - 1;
 		}
 
 		if (nextIndex !== null) {
 			event.preventDefault();
-			setCurrentHour(nextIndex);
+			if (mode === "day") setCurrentHour(nextIndex);
+			else setCurrentMonth(nextIndex);
 		}
 	}
 
-	$: if (totalHours > 0 && $viewerStore.currentHour !== currentHourIndex) {
+	$: if (mode === "day" && totalHours > 0 && $viewerStore.currentHour !== currentHourIndex) {
 		setCurrentHour(currentHourIndex);
+	}
+	$: if (mode === "month" && ($viewerStore.currentMonth ?? 7) !== currentMonthIndex) {
+		setCurrentMonth(currentMonthIndex);
 	}
 </script>
 
@@ -131,10 +149,10 @@
 			role="slider"
 			tabindex={totalHours > 0 ? 0 : -1}
 			aria-valuemin="0"
-			aria-valuemax={Math.max(totalHours - 1, 0)}
-			aria-valuenow={currentHourIndex}
-			aria-valuetext={`Time ${currentHourLabel}`}
-			aria-label="Select analysis hour"
+			aria-valuemax={Math.max(totalSegments - 1, 0)}
+			aria-valuenow={currentIndex}
+			aria-valuetext={mode === "day" ? `Time ${currentHourLabel}` : `Month ${currentMonthLabel}`}
+			aria-label={mode === "day" ? "Select analysis hour" : "Select month"}
 			bind:this={dialEl}
 			on:pointerdown={handlePointerDown}
 			on:pointermove={handlePointerMove}
@@ -146,7 +164,7 @@
 			<!-- Full dial face: one conic gradient from center to edge (inner and outer as one) -->
 			<div
 				class="day-ring"
-				style="width: {DIAL_SIZE_PX}px; height: {DIAL_SIZE_PX}px; background: {dayRingGradient};"
+				style="width: {DIAL_SIZE_PX}px; height: {DIAL_SIZE_PX}px; background: {ringGradient};"
 				aria-hidden="true"
 			></div>
 
@@ -166,10 +184,10 @@
 							flood-opacity="0.5"
 						/>
 					</filter>
-					{#if totalHours > 0}
+					{#if totalSegments > 0}
 						{@const linePos = getPositionForIndex(
-							currentHourIndex,
-							totalHours,
+							currentIndex,
+							totalSegments,
 							HANDLE_RADIUS,
 						)}
 						<linearGradient
@@ -189,16 +207,16 @@
 					{/if}
 				</defs>
 
-				{#if totalHours > 0}
-					<!-- Hour labels: visible on hover or while dragging, smooth fade + scale -->
+				{#if totalSegments > 0}
+					<!-- Labels: hours or months, visible on hover or while dragging -->
 					<g
 						class="hour-labels"
 						class:visible={showLabels}
 						filter="url(#label-drop-shadow)"
 						aria-hidden="true"
 					>
-						{#each Array(24) as _, i}
-							{@const pos = getPositionForIndex(i, 24, LABEL_RADIUS)}
+						{#each Array(mode === "day" ? 24 : 12) as _, i}
+							{@const pos = getPositionForIndex(i, mode === "day" ? 24 : 12, LABEL_RADIUS)}
 							<text
 								x={pos.x}
 								y={pos.y}
@@ -206,19 +224,19 @@
 								dominant-baseline="middle"
 								class="hour-label"
 							>
-								{String(i).padStart(2, "0")}
+								{mode === "day" ? String(i).padStart(2, "0") : MONTH_LABELS[i]}
 							</text>
 						{/each}
 					</g>
 
 					{@const knobPos = getPositionForIndex(
-						currentHourIndex,
-						totalHours,
+						currentIndex,
+						totalSegments,
 						HANDLE_RADIUS,
 					)}
 					{@const linePos = getPositionForIndex(
-						currentHourIndex,
-						totalHours,
+						currentIndex,
+						totalSegments,
 						HANDLE_RADIUS,
 					)}
 					<!-- Progress trail: single soft arc that blends with the dial (refined, minimal) -->
@@ -262,11 +280,31 @@
 			</svg>
 
 			<div class="center-display">
-				<div class="current-time">{currentHourLabel}</div>
-				<div class="state-label">{currentState.label}</div>
+				<div class="current-time">{centerLabel}</div>
+				{#if mode === "day"}
+					<div class="state-label">{currentState.label}</div>
+				{/if}
 			</div>
 		</div>
 
+		<div class="mode-toggle">
+			<button
+				class="mode-pill"
+				class:active={mode === "day"}
+				on:click={() => (mode = "day")}
+				type="button"
+			>
+				Day
+			</button>
+			<button
+				class="mode-pill"
+				class:active={mode === "month"}
+				on:click={() => (mode = "month")}
+				type="button"
+			>
+				Month
+			</button>
+		</div>
 		<ColorModeToggle />
 	</div>
 </div>
@@ -286,6 +324,34 @@
 		box-shadow: var(--shadow-panel);
 		-webkit-backdrop-filter: blur(12px);
 		backdrop-filter: blur(12px);
+	}
+
+	.mode-toggle {
+		display: flex;
+		gap: 4px;
+		margin-top: var(--spacing-md);
+		justify-content: flex-end;
+	}
+	.mode-pill {
+		font-family: var(--font-family);
+		font-size: 12px;
+		font-weight: 500;
+		padding: 4px 10px;
+		border-radius: 9999px;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--color-text-secondary, #94a3b8);
+		cursor: pointer;
+		transition: background 0.2s, color 0.2s, border-color 0.2s;
+	}
+	.mode-pill:hover {
+		background: rgba(255, 255, 255, 0.12);
+		color: var(--color-text-primary, #f8fafc);
+	}
+	.mode-pill.active {
+		background: rgba(255, 255, 255, 0.2);
+		color: #fff;
+		border-color: rgba(255, 255, 255, 0.35);
 	}
 
 	.radial-dial {

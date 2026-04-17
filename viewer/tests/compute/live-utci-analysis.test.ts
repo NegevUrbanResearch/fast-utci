@@ -32,6 +32,33 @@ const buildMinimalEpw = () => {
 	return `${header.join('\n')}\n${lines.join('\n')}`;
 };
 
+// Full-year EPW for 12-month compute: 366 days * 24 hours
+const buildFullYearEpw = () => {
+	const header = [
+		'LOCATION,Beer Sheva,ISR,source,wmo,31.25,34.79,2,300',
+		'DESIGN CONDITIONS,dummy',
+		'TYPICAL/EXTREME,dummy',
+		'GROUND TEMPERATURES,dummy',
+		'HOLIDAYS/DAYLIGHT,dummy',
+		'COMMENTS 1,dummy',
+		'COMMENTS 2,dummy',
+		'DATA PERIODS,dummy'
+	];
+
+	const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+	const lines: string[] = [];
+	for (let month = 1; month <= 12; month++) {
+		for (let day = 1; day <= DAYS_IN_MONTH[month - 1]; day++) {
+			for (let hour = 1; hour <= 24; hour++) {
+				lines.push(
+					`2020,${month},${day},${hour},0,0,30.0,25.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
+				);
+			}
+		}
+	}
+	return `${header.join('\n')}\n${lines.join('\n')}`;
+};
+
 const createSerializedBvhFixture = () => {
 	return {
 		serializedBvh: {
@@ -136,18 +163,29 @@ describe('liveUtciAnalysis adapter', () => {
 		expect(analysis.data.numPositions).toBeGreaterThan(0);
 		expect(analysis.data.positions.length).toBe(analysis.data.numPositions * 3);
 
-		if ('utciByHour' in analysis.data) {
+		if ('utciStorage' in analysis.data) {
 			expect(analysis.data.numHours).toBe(24);
-			expect(analysis.data.utciByHour.length).toBe(24);
+			expect(analysis.data.utciStorage!.numSlices).toBe(24);
 
-			for (const slice of analysis.data.utciByHour) {
+			const { getUTCIForHour } = await import('$lib/services/dataLoader');
+			for (let h = 0; h < 24; h++) {
+				const slice = getUTCIForHour(analysis.data, h);
+				expect(slice.length).toBe(analysis.data.numPositions);
+				for (let i = 0; i < slice.length; i++) {
+					expect(Number.isFinite(slice[i])).toBe(true);
+				}
+			}
+		} else if ('utciByHour' in analysis.data) {
+			expect(analysis.data.numHours).toBe(24);
+			expect(analysis.data.utciByHour!.length).toBe(24);
+			for (const slice of analysis.data.utciByHour!) {
 				expect(slice.length).toBe(analysis.data.numPositions);
 				for (let i = 0; i < slice.length; i++) {
 					expect(Number.isFinite(slice[i])).toBe(true);
 				}
 			}
 		} else {
-			throw new Error('Expected full-day data with utciByHour');
+			throw new Error('Expected full-day data with utciStorage or utciByHour');
 		}
 
 		// Metadata expectations
@@ -201,6 +239,41 @@ describe('liveUtciAnalysis adapter', () => {
 				{ pipeline: badPipeline }
 			)
 		).rejects.toThrow(/UTCI slice length mismatch/);
+	});
+
+	it('produces 288 utciStorage slices when numMonths=12', async () => {
+		const { pipeline, readUtcisSlice } = createFakePipeline();
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
+		};
+
+		const result = await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'test',
+				baseMetadata,
+				workerResult: createSerializedBvhFixture(),
+				epwContent: buildFullYearEpw(),
+				gridResolution: 2,
+				numHours: 24,
+				startMonth: 1,
+				numMonths: 12
+			},
+			{ pipeline }
+		);
+
+		expect(result.data.utciStorage).toBeDefined();
+		expect(result.data.utciStorage!.numSlices).toBe(288);
+		expect(result.metadata.num_months).toBe(12);
+		expect(result.data.numHours).toBe(288);
+		expect(readUtcisSlice).toHaveBeenCalledTimes(288);
 	});
 });
 

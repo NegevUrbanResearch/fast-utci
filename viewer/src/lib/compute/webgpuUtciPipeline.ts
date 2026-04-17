@@ -963,13 +963,27 @@ async function getWebgpuDevice(): Promise<{ device: GPUDevice; supportsMrtCompon
 	const requiredStorageBuffersPerStage = 10;
 	const supportedStorageBuffersPerStage = adapter.limits.maxStorageBuffersPerShaderStage;
 	const supportsMrtComponents = supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage;
+
+	// Default limits are often 128MB binding / 256MB buffer; large models (e.g. Ness Tziona)
+	// need solar/utci buffers >256MB. Request adapter max for both so CreateBuffer and
+	// bindings succeed without grid coarsening.
+	const maxStorageBufferBindingSize = adapter.limits.maxStorageBufferBindingSize;
+	const maxBufferSize = adapter.limits.maxBufferSize;
+
 	const device: GPUDevice = supportsMrtComponents
 		? await adapter.requestDevice({
 				requiredLimits: {
-					maxStorageBuffersPerShaderStage: requiredStorageBuffersPerStage
+					maxStorageBuffersPerShaderStage: requiredStorageBuffersPerStage,
+					maxStorageBufferBindingSize,
+					maxBufferSize
 				}
 			})
-		: await adapter.requestDevice();
+		: await adapter.requestDevice({
+				requiredLimits: {
+					maxStorageBufferBindingSize,
+					maxBufferSize
+				}
+			});
 	device.lost.then(() => {
 		if (cachedDevicePromise && cachedDevice === device) {
 			cachedDevicePromise = null;

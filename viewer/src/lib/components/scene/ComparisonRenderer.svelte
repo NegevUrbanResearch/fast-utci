@@ -32,6 +32,7 @@
 		createUtciSurfaceMesh,
 		updateUtciSurfaceTexture
 	} from '$lib/services/pointCloudService';
+	import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
 	import { resolveModelPath } from '$lib/utils/analysisPaths';
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
@@ -133,14 +134,23 @@
 		// Get current viewer state for UTCI visualization
 		const currentViewerState = get(viewerStore);
 		const hourIndex = currentViewerState.currentHour ?? 0;
+		const monthIndex = currentViewerState.currentMonth ?? 7;
+		const effectiveHourIndex = getEffectiveHourIndex(analysis, hourIndex, monthIndex);
 		const colorMode = currentViewerState.colorMode ?? 'normalized';
 		const metricType = currentViewerState.metricType ?? 'utci';
-		
+
 		// Use unified range for consistent color mapping between base and comparison
 		const rangeOverride = get(unifiedUtciRange) ?? undefined;
 
 		try {
-			comparisonUtciMesh = createUtciSurfaceMesh(analysis, hourIndex, colorMode, metricType, rangeOverride);
+			comparisonUtciMesh = createUtciSurfaceMesh(
+				analysis,
+				effectiveHourIndex,
+				colorMode,
+				metricType,
+				rangeOverride,
+				monthIndex
+			);
 			comparisonScene.add(comparisonUtciMesh);
 			
 			// Apply visibility based on viewer state
@@ -160,9 +170,15 @@
 
 		const currentViewerState = get(viewerStore);
 		const hourIndex = currentViewerState.currentHour ?? 0;
+		const monthIndex = currentViewerState.currentMonth ?? 7;
+		const effectiveHourIndex = getEffectiveHourIndex(
+			$comparisonAnalysis,
+			hourIndex,
+			monthIndex
+		);
 		const colorMode = currentViewerState.colorMode ?? 'normalized';
 		const metricType = currentViewerState.metricType ?? 'utci';
-		
+
 		// Use unified range for consistent color mapping between base and comparison
 		const rangeOverride = get(unifiedUtciRange) ?? undefined;
 
@@ -170,10 +186,11 @@
 			updateUtciSurfaceTexture(
 				comparisonUtciMesh,
 				$comparisonAnalysis,
-				hourIndex,
+				effectiveHourIndex,
 				colorMode,
 				metricType,
-				rangeOverride
+				rangeOverride,
+				monthIndex
 			);
 			
 			// Update visibility

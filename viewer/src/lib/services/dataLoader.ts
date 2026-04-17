@@ -6,7 +6,15 @@
  */
 
 import { base } from '$app/paths';
-import type { SingleHourData, FullDayData, UTCIData, Analysis, Position, HourStatistics } from '$lib/types/analysis';
+import type {
+	SingleHourData,
+	FullDayData,
+	UTCIData,
+	Analysis,
+	Position,
+	HourStatistics,
+	UtciStorage
+} from '$lib/types/analysis';
 
 // Data base path: strip /viewer/build from base path to get project root
 // e.g., /fast-utci/viewer/build -> /fast-utci
@@ -240,12 +248,16 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
  */
 export function getUTCIValue(data: UTCIData, positionIndex: number, hourIndex: number = 0): number {
 	if (data.numHours === 1) {
-		// Single hour
 		return (data as SingleHourData).utciValues[positionIndex];
-	} else {
-		// Full day
-		return (data as FullDayData).utciByHour[hourIndex][positionIndex];
 	}
+	const full = data as FullDayData;
+	if (full.utciStorage) {
+		const { buffer, numPoints, scale, numSlices } = full.utciStorage;
+		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
+		const idx = sliceIndex * numPoints + positionIndex;
+		return buffer[idx] / scale;
+	}
+	return full.utciByHour![hourIndex][positionIndex];
 }
 
 /**
@@ -264,17 +276,47 @@ export function getPosition(data: UTCIData, positionIndex: number): Position {
 }
 
 /**
- * Get all UTCI values for a specific hour
+ * Get all UTCI values for a specific hour/slice.
+ * For utciStorage, decodes on demand (allocates Float32Array).
  * @param data - UTCI data
- * @param hourIndex - Hour index (0 to numHours-1), defaults to 0
+ * @param hourIndex - Hour/slice index (0 to numHours-1), defaults to 0
  * @returns Array of UTCI values
  */
 export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Array {
 	if (data.numHours === 1) {
 		return (data as SingleHourData).utciValues;
-	} else {
-		return (data as FullDayData).utciByHour[hourIndex];
 	}
+	const full = data as FullDayData;
+	if (full.utciStorage) {
+		const { buffer, numPoints, scale, numSlices } = full.utciStorage;
+		// Clamp to valid slice index to avoid reading wrong month data
+		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
+		const out = new Float32Array(numPoints);
+		const base = sliceIndex * numPoints;
+		for (let i = 0; i < numPoints; i++) {
+			out[i] = buffer[base + i] / scale;
+		}
+		return out;
+	}
+	return full.utciByHour![hourIndex];
+}
+
+/**
+ * Get UTCI data as number[][] for export (e.g. parity artifact).
+ * For utciStorage, decodes all slices incrementally.
+ */
+export function getUtciByHourForExport(data: FullDayData): number[][] {
+	if (data.utciByHour && data.utciByHour.length > 0) {
+		return data.utciByHour.map((arr) => Array.from(arr));
+	}
+	if (data.utciStorage) {
+		const result: number[][] = [];
+		for (let i = 0; i < data.utciStorage.numSlices; i++) {
+			result.push(Array.from(getUTCIForHour(data, i)));
+		}
+		return result;
+	}
+	return [];
 }
 
 /**

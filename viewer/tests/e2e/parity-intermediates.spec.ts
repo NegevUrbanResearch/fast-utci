@@ -40,7 +40,7 @@ test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', (
 		]);
 
 		await page.goto(
-			`/debug-webgpu-utci?analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
+			`/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
 		);
 
 		await page.waitForFunction(

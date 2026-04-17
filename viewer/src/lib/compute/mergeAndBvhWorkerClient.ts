@@ -39,8 +39,9 @@ export const MAX_TRIANGLES_HARD_CAP = 2_000_000;
 /** Above this grid point count we reject to prevent runaway memory/time. */
 export const MAX_GRID_POINTS_GUARD = 600_000;
 
-/** Soft byte budget; reject before payload copy if estimate exceeds this. */
-export const DEFAULT_MAX_ESTIMATED_BYTES = 768 * 1024 * 1024;
+/** Soft byte budget; reject before payload copy if estimate exceeds this.
+ * 1.2 GB allows 2m grid for large models (e.g. Ness Tziona); device limits handle buffer size. */
+export const DEFAULT_MAX_ESTIMATED_BYTES = 1280 * 1024 * 1024;
 
 /** Copy typed arrays in chunks so large meshes never block one long task. */
 const COPY_CHUNK_FLOATS = 100_000;
@@ -121,17 +122,18 @@ function estimateBudget(params: {
 	const gridBytes = estimatedGridPoints * 3 * 4;
 	const solarBytes = estimatedGridPoints * totalHours * 4;
 	const skyBytes = estimatedGridPoints * 4;
-	const utciBytes = estimatedGridPoints * totalHours * 4;
+	// UTCI stored as Int16 (scale 100), not Float32 - halves this portion
+	const utciBytes = estimatedGridPoints * totalHours * 2;
 	const readbackAndStatsBytes = estimatedGridPoints * (4 + 12);
 
 	return Math.ceil(
 		meshBytes +
-		workerMergeAndBvhBytes +
-		gridBytes +
-		solarBytes +
-		skyBytes +
-		utciBytes +
-		readbackAndStatsBytes
+			workerMergeAndBvhBytes +
+			gridBytes +
+			solarBytes +
+			skyBytes +
+			utciBytes +
+			readbackAndStatsBytes
 	);
 }
 

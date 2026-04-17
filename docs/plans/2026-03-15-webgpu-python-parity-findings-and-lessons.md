@@ -47,6 +47,25 @@ Result:
   - `_webgpu_utci.json` (`utciByHour` pointwise + positions)
 - Reference intermediate loader validates optional ERF/DMRT arrays when present.
 - Contract tests fail fast on malformed payloads.
+- Baseline regeneration recipe:
+  ```bash
+  python scripts/export_ben_gurion_intermediates.py --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday --model data/3d_models/Ben-Gurion/original_with_layers.glb
+  ```
+- Lightweight `_mrt.json` schema check:
+  ```bash
+  python - <<'PY'
+  import json
+  from pathlib import Path
+
+  p = Path("data/analyses/Ben-Gurion/20250815_grid_2m_fullday_mrt.json")
+  data = json.loads(p.read_text(encoding="utf-8"))
+  required = {"mrt", "short_erf", "long_erf", "short_dmrt", "long_dmrt"}
+  assert required.issubset(data), f"missing keys: {sorted(required - set(data))}"
+  assert all(isinstance(data[k], list) for k in required), "expected array values"
+  print("ok")
+  PY
+  ```
+- Default MRT export stage behavior is `solar`, `sky`, and `mrt`.
 
 ## 2) Strict Compare Behavior
 
@@ -197,4 +216,3 @@ Interpretation:
 - `viewer/scripts/diagnose-solar-flips.ts`
 - `viewer/scripts/diagnose-mrt-worst-cell.ts`
 - `viewer/tests/e2e/diagnose-solar-ray-oracle.spec.ts`
-

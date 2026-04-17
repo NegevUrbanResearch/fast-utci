@@ -7,6 +7,8 @@ const DEFAULT_BASE_PATH = 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday';
 const PARITY_BASE_PATH = process.env.PARITY_BASE_PATH || DEFAULT_BASE_PATH;
 const basePath = resolve(REPO_ROOT, PARITY_BASE_PATH);
 const COLLECT_WAIT_MS = 180_000;
+const TOP_N = Math.max(1, Number.parseInt(process.env.PARITY_RAY_ORACLE_TOP_N ?? '3', 10) || 3);
+const ENABLE_BRUTE_ORACLE = process.env.PARITY_RAY_ORACLE_BRUTE === '1';
 
 type FlipCell = {
 	flatIndex: number;
@@ -23,11 +25,11 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 		const flipJson = JSON.parse(readFileSync(flipPath, 'utf8')) as {
 			topAffectedCells?: FlipCell[];
 		};
-		const topCells = (flipJson.topAffectedCells ?? []).slice(0, 10);
+		const topCells = (flipJson.topAffectedCells ?? []).slice(0, TOP_N);
 		expect(topCells.length, `No flip cells found in ${flipPath}`).toBeGreaterThan(0);
 
 		const analysisSlug = PARITY_BASE_PATH.replace(/^data[/\\]analyses[/\\]/, '').replace(/\\/g, '/');
-		await page.goto(`/debug-webgpu-utci?analysis=${encodeURIComponent(analysisSlug)}`);
+		await page.goto(`/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`);
 
 		await page.waitForFunction(
 			() => {
@@ -48,7 +50,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 			{ timeout: COLLECT_WAIT_MS, polling: 1000 }
 		);
 
-		const oracleRows = await page.evaluate((cells) => {
+		const oracleRows = await page.evaluate(({ cells, enableBruteOracle }) => {
 			const w = window as unknown as {
 				__parityModel__?: {
 					matrixWorld?: { elements: number[] };
@@ -215,7 +217,9 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 					v.normalize();
 					const rc = new THREE.Raycaster(origin, v, 0, 1_000_000);
 					cpuHitByVariant[name] = rc.intersectObject(model, true).length > 0;
-					bruteByVariant[name] = bruteForceOcclusion(origin, v);
+					if (enableBruteOracle) {
+						bruteByVariant[name] = bruteForceOcclusion(origin, v);
+					}
 				}
 				return {
 					...cell,
@@ -230,7 +234,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 						? { x: first.point.x, y: first.point.y, z: first.point.z }
 						: null,
 					cpuHitByVariant,
-					cpuBruteByVariant: bruteByVariant
+					...(enableBruteOracle ? { cpuBruteByVariant: bruteByVariant } : {})
 				};
 			});
 			for (const entry of touchedMaterials) {
@@ -242,7 +246,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 				}
 			}
 			return rows;
-		}, topCells);
+		}, { cells: topCells, enableBruteOracle: ENABLE_BRUTE_ORACLE });
 
 		const outPath = `${basePath}_solar_ray_oracle.json`;
 		writeFileSync(

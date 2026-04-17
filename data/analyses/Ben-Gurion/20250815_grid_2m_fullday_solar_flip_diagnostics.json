@@ -26,33 +26,33 @@
       "webgpuSolarBinary": 1,
       "refMarginToThreshold": -0.5,
       "webgpuMarginToThreshold": 0.5,
-      "refShortErf": 20.545873641967773,
+      "refShortErf": null,
       "webgpuShortErf": 95.70834350585938,
-      "shortErfDiff": 75.1624698638916,
-      "refShortDmrt": 4.713761806488037,
+      "shortErfDiff": null,
+      "refShortDmrt": null,
       "webgpuShortDmrt": 21.95800018310547,
-      "shortDmrtDiff": 17.24423837661743,
-      "refLongErf": -15.017805099487305,
-      "webgpuLongErf": -15.642952919006348,
-      "longErfDiff": -0.625147819519043,
-      "refLongDmrt": -3.4454779624938965,
-      "webgpuLongDmrt": -3.5889031887054443,
-      "longDmrtDiff": -0.14342522621154785,
+      "shortDmrtDiff": null,
+      "refLongErf": null,
+      "webgpuLongErf": -14.99205207824707,
+      "longErfDiff": null,
+      "refLongDmrt": null,
+      "webgpuLongDmrt": -3.4395694732666016,
+      "longDmrtDiff": null,
       "refMrt": 33.06828308105469,
-      "webgpuMrt": 49.169097900390625,
-      "mrtDiff": 16.100814819335938,
+      "webgpuMrt": 50.31842803955078,
+      "mrtDiff": 17.250144958496094,
       "refSkyAtPoint": 0.635520339012146,
       "webgpuSkyAtPoint": 0.6344313912018175,
       "skyDiffAtPoint": -0.0010889478103285333,
-      "score": 92.40670824050903
+      "score": 17.250144958496094
     }
   ],
   "topPointIndices": [
     {
       "pointIndex": 31079,
       "flipCount": 1,
-      "maxAbsShortErfDiff": 75.1624698638916,
-      "maxAbsShortDmrtDiff": 17.24423837661743
+      "maxAbsShortErfDiff": 0,
+      "maxAbsShortDmrtDiff": 0
     }
   ]
 }

@@ -50,6 +50,8 @@
 		MAX_GRID_POINTS_GUARD,
 	} from "$lib/compute/mergeAndBvhWorkerClient";
 	import { getTooltipData } from "$lib/services/tooltipService";
+	import { getUtciByHourForExport } from "$lib/services/dataLoader";
+	import { getEffectiveHourIndex } from "$lib/utils/effectiveHourIndex";
 	import {
 		sceneConfigStore,
 		updateSceneConfigFromBounds,
@@ -93,10 +95,14 @@
 	let lastPipeline: UTCIComputePipeline | null = null;
 	/** AbortController for the current live run; aborted when project/model changes so only one run is active. */
 	let liveAbortController: AbortController | null = null;
+	/** Progress during 12-month compute: { current, total } or null. */
+	let liveComputeProgress: { current: number; total: number } | null = null;
 
 	const DEFAULT_ANALYSIS_ID = getDefaultAnalysisId();
 	let analysisId: string = DEFAULT_ANALYSIS_ID;
 	let mounted = false;
+	/** When true (?parity=1), use numMonths=1 to preserve single-month parity/e2e behavior. */
+	$: parityMode = $page.url.searchParams.get("parity") === "1";
 
 	// Tooltip state
 	let tooltipVisible = false;
@@ -118,7 +124,8 @@
 	let liveLoading = false;
 	let liveError: string | null = null;
 	let lastLiveKey: string | null = null;
-	const LIVE_COMPUTE_WATCHDOG_MS = 60_000;
+	// Large models (e.g. Ness Tziona) with 12 months need several minutes for 288-slice readback
+	const LIVE_COMPUTE_WATCHDOG_MS = 300_000;
 	let liveComputeWatchdog: ReturnType<typeof setTimeout> | null = null;
 	let liveRunCounter = 0;
 	type ParityCollectionPhase =
@@ -332,21 +339,60 @@
 
 		try {
 			setParityStatus(runId, "running", "preflight");
-			// Single-pass preflight + payload prep with cooperative yielding.
-			const { meshes, totalTriangles, preflight } = await prepareMeshPayloadForWorkerAsync(model, {
-				signal,
-				gridResolution,
-				numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-				numMonths: 1,
-				hasWorkerSupport: typeof Worker !== "undefined",
-			});
+			// Try progressively coarser grid resolutions when budget is exceeded.
+			const GRID_FALLBACKS = [2, 4, 6, 8];
+			const baseGrid = base.metadata.grid_size || 2;
+			const startIdx = GRID_FALLBACKS.findIndex((r) => r >= baseGrid);
+			const resolutionsToTry =
+				startIdx >= 0 ? GRID_FALLBACKS.slice(startIdx) : [Math.max(baseGrid, 8)];
+
+			let meshes: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>["meshes"];
+			let totalTriangles: number;
+			let preflight: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>["preflight"];
+			let effectiveGridResolution = baseGrid;
+			let lastErr: unknown = null;
+
+			for (const tryRes of resolutionsToTry) {
+				try {
+					const result = await prepareMeshPayloadForWorkerAsync(model, {
+						signal,
+						gridResolution: tryRes,
+						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
+						numMonths: parityMode ? 1 : 12,
+						hasWorkerSupport: typeof Worker !== "undefined",
+					});
+					meshes = result.meshes;
+					totalTriangles = result.totalTriangles;
+					preflight = result.preflight;
+					effectiveGridResolution = tryRes;
+					break;
+				} catch (err) {
+					lastErr = err;
+					const msg = err instanceof Error ? err.message : String(err);
+					if (msg.includes("exceeds budget") && tryRes < resolutionsToTry[resolutionsToTry.length - 1]) {
+						continue;
+					}
+					throw err;
+				}
+			}
+
+			if (!meshes! || !preflight!) {
+				throw lastErr ?? new Error("Preflight failed");
+			}
+
 			emitComputeTelemetry("live.preflight.done", {
 				data: {
 					totalTriangles,
 					estimatedGridPoints: preflight.estimatedGridPoints,
 					estimatedBytes: preflight.estimatedBytes,
+					effectiveGridResolution,
 				},
 			});
+			if (effectiveGridResolution !== baseGrid) {
+				console.warn(
+					`[DEBUG UTCI] Memory budget: using ${effectiveGridResolution}m grid (requested ${baseGrid}m) for ~${(preflight.estimatedBytes / (1024 * 1024)).toFixed(0)} MB estimate`
+				);
+			}
 
 			setParityStatus(runId, "running", "epw");
 			const response = await fetch(epwUrl);
@@ -370,7 +416,7 @@
 				try {
 					workerResult = await runMergeAndBvhInWorker({
 						meshes,
-						gridResolution,
+						gridResolution: effectiveGridResolution,
 						zHeight,
 						signal,
 						maxGridPoints: MAX_GRID_POINTS_GUARD,
@@ -403,19 +449,28 @@
 				baseMetadata: base.metadata,
 				workerResult,
 				epwContent,
-				gridResolution,
+				gridResolution: effectiveGridResolution,
 				zHeight,
 				numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-				startMonth: 8,
+				startMonth: parityMode ? 8 : 1,
+				numMonths: parityMode ? 1 : 12
 			};
 
 			setParityStatus(runId, "running", "runAll");
+			liveComputeProgress = null;
 			const result = await createLiveUtciAnalysisFromCompute(
 				analysisParams,
-				{ pipeline, signal },
+				{
+					pipeline,
+					signal,
+					onProgress: (completed, total) => {
+						liveComputeProgress = { current: completed, total };
+					},
+				},
 			);
 
 			liveAnalysis = result;
+			liveComputeProgress = null;
 
 			// Treat the live WebGPU analysis as the comparison analysis so that
 			// unifiedUtciRange can provide a shared color scale across .bin and
@@ -426,8 +481,12 @@
 				comparisonAnalysis: result,
 			}));
 
-			// Expose results and intermediates for e2e validation (statistical comparison; grid sizes may differ).
-			if (result.data && "utciByHour" in result.data) {
+			// Expose results and intermediates for e2e validation only when ?parity=1.
+			// Normal 12-month mode skips this to avoid OOM: decoding 288 slices to number[][]
+			// plus solar/MRT readbacks would add 400+ MB for large grids.
+			if (parityMode) {
+			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
+			if (fullDayData && (fullDayData.utciByHour || fullDayData.utciStorage)) {
 				const win = window as unknown as {
 					__parityResults__?: unknown;
 					__parityIntermediates__?: {
@@ -443,13 +502,13 @@
 					};
 				};
 				win.__parityResults__ = {
-					utciByHour: result.data.utciByHour.map((arr) => Array.from(arr)),
-					positions: Array.from(result.data.positions),
+					utciByHour: getUtciByHourForExport(fullDayData),
+					positions: Array.from(fullDayData.positions),
 					computeGridPointsWorld:
 						(result as unknown as { __computeGridPointsWorld?: number[] })
 							.__computeGridPointsWorld ?? null,
-					numPoints: result.data.numPositions,
-					numHours: result.data.utciByHour.length,
+					numPoints: fullDayData.numPositions,
+					numHours: fullDayData.numHours,
 				};
 				if (
 					pipeline.readSolarExposureFull &&
@@ -458,8 +517,8 @@
 				) {
 					setParityStatus(runId, "running", "readback");
 					const numPoints = result.data.numPositions;
-					const numHours = result.data.utciByHour.length;
-					const numMonths = 1;
+					const numMonths = result.metadata.num_months ?? 1;
+					const numHours = 24;
 					try {
 						const readPromises: [
 							Promise<Float32Array>,
@@ -496,6 +555,7 @@
 								: {}),
 							numPoints,
 							numHours,
+							numMonths,
 						};
 						const debugWin = win as unknown as {
 							__parityDebug__?: {
@@ -550,9 +610,11 @@
 						);
 					}
 				}
-				setParityStatus(runId, "success", "done");
 			}
+			}
+			setParityStatus(runId, "success", "done");
 		} catch (error) {
+			liveComputeProgress = null;
 			if (error instanceof DOMException && error.name === "AbortError") {
 				return;
 			}
@@ -625,21 +687,33 @@
 
 		const canvasRect = canvasElement.getBoundingClientRect();
 
-		// Decide which UTCI mesh and analysis to sample based on curtain
-		// position, so hover works naturally on both sides.
-		const relativeX = (event.clientX - canvasRect.left) / canvasRect.width;
-		const curtain = get(curtainPosition);
-
+		const comparing = get(comparisonStore).isComparing;
 		let targetMesh: Mesh | null = null;
 		let targetAnalysis: Analysis | null = null;
 
-		if (relativeX <= curtain) {
-			targetMesh = utciMesh;
-			targetAnalysis = $analysisStore;
+		if (comparing) {
+			const relativeX = (event.clientX - canvasRect.left) / canvasRect.width;
+			const curtain = get(curtainPosition);
+			if (relativeX <= curtain) {
+				targetMesh = utciMesh;
+				targetAnalysis = $analysisStore;
+			} else {
+				targetMesh = liveUtciMesh;
+				targetAnalysis = liveAnalysis;
+			}
 		} else {
 			targetMesh = liveUtciMesh;
 			targetAnalysis = liveAnalysis;
 		}
+
+		const hourForTooltip =
+			targetAnalysis === liveAnalysis
+				? getEffectiveHourIndex(
+						targetAnalysis,
+						$viewerStore.currentHour,
+						$viewerStore.currentMonth ?? 7,
+					)
+				: $viewerStore.currentHour;
 
 		const tooltipData = getTooltipData(
 			event,
@@ -647,7 +721,7 @@
 			targetMesh,
 			targetAnalysis,
 			$viewerStore.metricType,
-			$viewerStore.currentHour,
+			hourForTooltip,
 			canvasRect,
 		);
 
@@ -691,6 +765,10 @@
 	});
 
 	$: currentProjectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
+
+	$: if (!$comparisonStore.isComparing && utciMesh) {
+		utciMesh = null;
+	}
 </script>
 
 <svelte:head></svelte:head>
@@ -767,9 +845,13 @@
 		</aside>
 
 		<main class="app-main" bind:this={mainViewportElement}>
-			<!-- Color Legend positioned at bottom right of screen -->
+			<!-- Color Legend: when not comparing, show live layer range -->
 			<div class="legend-container">
-				<ColorLegend />
+				<ColorLegend
+					displayAnalysis={
+						$comparisonStore.isComparing ? null : liveAnalysis
+					}
+				/>
 			</div>
 
 			<!-- Metric Tooltip -->
@@ -801,7 +883,11 @@
 				>
 					<div class="spinner"></div>
 					<div class="loading-text">
-						{modelLoading ? "Preparing model…" : "Computing UTCI…"}
+						{modelLoading
+							? "Preparing model…"
+							: liveComputeProgress
+								? `Computing month ${liveComputeProgress.current}/${liveComputeProgress.total}…`
+								: "Computing UTCI…"}
 					</div>
 				</div>
 			{/if}
@@ -876,14 +962,16 @@
 
 					{#if model}
 						<GridHelper {model} visible={gridVisible} />
-						<!-- Left: .bin-backed UTCI -->
-						<UTCIPointCloud
-							analysis={$analysisStore}
-							{model}
-							bind:utciSurface={utciMesh}
-						/>
+						<!-- Left: .bin-backed UTCI (only when comparison curtain is active) -->
+						{#if $comparisonStore.isComparing}
+							<UTCIPointCloud
+								analysis={$analysisStore}
+								{model}
+								bind:utciSurface={utciMesh}
+							/>
+						{/if}
 
-						<!-- Right: live-computed UTCI using adapter -->
+						<!-- Right: live-computed UTCI (always when available) -->
 						{#if liveAnalysis}
 							<UTCIPointCloud
 								analysis={liveAnalysis}
@@ -892,7 +980,7 @@
 							/>
 						{/if}
 
-						{#if utciMesh && liveUtciMesh && cameraRef}
+						{#if $comparisonStore.isComparing && utciMesh && liveUtciMesh && cameraRef}
 							<DebugUtciScissor
 								baseCamera={cameraRef}
 								binUtciMesh={utciMesh}
@@ -903,11 +991,12 @@
 				{/if}
 			</Scene>
 
-			<!-- Comparison curtain overlay reused for visual UX -->
-			<ComparisonCurtain
-				containerElement={mainViewportElement}
-				comparisonScenarioName="Live WebGPU UTCI"
-			/>
+			{#if $comparisonStore.isComparing}
+				<ComparisonCurtain
+					containerElement={mainViewportElement}
+					comparisonScenarioName="Live WebGPU UTCI"
+				/>
+			{/if}
 		</main>
 	</div>
 </div>

@@ -1,43 +1,49 @@
 <script lang="ts">
 	import { analysisStore } from "$lib/stores/analysisStore";
+	import { comparisonStore, unifiedUtciRange } from "$lib/stores/comparisonStore";
 	import { viewerStore, setMetricType } from "$lib/stores/viewerStore";
 	import {
 		LADYBUG_NUANCED_COLORS,
 		SHADING_INDEX_COLORS,
 		createShadingIndexLegendData,
 	} from "$lib/services/colorScale";
+	import { getUtciRangeForDisplay } from "$lib/utils/effectiveHourIndex";
+	import type { Analysis } from "$lib/types/analysis";
 	import type { MetricType } from "$lib/types/viewer";
+
+	/** When set (e.g. debug page showing only live layer), use this for legend range instead of analysisStore. */
+	export let displayAnalysis: Analysis | null = null;
 
 	let utciMin = 0;
 	let utciMax = 100;
 	let shadingIndexMin = 0;
 	let shadingIndexMax = 1;
 
-	$: if ($analysisStore) {
+	$: effectiveAnalysis = displayAnalysis ?? $analysisStore;
+
+	$: if (effectiveAnalysis) {
 		if ($viewerStore.metricType === "utci") {
-			if ($viewerStore.colorMode === "normalized") {
-				utciMin = $analysisStore.metadata.utci_range.min;
-				utciMax = $analysisStore.metadata.utci_range.max;
+			const inComparison = $comparisonStore.isComparing && $unifiedUtciRange;
+			if (inComparison) {
+				utciMin = $unifiedUtciRange.utciMin;
+				utciMax = $unifiedUtciRange.utciMax;
 			} else {
-				const hourStat =
-					$analysisStore.metadata.hour_statistics?.[
-						$viewerStore.currentHour
-					];
-				if (hourStat) {
-					utciMin = hourStat.min;
-					utciMax = hourStat.max;
-				} else {
-					utciMin = $analysisStore.metadata.utci_range.min;
-					utciMax = $analysisStore.metadata.utci_range.max;
-				}
+				const range = getUtciRangeForDisplay(
+					effectiveAnalysis.metadata,
+					$viewerStore.colorMode,
+					$viewerStore.currentHour,
+					$viewerStore.currentMonth ?? 7
+				);
+				utciMin = range.utciMin;
+				utciMax = range.utciMax;
 			}
 		} else {
 			// Shading Index
-			if ($analysisStore.metadata.shading_index_range) {
+			if (effectiveAnalysis.metadata.shading_index_range) {
 				shadingIndexMin =
-					$analysisStore.metadata.shading_index_range.min;
+					effectiveAnalysis.metadata.shading_index_range.min;
 				shadingIndexMax =
-					$analysisStore.metadata.shading_index_range.max;
+					effectiveAnalysis.metadata.shading_index_range.max;
 			}
 		}
 	}
@@ -45,7 +51,7 @@
 	// Make these reactive to ensure updates
 	$: isUTCI = $viewerStore.metricType === "utci";
 	$: isShadingIndex = $viewerStore.metricType === "shading_index";
-	$: hasShadingIndex = $analysisStore?.metadata.has_shading_index ?? false;
+	$: hasShadingIndex = effectiveAnalysis?.metadata.has_shading_index ?? false;
 
 	function selectUTCI() {
 		if (!isUTCI) {
@@ -96,7 +102,7 @@
 		shadingIndexLabels.length > 0 ? [...shadingIndexLabels].reverse() : [];
 </script>
 
-{#if $analysisStore}
+{#if effectiveAnalysis}
 	<div class="color-legend">
 		<div class="legend-header">
 			<div class="title">

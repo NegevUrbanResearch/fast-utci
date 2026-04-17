@@ -5,7 +5,7 @@
  */
 
 import { base } from '$app/paths';
-import { loadBinaryData, calculateStatistics } from './dataLoader';
+import { loadBinaryData, calculateStatistics, getUTCIForHour } from './dataLoader';
 import type { Analysis } from '$lib/types/analysis';
 
 // Data base path: strip /viewer/build from base path to get project root
@@ -90,8 +90,9 @@ export function calculateAvgMeanDiffAllHours(
 	let totalMeanDiff = 0;
 	let validHours = 0;
 
-	for (let hourIndex = 0; hourIndex < 24; hourIndex++) {
-		const analysisValues = analysis.data.utciByHour[hourIndex];
+	const numHours = Math.min(24, analysis.data.numHours);
+	for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
+		const analysisValues = getUTCIForHour(analysis.data, hourIndex);
 		const validationValues = validation.utciByHour[hourIndex];
 
 		if (analysisValues && validationValues) {
@@ -120,10 +121,9 @@ export function compareWithValidation(
 
 	if (analysis.data.numHours === 1) {
 		analysisValues = analysis.data.utciValues;
-		// For single hour analysis, use the specific hour from metadata
 		validationHourIndex = analysis.metadata.hours[0] as number;
 	} else {
-		analysisValues = analysis.data.utciByHour[hourIndex];
+		analysisValues = getUTCIForHour(analysis.data, hourIndex);
 		validationHourIndex = hourIndex;
 	}
 

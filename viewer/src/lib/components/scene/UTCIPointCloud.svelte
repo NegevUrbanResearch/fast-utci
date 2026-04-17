@@ -6,6 +6,7 @@
 		createUtciSurfaceMesh,
 		updateUtciSurfaceTexture
 	} from '$lib/services/pointCloudService';
+	import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 	import { viewerStore } from '$lib/stores/viewerStore';
 	import { unifiedUtciRange } from '$lib/stores/comparisonStore';
 	import type { Group, Mesh, MeshBasicMaterial } from 'three';
@@ -41,6 +42,7 @@
 	// Track last update state to avoid redundant texture updates
 	let lastUpdateState: {
 		hour: number;
+		month: number;
 		colorMode: string;
 		metricType: string;
 		unifiedRangeMin: number | null;
@@ -57,6 +59,7 @@
 	): boolean {
 		const currentState = {
 			hour: viewerState.currentHour,
+			month: viewerState.currentMonth ?? 7,
 			colorMode: viewerState.colorMode,
 			metricType: viewerState.metricType ?? 'utci',
 			unifiedRangeMin: unifiedRange?.utciMin ?? null,
@@ -70,6 +73,7 @@
 
 		const changed =
 			lastUpdateState.hour !== currentState.hour ||
+			lastUpdateState.month !== currentState.month ||
 			lastUpdateState.colorMode !== currentState.colorMode ||
 			lastUpdateState.metricType !== currentState.metricType ||
 			lastUpdateState.unifiedRangeMin !== currentState.unifiedRangeMin ||
@@ -95,18 +99,25 @@
 		} else if (analysis !== lastAnalysis) {
 			// Analysis changed - recreate the mesh
 			disposeUtciSurface();
-			utciSurface = createUtciSurfaceMesh(
+			const effectiveHourIndex = getEffectiveHourIndex(
 				analysis,
 				viewerState?.currentHour ?? 0,
+				viewerState?.currentMonth ?? 7
+			);
+			utciSurface = createUtciSurfaceMesh(
+				analysis,
+				effectiveHourIndex,
 				viewerState?.colorMode ?? 'normalized',
 				viewerState?.metricType ?? 'utci',
-				rangeOverride
+				rangeOverride,
+				viewerState?.currentMonth ?? 7
 			);
 			scene.add(utciSurface);
 			lastAnalysis = analysis;
 			// Update state tracking
 			lastUpdateState = {
 				hour: viewerState?.currentHour ?? 0,
+				month: viewerState?.currentMonth ?? 7,
 				colorMode: viewerState?.colorMode ?? 'normalized',
 				metricType: viewerState?.metricType ?? 'utci',
 				unifiedRangeMin: currentUnifiedRange?.utciMin ?? null,
@@ -115,13 +126,19 @@
 			invalidate();
 		} else if (utciSurface && viewerState && hasStateChanged(viewerState, currentUnifiedRange)) {
 			// Viewer state or unified range changed - update texture
+			const effectiveHourIndex = getEffectiveHourIndex(
+				analysis,
+				viewerState.currentHour,
+				viewerState.currentMonth ?? 7
+			);
 			updateUtciSurfaceTexture(
 				utciSurface,
 				analysis,
-				viewerState.currentHour,
+				effectiveHourIndex,
 				viewerState.colorMode,
 				viewerState.metricType ?? 'utci',
-				rangeOverride
+				rangeOverride,
+				viewerState.currentMonth ?? 7
 			);
 			invalidate();
 		}

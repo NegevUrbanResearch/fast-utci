@@ -98,6 +98,12 @@ export interface LiveUtciAnalysisParams {
 	 * Defaults to 8 (August) to match existing .bin analyses.
 	 */
 	startMonth?: number;
+	/**
+	 * Number of representative months to compute (1 = single day, 12 = full year).
+	 * When 12, uses startMonth=1 and 15th of each month; omit sunVectorsFixture so
+	 * ComputeManager computes per-month sun vectors from EPW.
+	 */
+	numMonths?: number;
 }
 
 const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
@@ -108,6 +114,10 @@ export interface LiveUtciAnalysisOptions {
 	 * In production this should be a WebGPU-backed pipeline; in tests a fake can be injected.
 	 */
 	pipeline: UTCIComputePipeline;
+	/**
+	 * Optional progress callback during 12-month readback: (completed, total).
+	 */
+	onProgress?: (completed: number, total: number) => void;
 	/**
 	 * Optional AbortSignal to cancel the run when the user switches project/model.
 	 * When aborted, the promise rejects with DOMException('Aborted', 'AbortError').
@@ -139,10 +149,12 @@ export async function createLiveUtciAnalysisFromCompute(
 		gridResolution = baseMetadata.grid_size || 2,
 		zHeight = 0.9,
 		numHours = baseMetadata.hours?.length ?? 24,
-		startMonth = 8 // August 15th to match existing .bin analyses
+		startMonth: startMonthParam,
+		numMonths: numMonthsParam
 	} = params;
 
-	const numMonths = 1;
+	const numMonths = numMonthsParam ?? 1;
+	const startMonth = numMonths > 1 ? 1 : (startMonthParam ?? 8); // 12-month: Jan; single: Aug to match .bin
 
 	const computeManager = new ComputeManager(options.pipeline, {
 		numMonths,
@@ -191,11 +203,15 @@ export async function createLiveUtciAnalysisFromCompute(
 	// Python reference intermediates are computed from human sample points
 	// above the grid position (pt_count=1 at height/2 ~= 0.9 m).
 	const computeGridHeight = baseGridHeight + PARITY_SAMPLE_HEIGHT_OFFSET_M;
-	const sunVectorsFixture = buildSunVectorsFixtureFromMetadata({
-		baseMetadata,
-		numHours,
-		numMonths
-	});
+	// When numMonths > 1, omit sunVectorsFixture so ComputeManager computes real sun vectors from EPW per month.
+	const sunVectorsFixture =
+		numMonths === 1
+			? buildSunVectorsFixtureFromMetadata({
+					baseMetadata,
+					numHours,
+					numMonths
+				})
+			: undefined;
 
 	const result = await computeManager.initFromModelAndWeather({
 		serializedBvh: workerResult.serializedBvh,
@@ -232,69 +248,80 @@ export async function createLiveUtciAnalysisFromCompute(
 		positions[i * 3 + 2] = az;
 	}
 
-	// 3. Read back UTCI slices for each analysis hour.
-	const utciByHour: Float32Array[] = [];
+	// 3. Read back UTCI slices and store in compact Int16 format.
+	// Scale 100 = 0.01 C precision (avoids visible banding); UTCI -40..+50 C fits in Int16.
+	// Single contiguous buffer halves memory vs 288 Float32Arrays and reduces fragmentation.
+	const totalSlices = numMonths * numHours;
+	const UTCI_STORAGE_SCALE = 100;
+	const utciStorage = new Int16Array(totalSlices * effectiveNumPoints);
 	const hourStatistics: HourStatistics[] = [];
 
 	let globalMin = Number.POSITIVE_INFINITY;
 	let globalMax = Number.NEGATIVE_INFINITY;
 
-	for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
-		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-		const hourReadStartedAt = performance.now();
-		const slice = await computeManager.getUtcisForMonthHour({
-			monthIndex: 0,
-			hourIndex,
-			numPoints: effectiveNumPoints,
-			numMonths,
-			numHours
-		});
+	for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
+		for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			const hourReadStartedAt = performance.now();
+			const slice = await computeManager.getUtcisForMonthHour({
+				monthIndex: monthOffset,
+				hourIndex,
+				numPoints: effectiveNumPoints,
+				numMonths,
+				numHours
+			});
 
-		if (slice.length !== effectiveNumPoints) {
-			throw new Error(
-				`UTCI slice length mismatch at hour ${hourIndex}: expected ${effectiveNumPoints}, got ${slice.length}.`
-			);
-		}
-		const effectiveSlice = slice;
-
-		let hourMin = Number.POSITIVE_INFINITY;
-		let hourMax = Number.NEGATIVE_INFINITY;
-		let sum = 0;
-		const CHUNK_SIZE = 20_000;
-
-		for (let i = 0; i < effectiveNumPoints; i++) {
-			const value = effectiveSlice[i];
-			if (!Number.isFinite(value)) continue;
-			if (value < hourMin) hourMin = value;
-			if (value > hourMax) hourMax = value;
-			sum += value;
-			if (i > 0 && i % CHUNK_SIZE === 0) {
-				if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-				await yieldToMain();
+			if (slice.length !== effectiveNumPoints) {
+				throw new Error(
+					`UTCI slice length mismatch at month ${monthOffset} hour ${hourIndex}: expected ${effectiveNumPoints}, got ${slice.length}.`
+				);
 			}
+
+			const sliceIdx = monthOffset * numHours + hourIndex;
+			const base = sliceIdx * effectiveNumPoints;
+
+			let hourMin = Number.POSITIVE_INFINITY;
+			let hourMax = Number.NEGATIVE_INFINITY;
+			let sum = 0;
+			const CHUNK_SIZE = 20_000;
+
+			for (let i = 0; i < effectiveNumPoints; i++) {
+				const value = slice[i];
+				if (!Number.isFinite(value)) continue;
+				if (value < hourMin) hourMin = value;
+				if (value > hourMax) hourMax = value;
+				sum += value;
+				// Encode as Int16: clamp to safe range
+				const encoded = Math.round(value * UTCI_STORAGE_SCALE);
+				utciStorage[base + i] = Math.max(-32768, Math.min(32767, encoded));
+				if (i > 0 && i % CHUNK_SIZE === 0) {
+					if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+					await yieldToMain();
+				}
+			}
+
+			if (!Number.isFinite(hourMin) || !Number.isFinite(hourMax)) {
+				hourMin = 0;
+				hourMax = 0;
+			}
+
+			const mean = effectiveNumPoints > 0 ? sum / effectiveNumPoints : 0;
+
+			if (hourMin < globalMin) globalMin = hourMin;
+			if (hourMax > globalMax) globalMax = hourMax;
+
+			hourStatistics.push({
+				min: hourMin,
+				max: hourMax,
+				mean
+			});
+
+			emitComputeTelemetry('utci.readback.done', {
+				ms: performance.now() - hourReadStartedAt,
+				data: { monthIndex: monthOffset, hourIndex, numPoints: effectiveNumPoints }
+			});
 		}
-
-		if (!Number.isFinite(hourMin) || !Number.isFinite(hourMax)) {
-			hourMin = 0;
-			hourMax = 0;
-		}
-
-		const mean = effectiveNumPoints > 0 ? sum / effectiveNumPoints : 0;
-
-		if (hourMin < globalMin) globalMin = hourMin;
-		if (hourMax > globalMax) globalMax = hourMax;
-
-		hourStatistics.push({
-			min: hourMin,
-			max: hourMax,
-			mean
-		});
-
-		utciByHour.push(effectiveSlice);
-		emitComputeTelemetry('utci.readback.done', {
-			ms: performance.now() - hourReadStartedAt,
-			data: { hourIndex, numPoints: effectiveNumPoints }
-		});
+		options.onProgress?.(monthOffset + 1, numMonths);
 	}
 
 	if (!Number.isFinite(globalMin) || !Number.isFinite(globalMax) || globalMin === globalMax) {
@@ -314,6 +341,7 @@ export async function createLiveUtciAnalysisFromCompute(
 		...baseMetadata,
 		analysis_type: 'full_day',
 		num_positions: effectiveNumPoints,
+		num_months: numMonths,
 		hours,
 		utci_range: {
 			min: globalMin,
@@ -328,9 +356,14 @@ export async function createLiveUtciAnalysisFromCompute(
 
 	const liveData: FullDayData = {
 		numPositions: effectiveNumPoints,
-		numHours,
+		numHours: totalSlices,
 		positions,
-		utciByHour
+		utciStorage: {
+			buffer: utciStorage,
+			numPoints: effectiveNumPoints,
+			numSlices: totalSlices,
+			scale: UTCI_STORAGE_SCALE
+		}
 	};
 
 	const analysis: Analysis = {

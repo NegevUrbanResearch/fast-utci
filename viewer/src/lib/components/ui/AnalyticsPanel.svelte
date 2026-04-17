@@ -17,7 +17,7 @@
 		compareWithValidation,
 		calculateAvgMeanDiffAllHours,
 	} from "$lib/services/validationService";
-	import { getShadingIndex } from "$lib/services/dataLoader";
+	import { getShadingIndex, getUTCIForHour } from "$lib/services/dataLoader";
 	import type { ComparisonStats } from "$lib/services/validationService";
 	import type { Analysis } from "$lib/types/analysis";
 
@@ -140,7 +140,7 @@
 	/**
 	 * Calculate UTCI statistics for the current hour/selection
 	 * For single_hour: uses the single utciValues array
-	 * For full_day: uses the utciByHour array for the selected hour
+	 * For full_day: uses getUTCIForHour (handles utciStorage and utciByHour)
 	 */
 	function calculateCurrentUtciStats(
 		analysis: Analysis | null,
@@ -151,19 +151,10 @@
 		let utciValues: Float32Array;
 
 		if (analysis.metadata.analysis_type === "single_hour") {
-			// Single hour analysis - use utciValues directly
 			utciValues = (analysis.data as any).utciValues;
 		} else {
-			// Full day analysis - use utciByHour for selected hour
-			const utciByHour = (analysis.data as any).utciByHour;
-			if (
-				!utciByHour ||
-				hourIndex < 0 ||
-				hourIndex >= utciByHour.length
-			) {
-				return null;
-			}
-			utciValues = utciByHour[hourIndex];
+			if (hourIndex < 0 || hourIndex >= analysis.data.numHours) return null;
+			utciValues = getUTCIForHour(analysis.data, hourIndex);
 		}
 
 		if (!utciValues || utciValues.length === 0) return null;
