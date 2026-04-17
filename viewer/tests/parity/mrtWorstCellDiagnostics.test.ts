@@ -48,4 +48,36 @@ describe('mrtWorstCellDiagnostics helpers', () => {
 			absDiff: 2
 		});
 	});
+
+	it('adds dominant-term attribution and contribution summary fields', () => {
+		const terms: OptionalTermSeries = {
+			short_erf: {
+				ref: [10, 20],
+				webgpu: [11, 21]
+			},
+			long_erf: {
+				ref: [5, 5],
+				webgpu: [4, 14]
+			},
+			short_dmrt: {
+				ref: [2, 2],
+				webgpu: [2.5, 2.5]
+			}
+		};
+
+		const rows = extractTopMrtDeltas({
+			refMrt: [20, 30],
+			webgpuMrt: [22, 40],
+			numPositions: 1,
+			topN: 1,
+			terms
+		});
+
+		expect(rows[0]).toMatchObject({
+			index: 1,
+			dominantTerm: 'long_erf',
+			dominantTermDelta: 9,
+			termAbsSum: 10.5
+		});
+	});
 });

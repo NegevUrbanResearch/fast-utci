@@ -16,6 +16,9 @@ export interface WorstCellRow {
 	diff: number;
 	absDiff: number;
 	termDeltas: Partial<Record<MrtTermName, number>>;
+	dominantTerm?: MrtTermName;
+	dominantTermDelta?: number;
+	termAbsSum?: number;
 }
 
 function validatePairLength(ref: Float32Array | readonly number[], webgpu: readonly number[], label: string): void {
@@ -84,10 +87,19 @@ export function extractTopMrtDeltas(args: {
 		const webgpu = webgpuMrt[index];
 		const diff = webgpu - ref;
 		const termDeltas: Partial<Record<MrtTermName, number>> = {};
+		let dominantTerm: MrtTermName | undefined;
+		let dominantTermDelta: number | undefined;
+		let termAbsSum = 0;
 
 		for (const [name, series] of Object.entries(terms ?? {}) as Array<[MrtTermName, TermSeries | undefined]>) {
 			if (!series) continue;
-			termDeltas[name] = series.webgpu[index] - series.ref[index];
+			const delta = series.webgpu[index] - series.ref[index];
+			termDeltas[name] = delta;
+			termAbsSum += Math.abs(delta);
+			if (dominantTermDelta === undefined || Math.abs(delta) > Math.abs(dominantTermDelta)) {
+				dominantTerm = name;
+				dominantTermDelta = delta;
+			}
 		}
 
 		return {
@@ -97,7 +109,10 @@ export function extractTopMrtDeltas(args: {
 			webgpu,
 			diff,
 			absDiff: Math.abs(diff),
-			termDeltas
+			termDeltas,
+			dominantTerm,
+			dominantTermDelta,
+			termAbsSum
 		} satisfies WorstCellRow;
 	});
 
