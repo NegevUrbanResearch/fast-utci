@@ -167,6 +167,67 @@ Interpretation:
 - Systemic mismatch has been largely resolved.
 - Remaining strict blockers are now narrow and localized.
 
+## Final-Mile Verification Update (2026-04-18)
+
+Verification commands executed on 2026-04-18:
+
+- `npm.cmd run parity:collect-webgpu`
+- `npx.cmd tsx scripts/compare-parity.ts --mode strict --report parity-report-strict-final-mile.json`
+- `npx.cmd tsx scripts/compare-parity.ts --mode stats --report parity-report-stats-final-mile.json`
+- `npx.cmd tsx scripts/diagnose-solar-flips.ts --top 25`
+- `npx.cmd tsx scripts/diagnose-mrt-worst-cell.ts --top 15`
+- `$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe scripts/export_ben_gurion_intermediates.py --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday --model data/3d_models/Ben-Gurion/original_with_layers.glb`
+- `npx.cmd tsx scripts/compare-parity.ts --mode strict --report parity-report-strict-final-mile.json` (post-regeneration confirmation)
+
+### Strict/Stats Summary (post-regeneration)
+
+- Strict:
+  - `solar`: FAIL (`rmse=0.00063`, `maxError=1.0000`)
+  - `sky`: PASS
+  - `mrt`: FAIL (`rmse=0.01665`, `maxError=17.2501`)
+  - `short_erf`: FAIL (`rmse=0.08372`, `maxError=75.1625`)
+  - `long_erf`: PASS
+  - `short_dmrt`: FAIL (`rmse=0.01921`, `maxError=17.2442`)
+  - `long_dmrt`: PASS
+  - `utci` pointwise: PASS (`rmse=0.0422`, `maxError=1.8523`)
+- Stats:
+  - `solar`: PASS
+  - `sky`: PASS
+  - `mrt`: PASS (`p99=0.0319`)
+  - `utci`: PASS
+  - `utci_pointwise`: PASS
+
+### Localized Worst Cells (post-regeneration diagnostics)
+
+- Solar flip count: `1 / 2,506,680` (flat index `745913`).
+- Dominant outlier location:
+  - `pointIndex=31079`, `hourIndex=17`
+  - `binaryFlipDirection=0->1`
+  - `mismatchClass=promotion-shortwave-dominant`
+  - `shortErfDiff=75.1625`, `shortDmrtDiff=17.2442`, `mrtDiff=17.2501`
+- UTCI strict worst cell remains nearby:
+  - `hour=16`, `pointIndex=31079`, `maxError=1.8523`
+
+### Component-Contract Resolution Check
+
+- Before Python regeneration in this run, strict compare reported:
+  - `short_erf/long_erf/short_dmrt/long_dmrt: FAIL (present in webgpu only)`.
+- After regeneration with the updated exporter defaults (`solar`, `sky`, `mrt`) and rerun:
+  - One-sided presence failures disappeared.
+  - Component terms are now compared numerically in strict mode (PASS/FAIL by value), confirming the contract is consumed correctly.
+
+### Accepted / Rejected Next Experiments
+
+Accepted next experiments:
+
+- Keep physics and weather-channel mapping unchanged; focus only on localized ray/geometry edge handling near `pointIndex=31079` at hours `16-17`.
+- Evaluate minimal, isolated intersection-threshold candidates with strict non-regression gates on flip-count and UTCI pointwise.
+
+Rejected next experiments:
+
+- Repeating systemic weather remaps or broad sun-timeline shifts (already shown regressive/noisy).
+- Broad multi-parameter shader sweeps that touch multiple ray/threshold behaviors simultaneously without cell-local evidence.
+
 ## Practical Rules for Future Parity Work
 
 1. **Always distinguish systemic vs localized errors early.**

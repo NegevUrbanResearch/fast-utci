@@ -1,0 +1,69 @@
+{
+  "basePath": "D:\\Projects\\Nur\\Shade\\fast-utci\\data\\analyses\\Ben-Gurion\\20250815_grid_2m_fullday",
+  "mode": "strict",
+  "summary": {
+    "pass": false,
+    "failCount": 4
+  },
+  "solar": {
+    "pass": false,
+    "rmse": 0.00063161226098228,
+    "maxError": 1
+  },
+  "sky": {
+    "pass": true,
+    "rmse": 0.0012269791532909073,
+    "maxError": 0.009029865264892578
+  },
+  "mrt": {
+    "pass": false,
+    "rmse": 0.016646373277446534,
+    "maxError": 17.250144958496094
+  },
+  "short_erf": {
+    "pass": false,
+    "rmse": 0.08371730846130673,
+    "maxError": 75.1624698638916
+  },
+  "long_erf": {
+    "pass": true,
+    "rmse": 0.02750939817426376,
+    "maxError": 0.2332324981689453
+  },
+  "short_dmrt": {
+    "pass": false,
+    "rmse": 0.019207878969792074,
+    "maxError": 17.24423837661743
+  },
+  "long_dmrt": {
+    "pass": true,
+    "rmse": 0.006311549647684773,
+    "maxError": 0.05350971221923828
+  },
+  "utci": {
+    "pass": true,
+    "pointwise": {
+      "rmse": 0.04217199376833061,
+      "maxError": 1.8522491455078125,
+      "meanDiff": -0.04047163970272555,
+      "tolerance": 2,
+      "worst": {
+        "hour": 16,
+        "pointIndex": 31079,
+        "ref": 32.697750091552734,
+        "webgpu": 34.54999923706055,
+        "diff": 1.8522491455078125
+      }
+    },
+    "range": {
+      "minDiff": 0.05228889655563762,
+      "maxDiff": 0.023850145826585845,
+      "meanDiff": 0.040471688808786155,
+      "pass": true
+    }
+  },
+  "utci_complexity": {
+    "skipped": true,
+    "reason": "unable to infer rectangular grid shape"
+  }
+}
