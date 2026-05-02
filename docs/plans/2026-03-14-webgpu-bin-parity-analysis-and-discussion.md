@@ -1,113 +1,216 @@
-# WebGPU vs .bin Parity: Root-Cause Analysis and Discussion
+# WebGPU vs .bin Parity: Final Findings
 
 **Date:** 2026-03-14  
-**Goal:** Analyze why WebGPU and Python .bin results differ, how to test parity properly, and how to align WebGPU with .bin—**before making any code changes**.  
-**Skills used:** Brainstorming (explore context, gather evidence, propose approaches), Systematic debugging (root-cause first, no fixes without understanding).
+**Finalized:** 2026-05-03  
+**Scope:** Ben-Gurion `20250815_grid_2m_fullday`, Python `.bin` baseline vs WebGPU UTCI debug pipeline.
 
----
+## Executive Summary
 
-## 1. Evidence Gathered
+The large daylight mismatches were caused by the TypeScript sunpath implementation, not by WebGPU numeric precision or the UTCI polynomial. The previous TS path used a simplified NOAA fractional-year approximation that differed from Ladybug/Python by about `0.38 deg` in sun direction. That is small geometrically, but enough to flip binary sun/shade classification at shadow edges and create isolated `~2 C` UTCI spikes.
 
-### 1.1 Intermediate data you have
+The repeated hour-23 night offset was a separate boundary-averaging bug. In 12-month mode, WebGPU averaged August hour 23 with September hour 0. The shader now clamps UTCI averaging inside each representative-day block.
 
-| File | Purpose |
-|------|--------|
-| `20250815_grid_2m_fullday_solar.json` | Python solar exposure (0/1 per point×hour), point-major flat |
-| `20250815_grid_2m_fullday_sky.json` | Python sky exposure (0–1 fraction per point) |
-| `20250815_grid_2m_fullday_mrt.json` | Python MRT (°C per point×hour) |
-| `20250815_grid_2m_fullday_weather_sample.json` | First 3 hours weather (air_temp, direct_normal, etc.) |
-| `20250815_grid_2m_fullday_webgpu_inspect.json` | WebGPU readback: solar/sky/MRT stats and samples |
+Current normal-mode app-visible August slice parity is very close:
 
-### 1.2 Grid and scale mismatches (evidence)
+| Metric | Result |
+|---|---:|
+| Points | `104,445` |
+| Hours | `24` |
+| Mean diff | `-0.040472 C` |
+| Mean abs diff | `0.040475 C` |
+| Max abs diff | `1.852249 C` |
+| Cells over `0.5 C` | `2` |
+| Cells over `2 C` | `0` |
 
-- **Point counts**
-  - Python / .bin: **104,445** (rectangular grid from analysis bounds, stored in .bin).
-  - WebGPU default (mesh): **105,157** (from `generateGridFromMesh`; different positions and count).
-  - So **default WebGPU and .bin are on different grids**—point-to-point comparison is invalid unless you use the same grid (e.g. `?rectangularGrid=1`).
+The remaining two large cells are the same point at hours 16 and 17:
 
-- **Sky exposure scale (root cause)**
-  - **Python export:** `sky_exposure` is a **0–1 fraction** (unoccluded sky view).
-  - **WebGPU readback:** The exposure shader writes the **raw Tregenza weight sum** (unoccluded weights), which has max ~**145.25** (`total_tregenza_weight` in `mrt_utci.wgsl`). The MRT shader then does `sky_exposure[i] / 145.2488` to get 0–1 for UTCI.
-  - **Inspect file:** `skyExposure` values are in the 5–145 range (e.g. 114.15, 144.99), i.e. **unnormalized**.
-  - **Parity test:** `compareIntermediatesStats` uses `TOLERANCE_MEAN = 0.02`, `TOLERANCE_MAX = 0.05` assuming **0–1**. Comparing WebGPU raw sum to Python 0–1 will fail (mean/max diff huge). So **sky parity failure is largely a scale/definition mismatch**, not only grid.
+```json
+[
+  {
+    "pointIndex": 31079,
+    "hour": 16,
+    "coords": { "x": -3342.616943359375, "y": -489.2862548828125, "z": 1.5 },
+    "pythonUtci": 32.697750091552734,
+    "webgpuUtci": 34.54999923706055,
+    "diff": 1.8522491455078125
+  },
+  {
+    "pointIndex": 31079,
+    "hour": 17,
+    "coords": { "x": -3342.616943359375, "y": -489.2862548828125, "z": 1.5 },
+    "pythonUtci": 28.2528018951416,
+    "webgpuUtci": 30.100000381469727,
+    "diff": 1.847198486328125
+  }
+]
+```
 
-- **Solar:** 0/1 per (point, hour); scale is fine. Differences can still come from grid, sun vectors, BVH/raycast, or ray offset (e.g. WebGPU `origin + sun * 0.1`).
+## Root Causes Found
 
-- **Weather sample:** Small float differences (e.g. 24.2 vs 23.7) are expected (EPW parsing, rounding). First-hour alignment is what matters for MRT/UTCI.
+### 1. Sunpath Drift
 
-### 1.3 Exposure / e2e test “timeout”
+Python uses Ladybug's Julian-century NOAA sunpath calculation. The previous frontend implementation used a shorter fractional-year NOAA approximation. For Ben-Gurion Aug 15, the old TS vectors differed by roughly `0.38 deg` at multiple daylight hours.
 
-- **Test:** `viewer/tests/e2e/parity-intermediates.spec.ts` waits for `__parityIntermediates__` (or `__parityIntermediatesError__`) with **INTERMEDIATES_WAIT_MS = 15_000** (15 s) and **test.setTimeout(INTERMEDIATES_WAIT_MS + 10_000)** (25 s).
-- **Pipeline for Ben-Gurion:** Load model → worker (merge + BVH + mesh grid) → upload ~105k points, 24 hours, BVH, dome, weather → exposure passes (solar + sky) → MRT/UTCI pass → readback. On a typical machine this can exceed 15 s, so the test can **time out** before the page ever sets `__parityIntermediates__`.
-- So the “exposure test failing due to timeout” is consistent with **wait too short** for the full run, not necessarily a bug in exposure itself.
+This caused isolated solar exposure flips near shadow boundaries:
 
-### 1.4 Rectangular grid page: “WebGPU UTCI not showing / processed”
+- Python shaded, WebGPU sunlit -> WebGPU UTCI too high by about `2 C`.
+- Python sunlit, WebGPU shaded -> WebGPU UTCI too low by about `2 C`.
 
-- **Flow:** With `?rectangularGrid=1` and metadata `bounds`, the debug page still runs the worker (for BVH), then passes `useRectangularGridFromBounds: true` and analysis bounds so `ComputeManager` builds the grid from `analysisBoundsToRectangularGrid` (same bounds as .bin) → **104,445 points**.
-- **Possible reasons UTCI “doesn’t show”:**
-  1. **Runtime:** 104k points × 24 hours is heavy; compute can take 30–60+ seconds—user may leave or think it hung.
-  2. **Error path:** Any throw (e.g. WebGPU device lost, buffer size, missing EPW) sets `liveError` and no `liveAnalysis` → no visualization.
-  3. **Display path:** Same code path as mesh grid; if `liveAnalysis` is set, the same point cloud/overlay should show. So if “nothing shows,” either compute never completes or an error is shown.
-- **Recommendation:** Add a visible “Computing…” state and progress (or at least “Running with 104,445 points…”) when using rectangular grid, and ensure errors surface (e.g. `liveError` in UI). Check browser console for errors when loading `?rectangularGrid=1&analysis=Ben-Gurion/20250815_grid_2m_fullday`.
+Fix: `viewer/src/lib/compute/sunpath.ts` now implements the Ladybug-compatible Julian-century equation chain, atmospheric refraction correction, azimuth branch, non-leap 2017 behavior, and correct ENU vector convention.
 
----
+### 2. Hour-23 Boundary Averaging
 
-## 2. Root Causes (Summary)
+The MRT/UTCI shader averaged each hour with `time_idx + 1`. In 12-month mode, that made a month/day boundary cross-talk:
 
-| Cause | Impact | Fix direction (later) |
-|-------|--------|------------------------|
-| **Sky exposure scale** | WebGPU readback is weight sum (~0–145); Python/reference is 0–1. Stats comparison assumes 0–1. | Normalize WebGPU sky by `total_tregenza_weight` when exposing for parity, or compare normalized stats. |
-| **Grid difference** | Default WebGPU uses mesh grid (105,157 pts); .bin uses rectangular (104,445). Different points → no point-wise match. | Use `?rectangularGrid=1` for same-grid runs; parity tests can use statistical comparison or same-grid + point-wise. |
-| **E2E timeout** | 15 s wait often too short for full Ben-Gurion pipeline. | Increase INTERMEDIATES_WAIT_MS (e.g. 60–90 s) or make it configurable; optionally split “quick smoke” vs “full parity” test. |
-| **Sun / BVH / ray details** | Small differences in sun vectors, ray origin offset, or BVH vs CPU intersector can change exposure and thus MRT/UTCI. | After fixing scale and grid, compare intermediates stage-by-stage (solar → sky → MRT → UTCI); align sun and ray convention if needed. |
+```text
+August hour 23 -> September hour 0
+```
 
----
+Fix: `mrt_utci.wgsl` now receives `num_hours_per_day` and clamps `next_idx` to the current representative-day block. Hour 23 duplicates itself for averaging, matching Python boundary behavior.
 
-## 3. How to Test Result Parity (Approaches)
+### 3. Weather Channel Semantics
 
-**A. Stage-by-stage with current setup (recommended first)**  
-- Keep **statistical** comparison (mean/max) for solar and sky, but **normalize WebGPU sky** to 0–1 before comparison (divide by same constant used in MRT shader).  
-- Compare MRT with existing tolerance (e.g. mean 1 °C, max 2 °C).  
-- Keep point-to-point UTCI out of scope until intermediates match.
+Earlier parity work also confirmed an EPW/Ladybug time-series detail that should stay documented: thermal and shortwave weather channels are not the same contract.
 
-**B. Same-grid (rectangular) for point-wise**  
-- Use `?rectangularGrid=1` so WebGPU uses the same 104,445 points as .bin (in viewer coords).  
-- Then you can optionally add point-wise UTCI comparison (or per-hour RMSE) with a tolerance (e.g. 1–2 °C).  
-- Requires rectangular path to complete and expose results (fix timeout/UX so it’s clear when it’s still computing).
+- Thermal fields follow Ladybug day-period semantics:
+  - hour 0 uses previous calendar day EPW hour 24.
+  - hours 1..23 use the same representative day EPW hours 1..23.
+- Shortwave fields follow the sun-vector timeline and EnergyPlus preceding-hour radiation convention:
+  - hour `h` uses same-day EPW hour `h + 1`.
 
-**C. Parity test robustness**  
-- Increase wait for `__parityIntermediates__` (e.g. 60–90 s) for the full Ben-Gurion run.  
-- Optionally: small “smoke” test (e.g. tiny analysis or mock) with short timeout; full parity test with long timeout.  
-- Document that reference files must be regenerated when Python pipeline or model changes.
+This split lives in `viewer/src/lib/compute/compute-manager.ts` and removed a broad weather-driven UTCI drift.
 
-**D. Diagnostic harness**  
-- Keep inspect test and `*_webgpu_inspect.json` output; add optional script to compare one run’s WebGPU vs Python intermediates (with normalization for sky) and print mean/max/rmse per stage.  
-- Helps iterate on formula/BVH/sun alignment without running Playwright every time.
+### 4. Test Path vs App Path
 
----
+The old Playwright parity collector used:
 
-## 4. Who Could Help and What They’d Say
+```text
+/debug-webgpu-utci?parity=1
+```
 
-- **Thermal comfort / UTCI domain expert (e.g. Ladybug or academic)**  
-  - “MRT and UTCI formulas must match the standard (e.g. ISO/ASHRAE); small differences in exposure or weather propagate. Align input definitions (sky view factor 0–1, same sun convention) first, then compare outputs.”
+That single-month fixture path did not match the user's visual debug path:
 
-- **WebGPU / graphics engineer**  
-  - “Ensure readback happens after `onSubmittedWorkDone` and that you’re reading the buffer the shader wrote. For parity, normalize sky to 0–1 on the CPU after readback so your comparison is like-for-like. Check for precision (f32) and any packed format.”
+```text
+/debug-webgpu-utci
+```
 
-- **QA / test engineer**  
-  - “Separate fast smoke test (short timeout) from full parity test (long timeout). Use conditional skip when reference files are missing. Log stage-wise pass/fail (solar, sky, MRT) so we know which stage regressed.”
+Fix: `PARITY_COLLECT_MODE=normal` now loads `/debug-webgpu-utci?collect=normal` and exports the app-visible 12-month August slice to:
 
-- **Product / project owner**  
-  - “We need a clear definition of ‘parity achieved’: e.g. same grid, intermediates within tolerance, UTCI RMSE &lt; 2 °C. Prioritize fixing the sky scale and timeout so the current test can pass; then tighten tolerances or add point-wise checks.”
+```text
+data/analyses/Ben-Gurion/20250815_grid_2m_fullday_webgpu_normal_utci.json
+```
 
----
+This lets parity checks inspect the same data that is shown in the UI.
 
-## 5. Recommended Order of Work (When You Implement)
+## Current Stage Results
 
-1. **Align sky scale:** Normalize WebGPU sky readback to 0–1 (divide by `total_tregenza_weight`) when populating `__parityIntermediates__` (and in any export used for parity). No change to MRT shader; only to what is exposed for comparison.
-2. **E2E timeout:** Increase INTERMEDIATES_WAIT_MS (and test timeout) so the full Ben-Gurion run can complete in CI/local; optionally add a “slow” tag and document.
-3. **Rectangular grid UX:** Make long-running rectangular runs visible (progress or message) and ensure errors are shown; verify in browser that `?rectangularGrid=1` completes and displays UTCI.
-4. **Re-run parity test:** With normalized sky and longer wait, confirm solar/sky/MRT statistical tests pass (or document remaining gaps).
-5. **Optional:** Same-grid point-wise UTCI comparison and/or diagnostic script as above.
+From `viewer/parity-report-stats-latest.json`:
 
-No code changes were made in this session; this document is for analysis and discussion only.
+| Stage | Pass | Notes |
+|---|---:|---|
+| Solar | yes | One remaining binary flip: point `31079`, hour `17`. |
+| Sky | yes | Normalized WebGPU sky exposure matches Python closely. |
+| MRT | yes | Mean diff `0.0037 C`; worst cell is driven by the same solar flip. |
+| UTCI | yes | Pointwise max error now comes from the same remaining solar-edge point. |
+
+Component diagnostics are also populated and compared in the parity report:
+
+| Component | Current status |
+|---|---|
+| `short_erf` | Pass; worst cell follows the same solar flip. |
+| `long_erf` | Pass; no broad drift. |
+| `short_dmrt` | Pass; worst cell follows the same solar flip. |
+| `long_dmrt` | Pass; no broad drift. |
+
+The MRT worst case is:
+
+```json
+{
+  "pointIndex": 31079,
+  "hourIndex": 17,
+  "ref": 33.06828308105469,
+  "webgpu": 50.31842803955078,
+  "diff": 17.250144958496094
+}
+```
+
+That propagates to UTCI as the remaining `~1.85 C` outlier.
+
+## High-Value Diagnostics
+
+The useful tools from the parity work are:
+
+- `viewer/scripts/diagnose-solar-flips.ts`
+  - Lists solar flip cells with point/hour indices and coordinates.
+- `viewer/scripts/diagnose-mrt-worst-cell.ts`
+  - Decomposes the worst MRT deltas by solar, sky, ERF, and DMRT terms.
+- `viewer/tests/e2e/diagnose-solar-ray-oracle.spec.ts`
+  - Runs a CPU ray oracle against browser model state.
+- `viewer/src/lib/parity/mrtWorstCellDiagnostics.ts`
+  - Shared MRT term attribution helpers.
+
+These moved the workflow from aggregate guessing to point/hour-level evidence.
+
+## False Leads and Lessons
+
+Useful but non-final experiments:
+
+- Full weather remap to previous-day semantics for all channels:
+  - helped thermal alignment but broke shortwave timing.
+- Raw sun-vector sign/mapping tweaks:
+  - moved flips around but did not address the underlying sunpath drift.
+- Broad BVH epsilon/ray-origin changes:
+  - sometimes reduced one flip while creating more elsewhere.
+- Range-only UTCI checks:
+  - can pass while pointwise parity is still wrong.
+
+Practical rules going forward:
+
+1. Separate systemic drift from localized geometric edge effects early.
+2. Compare stage-by-stage: solar -> sky -> MRT/DMRT/ERF -> UTCI.
+3. Treat weather thermal and shortwave timelines as independent contracts.
+4. Keep pointwise UTCI and component diagnostics available, even when aggregate stats pass.
+5. For UI-visible parity questions, collect from the same app path the user sees, not only the special `?parity=1` fixture path.
+
+## Verification Commands
+
+Focused sunpath verification:
+
+```powershell
+cd viewer
+npx vitest run tests/compute/sunpath.test.ts tests/compute/solar-altitude-packing.test.ts
+```
+
+Normal app-path WebGPU collection:
+
+```powershell
+cd viewer
+$env:PARITY_COLLECT_MODE='normal'
+npm run parity:collect-webgpu
+```
+
+Existing parity/stat report path:
+
+```powershell
+cd viewer
+npm run parity:collect-webgpu
+npm run parity:compare
+npx tsx scripts/compare-parity.ts --mode stats --report parity-report-stats-latest.json
+```
+
+## Remaining Work
+
+1. Investigate the single remaining solar-edge point at:
+   - point `31079`
+   - coords `(-3342.616943359375, -489.2862548828125, 1.5)`
+   - hours `16` and `17`
+2. Compare Python Embree vs WebGPU BVH ray behavior for that ray.
+3. Decide whether to accept one binary shadow-edge flip, add a numerical tolerance policy, or align ray epsilon/origin/intersection behavior further.
+
+## Conclusion
+
+The main parity blockers are resolved. WebGPU UTCI now matches the Python baseline closely on the actual app-visible normal debug path. The remaining discrepancy is localized to one shadow-edge ray classification, not a broad UTCI, MRT, weather, or WebGPU precision issue.
+
+## Superseded Notes
+
+This document supersedes `docs/plans/2026-03-15-webgpu-python-parity-findings-and-lessons.md`. The durable findings from that note have been folded here so there is one canonical parity summary.

@@ -7,6 +7,7 @@ const DEFAULT_BASE_PATH = 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday';
 const PARITY_BASE_PATH = process.env.PARITY_BASE_PATH || DEFAULT_BASE_PATH;
 const basePath = resolve(REPO_ROOT, PARITY_BASE_PATH);
 const COLLECT_WAIT_MS = 180_000;
+const COLLECT_MODE = process.env.PARITY_COLLECT_MODE === 'normal' ? 'normal' : 'parity';
 
 function expectNumberArrayLength(arr: unknown, expected: number, label: string): asserts arr is number[] {
 	expect(Array.isArray(arr), `${label} should be number[]`).toBe(true);
@@ -14,11 +15,12 @@ function expectNumberArrayLength(arr: unknown, expected: number, label: string):
 }
 
 /**
- * WebGPU collect: load debug page, wait for parity data, write _webgpu_*.json files to disk.
+ * WebGPU collect: load debug page, wait for data, write _webgpu_*.json files to disk.
  * Set PARITY_BASE_PATH (relative to repo root) to change output directory.
+ * Set PARITY_COLLECT_MODE=normal to collect the app-visible August slice from 12-month normal mode.
  */
 test.describe('Collect WebGPU parity to files', () => {
-	test('wait for parity data and write WebGPU JSON files', async ({ page }) => {
+	test('wait for WebGPU data and write JSON files', async ({ page }) => {
 		test.setTimeout(240_000);
 		const pageErrors: string[] = [];
 		const failedRequests: string[] = [];
@@ -37,15 +39,19 @@ test.describe('Collect WebGPU parity to files', () => {
 
 		// Analysis slug for URL: e.g. "Ben-Gurion/20250815_grid_2m_fullday"
 		const analysisSlug = PARITY_BASE_PATH.replace(/^data[/\\]analyses[/\\]/, '').replace(/\\/g, '/');
-		const url = `/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
+		const url =
+			COLLECT_MODE === 'normal'
+				? `/debug-webgpu-utci?collect=normal&analysis=${encodeURIComponent(analysisSlug)}`
+				: `/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
 		await page.goto(url);
 
 		try {
 			await page.waitForFunction(
-				() => {
+				(mode) => {
 					const w = window as unknown as {
 						__parityResults__?: unknown;
 						__parityIntermediates__?: unknown;
+						__normalUtciResults__?: unknown;
 						__parityIntermediatesError__?: string;
 						__parityCollectionError__?: string;
 						__parityCollectionStatus__?: {
@@ -57,10 +63,14 @@ test.describe('Collect WebGPU parity to files', () => {
 					if (w.__parityCollectionStatus__?.state === 'error') return true;
 					if (w.__parityCollectionStatus__?.state === 'timeout') return true;
 					if (w.__parityCollectionStatus__?.state === 'success') {
+						if (mode === 'normal') {
+							return w.__normalUtciResults__ != null;
+						}
 						return w.__parityResults__ != null && w.__parityIntermediates__ != null;
 					}
 					return false;
 				},
+				COLLECT_MODE,
 				{ timeout: COLLECT_WAIT_MS, polling: 1000 }
 			);
 		} catch (waitErr) {
@@ -96,6 +106,7 @@ test.describe('Collect WebGPU parity to files', () => {
 			const w = window as unknown as {
 				__parityResults__?: unknown;
 				__parityIntermediates__?: unknown;
+				__normalUtciResults__?: unknown;
 				__parityIntermediatesError__?: string;
 				__parityCollectionError__?: string;
 				__parityCollectionStatus__?: {
@@ -111,6 +122,7 @@ test.describe('Collect WebGPU parity to files', () => {
 			return {
 				hasResults: w.__parityResults__ != null,
 				hasIntermediates: w.__parityIntermediates__ != null,
+				hasNormalResults: w.__normalUtciResults__ != null,
 				intermediatesError: w.__parityIntermediatesError__ ?? null,
 				collectionError: w.__parityCollectionError__ ?? null,
 				status: w.__parityCollectionStatus__ ?? null,
@@ -120,8 +132,9 @@ test.describe('Collect WebGPU parity to files', () => {
 		if (
 			readiness.collectionError ||
 			readiness.intermediatesError ||
-			!readiness.hasResults ||
-			!readiness.hasIntermediates ||
+			(COLLECT_MODE === 'normal'
+				? !readiness.hasNormalResults
+				: (!readiness.hasResults || !readiness.hasIntermediates)) ||
 			readiness.status?.state !== 'success'
 		) {
 			throw new Error(
@@ -136,7 +149,79 @@ test.describe('Collect WebGPU parity to files', () => {
 		}
 
 		const t0 = Date.now();
-		console.log(`[collect] parity status success; starting export at ${new Date(t0).toISOString()}`);
+		console.log(`[collect] ${COLLECT_MODE} status success; starting export at ${new Date(t0).toISOString()}`);
+
+		if (COLLECT_MODE === 'normal') {
+			const normalResultsJson = await page.evaluate(() => {
+				const w = window as unknown as {
+					__normalUtciResults__?: {
+						utciByHour: number[][];
+						positions?: number[];
+						numPoints: number;
+						numHours: number;
+						monthIndex: number;
+					};
+				};
+				if (!w.__normalUtciResults__) {
+					throw new Error('Missing __normalUtciResults__ at export time');
+				}
+				return JSON.stringify(w.__normalUtciResults__);
+			});
+			const normalResults = JSON.parse(normalResultsJson) as {
+				utciByHour: number[][];
+				positions?: number[];
+				numPoints: number;
+				numHours: number;
+				monthIndex: number;
+			};
+			expect(normalResults.monthIndex).toBe(7);
+			expect(normalResults.numHours).toBe(24);
+			expect(normalResults.utciByHour.length).toBe(24);
+			for (let hourIdx = 0; hourIdx < normalResults.utciByHour.length; hourIdx++) {
+				expectNumberArrayLength(normalResults.utciByHour[hourIdx], normalResults.numPoints, `normal utciByHour[${hourIdx}]`);
+			}
+			if (normalResults.positions != null) {
+				expectNumberArrayLength(normalResults.positions, normalResults.numPoints * 3, 'normal positions');
+			}
+			let min = Infinity;
+			let max = -Infinity;
+			let sum = 0;
+			let count = 0;
+			for (const hour of normalResults.utciByHour) {
+				for (const v of hour) {
+					if (Number.isFinite(v)) {
+						min = Math.min(min, v);
+						max = Math.max(max, v);
+						sum += v;
+						count++;
+					}
+				}
+			}
+			const mean = count > 0 ? sum / count : 0;
+			writeFileSync(
+				`${basePath}_webgpu_normal_utci.json`,
+				JSON.stringify(
+					{
+						numPoints: normalResults.numPoints,
+						numHours: normalResults.numHours,
+						monthIndex: normalResults.monthIndex,
+						...(normalResults.positions ? { positions: normalResults.positions } : {}),
+						utciByHour: normalResults.utciByHour,
+						utci_range: { min: min === Infinity ? 0 : min, max: max === -Infinity ? 0 : max, mean },
+					},
+					null,
+					0
+				)
+			);
+			const writtenNormalUtci = JSON.parse(readFileSync(`${basePath}_webgpu_normal_utci.json`, 'utf8')) as Record<string, unknown>;
+			expect(writtenNormalUtci.numPoints).toBe(normalResults.numPoints);
+			expect(writtenNormalUtci.numHours).toBe(24);
+			expect(writtenNormalUtci.monthIndex).toBe(7);
+			expect(Array.isArray(writtenNormalUtci.utciByHour)).toBe(true);
+			expect((writtenNormalUtci.utciByHour as unknown[]).length).toBe(24);
+			console.log(`[collect] wrote normal UTCI in ${Date.now() - t0}ms`);
+			return;
+		}
 
 		const intermediatesJson = await page.evaluate(() => {
 			const w = window as unknown as {

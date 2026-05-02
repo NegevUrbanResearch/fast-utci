@@ -35,6 +35,8 @@ var<storage, read_write> utci_results: array<f32>;
 struct MRTParams {
 	num_points: u32,
 	num_time_steps: u32,
+	num_hours_per_day: u32,
+	_pad: u32,
 };
 
 @group(0) @binding(4)
@@ -429,19 +431,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 	let utci0 = compute_utci(w.air_temp, c0.mrt, w.wind_speed, w.rel_humidity);
 
 	// Boundary-averaged UTCI semantics:
-	// For all but the last time step, average UTCI at the current and next
-	// hour; for the last time step, fall back to the single-hour UTCI. This
-	// mirrors the behavior of the TypeScript boundary-averaging helper and
-	// Python's BoundaryAveragingCalculator at the level of "one UTCI per time
-	// index" while preserving the flat buffer shape.
-	var utci_value = utci0;
-	if (time_idx + 1u < params.num_time_steps) {
-		let next_idx = time_idx + 1u;
-		let w1 = weather_data[next_idx];
-		let c1 = compute_outdoor_mrt(point_idx, next_idx, w1.mrt_longwave, w1, params.num_time_steps);
-		let utci1 = compute_utci(w1.air_temp, c1.mrt, w1.wind_speed, w1.rel_humidity);
-		utci_value = 0.5 * (utci0 + utci1);
-	}
+	// Average UTCI at the current boundary with the next boundary, clamping at
+	// each representative-day boundary so month/day hour 23 duplicates itself.
+	let hours_per_day = max(params.num_hours_per_day, 1u);
+	let day_start = (time_idx / hours_per_day) * hours_per_day;
+	let day_end = min(day_start + hours_per_day - 1u, params.num_time_steps - 1u);
+	let next_idx = min(time_idx + 1u, day_end);
+	let w1 = weather_data[next_idx];
+	let c1 = compute_outdoor_mrt(point_idx, next_idx, w1.mrt_longwave, w1, params.num_time_steps);
+	let utci1 = compute_utci(w1.air_temp, c1.mrt, w1.wind_speed, w1.rel_humidity);
 
-	utci_results[flat_index] = utci_value;
+	utci_results[flat_index] = 0.5 * (utci0 + utci1);
 }

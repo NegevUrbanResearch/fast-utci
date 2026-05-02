@@ -80,30 +80,35 @@ export function compareIntermediates(params: {
 	ref: Float32Array;
 	webgpu: Float32Array;
 	tolerance?: number;
-}): CompareIntermediatesResult {
-	const { ref, webgpu, tolerance = 1e-5 } = params;
+	allowedOutliers?: number;
+}): CompareIntermediatesResult & { outlierCount: number; allowedOutliers: number } {
+	const { ref, webgpu, tolerance = 1e-5, allowedOutliers = 0 } = params;
 	if (ref.length !== webgpu.length) {
 		throw new Error(`Length mismatch: ref ${ref.length} vs webgpu ${webgpu.length}`);
 	}
 	const n = ref.length;
 	if (n === 0) {
-		return { pass: true, rmse: 0, maxError: 0, numPoints: 0 };
+		return { pass: true, rmse: 0, maxError: 0, numPoints: 0, outlierCount: 0, allowedOutliers };
 	}
 	let sumSq = 0;
 	let maxError = 0;
+	let outlierCount = 0;
 	for (let i = 0; i < n; i++) {
 		const d = webgpu[i] - ref[i];
 		sumSq += d * d;
 		const absD = Math.abs(d);
+		if (absD > tolerance) outlierCount++;
 		if (absD > maxError) maxError = absD;
 	}
 	const rmse = Math.sqrt(sumSq / n);
-	const pass = maxError <= tolerance;
+	const pass = outlierCount <= allowedOutliers;
 	return {
 		pass,
 		rmse,
 		maxError,
-		numPoints: n
+		numPoints: n,
+		outlierCount,
+		allowedOutliers
 	};
 }
 

@@ -207,7 +207,8 @@ export class ComputeManager {
 				const thermalMonth = prev?.month ?? month;
 				const thermalDay = prev?.day ?? day;
 				const thermalHour = hour === 0 ? 24 : hour;
-				// Shortwave channels stay aligned to same-day sun-vector hours.
+
+				// Solar channels use accumulated previous-hour EnergyPlus convention (shift + 1)
 				const solarHour = hour + 1;
 				const fallbackData =
 					// Short synthetic EPW fixtures in tests may not contain a full-year index.

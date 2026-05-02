@@ -88,6 +88,19 @@ describe('mrt reference vs shader', () => {
 		expect(shaderSource).toContain('var<storage, read_write> long_dmrt_results: array<f32>;');
 	});
 
+	it('clamps UTCI averaging to the representative-day boundary', () => {
+		const shaderPath = resolve(process.cwd(), 'src/lib/compute/shaders/mrt_utci.wgsl');
+		const shaderSource = readFileSync(shaderPath, 'utf8');
+		expect(shaderSource).toContain('num_hours_per_day: u32,');
+		expect(shaderSource).toContain('let hours_per_day = max(params.num_hours_per_day, 1u);');
+		expect(shaderSource).toContain('let day_start = (time_idx / hours_per_day) * hours_per_day;');
+		expect(shaderSource).toContain('let day_end = min(day_start + hours_per_day - 1u, params.num_time_steps - 1u);');
+		expect(shaderSource).toContain('let next_idx = min(time_idx + 1u, day_end);');
+		expect(shaderSource).not.toContain('let next_idx = min(time_idx + 1u, params.num_time_steps - 1u);');
+		expect(shaderSource).toContain('utci_results[flat_index] = 0.5 * (utci0 + utci1);');
+		expect(shaderSource).not.toContain('fall back to the single-hour UTCI');
+	});
+
 	it('shader MRT and components match reference on canonical fixtures', () => {
 		const fixturePath = resolve(process.cwd(), 'tests/fixtures/parity/mrt-fixtures.json');
 		const fixtures = JSON.parse(readFileSync(fixturePath, 'utf8')) as FixtureFile;

@@ -462,7 +462,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 
 		this.queue.writeBuffer(this.weatherBuffer, 0, this.weatherData.buffer, this.weatherData.byteOffset, this.weatherData.byteLength);
-		this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([numPoints, totalTimeSteps]));
+		this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([numPoints, totalTimeSteps, numHours, 0]));
 
 		const workgroupSize = params.workgroupSize ?? 64;
 		const workgroupsX = Math.ceil(numPoints / workgroupSize);

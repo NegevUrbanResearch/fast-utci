@@ -80,6 +80,7 @@ import {
 	let tooltipX = 0;
 	let tooltipY = 0;
 	let tooltipValue: number | null = null;
+	let tooltipPosition: { x: number; y: number; z: number } | null = null;
 	let utciMesh: Mesh | null = null;
 	let canvasElement: HTMLCanvasElement | null = null;
 
@@ -199,6 +200,7 @@ import {
 			!cameraRef
 		) {
 			tooltipVisible = false;
+			tooltipPosition = null;
 			return;
 		}
 
@@ -241,13 +243,16 @@ import {
 			tooltipX = event.clientX;
 			tooltipY = event.clientY;
 			tooltipValue = tooltipData.value;
+			tooltipPosition = tooltipData.position;
 		} else {
 			tooltipVisible = false;
+			tooltipPosition = null;
 		}
 	}
 
 	function handleMouseLeave() {
 		tooltipVisible = false;
+		tooltipPosition = null;
 	}
 
 	// Attach event listeners to canvas element when available
@@ -359,6 +364,7 @@ import {
 				x={tooltipX}
 				y={tooltipY}
 				value={tooltipValue}
+				position={tooltipPosition}
 				metricType={$viewerStore.metricType}
 			/>
 			{#if $viewerStore.loading}

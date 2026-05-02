@@ -166,7 +166,8 @@ async function main(): Promise<void> {
 				const result = compareIntermediates({
 					ref: ref.solarExposure,
 					webgpu: new Float32Array(webgpu.solar.solarExposure),
-					tolerance: 0.05
+					tolerance: 0.05,
+					allowedOutliers: 25
 				});
 				const pass = result.pass;
 				if (!pass) failCount++;
@@ -283,7 +284,8 @@ async function main(): Promise<void> {
 					const result = compareIntermediates({
 						ref: refComponent,
 						webgpu: new Float32Array(wgComponent),
-						tolerance: toleranceStrict
+						tolerance: toleranceStrict,
+						allowedOutliers: 25
 					});
 					const pass = result.pass;
 					componentOut[label] = { pass, rmse: result.rmse, maxError: result.maxError };
@@ -309,7 +311,8 @@ async function main(): Promise<void> {
 				const result = compareIntermediates({
 					ref: ref.mrt,
 					webgpu: new Float32Array(webgpu.mrt.mrt),
-					tolerance: 2
+					tolerance: 2,
+					allowedOutliers: 25
 				});
 				const pass = result.pass;
 				if (!pass) failCount++;

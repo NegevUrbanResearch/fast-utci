@@ -44,7 +44,7 @@ describe('UTCI boundary-averaged series helper', () => {
 		expect(series[0]).toBeCloseTo(direct, 6);
 	});
 
-	it('should average adjacent UTCI values for interior boundaries', () => {
+	it('should average adjacent UTCI values for boundary samples', () => {
 		const airTemps = [20, 25, 30];
 		const mrts = [25, 30, 35];
 		const windSpeeds = [1.0, 1.0, 1.0];
@@ -67,7 +67,7 @@ describe('UTCI boundary-averaged series helper', () => {
 		expect(series[0]).toBeCloseTo((utci0 + utci1) / 2, 6);
 		// Second entry averages UTCI at t1 and t2
 		expect(series[1]).toBeCloseTo((utci1 + utci2) / 2, 6);
-		// Last entry falls back to UTCI at t2
+		// Last entry uses the duplicated final boundary, which equals UTCI at t2.
 		expect(series[2]).toBeCloseTo(utci2, 6);
 	});
 });

@@ -50,7 +50,7 @@
 		MAX_GRID_POINTS_GUARD,
 	} from "$lib/compute/mergeAndBvhWorkerClient";
 	import { getTooltipData } from "$lib/services/tooltipService";
-	import { getUtciByHourForExport } from "$lib/services/dataLoader";
+	import { getUTCIForHour, getUtciByHourForExport } from "$lib/services/dataLoader";
 	import { getEffectiveHourIndex } from "$lib/utils/effectiveHourIndex";
 	import {
 		sceneConfigStore,
@@ -103,12 +103,16 @@
 	let mounted = false;
 	/** When true (?parity=1), use numMonths=1 to preserve single-month parity/e2e behavior. */
 	$: parityMode = $page.url.searchParams.get("parity") === "1";
+	/** E2E-only normal-mode export; keeps parityMode false while exposing one app-visible month slice. */
+	$: normalCollectMode = !parityMode && $page.url.searchParams.get("collect") === "normal";
 
 	// Tooltip state
 	let tooltipVisible = false;
 	let tooltipX = 0;
 	let tooltipY = 0;
 	let tooltipValue: number | null = null;
+	let tooltipPosition: { x: number; y: number; z: number } | null = null;
+	let copiedPointStatus: string | null = null;
 	let utciMesh: Mesh | null = null;
 	let liveUtciMesh: Mesh | null = null;
 	let canvasElement: HTMLCanvasElement | null = null;
@@ -161,6 +165,7 @@
 		__parityCollectionLog__?: ParityCollectionLogEntry[];
 		__parityResults__?: unknown;
 		__parityIntermediates__?: unknown;
+		__normalUtciResults__?: unknown;
 		__parityMetadata__?: AnalysisMetadata;
 		__parityModel__?: Group | null;
 		__parityThree__?: typeof THREE;
@@ -319,6 +324,7 @@
 		parityWin.__parityCollectionError__ = undefined;
 		parityWin.__parityResults__ = undefined;
 		parityWin.__parityIntermediates__ = undefined;
+		parityWin.__normalUtciResults__ = undefined;
 		parityWin.__parityMetadata__ = base.metadata;
 		parityWin.__parityCollectionLog__ = [];
 		setParityStatus(runId, "running", "preflight");
@@ -481,11 +487,29 @@
 				comparisonAnalysis: result,
 			}));
 
+			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
+
+			if (normalCollectMode && fullDayData && (fullDayData.utciByHour || fullDayData.utciStorage)) {
+				const monthIndex = 7;
+				const utciByHour: number[][] = [];
+				for (let hour = 0; hour < 24; hour++) {
+					const effectiveHour = getEffectiveHourIndex(result, hour, monthIndex);
+					utciByHour.push(Array.from(getUTCIForHour(fullDayData, effectiveHour)));
+				}
+				const win = getParityWindow();
+				win.__normalUtciResults__ = {
+					utciByHour,
+					positions: Array.from(fullDayData.positions),
+					numPoints: fullDayData.numPositions,
+					numHours: 24,
+					monthIndex,
+				};
+			}
+
 			// Expose results and intermediates for e2e validation only when ?parity=1.
 			// Normal 12-month mode skips this to avoid OOM: decoding 288 slices to number[][]
 			// plus solar/MRT readbacks would add 400+ MB for large grids.
 			if (parityMode) {
-			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
 			if (fullDayData && (fullDayData.utciByHour || fullDayData.utciStorage)) {
 				const win = window as unknown as {
 					__parityResults__?: unknown;
@@ -499,6 +523,7 @@
 						longDmrt?: number[];
 						numPoints: number;
 						numHours: number;
+						numMonths?: number;
 					};
 				};
 				win.__parityResults__ = {
@@ -669,6 +694,125 @@
 	let lastTooltipUpdate = 0;
 	const TOOLTIP_THROTTLE_MS = 16;
 
+	function getDebugTooltipTarget(event: MouseEvent): {
+		mesh: Mesh | null;
+		analysis: Analysis | null;
+		hourIndex: number;
+		side: "python" | "webgpu";
+	} {
+		const comparing = get(comparisonStore).isComparing;
+		const currentHour = $viewerStore.currentHour;
+		const currentMonth = $viewerStore.currentMonth ?? 7;
+
+		if (comparing && canvasElement) {
+			const canvasRect = canvasElement.getBoundingClientRect();
+			const relativeX = (event.clientX - canvasRect.left) / canvasRect.width;
+			const curtain = get(curtainPosition);
+			if (relativeX <= curtain) {
+				return {
+					mesh: utciMesh,
+					analysis: $analysisStore,
+					hourIndex: currentHour,
+					side: "python"
+				};
+			}
+		}
+
+		return {
+			mesh: liveUtciMesh,
+			analysis: liveAnalysis,
+			hourIndex: liveAnalysis
+				? getEffectiveHourIndex(liveAnalysis, currentHour, currentMonth)
+				: currentHour,
+			side: "webgpu"
+		};
+	}
+
+	function getUtciAtPoint(analysis: Analysis | null, pointIndex: number, hourIndex: number): number | null {
+		if (!analysis || pointIndex < 0 || pointIndex >= analysis.data.numPositions) return null;
+		const values = getUTCIForHour(analysis.data, hourIndex);
+		if (!values || pointIndex >= values.length) return null;
+		return values[pointIndex];
+	}
+
+	async function copyTextToClipboard(text: string): Promise<void> {
+		if (navigator.clipboard?.writeText) {
+			try {
+				await navigator.clipboard.writeText(text);
+				return;
+			} catch {
+				// Fall through to textarea-based copy below.
+			}
+		}
+
+		const textarea = document.createElement("textarea");
+		textarea.value = text;
+		textarea.setAttribute("readonly", "true");
+		textarea.style.position = "fixed";
+		textarea.style.left = "-9999px";
+		textarea.style.top = "0";
+		document.body.appendChild(textarea);
+		textarea.focus();
+		textarea.select();
+		const copied = document.execCommand("copy");
+		document.body.removeChild(textarea);
+		if (!copied) {
+			throw new Error("Clipboard copy was rejected by the browser.");
+		}
+	}
+
+	async function copyClickedPointData(event: MouseEvent | PointerEvent) {
+		if (!$viewerStore.utciVisible || !canvasElement || !cameraRef) return;
+		const canvasRect = canvasElement.getBoundingClientRect();
+		const target = getDebugTooltipTarget(event);
+		const tooltipData = getTooltipData(
+			event,
+			cameraRef,
+			target.mesh,
+			target.analysis,
+			$viewerStore.metricType,
+			target.hourIndex,
+			canvasRect,
+		);
+		if (!tooltipData) return;
+
+		const currentHour = $viewerStore.currentHour;
+		const currentMonth = $viewerStore.currentMonth ?? 7;
+		const pythonHourIndex = currentHour;
+		const webgpuHourIndex = liveAnalysis
+			? getEffectiveHourIndex(liveAnalysis, currentHour, currentMonth)
+			: currentHour;
+		const pythonUtci = getUtciAtPoint($analysisStore, tooltipData.positionIndex, pythonHourIndex);
+		const webgpuUtci = getUtciAtPoint(liveAnalysis, tooltipData.positionIndex, webgpuHourIndex);
+		const payload = {
+			source: "debug-webgpu-utci",
+			analysisId,
+			parityMode,
+			clickedSide: target.side,
+			pointIndex: tooltipData.positionIndex,
+			coords: tooltipData.position,
+			hour: currentHour,
+			monthIndex: currentMonth,
+			pythonHourIndex,
+			webgpuHourIndex,
+			pythonUtci,
+			webgpuUtci,
+			diff: pythonUtci == null || webgpuUtci == null ? null : webgpuUtci - pythonUtci
+		};
+		const text = JSON.stringify(payload, null, 2);
+		try {
+			await copyTextToClipboard(text);
+			copiedPointStatus = `Copied point ${tooltipData.positionIndex}`;
+			console.info("[debug-webgpu-utci] Copied point comparison:", payload);
+		} catch (error) {
+			copiedPointStatus = "Copy failed - see console";
+			console.warn("[debug-webgpu-utci] Failed to copy point comparison; payload:", payload, error);
+		}
+		window.setTimeout(() => {
+			copiedPointStatus = null;
+		}, 2000);
+	}
+
 	function handleMouseMove(event: MouseEvent) {
 		const now = performance.now();
 		if (now - lastTooltipUpdate < TOOLTIP_THROTTLE_MS) {
@@ -682,46 +826,20 @@
 			!cameraRef
 		) {
 			tooltipVisible = false;
+			tooltipPosition = null;
 			return;
 		}
 
 		const canvasRect = canvasElement.getBoundingClientRect();
-
-		const comparing = get(comparisonStore).isComparing;
-		let targetMesh: Mesh | null = null;
-		let targetAnalysis: Analysis | null = null;
-
-		if (comparing) {
-			const relativeX = (event.clientX - canvasRect.left) / canvasRect.width;
-			const curtain = get(curtainPosition);
-			if (relativeX <= curtain) {
-				targetMesh = utciMesh;
-				targetAnalysis = $analysisStore;
-			} else {
-				targetMesh = liveUtciMesh;
-				targetAnalysis = liveAnalysis;
-			}
-		} else {
-			targetMesh = liveUtciMesh;
-			targetAnalysis = liveAnalysis;
-		}
-
-		const hourForTooltip =
-			targetAnalysis === liveAnalysis
-				? getEffectiveHourIndex(
-						targetAnalysis,
-						$viewerStore.currentHour,
-						$viewerStore.currentMonth ?? 7,
-					)
-				: $viewerStore.currentHour;
+		const target = getDebugTooltipTarget(event);
 
 		const tooltipData = getTooltipData(
 			event,
 			cameraRef,
-			targetMesh,
-			targetAnalysis,
+			target.mesh,
+			target.analysis,
 			$viewerStore.metricType,
-			hourForTooltip,
+			target.hourIndex,
 			canvasRect,
 		);
 
@@ -730,13 +848,16 @@
 			tooltipX = event.clientX;
 			tooltipY = event.clientY;
 			tooltipValue = tooltipData.value;
+			tooltipPosition = tooltipData.position;
 		} else {
 			tooltipVisible = false;
+			tooltipPosition = null;
 		}
 	}
 
 	function handleMouseLeave() {
 		tooltipVisible = false;
+		tooltipPosition = null;
 	}
 
 	let eventListenersAttached = false;
@@ -749,6 +870,7 @@
 		canvas.addEventListener("mouseleave", handleMouseLeave, {
 			passive: true,
 		});
+		canvas.addEventListener("pointerdown", copyClickedPointData);
 		eventListenersAttached = true;
 	}
 
@@ -758,6 +880,7 @@
 		if (canvasElement && eventListenersAttached) {
 			canvasElement.removeEventListener("mousemove", handleMouseMove);
 			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
+			canvasElement.removeEventListener("pointerdown", copyClickedPointData);
 			eventListenersAttached = false;
 		}
 		lastPipeline?.dispose?.();
@@ -860,8 +983,12 @@
 				x={tooltipX}
 				y={tooltipY}
 				value={tooltipValue}
+				position={tooltipPosition}
 				metricType={$viewerStore.metricType}
 			/>
+			{#if copiedPointStatus}
+				<div class="copy-status">{copiedPointStatus}</div>
+			{/if}
 			{#if $viewerStore.loading}
 				<div class="overlay-message">Loading analysis data...</div>
 			{/if}
@@ -1210,6 +1337,23 @@
 		bottom: 20px;
 		right: 20px;
 		z-index: var(--z-tooltip);
+	}
+
+	.copy-status {
+		position: absolute;
+		left: 50%;
+		bottom: 20px;
+		transform: translateX(-50%);
+		z-index: var(--z-tooltip);
+		padding: 6px 10px;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: var(--radius-panel);
+		background: var(--color-bg-panel);
+		color: var(--color-text-secondary);
+		box-shadow: var(--shadow-tooltip);
+		font-size: 12px;
+		font-weight: 600;
+		pointer-events: none;
 	}
 
 	.overlay-message {

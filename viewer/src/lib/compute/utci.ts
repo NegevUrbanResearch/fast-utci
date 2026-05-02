@@ -38,8 +38,9 @@ export function calculateUTCI(
  * Boundary-averaged UTCI series helper.
  *
  * Given per-hour meteorological inputs and MRT values, returns an array of UTCI
- * values where each entry (except the last) is the average of UTCI computed at
- * the current and next hour. The last entry falls back to the single-hour UTCI.
+ * values where each entry is the average of UTCI computed at the current and
+ * next hour, clamping the final boundary to the last sample so the last entry
+ * matches the duplicated final weather/MRT boundary used by Python.
  *
  * This mirrors the semantics of Python's BoundaryAveragingCalculator at the
  * level of "one UTCI per hour boundary" while keeping the data shape

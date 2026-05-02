@@ -7,10 +7,12 @@
 	export let x: number = 0;
 	export let y: number = 0;
 	export let value: number | null = null;
+	export let position: { x: number; y: number; z: number } | null = null;
 	export let metricType: MetricType = 'utci';
 
 	// Format value based on metric type
 	$: formattedValue = value !== null ? formatValue(value, metricType) : null;
+	$: formattedPosition = position ? formatPosition(position) : null;
 	$: metricLabel = metricType === 'utci' ? 'UTCI' : 'Shading Index';
 	$: description = value !== null ? getDescription(value, metricType) : null;
 
@@ -38,6 +40,10 @@
 			return '';
 		}
 	}
+
+	function formatPosition(pos: { x: number; y: number; z: number }): string {
+		return `X ${pos.x.toFixed(3)} / Y ${pos.y.toFixed(3)} / Z ${pos.z.toFixed(3)}`;
+	}
 </script>
 
 {#if visible && formattedValue !== null}
@@ -56,6 +62,9 @@
 		<div class="tooltip-value">{formattedValue}</div>
 		{#if description}
 			<div class="tooltip-description">{description}</div>
+		{/if}
+		{#if formattedPosition}
+			<div class="tooltip-position">{formattedPosition}</div>
 		{/if}
 	</div>
 {/if}
@@ -125,6 +134,16 @@
 		font-size: 12px;
 		font-weight: 500;
 		line-height: 1.3;
+	}
+
+	.tooltip-position {
+		margin-top: 6px;
+		padding-top: 6px;
+		border-top: 1px solid var(--color-border-subtle);
+		color: var(--color-text-muted);
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 </style>
 
