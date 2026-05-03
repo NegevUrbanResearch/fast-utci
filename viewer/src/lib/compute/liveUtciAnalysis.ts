@@ -347,14 +347,13 @@ export async function createLiveUtciAnalysisFromCompute(
 
 		hourStatistics.push({ min: hourMin, max: hourMax, mean });
 
-		// Yield to main thread periodically to keep UI responsive
-		if (sliceIdx % 24 === 23) {
+		// Report progress per month and yield to keep UI/spinner responsive
+		if ((sliceIdx + 1) % numHours === 0) {
+			const monthsDone = (sliceIdx + 1) / numHours;
+			options.onProgress?.(monthsDone, numMonths);
 			await yieldToMain();
 		}
 	}
-
-	// Progress: readback complete
-	options.onProgress?.(numMonths, numMonths);
 
 	if (!Number.isFinite(globalMin) || !Number.isFinite(globalMax) || globalMin === globalMax) {
 		// Fallback to a small artificial range to keep color mapping stable
