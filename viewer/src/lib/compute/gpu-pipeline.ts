@@ -29,8 +29,8 @@ export function createPipelineConfig(params: {
 		numPoints,
 		numHours,
 		numMonths,
-		// f32 per point × hour × month
-		solarExposureBufferSize: numPoints * totalTimeSteps * 4,
+		// Bit-packed: 1 bit per point × time step, stored as u32 words
+		solarExposureBufferSize: Math.ceil((numPoints * totalTimeSteps) / 32) * 4,
 		// Single sky view factor per point
 		skyExposureBufferSize: numPoints * 4,
 		// f32 per point × hour × month
@@ -131,6 +131,20 @@ export interface UTCIComputePipeline {
 	readUtcisSlice(params: {
 		monthIndex: number; // 0-11
 		hourIndex: number; // 0-23
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<Float32Array>;
+
+	/**
+	 * Read the entire UTCI results buffer in a single GPU→CPU transfer.
+	 * Returns a flat Float32Array of length numPoints × numHours × numMonths,
+	 * in point-major layout: [p0_t0, p0_t1, ..., p0_tN, p1_t0, ...].
+	 * 
+	 * This eliminates 288 serial mapAsync round-trips by doing one bulk copy.
+	 * Optional; falls back to per-slice reading if not implemented.
+	 */
+	readUtciBulk?(params: {
 		numPoints: number;
 		numHours: number;
 		numMonths: number;

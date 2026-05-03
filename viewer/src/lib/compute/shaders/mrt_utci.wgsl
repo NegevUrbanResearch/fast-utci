@@ -20,8 +20,11 @@ struct WeatherSample {
 	horiz_infrared: f32,
 };
 
+// Bit-packed solar exposure (read-only in MRT pass).
+// Word index = flat_index / 32, bit index = flat_index % 32.
+// Bit = 1 means exposed, 0 means occluded.
 @group(0) @binding(0)
-var<storage, read> solar_exposure: array<f32>;
+var<storage, read> solar_exposure: array<u32>;
 
 @group(0) @binding(1)
 var<storage, read> sky_exposure: array<f32>;
@@ -114,9 +117,11 @@ fn compute_outdoor_mrt(
 	// Tregenza weights sum to ~145.25; divide raw sky exposure to get [0,1] SVF.
 	var sky_vf = clamp(sky_exposure[point_idx] / total_tregenza_weight, 0.0, 1.0);
 
-	// Solar exposure fraction for this point/time (0–1), from solar_exposure buffer.
+	// Solar exposure: unpack single bit from bit-packed u32 buffer.
 	let flat_index: u32 = point_idx * num_time_steps + time_idx;
-	let solar_exp: f32 = clamp(solar_exposure[flat_index], 0.0, 1.0);
+	let solar_word: u32 = solar_exposure[flat_index / 32u];
+	let solar_bit: u32 = (solar_word >> (flat_index % 32u)) & 1u;
+	let solar_exp: f32 = f32(solar_bit);
 
 	// Real solar altitude for this timestep (radians), from CPU sunpath.
 	let alt_rad: f32 = sun_altitudes[time_idx];

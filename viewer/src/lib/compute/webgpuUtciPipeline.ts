@@ -219,7 +219,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 		const totalTimeSteps = this.weatherData.length / weatherStride;
 
-		const solarBytes = numPoints * totalTimeSteps * 4;
+		// Bit-packed: 1 bit per (point, time_step), packed into u32 words.
+		const totalSolarBits = numPoints * totalTimeSteps;
+		const solarWords = Math.ceil(totalSolarBits / 32);
+		const solarBytes = solarWords * 4;
 		if (!this.solarExposureBuffer || this.solarExposureBuffer.size !== solarBytes) {
 			this.solarExposureBuffer?.destroy();
 			this.solarExposureBuffer = this.device.createBuffer({
@@ -636,6 +639,40 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		return out;
 	}
 
+	async readUtciBulk(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+	}): Promise<Float32Array> {
+		if (!this.utciBuffer || !this.lastConfig) {
+			throw new Error('WebGPU UTCI pipeline: results buffer not available');
+		}
+
+		const { numPoints, numHours, numMonths } = params;
+		const totalElements = numPoints * numHours * numMonths;
+		const totalBytes = totalElements * 4;
+
+		// Reuse the main staging buffer if it's the right size
+		if (!this.stagingBuffer || this.stagingBuffer.size !== totalBytes) {
+			this.stagingBuffer?.destroy();
+			this.stagingBuffer = this.device.createBuffer({
+				size: totalBytes,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+
+		const encoder = this.device.createCommandEncoder();
+		encoder.copyBufferToBuffer(this.utciBuffer, 0, this.stagingBuffer, 0, totalBytes);
+		this.queue.submit([encoder.finish()]);
+
+		await this.stagingBuffer.mapAsync(GPUMapMode.READ);
+		const mapped = new Float32Array(this.stagingBuffer.getMappedRange());
+		const out = new Float32Array(mapped.length);
+		out.set(mapped);
+		this.stagingBuffer.unmap();
+		return out;
+	}
+
 	async readSolarExposureFull(params: {
 		numPoints: number;
 		numHours: number;
@@ -652,21 +689,29 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		await this.queue.onSubmittedWorkDone();
 		const { numPoints, numHours, numMonths } = params;
 		const totalTimeSteps = numHours * numMonths;
-		const bytes = numPoints * totalTimeSteps * 4;
-		if (!this.solarStagingBuffer || this.solarStagingBuffer.size !== bytes) {
+		const packedBytes = this.solarExposureBuffer.size;
+		if (!this.solarStagingBuffer || this.solarStagingBuffer.size !== packedBytes) {
 			this.solarStagingBuffer?.destroy();
 			this.solarStagingBuffer = this.device.createBuffer({
-				size: bytes,
+				size: packedBytes,
 				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
 			});
 		}
 		const encoder = this.device.createCommandEncoder();
-		encoder.copyBufferToBuffer(this.solarExposureBuffer, 0, this.solarStagingBuffer, 0, bytes);
+		encoder.copyBufferToBuffer(this.solarExposureBuffer, 0, this.solarStagingBuffer, 0, packedBytes);
 		this.queue.submit([encoder.finish()]);
 		await this.solarStagingBuffer.mapAsync(GPUMapMode.READ);
-		const mapped = new Float32Array(this.solarStagingBuffer.getMappedRange());
-		const out = new Float32Array(mapped.length);
-		out.set(mapped);
+		const packed = new Uint32Array(this.solarStagingBuffer.getMappedRange());
+
+		// Unpack bits back to f32 (0.0 or 1.0) for parity comparison
+		const totalElements = numPoints * totalTimeSteps;
+		const out = new Float32Array(totalElements);
+		for (let i = 0; i < totalElements; i++) {
+			const wordIdx = Math.floor(i / 32);
+			const bitIdx = i % 32;
+			out[i] = (packed[wordIdx] >> bitIdx) & 1 ? 1.0 : 0.0;
+		}
+
 		this.solarStagingBuffer.unmap();
 		return out;
 	}

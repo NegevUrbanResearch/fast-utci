@@ -291,4 +291,9 @@ export class ComputeManager {
 	}): Promise<Float32Array> {
 		return this.pipeline.readUtcisSlice(params);
 	}
+
+	/** Expose pipeline for advanced readback patterns (bulk read). */
+	getPipeline(): UTCIComputePipeline {
+		return this.pipeline;
+	}
 }

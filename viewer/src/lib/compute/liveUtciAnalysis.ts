@@ -6,6 +6,54 @@ import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
 
+/**
+ * Read all UTCI slices in a single GPU→CPU transfer instead of 288 serial mapAsync calls.
+ * 
+ * Uses the pipeline's readUtciBulk method (single mapAsync instead of 288).
+ * This reduces PCIe round-trip overhead from 288 × ~1-2ms to 1 × ~1-2ms.
+ * 
+ * Falls back to per-slice reading if the pipeline doesn't support bulk access.
+ */
+async function readAllUtciSlices(
+	computeManager: ComputeManager,
+	params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+		signal?: AbortSignal;
+	}
+): Promise<Float32Array> {
+	const { numPoints, numHours, numMonths, signal } = params;
+
+	// Try bulk readback first (single mapAsync instead of 288).
+	const pipeline = computeManager.getPipeline();
+	if (pipeline.readUtciBulk) {
+		return pipeline.readUtciBulk({ numPoints, numHours, numMonths });
+	}
+
+	// Fallback: per-slice reading
+	const totalSlices = numMonths * numHours;
+	const allUtci = new Float32Array(totalSlices * numPoints);
+
+	for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
+		for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
+			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			const slice = await computeManager.getUtcisForMonthHour({
+				monthIndex: monthOffset,
+				hourIndex,
+				numPoints,
+				numMonths,
+				numHours
+			});
+			const sliceIdx = monthOffset * numHours + hourIndex;
+			allUtci.set(slice, sliceIdx * numPoints);
+		}
+		await yieldToMain();
+	}
+
+	return allUtci;
+}
+
 function worldToAnalysisCoords(
 	x: number,
 	y: number,
@@ -248,9 +296,9 @@ export async function createLiveUtciAnalysisFromCompute(
 		positions[i * 3 + 2] = az;
 	}
 
-	// 3. Read back UTCI slices and store in compact Int16 format.
-	// Scale 100 = 0.01 C precision (avoids visible banding); UTCI -40..+50 C fits in Int16.
-	// Single contiguous buffer halves memory vs 288 Float32Arrays and reduces fragmentation.
+	// 3. Read back UTCI slices: batch all into a single large readback.
+	// Instead of 288 serial mapAsync calls (each adding ~1-2ms of CPU/PCIe latency),
+	// we read the entire UTCI buffer in one shot and quantize on CPU.
 	const totalSlices = numMonths * numHours;
 	const UTCI_STORAGE_SCALE = 100;
 	const utciStorage = new Int16Array(totalSlices * effectiveNumPoints);
@@ -259,70 +307,54 @@ export async function createLiveUtciAnalysisFromCompute(
 	let globalMin = Number.POSITIVE_INFINITY;
 	let globalMax = Number.NEGATIVE_INFINITY;
 
-	for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
-		for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-			const hourReadStartedAt = performance.now();
-			const slice = await computeManager.getUtcisForMonthHour({
-				monthIndex: monthOffset,
-				hourIndex,
-				numPoints: effectiveNumPoints,
-				numMonths,
-				numHours
-			});
+	// Read all UTCI results in one mapAsync call instead of 288 serial calls.
+	// This eliminates ~300-600ms of PCIe round-trip latency.
+	const allUtci = await readAllUtciSlices(computeManager, {
+		numPoints: effectiveNumPoints,
+		numHours,
+		numMonths,
+		signal
+	});
 
-			if (slice.length !== effectiveNumPoints) {
-				throw new Error(
-					`UTCI slice length mismatch at month ${monthOffset} hour ${hourIndex}: expected ${effectiveNumPoints}, got ${slice.length}.`
-				);
-			}
+	for (let sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {
+		if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+		const base = sliceIdx * effectiveNumPoints;
 
-			const sliceIdx = monthOffset * numHours + hourIndex;
-			const base = sliceIdx * effectiveNumPoints;
+		let hourMin = Number.POSITIVE_INFINITY;
+		let hourMax = Number.NEGATIVE_INFINITY;
+		let sum = 0;
 
-			let hourMin = Number.POSITIVE_INFINITY;
-			let hourMax = Number.NEGATIVE_INFINITY;
-			let sum = 0;
-			const CHUNK_SIZE = 20_000;
-
-			for (let i = 0; i < effectiveNumPoints; i++) {
-				const value = slice[i];
-				if (!Number.isFinite(value)) continue;
-				if (value < hourMin) hourMin = value;
-				if (value > hourMax) hourMax = value;
-				sum += value;
-				// Encode as Int16: clamp to safe range
-				const encoded = Math.round(value * UTCI_STORAGE_SCALE);
-				utciStorage[base + i] = Math.max(-32768, Math.min(32767, encoded));
-				if (i > 0 && i % CHUNK_SIZE === 0) {
-					if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-					await yieldToMain();
-				}
-			}
-
-			if (!Number.isFinite(hourMin) || !Number.isFinite(hourMax)) {
-				hourMin = 0;
-				hourMax = 0;
-			}
-
-			const mean = effectiveNumPoints > 0 ? sum / effectiveNumPoints : 0;
-
-			if (hourMin < globalMin) globalMin = hourMin;
-			if (hourMax > globalMax) globalMax = hourMax;
-
-			hourStatistics.push({
-				min: hourMin,
-				max: hourMax,
-				mean
-			});
-
-			emitComputeTelemetry('utci.readback.done', {
-				ms: performance.now() - hourReadStartedAt,
-				data: { monthIndex: monthOffset, hourIndex, numPoints: effectiveNumPoints }
-			});
+		for (let i = 0; i < effectiveNumPoints; i++) {
+			// GPU buffer is point-major: allUtci[pointIdx * totalSlices + sliceIdx]
+			const value = allUtci[i * totalSlices + sliceIdx];
+			if (!Number.isFinite(value)) continue;
+			if (value < hourMin) hourMin = value;
+			if (value > hourMax) hourMax = value;
+			sum += value;
+			const encoded = Math.round(value * UTCI_STORAGE_SCALE);
+			utciStorage[base + i] = Math.max(-32768, Math.min(32767, encoded));
 		}
-		options.onProgress?.(monthOffset + 1, numMonths);
+
+		if (!Number.isFinite(hourMin) || !Number.isFinite(hourMax)) {
+			hourMin = 0;
+			hourMax = 0;
+		}
+
+		const mean = effectiveNumPoints > 0 ? sum / effectiveNumPoints : 0;
+
+		if (hourMin < globalMin) globalMin = hourMin;
+		if (hourMax > globalMax) globalMax = hourMax;
+
+		hourStatistics.push({ min: hourMin, max: hourMax, mean });
+
+		// Yield to main thread periodically to keep UI responsive
+		if (sliceIdx % 24 === 23) {
+			await yieldToMain();
+		}
 	}
+
+	// Progress: readback complete
+	options.onProgress?.(numMonths, numMonths);
 
 	if (!Number.isFinite(globalMin) || !Number.isFinite(globalMax) || globalMin === globalMax) {
 		// Fallback to a small artificial range to keep color mapping stable
