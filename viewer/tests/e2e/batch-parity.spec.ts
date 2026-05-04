@@ -11,6 +11,7 @@ const COLLECT_WAIT_MS = 300_000;
 const analysesToRun = manifest.analyses;
 
 	test(`Collect parity and timing for all analyses`, async ({ page }) => {
+		page.on('console', (msg) => console.log(`  [browser] ${msg.text()}`));
 		// Massive timeout for the entire batch
 		test.setTimeout(COLLECT_WAIT_MS * (analysesToRun.length + 1));
 		
@@ -113,13 +114,17 @@ const analysesToRun = manifest.analyses;
 			);
 
 			const status12m = await page.evaluate(() => (window as any).__parityCollectionStatus__);
+			const log12m = await page.evaluate(() => (window as any).__parityCollectionLog__);
 			const tCompute12m = (status12m.updatedAt - status12m.startedAt) / 1000;
 			console.log(`  [12m] Compute done: ${tCompute12m.toFixed(2)}s`);
+
+			const preflight = await page.evaluate(() => (window as any).__computePreflight__);
 
 			// Save combined timing report
 			const timingReport = {
 				analysisId: analysis.id,
 				pythonRuntime: analysis.runtime_seconds,
+				preflight,
 				webgpu_1m: {
 					compute_s: tCompute1m,
 					collect_s: collectTime1m,
@@ -128,10 +133,12 @@ const analysesToRun = manifest.analyses;
 				},
 				webgpu_12m: {
 					compute_s: tCompute12m,
-					status: status12m
+					status: status12m,
+					log: log12m
 				},
 				timestamp: new Date().toISOString()
 			};
+
 			writeFileSync(timingFile, JSON.stringify(timingReport, null, 2));
 
 			console.log(`[batch] Finished ${analysisSlug}. 1m: ${tCompute1m.toFixed(2)}s, 12m: ${tCompute12m.toFixed(2)}s.`);

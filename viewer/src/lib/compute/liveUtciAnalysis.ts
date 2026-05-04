@@ -167,6 +167,10 @@ export interface LiveUtciAnalysisOptions {
 	 */
 	onProgress?: (completed: number, total: number) => void;
 	/**
+	 * Optional phase change callback: (phaseName).
+	 */
+	onPhase?: (phase: string) => void;
+	/**
 	 * Optional AbortSignal to cancel the run when the user switches project/model.
 	 * When aborted, the promise rejects with DOMException('Aborted', 'AbortError').
 	 */
@@ -297,6 +301,7 @@ export async function createLiveUtciAnalysisFromCompute(
 	}
 
 	// 3. Read back UTCI slices: batch all into a single large readback.
+	if (options.onPhase) options.onPhase('readback');
 	// Instead of 288 serial mapAsync calls (each adding ~1-2ms of CPU/PCIe latency),
 	// we read the entire UTCI buffer in one shot and quantize on CPU.
 	const totalSlices = numMonths * numHours;

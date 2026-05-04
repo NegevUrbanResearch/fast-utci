@@ -399,6 +399,11 @@
 					`[DEBUG UTCI] Memory budget: using ${effectiveGridResolution}m grid (requested ${baseGrid}m) for ~${(preflight.estimatedBytes / (1024 * 1024)).toFixed(0)} MB estimate`
 				);
 			}
+			(window as any).__computePreflight__ = {
+				numPoints: preflight.estimatedGridPoints,
+				estimatedBytes: preflight.estimatedBytes,
+				effectiveGridResolution,
+			};
 
 			setParityStatus(runId, "running", "epw");
 			const response = await fetch(epwUrl);
@@ -472,11 +477,19 @@
 					onProgress: (completed, total) => {
 						liveComputeProgress = { current: completed, total };
 					},
+					onPhase: (phase) => {
+						if (phase === "readback") {
+							setParityStatus(runId, "running", "readback");
+						}
+					},
 				},
 			);
 
 			liveAnalysis = result;
 			liveComputeProgress = null;
+
+			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
+
 
 			// Treat the live WebGPU analysis as the comparison analysis so that
 			// unifiedUtciRange can provide a shared color scale across .bin and
@@ -487,7 +500,6 @@
 				comparisonAnalysis: result,
 			}));
 
-			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
 
 			if (normalCollectMode && fullDayData && (fullDayData.utciByHour || fullDayData.utciStorage)) {
 				const monthIndex = 7;
@@ -538,7 +550,6 @@
 					pipeline.readSkyExposure &&
 					lastPipeline === pipeline
 				) {
-					setParityStatus(runId, "running", "readback");
 					const numPoints = result.data.numPositions;
 					const numMonths = result.metadata.num_months ?? 1;
 					const numHours = 24;
