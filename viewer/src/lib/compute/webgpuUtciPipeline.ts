@@ -990,7 +990,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	}
 }
 
-async function getWebgpuDevice(): Promise<{ device: GPUDevice; supportsMrtComponents: boolean }> {
+async function getWebgpuDevice(enableDiagnostics: boolean): Promise<{ device: GPUDevice; supportsMrtComponents: boolean }> {
 	if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
 		throw new Error('WebGPU not available in this environment');
 	}
@@ -1007,7 +1007,7 @@ async function getWebgpuDevice(): Promise<{ device: GPUDevice; supportsMrtCompon
 	}
 	const requiredStorageBuffersPerStage = 10;
 	const supportedStorageBuffersPerStage = adapter.limits.maxStorageBuffersPerShaderStage;
-	const supportsMrtComponents = supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage;
+	const supportsMrtComponents = enableDiagnostics && (supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage);
 
 	// Default limits are often 128MB binding / 256MB buffer; large models (e.g. Ness Tziona)
 	// need solar/utci buffers >256MB. Request adapter max for both so CreateBuffer and
@@ -1042,16 +1042,22 @@ let cachedDevicePromise: Promise<GPUDevice> | null = null;
 let cachedDevice: GPUDevice | null = null;
 let cachedSupportsMrtComponents = false;
 
-export async function createWebgpuUtciPipeline(): Promise<UTCIComputePipeline> {
-	if (!cachedDevicePromise) {
-		cachedDevicePromise = getWebgpuDevice().then(({ device, supportsMrtComponents }) => {
+export async function createWebgpuUtciPipeline(options: { enableDiagnostics?: boolean } = {}): Promise<UTCIComputePipeline> {
+	const enableDiagnostics = options.enableDiagnostics ?? false;
+
+	if (!cachedDevicePromise || (enableDiagnostics && !cachedSupportsMrtComponents)) {
+		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(({ device, supportsMrtComponents }) => {
 			cachedDevice = device;
 			cachedSupportsMrtComponents = supportsMrtComponents;
+			if (enableDiagnostics && !supportsMrtComponents) {
+				console.warn("MRT diagnostics were requested but hardware does not support them.");
+			}
 			return device;
 		});
 	}
 	const device = await cachedDevicePromise;
-	return new WebgpuUtciComputePipeline(device, cachedSupportsMrtComponents);
+	const useDiagnostics = enableDiagnostics && cachedSupportsMrtComponents;
+	return new WebgpuUtciComputePipeline(device, useDiagnostics);
 }
 
 export function __resetWebgpuDeviceCacheForTests(): void {

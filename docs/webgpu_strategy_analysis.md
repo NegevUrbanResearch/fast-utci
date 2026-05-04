@@ -425,7 +425,7 @@ The on-demand readback fix is correct in principle, but the **scrub jank risk** 
 | # | Action | Accuracy Impact | Evidence |
 |---|--------|----------------|----------|
 | 1 | ~~**Bit-pack solar exposure** (560 MB → 17 MB)~~ | ✅ **Lossless** — encoding `{0,1}` values, no approximation | ✅ **SHIPPED** (2026-05-04) |
-| 2 | **Disable MRT diagnostics in production** (-2.2 GB) | ✅ **N/A** — diagnostic-only buffers | Already a config flag |
+| 2 | **Disable MRT diagnostics in production** (-2.2 GB) | ✅ **N/A** — diagnostic-only buffers | Need to add config flag (currently dynamically enabled if hardware supports it) |
 | 3 | **f16 storage for UTCI/MRT** (compute stays f32) | ✅ **<0.05°C** — f16 has 0.016°C resolution at 35°C | Mixed-precision is standard in scientific GPU computing; requires `shader-f16` feature check |
 | 4 | **Spatial tiling** for >200K points | ✅ **Zero** — same math, different scheduling | BVH stays shared across tiles |
 
@@ -538,7 +538,7 @@ To compare runtimes, you would need to use the browser DevTools Performance tab 
 | 2 | ~~Eliminate 288× serial readback~~ | ✅ **Done** | 300-600ms → 10-30ms | — |
 | 3 | **Offload quantization to Web Worker** | 🟡 P1 | Unblocks main thread during init | ~1 day |
 | 4 | **LRU cache for `getUTCIForHour`** | 🟡 P1 | Smooth scrubbing on NZ | ~2 hours |
-| 5 | **Disable MRT diagnostics in production** | 🟡 P1 | -2.2 GB GPU memory | Config flag |
+| 5 | **Disable MRT diagnostics in production** | 🟡 P1 | -2.2 GB GPU memory | Add config flag (currently always on if GPU supports it) |
 | 6 | **f16 storage for UTCI/MRT** | 🔵 P2 | -560 MB GPU memory | ~3 days |
 | 7 | **Spatial tiling** for >200K points | 🔵 P2 | Removes size ceiling | ~1 week |
 

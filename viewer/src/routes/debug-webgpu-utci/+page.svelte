@@ -412,7 +412,7 @@
 			setParityStatus(runId, "running", "pipelineInit");
 			lastPipeline?.dispose?.();
 			lastPipeline = null;
-			const pipeline = await createWebgpuUtciPipeline();
+			const pipeline = await createWebgpuUtciPipeline({ enableDiagnostics: parityMode });
 			lastPipeline = pipeline;
 
 			let workerResult: { gridPoints: Float32Array; serializedBvh: import("$lib/compute/gpu-pipeline").SerializedBvhForGpu } | null = null;
