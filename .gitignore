@@ -58,7 +58,7 @@ site/
 !data/analyses/*.json
 !data/analyses/*.bin
 !data/analyses/manifest.json
-.cursor/plans/weather-api-integration.plan.md
+data/batch-parity-results/*.json
 
 # WebGPU parity/debug generated artifacts
 data/analyses/**/*_webgpu_*.json

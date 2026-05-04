@@ -506,10 +506,8 @@
 				};
 			}
 
-			// Expose results and intermediates for e2e validation only when ?parity=1.
-			// Normal 12-month mode skips this to avoid OOM: decoding 288 slices to number[][]
-			// plus solar/MRT readbacks would add 400+ MB for large grids.
-			if (parityMode) {
+			// Expose results and intermediates for e2e validation when ?parity=1 or ?collect=normal.
+			if (parityMode || normalCollectMode) {
 			if (fullDayData && (fullDayData.utciByHour || fullDayData.utciStorage)) {
 				const win = window as unknown as {
 					__parityResults__?: unknown;
@@ -566,21 +564,21 @@
 							mrtArray !== undefined
 								? await pipeline.readMrtComponentsFull({ numPoints, numHours, numMonths })
 								: undefined;
+						const augustStart = 7 * 24 * numPoints;
+						const augustEnd = 8 * 24 * numPoints;
+						const TOME_WEIGHT = 145.24881; // Matches WGSL total_tregenza_weight
+
 						win.__parityIntermediates__ = {
-							solarExposure,
-							skyExposure,
-							...(mrtArray !== undefined ? { mrt: Array.from(mrtArray) } : {}),
-							...(mrtComponents
-								? {
-										shortErf: Array.from(mrtComponents.shortErf),
-										longErf: Array.from(mrtComponents.longErf),
-										shortDmrt: Array.from(mrtComponents.shortDmrt),
-										longDmrt: Array.from(mrtComponents.longDmrt)
-									}
-								: {}),
+							solarExposure: results[0] ? results[0].slice(parityMode ? 0 : augustStart, parityMode ? results[0].length : augustEnd) : null,
+							skyExposure: results[1] ? results[1].map(v => v / TOME_WEIGHT) : null,
+							mrt: results[2] ? results[2].slice(parityMode ? 0 : augustStart, parityMode ? results[2].length : augustEnd) : null,
+							shortErf: mrtComponents?.shortErf ? mrtComponents.shortErf.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.shortErf.length : augustEnd) : null,
+							longErf: mrtComponents?.longErf ? mrtComponents.longErf.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.longErf.length : augustEnd) : null,
+							shortDmrt: mrtComponents?.shortDmrt ? mrtComponents.shortDmrt.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.shortDmrt.length : augustEnd) : null,
+							longDmrt: mrtComponents?.longDmrt ? mrtComponents.longDmrt.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.longDmrt.length : augustEnd) : null,
 							numPoints,
-							numHours,
-							numMonths,
+							numHours: 24,
+							numMonths: 1,
 						};
 						const debugWin = win as unknown as {
 							__parityDebug__?: {

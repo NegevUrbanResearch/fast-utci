@@ -418,25 +418,21 @@ The on-demand readback fix is correct in principle, but the **scrub jank risk** 
 ## Summary of Recommendations
 
 ### Architecture Decision
-**Stay on WebGPU.** WGSL portability to native (wgpu-rs) is confirmed and keeps the escape hatch open. The browser distribution model is your competitive advantage. Consider a Tauri desktop wrapper for offline/Grasshopper scenarios before considering a native compute rewrite.
+**Stay on WebGPU.** WGSL portability to native (wgpu-rs) keeps the escape hatch open. The browser distribution model is your competitive advantage. Consider a Tauri desktop wrapper for offline/Grasshopper scenarios before any native compute rewrite.
 
-### Memory Optimization Priority (with accuracy verification)
+### Shipped (2026-05-04)
+- ✅ **Bit-pack solar exposure** — 560 MB → 17.5 MB (97% reduction, lossless)
+- ✅ **Bulk readback** — 288 × mapAsync → 1 × mapAsync (eliminates ~300-600ms latency)
 
-| # | Action | Accuracy Impact | Evidence |
-|---|--------|----------------|----------|
-| 1 | ~~**Bit-pack solar exposure** (560 MB → 17 MB)~~ | ✅ **Lossless** — encoding `{0,1}` values, no approximation | ✅ **SHIPPED** (2026-05-04) |
-| 2 | **Disable MRT diagnostics in production** (-2.2 GB) | ✅ **N/A** — diagnostic-only buffers | Need to add config flag (currently dynamically enabled if hardware supports it) |
-| 3 | **f16 storage for UTCI/MRT** (compute stays f32) | ✅ **<0.05°C** — f16 has 0.016°C resolution at 35°C | Mixed-precision is standard in scientific GPU computing; requires `shader-f16` feature check |
-| 4 | **Spatial tiling** for >200K points | ✅ **Zero** — same math, different scheduling | BVH stays shared across tiles |
+### Next Steps
+See the **Updated Priority Matrix** in Section 4 for the full ranked list. In brief:
+
+1. **Quick UX wins** (~2 days total): Web Worker for quantization + LRU cache for decoded slices
+2. **Research** (~2 days): Prototype GPU→Three.js rendering bridge (validates compute-on-demand feasibility)
+3. **Architecture** (~2 weeks): Compute-on-demand — the correct end-state for both 2m and 0.5m resolution
 
 > [!WARNING]
-> **Never use f16 for UTCI polynomial computation** — only for storing final results. The 6th-degree polynomial overflows f16's range (max 65,504) during intermediate calculations and introduces up to ±5°C error. All computation must remain in f32.
-
-### Performance Fix
-~~The single highest-impact change: **eliminate the 288× serial readback loop.**~~ ✅ **SHIPPED** (2026-05-04) — replaced with single `readUtciBulk` (`copyBufferToBuffer` + one `mapAsync`).
-
-> [!IMPORTANT]
-> The GTX 5070 IS faster at the actual compute — you just can't see it because the readback loop adds a fixed ~300-600ms overhead that dwarfs the GPU time difference. Fix the readback, and you'll see the 5-10× speedup you expected. Prove this with the 5-minute telemetry test before investing in the full refactor.
+> **Never use f16 for UTCI polynomial computation** — only for storing final results. The 6th-degree polynomial overflows f16's range (max 65,504) during intermediate calculations. Use `pack2x16float` for storage (no extension needed) — this supersedes the `shader-f16` approach from Section 2.
 
 ---
 
@@ -444,12 +440,11 @@ The on-demand readback fix is correct in principle, but the **scrub jank risk** 
 
 ### What Was Shipped
 
-| Change | Status | Impact |
-|--------|--------|--------|
-| **Bit-pack solar exposure** (`f32` → `u32` bitmask) | ✅ Shipped | Solar buffer: **560 MB → 17.5 MB** (97% reduction). Lossless. |
-| **Bulk UTCI readback** (`readUtciBulk`) | ✅ Shipped | Readback: **288 × mapAsync → 1 × mapAsync**. ~300-600ms → ~10-30ms. |
-| **`getPipeline()` accessor** on `ComputeManager` | ✅ Shipped | Enables bulk readback path. |
-| **`readUtciBulk` interface** on `UTCIComputePipeline` | ✅ Shipped | Optional method with per-slice fallback. |
+| Change | Impact |
+|--------|--------|
+| **Bit-pack solar exposure** (`f32` → `u32` bitmask) | Solar buffer: **560 MB → 17.5 MB** (97% reduction). Mathematically lossless. |
+| **Bulk UTCI readback** (`readUtciBulk`) | Readback: **288 × mapAsync → 1 × mapAsync**. Eliminates ~300-600ms of PCIe round-trip latency. |
+| **`getPipeline()` + `readUtciBulk` interface** | Enables bulk readback path with per-slice fallback for compatibility. |
 
 ### Updated GPU Buffer Footprint (NZ, 12 months × 24 hours)
 
@@ -463,82 +458,144 @@ The on-demand readback fix is correct in principle, but the **scrub jank risk** 
 
 ### New Bottleneck: CPU Quantization Loop
 
-With the GPU readback now taking ~10-30ms, **the dominant bottleneck has shifted to CPU-side processing** — specifically the quantization loop in `liveUtciAnalysis.ts` that transposes point-major GPU data into time-major `Int16Array` storage.
+With GPU readback now at ~10-30ms, **the dominant bottleneck has shifted to CPU-side processing** — the quantization loop in `liveUtciAnalysis.ts` that transposes point-major GPU data into time-major `Int16Array` storage.
 
-**Root cause analysis:**
+**Root cause:** The loop iterates `totalSlices (288) × effectiveNumPoints (511K for NZ)` = **~147M iterations**. Each iteration reads from `allUtci[i * totalSlices + sliceIdx]` — a **strided access** with stride = 1,152 bytes, causing severe cache thrashing. Writes to `utciStorage[base + i]` are sequential (good), but the reads dominate.
 
-The quantization loop iterates `totalSlices (288) × effectiveNumPoints (511K for NZ)` = **~147M iterations**. Each iteration:
-1. Reads from `allUtci[i * totalSlices + sliceIdx]` — **strided access** across point-major layout (stride = 288 × 4B = 1,152 bytes). This causes **cache thrashing** because adjacent iterations jump 1KB+ in memory.
-2. Performs arithmetic (isFinite check, min/max, multiply, round, clamp)
-3. Writes to `utciStorage[base + i]` — sequential access (good)
+> [!NOTE]
+> **Timing estimates below are analytical, not measured.** No timing instrumentation currently exists for this loop. Add `performance.now()` calls before investing in fixes.
 
-For NZ: 147M iterations × cache-unfriendly reads ≈ **2-5 seconds of CPU work** blocking the main thread. This is why:
-- The spinner/overlay freezes (main thread is blocked in the inner loop)
-- The "Computing month..." overlay only appeared at the end (old code: progress was per-month inside the loop; our initial refactor moved it to after the loop — **fixed** by restoring per-month progress calls)
+**Estimated phase timeline for NZ:**
 
-**Phase timeline for NZ (estimated):**
 | Phase | Duration | Bottleneck |
 |-------|----------|------------|
 | GPU compute (solar + sky + MRT/UTCI) | ~200-500ms | GPU-bound |
 | GPU readback (bulk mapAsync) | ~10-30ms | PCIe transfer |
-| CPU quantization (point→time transpose + Int16 encode) | **~2-5s** | CPU cache thrashing |
+| CPU quantization (point→time transpose + Int16 encode) | **~2-5s (est.)** | CPU cache thrashing |
 | **Total** | **~2.5-5.5s** | CPU quantization dominates |
 
-**Potential fixes (future work):**
-1. **Move quantization to a Web Worker** — offload the 147M-iteration loop from the main thread so the spinner stays responsive. The `allUtci` Float32Array can be transferred (zero-copy) to the worker.
-2. **Transpose on GPU** — add a compute shader that transposes point-major to time-major layout, writing directly to a time-major storage buffer. CPU then just copies bytes with no arithmetic.
-3. **Change the storage layout** to point-major — avoid the transpose entirely. This requires changes to `getUTCIForHour` and the point cloud color update path, but eliminates the cache thrashing problem at its source.
-4. **Chunk the inner loop** — yield to main thread every N iterations within each slice (e.g., every 50K points) to keep the spinner alive. Simple but doesn't reduce total wall time.
+**Fixes (ranked by effort/impact):**
+
+1. **Move quantization to a Web Worker** (~1 day) — Offload the 147M-iteration loop from the main thread so the spinner stays responsive. The `allUtci` Float32Array can be transferred zero-copy via `postMessage`. Doesn't reduce total wall time but unblocks the UI.
+2. **Chunk the inner loop** (~2 hours) — Yield to main thread every 50K points within each slice. Simplest fix, keeps spinner alive, but doesn't reduce total time.
+3. **Transpose on GPU** (~3 days) — Add a compute shader that transposes point-major to time-major layout. Eliminates the cache-thrashing problem at its source but adds a second GPU dispatch + readback.
+4. ~~Change storage layout to point-major~~ — Would break `getUTCIForHour()` which depends on time-major layout for O(1) slice access. Rejected.
 
 ### Scrubbing Smoothness on Ness Tziona
 
-**Root cause:** Scrubbing itself is **not doing GPU readback** — all data is pre-loaded in `utciStorage` (Int16Array). However, `getUTCIForHour()` in `dataLoader.ts` allocates a **new `Float32Array(numPoints)`** and decodes all 511K Int16 values to f32 **on every slider change**:
+**Root cause:** Scrubbing doesn't hit the GPU — all data is pre-loaded in `utciStorage`. But `getUTCIForHour()` in `dataLoader.ts` allocates a **new `Float32Array(numPoints)`** and decodes 511K Int16→f32 values **on every slider change**:
 
 ```typescript
-// dataLoader.ts line 290-299
-if (full.utciStorage) {
-    const out = new Float32Array(numPoints);  // 511K × 4B = 2MB allocation per scrub
-    for (let i = 0; i < numPoints; i++) {
-        out[i] = buffer[base + i] / scale;    // 511K divisions
-    }
-    return out;
+// dataLoader.ts:290-299
+const out = new Float32Array(numPoints);  // 511K × 4B = 2MB allocation per scrub
+for (let i = 0; i < numPoints; i++) {
+    out[i] = buffer[base + i] / scale;    // 511K divisions
 }
 ```
 
-For NZ (511K points), each scrub event triggers:
-- **2 MB allocation** (`new Float32Array(511840)`)
-- **511K integer→float conversions** (division by 100)
-- The resulting array is used to update point cloud colors, which is another **511K × color computation** pass
+For NZ (511K points), each scrub triggers: 2 MB allocation + 511K divisions + 511K color computations. This is why scrubbing feels sluggish on NZ but fine on BG (~34K points — 15× smaller).
 
-This is why scrubbing feels sluggish on NZ but fine on BG (~34K points — 15× smaller).
+**Fixes (ranked by effort/impact):**
 
-**Potential fixes:**
-1. **LRU cache for decoded slices** — cache the last N decoded Float32Arrays so repeated scrubs to the same or adjacent hours are instant
-2. **Pre-decode visible range** — when user starts scrubbing, pre-decode adjacent hours in an idle callback
-3. **Direct Int16 → color pipeline** — modify the point cloud shader to read Int16 directly, avoiding the decode step entirely. The color ramp function only needs the quantized value.
+1. **LRU cache for decoded slices** (~1 day) — Cache the last N decoded Float32Arrays. Repeated/adjacent scrubs become instant. Highest impact for the effort.
+2. **Pre-decode visible range** (~half day) — On scrub start, pre-decode adjacent hours in an idle callback.
+3. **Direct Int16 → color pipeline** — Modify the point cloud shader to read Int16 directly. The color ramp only needs the quantized value. Elegant but requires shader changes.
 
-### Parity Test Runtime Measurement
+### Parity Test Note
 
-The parity test (`buildParityReport.ts`) **does not measure runtimes**. It compares:
-- Solar exposure values (ref vs WebGPU)
-- Sky exposure values
-- MRT values
-- UTCI values (range comparison + pointwise comparison)
-- Spatial complexity metrics (gradient energy, variance, entropy)
-
-All comparisons are **accuracy-only** (mean diff, max diff, RMSE, worst indices). There is no timing instrumentation in the parity suite.
-
-To compare runtimes, you would need to use the browser DevTools Performance tab or the existing `emitComputeTelemetry` calls that log `pipeline.upload.done` and similar events to the console.
+The parity suite (`buildParityReport.ts`) measures **accuracy only** (mean diff, max diff, RMSE), not runtime. For timing, use DevTools Performance tab or existing `emitComputeTelemetry` calls.
 
 ### Updated Priority Matrix
 
-| # | Action | Status | Impact | Effort |
-|---|--------|--------|--------|--------|
-| 1 | ~~Bit-pack solar exposure~~ | ✅ **Done** | 560 MB → 17.5 MB | — |
-| 2 | ~~Eliminate 288× serial readback~~ | ✅ **Done** | 300-600ms → 10-30ms | — |
-| 3 | **Offload quantization to Web Worker** | 🟡 P1 | Unblocks main thread during init | ~1 day |
-| 4 | **LRU cache for `getUTCIForHour`** | 🟡 P1 | Smooth scrubbing on NZ | ~2 hours |
-| 5 | **Disable MRT diagnostics in production** | 🟡 P1 | -2.2 GB GPU memory | Add config flag (currently always on if GPU supports it) |
-| 6 | **f16 storage for UTCI/MRT** | 🔵 P2 | -560 MB GPU memory | ~3 days |
-| 7 | **Spatial tiling** for >200K points | 🔵 P2 | Removes size ceiling | ~1 week |
+> [!IMPORTANT]
+> Web Worker and LRU cache are **not obsoleted by compute-on-demand** — they solve *today's* UX problems with ~1 day of effort each. Compute-on-demand is the right *architecture* but requires solving the GPU→Three.js rendering bridge first (see Section 5).
+
+| # | Action | Status | Impact | Effort | Risk |
+|---|--------|--------|--------|--------|------|
+| 1 | ~~Bit-pack solar exposure~~ | ✅ Done | 560 MB → 17.5 MB | — | — |
+| 2 | ~~Bulk readback (288→1 mapAsync)~~ | ✅ Done | 300-600ms → 10-30ms | — | — |
+| 3 | **Web Worker for quantization** | 🔴 Next | Unfreezes UI during NZ init | ~1 day | Low |
+| 4 | **LRU cache for decoded slices** | 🔴 Next | Eliminates scrub jank on NZ | ~1 day | Low |
+| 5 | **Prototype GPU→Three.js bridge** | 🟡 Research | Validates compute-on-demand path | ~2 days | Medium |
+| 6 | **Compute-on-demand architecture** | 🟡 After #5 | Enables 0.5m, eliminates all CPU readback | ~2 weeks | High |
+| 7 | **`pack2x16float` for UTCI+MRT** | 🟡 With #6 | 50% storage savings per-hour buffer | ~2 days | Low |
+| 8 | **Disable MRT diagnostics in prod** | 🔵 P2 | -2.2 GB GPU memory | Config flag | Low |
+
+---
+
+## 5. Phase 2 Analysis: Scaling to 0.5m & Extreme Optimization (2026-05-04)
+
+As the project targets 0.5m resolution, grid points scale quadratically. Ness Tziona at 0.5m jumps from 511,840 to **~8.2 million points**.
+
+### The Hard Limit of "Compute All, Store All"
+
+At 8.2M points, storing 288 hours simultaneously is impossible in a browser:
+
+| Buffer | Size at 8.2M × 288 |
+|--------|---------------------|
+| GPU UTCI + MRT (f32) | **~9.4 GB** — exceeds all WebGPU limits |
+| CPU Int16 storage | **~4.7 GB** — exceeds browser tab limits |
+
+No amount of per-value compression can overcome this volume. The architecture must change.
+
+### 5.1 The Universal Architecture: Compute-on-Demand
+
+> [!NOTE]
+> This architecture isn't just for 0.5m — it's the correct end-state for 2m as well, because it eliminates CPU readback entirely.
+
+The core insight: separate the **slow** geometry-dependent computation (raytracing) from the **fast** weather-dependent computation (UTCI polynomial).
+
+1. **Pre-compute and cache shadows (raytracing):**
+   - Compute solar exposure for all points × 288 hours
+   - Bit-pack into `u32` words (~33 MB for 8.2M × 288)
+   - Sky exposure: 8.2M × 4B = ~33 MB
+   - These stay permanently in GPU memory
+
+2. **Recompute temperature math on the fly:**
+   - Allocate a single 1-hour buffer. Use `pack2x16float` to store both MRT and UTCI (~33 MB)
+   - When the user scrubs, a compute shader reads the cached exposure + weather and runs the UTCI polynomial
+   - The GPU writes directly to this buffer — **no CPU readback needed**
+
+**Memory impact at 8.2M points:**
+
+| Component | "Store All" | Compute-on-Demand |
+|-----------|-------------|-------------------|
+| Solar exposure (bit-packed) | ~33 MB | ~33 MB |
+| Sky exposure | ~33 MB | ~33 MB |
+| UTCI results | ~9.4 GB | **~33 MB** (1 hour, packed) |
+| MRT results | ~9.4 GB | **included above** |
+| CPU Int16 storage | ~4.7 GB | **0 MB** |
+| **Total** | **~23+ GB** | **~100 MB** |
+
+> [!WARNING]
+> **Implementation Dependency: GPU→Three.js rendering bridge.** The document's claim that "Three.js renders this single buffer directly" requires wiring Three.js to read our raw WebGPU compute buffer. 
+>
+> *Good News:* The project **already uses `WebGPURenderer`** (in `Scene.svelte`). This eliminates the massive risk of migrating from WebGL.
+>
+> *The Task:* The `UTCIPointCloud` currently uses CPU-side `BufferAttribute`s (`createColors`). This must be refactored to use `StorageBufferAttribute` (or TSL `storage()`) so the vertex shader can directly read the GPU buffer output from our UTCI compute shader, bypassing the CPU entirely.
+>
+> **Recommendation:** Prototype the `StorageBufferAttribute` connection with a dummy buffer before ripping out the CPU quantization loop. If this wiring works smoothly, Compute-on-Demand is fully unlocked.
+
+> [!NOTE]
+> **The "<5ms recompute" estimate needs verification.** The MRT+UTCI shader does bit-unpacking, sky lookup, projection factor table lookup, vapor pressure calculation, AND the 6th-degree polynomial. At 8.2M points this is ~128K workgroups × 64 threads. Benchmark on the weakest target hardware (GTX 970, Intel Iris Xe) before committing. If >16ms, slider scrubbing needs LOD or sub-region recompute.
+
+### 5.2 WGSL Packing Techniques
+
+For either architecture, `pack2x16float` is the key tool for reducing per-value storage:
+
+- **`pack2x16float(vec2<f32>(mrt, utci))` → u32** — Packs both values into one 32-bit word with f16 precision (~0.016°C at 35°C). No hardware extension needed; works on all WebGPU devices. This is strictly better than the `shader-f16` approach discussed in Section 2 because it has no feature-detection fallback path.
+
+- ~~**`pack4x8unorm` for sky exposure**~~ — **Rejected.** Raw sky exposure values are accumulated Tregenza weights (0 to ~145.25), NOT [0,1] floats. `pack4x8unorm` would clamp them. The sky buffer is only 2 MB (even at 8.2M points: 33 MB) — the savings are negligible compared to UTCI/MRT buffers.
+
+- **Why not 8-bit temperatures?** `pack4x8snorm` over a 100°C range yields ~0.4°C resolution, which violates the ±0.5°C parity threshold. 16-bit (`pack2x16float`) is the minimum.
+
+### 5.3 Rejected Strategy: Temporal Fourier Compression
+
+*Hypothesis: Use DFT to compress 288 hours into 10-20 harmonic coefficients.*
+
+**Why it fails:** Fourier series are excellent for smooth waves (air temperature) but catastrophic for discontinuous step functions (shadows).
+
+- **Gibbs phenomenon:** Binary solar exposure (0/1) causes severe ringing at shadow boundaries when harmonics are truncated
+- **Thermal accuracy destroyed:** A sharp 15°C drop when stepping into shade becomes a gradual, wavy slope
+- **Verdict:** Rejected. Bit-packing binary shadows is 100% lossless and uses less memory (36 bytes per point) than storing float coefficients
 
