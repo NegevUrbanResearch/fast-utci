@@ -9,8 +9,7 @@ describe('GPU Compute Pipeline', () => {
 			numMonths: 12
 		});
 
-		// 100 points × 24 hours × 12 months × 4 bytes (f32)
-		expect(config.solarExposureBufferSize).toBe(100 * 24 * 12 * 4);
+		expect(config.solarExposureBufferSize).toBe(Math.ceil((100 * 24 * 12) / 32) * 4);
 		expect(config.utciResultBufferSize).toBe(100 * 24 * 12 * 4);
 
 		// 1 sky view factor per point
@@ -60,18 +59,18 @@ describe('GPU Compute Pipeline', () => {
 		expect(() => calculateDispatch(10_000, 24, 1, 0)).toThrowError();
 	});
 
-	it('should match exposure pass dispatch convention (solar 2D, sky 1D)', () => {
+	it('should match solar dispatch dimensions and the equivalent sky X workgroup count', () => {
 		const numPoints = 500;
 		const numHours = 24;
 		const numMonths = 12;
 		const workgroupSize = 64;
 
-		// Solar: (ceil(points/64), numMonths*numHours, 1)
+		// Solar dispatch uses the production helper directly.
 		const solarDispatch = calculateDispatch(numPoints, numHours, numMonths, workgroupSize);
 		expect(solarDispatch.x).toBe(Math.ceil(numPoints / workgroupSize));
 		expect(solarDispatch.y).toBe(numMonths * numHours);
 
-		// Sky: (ceil(points/64), 1, 1) — 1D over points only
+		// Sky exposure uses the same X workgroup count over points, but that path is not asserted here.
 		const skyWorkgroupsX = Math.ceil(numPoints / workgroupSize);
 		expect(skyWorkgroupsX).toBe(8);
 	});
