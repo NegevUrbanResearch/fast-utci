@@ -30,7 +30,9 @@
 	} from '$lib/services/modelCacheService';
 	import {
 		createUtciSurfaceMesh,
-		updateUtciSurfaceTexture
+		disposeUtciSurfaceMesh,
+		type UtciSurfaceBackendType,
+		updateUtciSurfaceMesh
 	} from '$lib/services/pointCloudService';
 	import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
@@ -38,10 +40,11 @@
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 	import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 	import * as THREE from 'three';
-	import type { Group, PerspectiveCamera, Mesh, MeshBasicMaterial } from 'three';
+	import type { Group, PerspectiveCamera, Mesh } from 'three';
 
 	// Props
 	export let baseCamera: PerspectiveCamera | undefined = undefined;
+	export let utciSurfaceBackend: UtciSurfaceBackendType = 'dataTexture';
 
 	const { renderer, scene, invalidate, autoRender, renderStage } = useThrelte();
 
@@ -58,6 +61,8 @@
 
 	// UTCI surface mesh for comparison scene
 	let comparisonUtciMesh: Mesh | null = null;
+	let lastComparisonAnalysis: typeof $comparisonAnalysis = null;
+	let lastBackend: UtciSurfaceBackendType | null = null;
 
 	/**
 	 * Get the comparison UTCI mesh for external use (e.g., tooltip raycasting)
@@ -125,8 +130,8 @@
 	/**
 	 * Create UTCI surface mesh for comparison analysis
 	 */
-	function createComparisonUtciMesh(analysis: typeof $comparisonAnalysis): void {
-		if (!analysis || !comparisonScene) return;
+	function createComparisonUtciMesh(analysis: typeof $comparisonAnalysis): boolean {
+		if (!analysis || !comparisonScene) return false;
 
 		// Dispose existing mesh first
 		disposeComparisonUtciMesh();
@@ -143,30 +148,35 @@
 		const rangeOverride = get(unifiedUtciRange) ?? undefined;
 
 		try {
-			comparisonUtciMesh = createUtciSurfaceMesh(
+			comparisonUtciMesh = createUtciSurfaceMesh({
 				analysis,
-				effectiveHourIndex,
+				hourIndex: effectiveHourIndex,
 				colorMode,
 				metricType,
 				rangeOverride,
-				monthIndex
-			);
+				monthIndex,
+				backend: utciSurfaceBackend
+			});
 			comparisonScene.add(comparisonUtciMesh);
 			
 			// Apply visibility based on viewer state
 			comparisonUtciMesh.visible = currentViewerState.utciVisible ?? true;
+			lastComparisonAnalysis = analysis;
+			lastBackend = utciSurfaceBackend;
 			
 			console.log(`[COMPARISON RENDERER] Created UTCI mesh for comparison analysis`);
+			return true;
 		} catch (error) {
 			console.error('[COMPARISON RENDERER] Failed to create UTCI mesh:', error);
+			return false;
 		}
 	}
 
 	/**
 	 * Update UTCI surface mesh with new viewer state
 	 */
-	function updateComparisonUtciMesh(): void {
-		if (!comparisonUtciMesh || !$comparisonAnalysis) return;
+	function updateComparisonUtciMesh(): boolean {
+		if (!comparisonUtciMesh || !$comparisonAnalysis) return false;
 
 		const currentViewerState = get(viewerStore);
 		const hourIndex = currentViewerState.currentHour ?? 0;
@@ -183,22 +193,30 @@
 		const rangeOverride = get(unifiedUtciRange) ?? undefined;
 
 		try {
-			updateUtciSurfaceTexture(
+			const updated = updateUtciSurfaceMesh(
 				comparisonUtciMesh,
-				$comparisonAnalysis,
-				effectiveHourIndex,
-				colorMode,
-				metricType,
-				rangeOverride,
-				monthIndex
+				{
+					analysis: $comparisonAnalysis,
+					hourIndex: effectiveHourIndex,
+					colorMode,
+					metricType,
+					rangeOverride,
+					monthIndex,
+					backend: utciSurfaceBackend
+				}
 			);
+			if (!updated) {
+				return createComparisonUtciMesh($comparisonAnalysis);
+			}
 			
 			// Update visibility
 			comparisonUtciMesh.visible = currentViewerState.utciVisible ?? true;
 			
 			invalidate();
+			return true;
 		} catch (error) {
 			console.error('[COMPARISON RENDERER] Failed to update UTCI mesh:', error);
+			return false;
 		}
 	}
 
@@ -212,19 +230,10 @@
 			comparisonScene.remove(comparisonUtciMesh);
 		}
 
-		// Dispose materials and textures
-		const materials = Array.isArray(comparisonUtciMesh.material)
-			? comparisonUtciMesh.material
-			: [comparisonUtciMesh.material];
-
-		materials.forEach((mat) => {
-			const material = mat as MeshBasicMaterial;
-			material.map?.dispose();
-			material.dispose();
-		});
-
-		comparisonUtciMesh.geometry.dispose();
+		disposeUtciSurfaceMesh(comparisonUtciMesh);
 		comparisonUtciMesh = null;
+		lastComparisonAnalysis = null;
+		lastBackend = null;
 		
 		console.log(`[COMPARISON RENDERER] Disposed UTCI mesh`);
 	}
@@ -615,31 +624,74 @@
 		invalidate();
 	}
 
-	// Track previous viewer state for comparison UTCI updates
-	// Only trigger expensive texture updates when relevant viewer properties change
-	let lastUtciUpdateState: { hour: number; colorMode: string; metricType: string; visible: boolean } | null = null;
+	// Track previous viewer state for comparison UTCI updates.
+	let lastUtciUpdateState: {
+		hour: number;
+		month: number;
+		colorMode: string;
+		metricType: string;
+		visible: boolean;
+		unifiedRangeMin: number | null;
+		unifiedRangeMax: number | null;
+	} | null = null;
 
-	// React to viewer state changes (hour, metric type, color mode, visibility)
-	// Note: We deliberately do NOT reference $comparisonStore here to avoid
-	// triggering expensive UTCI updates on curtain position changes
-	$: if (comparisonUtciMesh && $viewerStore) {
-		const currentState = {
-			hour: $viewerStore.currentHour,
-			colorMode: $viewerStore.colorMode,
-			metricType: $viewerStore.metricType ?? 'utci',
-			visible: $viewerStore.utciVisible ?? true
-		};
-		
-		// Only update if comparison is active and state actually changed
-		if (get(comparisonStore).isComparing && (
-			!lastUtciUpdateState ||
-			lastUtciUpdateState.hour !== currentState.hour ||
-			lastUtciUpdateState.colorMode !== currentState.colorMode ||
-			lastUtciUpdateState.metricType !== currentState.metricType ||
-			lastUtciUpdateState.visible !== currentState.visible
-		)) {
-			updateComparisonUtciMesh();
-			lastUtciUpdateState = currentState;
+	// React to viewer state changes without depending on comparison store fields
+	// that change every frame, like curtain position.
+	$: {
+		const viewerState = $viewerStore;
+		const currentUnifiedRange = $unifiedUtciRange;
+		const currentComparisonAnalysis = $comparisonAnalysis;
+		const currentState = viewerState ? {
+			hour: viewerState.currentHour ?? 0,
+			month: viewerState.currentMonth ?? 7,
+			colorMode: viewerState.colorMode ?? 'normalized',
+			metricType: viewerState.metricType ?? 'utci',
+			visible: viewerState.utciVisible ?? true,
+			unifiedRangeMin: currentUnifiedRange?.utciMin ?? null,
+			unifiedRangeMax: currentUnifiedRange?.utciMax ?? null
+		} : null;
+
+		if (!viewerState || !get(comparisonStore).isComparing || !currentComparisonAnalysis) {
+			if (!currentComparisonAnalysis) {
+				lastUtciUpdateState = null;
+			}
+		} else if (!currentState) {
+			// Unreachable with the guard above, but keeps TypeScript happy in the
+			// subsequent state comparisons.
+		} else if (!comparisonUtciMesh) {
+			if (comparisonScene && currentState) {
+				const recreated = createComparisonUtciMesh(currentComparisonAnalysis);
+				if (recreated) {
+					lastUtciUpdateState = currentState;
+					invalidate();
+				}
+			}
+		} else {
+			const needsRecreate =
+				currentComparisonAnalysis !== lastComparisonAnalysis ||
+				utciSurfaceBackend !== lastBackend;
+			const stateChanged =
+				!lastUtciUpdateState ||
+				lastUtciUpdateState.hour !== currentState.hour ||
+				lastUtciUpdateState.month !== currentState.month ||
+				lastUtciUpdateState.colorMode !== currentState.colorMode ||
+				lastUtciUpdateState.metricType !== currentState.metricType ||
+				lastUtciUpdateState.visible !== currentState.visible ||
+				lastUtciUpdateState.unifiedRangeMin !== currentState.unifiedRangeMin ||
+				lastUtciUpdateState.unifiedRangeMax !== currentState.unifiedRangeMax;
+
+			if (needsRecreate) {
+				const recreated = createComparisonUtciMesh(currentComparisonAnalysis);
+				if (recreated) {
+					lastUtciUpdateState = currentState;
+					invalidate();
+				}
+			} else if (stateChanged) {
+				const updated = updateComparisonUtciMesh();
+				if (updated) {
+					lastUtciUpdateState = currentState;
+				}
+			}
 		}
 	}
 

@@ -53,10 +53,17 @@
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
-import {
-	sceneConfigStore,
-	updateSceneConfigFromBounds,
-} from "$lib/stores/sceneConfigStore";
+	import {
+		sceneConfigStore,
+		updateSceneConfigFromBounds,
+	} from "$lib/stores/sceneConfigStore";
+	import {
+		DEFAULT_MAIN_UTCI_RENDER_MODE,
+		parseUtciRenderMode,
+		resolveMainRouteUtciSurfaceBackend,
+		type UtciRendererBackend,
+		type UtciRenderMode,
+	} from "$lib/utciRenderMode";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -74,6 +81,86 @@ import {
 	const DEFAULT_ANALYSIS_ID = getDefaultAnalysisId();
 	let analysisId: string = DEFAULT_ANALYSIS_ID;
 	let mounted = false;
+	// Main route UTCI rendering follows the selected/default render mode.
+	$: utciRenderMode = parseUtciRenderMode(
+		$page.url.searchParams,
+		DEFAULT_MAIN_UTCI_RENDER_MODE,
+	);
+	type UtciOnDemandMode = "off" | "f32";
+	$: utciOnDemandMode =
+		$page.url.searchParams.get("utciOnDemand") === "f32" ? "f32" : "off";
+	let rendererBackend: UtciRendererBackend = "unknown";
+	$: resolvedUtciSurfaceBackend = resolveMainRouteUtciSurfaceBackend({
+		mode: utciRenderMode,
+		rendererBackend,
+		isComparing: $comparisonStore.isComparing,
+	});
+	$: utciRenderDiagnosticsEnabled =
+		$page.url.searchParams.get("utciRenderDiagnostics") === "1";
+
+	type MainRouteUtciSurfaceDiagnostics = {
+		utciSurfaceSource?: string;
+		selectedHourTransferCount?: number;
+		dataTextureBuildCount?: number;
+	};
+
+	type MainRouteUtciRenderDiagnostics = {
+		utciOnDemand: UtciOnDemandMode;
+		utciRenderRequested: UtciRenderMode;
+		utciRenderResolved: "dataTexture" | "gpuNative";
+		rendererBackend: UtciRendererBackend;
+		utciSurfaceSource?: string;
+		selectedHourTransferCount?: number;
+		dataTextureBuildCount?: number;
+	};
+
+	type MainRouteWindow = Window & {
+		__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+	};
+
+	let utciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics = {};
+
+	function updateUtciRenderDiagnostics(diagnostics: {
+		utciRenderDiagnosticsEnabled: boolean;
+		utciOnDemandMode: UtciOnDemandMode;
+		utciRenderMode: UtciRenderMode;
+		resolvedUtciSurfaceBackend: "dataTexture" | "gpuNative";
+		rendererBackend: UtciRendererBackend;
+		utciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
+	}): void {
+		if (typeof window === "undefined") return;
+
+		const win = window as MainRouteWindow;
+		if (!diagnostics.utciRenderDiagnosticsEnabled) {
+			win.__utciRenderDiagnostics__ = undefined;
+			return;
+		}
+
+		win.__utciRenderDiagnostics__ = {
+			utciOnDemand: diagnostics.utciOnDemandMode,
+			utciRenderRequested: diagnostics.utciRenderMode,
+			utciRenderResolved: diagnostics.resolvedUtciSurfaceBackend,
+			rendererBackend: diagnostics.rendererBackend,
+			utciSurfaceSource: diagnostics.utciSurfaceDiagnostics.utciSurfaceSource,
+			selectedHourTransferCount:
+				diagnostics.utciSurfaceDiagnostics.selectedHourTransferCount,
+			dataTextureBuildCount:
+				diagnostics.utciSurfaceDiagnostics.dataTextureBuildCount,
+		};
+	}
+
+	function handleRendererDiagnostics(diagnostics: {
+		rendererBackend: UtciRendererBackend;
+		error?: string;
+	}): void {
+		rendererBackend = diagnostics.rendererBackend;
+	}
+
+	function handleUtciSurfaceDiagnostics(
+		diagnostics: MainRouteUtciSurfaceDiagnostics,
+	): void {
+		utciSurfaceDiagnostics = diagnostics;
+	}
 
 	// Tooltip state
 	let tooltipVisible = false;
@@ -250,6 +337,17 @@ import {
 		}
 	}
 
+	$: if (typeof window !== "undefined") {
+		updateUtciRenderDiagnostics({
+			utciRenderDiagnosticsEnabled,
+			utciOnDemandMode,
+			utciRenderMode,
+			resolvedUtciSurfaceBackend,
+			rendererBackend,
+			utciSurfaceDiagnostics,
+		});
+	}
+
 	function handleMouseLeave() {
 		tooltipVisible = false;
 		tooltipPosition = null;
@@ -270,6 +368,10 @@ import {
 	}
 
 	onDestroy(() => {
+		if (typeof window !== "undefined") {
+			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
+		}
+
 		if (canvasElement && eventListenersAttached) {
 			canvasElement.removeEventListener("mousemove", handleMouseMove);
 			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
@@ -412,6 +514,7 @@ import {
 					? 0x4b5563
 					: 0x111827}
 				bind:canvasElement
+				onRendererDiagnostics={handleRendererDiagnostics}
 			>
 				<Camera
 					bind:cameraRef
@@ -481,6 +584,8 @@ import {
 							analysis={$analysisStore}
 							{model}
 							bind:utciSurface={utciMesh}
+							onUtciSurfaceDiagnostics={handleUtciSurfaceDiagnostics}
+							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>
 					{/if}
 
@@ -489,6 +594,7 @@ import {
 						<ComparisonRenderer
 							bind:this={comparisonRenderer}
 							baseCamera={cameraRef}
+							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>
 					{/if}
 				{/if}

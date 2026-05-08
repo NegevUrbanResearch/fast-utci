@@ -12,6 +12,12 @@ import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
+import {
+	createGpuNativeUtciSurfaceMesh,
+	disposeGpuNativeUtciSurfaceMesh,
+	getGpuNativeUtciSurfaceSource,
+	updateGpuNativeUtciSurfaceMesh
+} from './gpuUtciRenderBridge';
 
 // Vertical separation between the UTCI overlay and underlying geometry.
 // Use a small negative offset so the UTCI plane sits just below the sampled
@@ -21,7 +27,7 @@ const VISUAL_LAYER_OFFSET = -0.05;
 const DEFAULT_OPACITY = 0.9;
 const TEXTURE_ALPHA = 255;
 
-interface UtciGridLayout {
+export interface UtciGridLayout {
 	width: number;
 	height: number;
 	gridSize: number;
@@ -34,10 +40,43 @@ interface UtciGridLayout {
 	centerX: number;
 	centerZ: number;
 	baseY: number;
+	indexToRow: Uint32Array;
+	indexToColumn: Uint32Array;
 	indexToTexel: Uint32Array;
 	colorBuffer: Uint8Array;
 	texture?: THREE.DataTexture;
 }
+
+export type UtciSurfaceBackendType = 'dataTexture' | 'gpuNative';
+
+export interface UtciSurfaceMeshOptions {
+	analysis: Analysis;
+	hourIndex?: number;
+	colorMode?: 'normalized' | 'discrete';
+	metricType?: MetricType;
+	rangeOverride?: UtciRangeOverride;
+	monthIndex?: number;
+	backend?: UtciSurfaceBackendType;
+}
+
+interface ResolvedUtciSurfaceMeshOptions {
+	analysis: Analysis;
+	hourIndex: number;
+	colorMode: 'normalized' | 'discrete';
+	metricType: MetricType;
+	rangeOverride?: UtciRangeOverride;
+	monthIndex: number;
+	backend: UtciSurfaceBackendType;
+}
+
+interface UtciSurfaceBackend {
+	type: UtciSurfaceBackendType;
+	createMesh: (layout: UtciGridLayout, colors: Float32Array) => THREE.Mesh;
+	updateMesh: (mesh: THREE.Mesh, layout: UtciGridLayout, colors: Float32Array) => boolean;
+	disposeMesh: (mesh: THREE.Mesh) => void;
+}
+
+const DEFAULT_UTCI_SURFACE_BACKEND: UtciSurfaceBackendType = 'dataTexture';
 
 /**
  * Create UTCI point cloud geometry and material
@@ -93,6 +132,94 @@ export interface UtciRangeOverride {
 	utciMin: number;
 	utciMax: number;
 }
+
+const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = {
+	dataTexture: {
+		type: 'dataTexture',
+		createMesh(layout, colors) {
+			fillColorBuffer(layout, colors);
+
+			const texture = new THREE.DataTexture(
+				layout.colorBuffer,
+				layout.width,
+				layout.height,
+				THREE.RGBAFormat,
+				THREE.UnsignedByteType
+			);
+			texture.needsUpdate = true;
+			texture.flipY = false;
+			texture.generateMipmaps = false;
+			texture.magFilter = THREE.NearestFilter;
+			texture.minFilter = THREE.NearestFilter;
+			texture.colorSpace = THREE.SRGBColorSpace;
+
+			layout.texture = texture;
+
+			const material = new THREE.MeshBasicMaterial({
+				map: texture,
+				transparent: true,
+				opacity: DEFAULT_OPACITY,
+				side: THREE.DoubleSide,
+				depthTest: true,
+				depthWrite: false,
+				polygonOffset: false,
+				toneMapped: false
+			});
+
+			const geometry = createUtciSurfacePlaneGeometry(layout);
+			const mesh = new THREE.Mesh(geometry, material);
+			mesh.name = 'UTCI Texture Overlay';
+			applySurfaceMeshState(mesh, layout, 'dataTexture');
+			incrementDataTextureBuildCount(mesh);
+			return mesh;
+		},
+		updateMesh(mesh, layout, colors) {
+			const material = mesh.material as THREE.MeshBasicMaterial;
+			const texture = layout.texture ?? (material.map as THREE.DataTexture | null);
+			if (!texture) {
+				console.warn('[UTCI] Missing texture on dataTexture surface mesh. Recreate the mesh.');
+				return false;
+			}
+
+			fillColorBuffer(layout, colors);
+			texture.needsUpdate = true;
+			layout.texture = texture;
+			applySurfaceMeshState(mesh, layout, 'dataTexture');
+			incrementDataTextureBuildCount(mesh);
+			return true;
+		},
+		disposeMesh(mesh) {
+			disposeSurfaceMeshAssets(mesh);
+		}
+	},
+	gpuNative: {
+		type: 'gpuNative',
+		createMesh(layout, colors) {
+			const mesh = createGpuNativeUtciSurfaceMesh({ layout, colors, opacity: DEFAULT_OPACITY });
+			applySurfaceMeshState(mesh, layout, 'gpuNative');
+			incrementSelectedHourTransferCount(mesh);
+			mesh.name = 'UTCI GPU Surface Overlay';
+			return mesh;
+		},
+		updateMesh(mesh, layout, colors) {
+			const updated = updateGpuNativeUtciSurfaceMesh(mesh, {
+				layout,
+				colors,
+				opacity: DEFAULT_OPACITY
+			});
+			if (!updated) {
+				return false;
+			}
+
+			applySurfaceMeshState(mesh, layout, 'gpuNative');
+			incrementSelectedHourTransferCount(mesh);
+			return true;
+		},
+		disposeMesh(mesh) {
+			disposeGpuNativeUtciSurfaceMesh(mesh);
+		}
+	}
+};
 
 /**
  * Create color array for point cloud
@@ -201,61 +328,73 @@ export function updatePointCloudColors(
  * @param rangeOverride - Optional UTCI range override for unified comparison scales
  * @param monthIndex - Month index for multi-month (full day = selected month's 24h)
  */
+export function createUtciSurfaceMesh(options: UtciSurfaceMeshOptions): THREE.Mesh;
 export function createUtciSurfaceMesh(
 	analysis: Analysis,
+	hourIndex?: number,
+	colorMode?: 'normalized' | 'discrete',
+	metricType?: MetricType,
+	rangeOverride?: UtciRangeOverride,
+	monthIndex?: number
+): THREE.Mesh;
+export function createUtciSurfaceMesh(
+	optionsOrAnalysis: Analysis | UtciSurfaceMeshOptions,
 	hourIndex: number = 0,
 	colorMode: 'normalized' | 'discrete' = 'normalized',
 	metricType: MetricType = 'utci',
 	rangeOverride?: UtciRangeOverride,
 	monthIndex: number = 7
 ): THREE.Mesh {
-	const layout = buildUtciGridLayout(analysis);
-	const colors = createColors(analysis, hourIndex, colorMode, metricType, rangeOverride, monthIndex);
-	fillColorBuffer(layout, colors);
+	const options = isUtciSurfaceMeshOptions(optionsOrAnalysis)
+		? resolveUtciSurfaceMeshOptions(optionsOrAnalysis)
+		: resolveUtciSurfaceMeshOptions(
+				optionsOrAnalysis,
+				hourIndex,
+				colorMode,
+				metricType,
+				rangeOverride,
+				monthIndex
+			);
 
-	const texture = new THREE.DataTexture(
-		layout.colorBuffer,
-		layout.width,
-		layout.height,
-		THREE.RGBAFormat,
-		THREE.UnsignedByteType
-	);
-	texture.needsUpdate = true;
-	texture.flipY = false;
-	texture.generateMipmaps = false;
-	texture.magFilter = THREE.NearestFilter;
-	texture.minFilter = THREE.NearestFilter;
-	texture.colorSpace = THREE.SRGBColorSpace;
+	return createUtciSurfaceMeshInternal(options);
+}
 
-	layout.texture = texture;
+export function updateUtciSurfaceMesh(mesh: THREE.Mesh, options: UtciSurfaceMeshOptions): boolean {
+	const layout: UtciGridLayout | undefined = mesh.userData.utciLayout;
+	if (!layout) {
+		console.warn('[UTCI] Missing layout on surface mesh. Recreate the mesh.');
+		return false;
+	}
 
-	const material = new THREE.MeshBasicMaterial({
-		map: texture,
-		transparent: true,
-		opacity: DEFAULT_OPACITY,
-		side: THREE.DoubleSide,
-		depthTest: true,
-		depthWrite: false,
-		// No polygon offset: we rely on geometry placement (slightly below
-		// ground) plus the semi-transparent base mesh for visual layering.
-		polygonOffset: false,
-		toneMapped: false
+	const currentBackendType = getSurfaceBackendType(mesh);
+	const resolved = resolveUtciSurfaceMeshOptions({
+		...options,
+		backend: options.backend ?? currentBackendType
 	});
+	if (resolved.backend !== currentBackendType) {
+		console.warn(
+			`[UTCI] Surface backend cannot switch from ${currentBackendType} to ${resolved.backend} in place. Recreate the mesh.`
+		);
+		return false;
+	}
 
-	const planeWidth = layout.width * layout.gridSize;
-	const planeHeight = layout.height * layout.gridSize;
+	const nextLayout = buildUtciGridLayout(resolved.analysis);
+	if (!canReuseUtciSurfaceLayout(layout, nextLayout)) {
+		console.warn('[UTCI] Surface layout changed; recreate the mesh to realign surface assets.');
+		return false;
+	}
 
-	const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-	geometry.rotateX(-Math.PI / 2);
+	nextLayout.texture = layout.texture;
+	const colors = createColors(
+		resolved.analysis,
+		resolved.hourIndex,
+		resolved.colorMode,
+		resolved.metricType,
+		resolved.rangeOverride,
+		resolved.monthIndex
+	);
 
-	const mesh = new THREE.Mesh(geometry, material);
-	mesh.name = 'UTCI Texture Overlay';
-	mesh.position.set(layout.centerX, layout.baseY, layout.centerZ);
-	mesh.renderOrder = 2;
-	mesh.frustumCulled = false;
-
-	mesh.userData.utciLayout = layout;
-	return mesh;
+	return getUtciSurfaceBackend(resolved.backend).updateMesh(mesh, nextLayout, colors);
 }
 
 /**
@@ -275,29 +414,154 @@ export function updateUtciSurfaceTexture(
 	metricType: MetricType = 'utci',
 	rangeOverride?: UtciRangeOverride,
 	monthIndex: number = 7
+): boolean {
+	return updateUtciSurfaceMesh(mesh, {
+		analysis,
+		hourIndex,
+		colorMode,
+		metricType,
+		rangeOverride,
+		monthIndex
+	});
+}
+
+export function disposeUtciSurfaceMesh(mesh: THREE.Mesh | null): void {
+	if (!mesh) {
+		return;
+	}
+
+	getUtciSurfaceBackend(getSurfaceBackendType(mesh)).disposeMesh(mesh);
+	delete mesh.userData.utciLayout;
+	delete mesh.userData.utciSurfaceBackend;
+}
+
+function createUtciSurfaceMeshInternal(options: ResolvedUtciSurfaceMeshOptions): THREE.Mesh {
+	const layout = buildUtciGridLayout(options.analysis);
+	const colors = createColors(
+		options.analysis,
+		options.hourIndex,
+		options.colorMode,
+		options.metricType,
+		options.rangeOverride,
+		options.monthIndex
+	);
+
+	return getUtciSurfaceBackend(options.backend).createMesh(layout, colors);
+}
+
+function resolveUtciSurfaceMeshOptions(
+	options: UtciSurfaceMeshOptions
+): ResolvedUtciSurfaceMeshOptions;
+function resolveUtciSurfaceMeshOptions(
+	analysis: Analysis,
+	hourIndex?: number,
+	colorMode?: 'normalized' | 'discrete',
+	metricType?: MetricType,
+	rangeOverride?: UtciRangeOverride,
+	monthIndex?: number
+): ResolvedUtciSurfaceMeshOptions;
+function resolveUtciSurfaceMeshOptions(
+	optionsOrAnalysis: Analysis | UtciSurfaceMeshOptions,
+	hourIndex: number = 0,
+	colorMode: 'normalized' | 'discrete' = 'normalized',
+	metricType: MetricType = 'utci',
+	rangeOverride?: UtciRangeOverride,
+	monthIndex: number = 7
+): ResolvedUtciSurfaceMeshOptions {
+	if (isUtciSurfaceMeshOptions(optionsOrAnalysis)) {
+		return {
+			analysis: optionsOrAnalysis.analysis,
+			hourIndex: optionsOrAnalysis.hourIndex ?? 0,
+			colorMode: optionsOrAnalysis.colorMode ?? 'normalized',
+			metricType: optionsOrAnalysis.metricType ?? 'utci',
+			rangeOverride: optionsOrAnalysis.rangeOverride,
+			monthIndex: optionsOrAnalysis.monthIndex ?? 7,
+			backend: optionsOrAnalysis.backend ?? DEFAULT_UTCI_SURFACE_BACKEND
+		};
+	}
+
+	return {
+		analysis: optionsOrAnalysis,
+		hourIndex,
+		colorMode,
+		metricType,
+		rangeOverride,
+		monthIndex,
+		backend: DEFAULT_UTCI_SURFACE_BACKEND
+	};
+}
+
+function isUtciSurfaceMeshOptions(
+	optionsOrAnalysis: Analysis | UtciSurfaceMeshOptions
+): optionsOrAnalysis is UtciSurfaceMeshOptions {
+	return 'analysis' in optionsOrAnalysis;
+}
+
+function getUtciSurfaceBackend(type: UtciSurfaceBackendType): UtciSurfaceBackend {
+	return utciSurfaceBackends[type];
+}
+
+function getSurfaceBackendType(mesh: THREE.Mesh): UtciSurfaceBackendType {
+	return (mesh.userData.utciSurfaceBackend as UtciSurfaceBackendType | undefined) ?? DEFAULT_UTCI_SURFACE_BACKEND;
+}
+
+function canReuseUtciSurfaceLayout(current: UtciGridLayout, next: UtciGridLayout): boolean {
+	return (
+		current.numPositions === next.numPositions &&
+		current.width === next.width &&
+		current.height === next.height &&
+		current.gridSize === next.gridSize &&
+		current.coordinateSystem === next.coordinateSystem
+	);
+}
+
+function createUtciSurfacePlaneGeometry(layout: UtciGridLayout): THREE.PlaneGeometry {
+	const planeWidth = layout.width * layout.gridSize;
+	const planeHeight = layout.height * layout.gridSize;
+	const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+	geometry.rotateX(-Math.PI / 2);
+	return geometry;
+}
+
+function applySurfaceMeshState(
+	mesh: THREE.Mesh,
+	layout: UtciGridLayout,
+	backend: UtciSurfaceBackendType
 ): void {
-	const layout: UtciGridLayout | undefined = mesh.userData.utciLayout;
-	if (!layout) {
-		console.warn('[UTCI] Missing layout on surface mesh. Recreating mesh.');
-		return;
+	mesh.position.set(layout.centerX, layout.baseY, layout.centerZ);
+	mesh.renderOrder = 2;
+	mesh.frustumCulled = false;
+	mesh.userData.utciLayout = layout;
+	mesh.userData.utciSurfaceBackend = backend;
+	if (backend === 'gpuNative') {
+		mesh.userData.utciSurfaceSource = getGpuNativeUtciSurfaceSource(mesh);
+		mesh.userData.dataTextureBuildCount = 0;
+	} else {
+		delete mesh.userData.utciSurfaceSource;
+		delete mesh.userData.selectedHourTransferCount;
+	}
+}
+
+function incrementSelectedHourTransferCount(mesh: THREE.Mesh): void {
+	mesh.userData.selectedHourTransferCount =
+		((mesh.userData.selectedHourTransferCount as number | undefined) ?? 0) + 1;
+}
+
+function incrementDataTextureBuildCount(mesh: THREE.Mesh): void {
+	mesh.userData.dataTextureBuildCount =
+		((mesh.userData.dataTextureBuildCount as number | undefined) ?? 0) + 1;
+}
+
+function disposeSurfaceMeshAssets(mesh: THREE.Mesh): void {
+	mesh.removeFromParent();
+
+	const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+	for (const material of materials) {
+		(material as THREE.Material & { map?: THREE.Texture | null }).map?.dispose();
+		material.dispose();
 	}
 
-	if (layout.numPositions !== analysis.data.numPositions) {
-		console.warn('[UTCI] Analysis position count changed; recreate mesh to realign texture.');
-		return;
-	}
-
-	const material = mesh.material as THREE.MeshBasicMaterial;
-	const texture = layout.texture ?? (material.map as THREE.DataTexture | null);
-	if (!texture) {
-		console.warn('[UTCI] Missing texture on surface mesh. Recreating mesh.');
-		return;
-	}
-
-	const colors = createColors(analysis, hourIndex, colorMode, metricType, rangeOverride, monthIndex);
-	fillColorBuffer(layout, colors);
-
-	texture.needsUpdate = true;
+	mesh.geometry.dispose();
 }
 
 function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
@@ -371,23 +635,9 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		if (transformed.y > maxY) maxY = transformed.y;
 	}
 
-	let maxRow = 0;
-	let maxCol = 0;
-	const invGrid = 1 / gridSize;
-
-	for (let i = 0; i < numPositions; i++) {
-		const col = Math.round((xs[i] - minX) * invGrid);
-		const row = Math.round((zs[i] - minZ) * invGrid);
-
-		cols[i] = col;
-		rows[i] = row;
-
-		if (col > maxCol) maxCol = col;
-		if (row > maxRow) maxRow = row;
-	}
-
-	let width = Math.max(1, maxCol + 1);
-	let height = Math.max(1, maxRow + 1);
+	let width = 1;
+	let height = 1;
+	let usingBoundsFallback = false;
 
 	// Guard against invalid layout (e.g. NaN positions or wrong coordinate space)
 	let layoutValid =
@@ -401,6 +651,7 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	// Fallback for live/WebGPU rectangular grid: use metadata.bounds so overlay is placed in scene
 	const bounds = metadata.bounds as { x_min: number; x_max: number; y_min: number; y_max: number; z?: number } | undefined;
 	if (!layoutValid && bounds && (analysis as any).__source === 'webgpu') {
+		usingBoundsFallback = true;
 		if (coordinateSystem === 'xy_ground') {
 			minX = bounds.x_min;
 			maxX = bounds.x_max;
@@ -430,6 +681,25 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		);
 	}
 
+	if (layoutValid) {
+		if (usingBoundsFallback) {
+			assignFallbackGridCoordinates(rows, cols, numPositions, width, height);
+		} else {
+			const dimensions = assignGridCoordinatesFromWorldPositions({
+				xs,
+				zs,
+				minX,
+				minZ,
+				gridSize,
+				rows,
+				cols,
+				numPositions
+			});
+			width = dimensions.width;
+			height = dimensions.height;
+		}
+	}
+
 	for (let i = 0; i < numPositions; i++) {
 		const flippedRow = height - 1 - rows[i];
 		const texelIndex = flippedRow * width + cols[i];
@@ -455,9 +725,65 @@ function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		centerX,
 		centerZ,
 		baseY,
+		indexToRow: rows,
+		indexToColumn: cols,
 		indexToTexel,
 		colorBuffer
 	};
+}
+
+function assignGridCoordinatesFromWorldPositions(params: {
+	xs: Float32Array;
+	zs: Float32Array;
+	minX: number;
+	minZ: number;
+	gridSize: number;
+	rows: Uint32Array;
+	cols: Uint32Array;
+	numPositions: number;
+}): { width: number; height: number } {
+	const { xs, zs, minX, minZ, gridSize, rows, cols, numPositions } = params;
+	let maxRow = 0;
+	let maxCol = 0;
+	const invGrid = 1 / gridSize;
+
+	for (let i = 0; i < numPositions; i++) {
+		const col = Math.round((xs[i] - minX) * invGrid);
+		const row = Math.round((zs[i] - minZ) * invGrid);
+
+		cols[i] = col;
+		rows[i] = row;
+
+		if (col > maxCol) maxCol = col;
+		if (row > maxRow) maxRow = row;
+	}
+
+	return {
+		width: Math.max(1, maxCol + 1),
+		height: Math.max(1, maxRow + 1)
+	};
+}
+
+function assignFallbackGridCoordinates(
+	rows: Uint32Array,
+	cols: Uint32Array,
+	numPositions: number,
+	width: number,
+	height: number
+): void {
+	const expectedPositions = width * height;
+	if (numPositions !== expectedPositions) {
+		console.warn(
+			`[UTCI] WebGPU bounds fallback expected ${expectedPositions} grid points but received ${numPositions}. Mapping sequentially within the fallback grid.`
+		);
+	}
+
+	for (let i = 0; i < numPositions; i++) {
+		const col = Math.min(width - 1, Math.floor(i / height));
+		const row = Math.min(height - 1, i % height);
+		cols[i] = col;
+		rows[i] = row;
+	}
 }
 
 function fillColorBuffer(layout: UtciGridLayout, colors: Float32Array): void {

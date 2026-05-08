@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { browser } from "$app/environment";
+	import { T } from "@threlte/core";
 	import { onMount, onDestroy } from "svelte";
 	import { page } from "$app/stores";
 	import { goto } from "$app/navigation";
@@ -9,6 +11,8 @@
 	} from "$lib/stores/analysisStore";
 	import {
 		viewerStore,
+		setCurrentHour,
+		setCurrentMonth,
 		setAnalysisId,
 		setLoading,
 		setError,
@@ -58,12 +62,35 @@
 	} from "$lib/stores/sceneConfigStore";
 	import type { Analysis, AnalysisMetadata } from "$lib/types/analysis";
 	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
+	import { ComputeManager } from "$lib/compute/compute-manager";
+	import {
+		createEmptyOnDemandDiagnostics,
+		type OnDemandRuntimeDiagnostics,
+	} from "$lib/compute/onDemandDiagnostics";
+	import {
+		createOnDemandScrubState,
+		markOnDemandRequestCompleted,
+		startOnDemandRequest,
+	} from "$lib/compute/onDemandScrubState";
 	import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
 	import { normalizeSkyExposureToViewFactor } from "$lib/parity/skyScale";
-	import type { UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
+	import type { SerializedBvhForGpu, UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
 	import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
 	import { get } from "svelte/store";
 	import { emitComputeTelemetry } from "$lib/compute/telemetry";
+	import {
+		createSyntheticGpuUtciBridge,
+		type SyntheticGpuUtciBridge,
+	} from "$lib/services/gpuUtciRenderBridge";
+	import {
+		DEFAULT_DEBUG_UTCI_RENDER_MODE,
+		parseUtciRenderMode,
+		resolveUtciSurfaceBackend,
+		type UtciRenderMode,
+		type UtciRendererBackend,
+	} from "$lib/utciRenderMode";
+	import { calculateScenarioOrigin } from "$lib/utils/coordinates";
+	import { getAnchorOffset, isNormalizationEnabled } from "$lib/config/viewerConfig";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -86,7 +113,11 @@
 	let modelLoading = true;
 	/** Full-screen overlay until model is loaded and live UTCI has finished or failed. */
 	$: showFullLoadOverlay =
-		modelLoading || (model != null && liveAnalysis === null && liveError === null);
+		modelLoading ||
+		(model != null &&
+			liveAnalysis === null &&
+			liveError === null &&
+			!strictExposureOnlyEnabled);
 	let hasFitOnce = false;
 	let lastModelFile: string | null = null;
 	/** Model file path that the current `model` was loaded for. Used to avoid running compute with a stale model after project switch. */
@@ -97,6 +128,7 @@
 	let liveAbortController: AbortController | null = null;
 	/** Progress during 12-month compute: { current, total } or null. */
 	let liveComputeProgress: { current: number; total: number } | null = null;
+	let rerunLiveAnalysisAfterCurrentCompute = false;
 
 	const DEFAULT_ANALYSIS_ID = getDefaultAnalysisId();
 	let analysisId: string = DEFAULT_ANALYSIS_ID;
@@ -105,6 +137,19 @@
 	$: parityMode = $page.url.searchParams.get("parity") === "1";
 	/** E2E-only normal-mode export; keeps parityMode false while exposing one app-visible month slice. */
 	$: normalCollectMode = !parityMode && $page.url.searchParams.get("collect") === "normal";
+	$: onDemandDebugModeEnabled = $page.url.searchParams.get("utciOnDemand") === "f32";
+	$: debugOnDemandMode = onDemandDebugModeEnabled ? "f32" : "off";
+	// Default the debug route to auto so prototype coverage exercises the live
+	// renderer-backend resolution path.
+	$: utciRenderMode = parseUtciRenderMode(
+		$page.url.searchParams,
+		DEFAULT_DEBUG_UTCI_RENDER_MODE,
+	);
+	let rendererBackend: UtciRendererBackend = "unknown";
+	$: resolvedUtciSurfaceBackend = resolveUtciSurfaceBackend(
+		utciRenderMode,
+		rendererBackend,
+	);
 
 	// Tooltip state
 	let tooltipVisible = false;
@@ -115,6 +160,11 @@
 	let copiedPointStatus: string | null = null;
 	let utciMesh: Mesh | null = null;
 	let liveUtciMesh: Mesh | null = null;
+	let liveUtciSurfaceDiagnostics: {
+		utciSurfaceSource?: string;
+		selectedHourTransferCount?: number;
+		dataTextureBuildCount?: number;
+	} = {};
 	let canvasElement: HTMLCanvasElement | null = null;
 
 	// Camera reference - will be set from Camera component
@@ -128,6 +178,7 @@
 	let liveLoading = false;
 	let liveError: string | null = null;
 	let lastLiveKey: string | null = null;
+	let lastLiveComputeModeKey: string | null = null;
 	// Large models (e.g. Ness Tziona) with 12 months need several minutes for 288-slice readback
 	const LIVE_COMPUTE_WATCHDOG_MS = 300_000;
 	let liveComputeWatchdog: ReturnType<typeof setTimeout> | null = null;
@@ -158,6 +209,79 @@
 		message?: string;
 	};
 
+	type OnDemandPrototypeDiagnostics = Partial<OnDemandRuntimeDiagnostics> & {
+		navigatorGpu: boolean;
+		rendererBackend: "webgpu" | "unknown";
+		utciRenderRequested?: UtciRenderMode;
+		utciRenderResolved?: "dataTexture" | "gpuNative";
+		utciSurfaceSource?: string;
+		bridgeAttached?: boolean;
+		visibleColorVariance?: number;
+		debugComparisonReference?: "python-bin";
+		pythonBinComparisonActive?: boolean;
+		debugComparisonMonthIndex?: number;
+		pythonComparisonHourIndex?: number;
+		webgpuComparisonHourIndex?: number;
+		pythonBinSampleComparison?: OnDemandPythonSampleComparison;
+		appVisibleSelectedHour?: boolean;
+		selectedHourReadbackCount?: number;
+		liveAnalysisConstructedForSelectedHour?: boolean;
+		pendingReadbackRequestId?: number;
+		pendingReadbackTimeIndex?: number;
+	};
+
+	type OnDemandPythonSampleRecord = {
+		pointIndex: number;
+		debugValue: number;
+		referenceValue: number;
+		absDiff: number;
+	};
+
+	type OnDemandPythonSampleComparison = {
+		numCompared: number;
+		maxAbsDiff: number;
+		samples: OnDemandPythonSampleRecord[];
+	};
+
+	type OnDemandPrototypeComparison = {
+		timeIndex: number;
+		numCompared: number;
+		maxAbsDiff: number;
+		rmse: number;
+		debugReadbackCount: number;
+	};
+
+	type OnDemandMultiHourComparisonResult = {
+		hour: number;
+		numCompared: number;
+		maxAbsDiff: number;
+		rmse: number;
+		onDemandAt31079?: number;
+		baselineAt31079?: number;
+		diffAt31079?: number;
+	};
+
+	type OnDemandPrototypeMultiHourComparison = {
+		baselineSource: "separateRunAll";
+		baselineMonthContext: {
+			monthIndex: 0;
+			sliceKind: "representative-day-full-year";
+			note: string;
+		};
+		strictPath: OnDemandRuntimeDiagnostics;
+		hours: number[];
+		hourResults: OnDemandMultiHourComparisonResult[];
+		knownPoint31079?: {
+			pointIndex: number;
+			hours: Array<{
+				hour: number;
+				onDemand: number;
+				baseline: number;
+				diff: number;
+			}>;
+		};
+	};
+
 	type ParityWindow = Window & {
 		__parityIntermediatesError__?: string;
 		__parityCollectionError__?: string;
@@ -169,10 +293,1444 @@
 		__parityMetadata__?: AnalysisMetadata;
 		__parityModel__?: Group | null;
 		__parityThree__?: typeof THREE;
+		__onDemandPrototypeDiagnostics__?: OnDemandPrototypeDiagnostics;
+		__onDemandPrototypeComparison__?: OnDemandPrototypeComparison;
+		__onDemandMultiHourComparison__?: OnDemandPrototypeMultiHourComparison;
 	};
+
+	type OnDemandPrototypeStatus =
+		| "idle"
+		| "diagnostics"
+		| "ready"
+		| "unsupported"
+		| "error";
 
 	const getParityWindow = (): ParityWindow =>
 		window as unknown as ParityWindow;
+
+	const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
+
+	function buildSunVectorsFixtureFromMetadata(params: {
+		baseMetadata: AnalysisMetadata;
+		numHours: number;
+		numMonths: number;
+	}): { sunVectors: Float32Array; sunAltitudes: Float32Array } | undefined {
+		const { baseMetadata, numHours, numMonths } = params;
+		const raw = (baseMetadata as unknown as { sun_positions?: unknown }).sun_positions;
+		if (!Array.isArray(raw) || raw.length < numHours) return undefined;
+
+		type SunPositionLike = {
+			vector?: [number, number, number];
+			altitude?: number;
+			is_up?: boolean;
+		};
+
+		const firstDay = raw as SunPositionLike[];
+		const sunVectors = new Float32Array(numMonths * numHours * 3);
+		const sunAltitudes = new Float32Array(numMonths * numHours);
+		for (let monthOffset = 0; monthOffset < numMonths; monthOffset += 1) {
+			for (let hour = 0; hour < numHours; hour += 1) {
+				const source = firstDay[hour];
+				const vector = source?.vector;
+				const baseIndex = (monthOffset * numHours + hour) * 3;
+				if (vector && vector.length === 3) {
+					sunVectors[baseIndex] = vector[0];
+					sunVectors[baseIndex + 1] = vector[2];
+					sunVectors[baseIndex + 2] = -vector[1];
+				}
+				const altitudeDegrees = Number.isFinite(source?.altitude)
+					? (source?.altitude as number)
+					: 0;
+				const isUp = source?.is_up === true || altitudeDegrees > 0;
+				sunAltitudes[monthOffset * numHours + hour] = isUp
+					? (altitudeDegrees * Math.PI) / 180
+					: 0;
+			}
+		}
+
+		return { sunVectors, sunAltitudes };
+	}
+
+	function getGridOriginOffset(
+		baseMetadata: AnalysisMetadata,
+	): { x: number; y: number; z: number } | undefined {
+		if (!isNormalizationEnabled()) return undefined;
+
+		const coordinateSystem =
+			(baseMetadata.coordinate_system as "xy_ground" | "xz_ground") ?? "xy_ground";
+		const scenarioOrigin = calculateScenarioOrigin(baseMetadata as any);
+		const anchorOffset = getAnchorOffset();
+		const transformedOrigin =
+			coordinateSystem === "xy_ground"
+				? new THREE.Vector3(
+					scenarioOrigin.x,
+					scenarioOrigin.z,
+					-scenarioOrigin.y,
+				)
+				: scenarioOrigin.clone();
+		const normalizationOffset = anchorOffset.clone().sub(transformedOrigin);
+		return normalizationOffset.lengthSq() > 0.001
+			? {
+				x: normalizationOffset.x,
+				y: normalizationOffset.y,
+				z: normalizationOffset.z,
+			}
+			: undefined;
+	}
+
+	function getStrictExposureOnlyTimeIndex(): number {
+		const raw = Number($page.url.searchParams.get("timeIndex") ?? "12");
+		return Number.isInteger(raw) && raw >= 0 ? raw : 12;
+	}
+
+	function getDebugOnDemandSelection(params: {
+		monthIndex: number;
+		hourIndex: number;
+		parityMode: boolean;
+	}): { monthIndex: number; hourIndex: number; timeIndex: number } {
+		const { monthIndex, hourIndex, parityMode } = params;
+		return {
+			monthIndex,
+			hourIndex,
+			timeIndex: parityMode ? hourIndex : monthIndex * 24 + hourIndex,
+		};
+	}
+
+	function getDebugComparisonSelectionView(): { monthIndex: number; hourIndex: number } {
+		return {
+			monthIndex: $viewerStore.currentMonth ?? 7,
+			hourIndex: $viewerStore.currentHour,
+		};
+	}
+
+	function getCompareHoursFromQuery(): number[] {
+		const raw = $page.url.searchParams.get("compareHours");
+		if (!raw) return [];
+		return raw
+			.split(",")
+			.map((value) => Number(value.trim()))
+			.filter((value) => Number.isInteger(value) && value >= 0);
+	}
+
+	function clearOnDemandPrototypeComparison(): void {
+		if (!browser) return;
+		getParityWindow().__onDemandPrototypeComparison__ = undefined;
+	}
+
+	function clearOnDemandMultiHourComparison(): void {
+		if (!browser) return;
+		getParityWindow().__onDemandMultiHourComparison__ = undefined;
+	}
+
+	let onDemandPrototypeComparisonRunToken = 0;
+	let lastOnDemandPrototypeComparisonAttemptKey: string | null = null;
+
+	function invalidateOnDemandPrototypeComparison(options?: { resetAttemptKey?: boolean }): void {
+		onDemandPrototypeComparisonRunToken += 1;
+		if (options?.resetAttemptKey !== false) {
+			lastOnDemandPrototypeComparisonAttemptKey = null;
+		}
+		clearOnDemandPrototypeComparison();
+		clearOnDemandMultiHourComparison();
+	}
+
+	function hasOnDemandPrototypeComparison(): boolean {
+		return browser && Boolean(getParityWindow().__onDemandPrototypeComparison__);
+	}
+
+	function hasOnDemandMultiHourComparison(): boolean {
+		return browser && Boolean(getParityWindow().__onDemandMultiHourComparison__);
+	}
+
+	function getOnDemandPrototypeDebugReadbackCount(): number {
+		return getParityWindow().__onDemandPrototypeDiagnostics__?.debugReadbackCount ?? 0;
+	}
+
+	function getOnDemandPrototypeComparisonKey(): string | null {
+		if (
+			!browser ||
+			!compareOneHourEnabled ||
+			!liveAnalysis ||
+			!lastPipeline ||
+			!lastLiveKey ||
+			liveLoading ||
+			liveError
+		) {
+			return null;
+		}
+		return `${lastLiveKey}|compareOneHour`;
+	}
+
+	let onDemandPrototypeStatus: OnDemandPrototypeStatus = "idle";
+	let onDemandPrototypeError: string | null = null;
+	let syntheticBridge: SyntheticGpuUtciBridge | null = null;
+	let syntheticBridgeKey: string | null = null;
+	let syntheticBridgeMountedKey: string | null = null;
+	let syntheticBridgeValidationRunId = 0;
+	let syntheticBridgeValidationStartedForKey: string | null = null;
+	let syntheticBridgeValidationTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastDebugOnDemandScrubTriggerKey: string | null = null;
+	let debugOnDemandScrubScheduleRunId = 0;
+	let onDemandDebugPrepared:
+		| {
+				computeManager: ComputeManager;
+				pipeline: UTCIComputePipeline;
+				numPoints: number;
+				numHours: number;
+				numMonths: number;
+				base: Analysis;
+				signal: AbortSignal;
+				runId: number;
+				zHeight: number;
+				exposureReady: boolean;
+				exposurePrecomputePromise: Promise<void> | null;
+				pendingRenderUpdate:
+					| {
+							requestId: number;
+							monthIndex: number;
+							timeIndex: number;
+							startedAt: number;
+						}
+					| null;
+			}
+		| undefined;
+	let onDemandScrubState = createOnDemandScrubState();
+	let wasOnDemandPrototypeEnabled = false;
+	let wasCompareOneHourEnabled = false;
+	$: onDemandPrototypeEnabled =
+		browser &&
+		($page.url.searchParams.get("onDemandPrototype") === "1" || onDemandDebugModeEnabled);
+	$: compareOneHourEnabled =
+		onDemandPrototypeEnabled &&
+		browser &&
+		$page.url.searchParams.get("compareOneHour") === "1";
+	$: strictExposureOnlyEnabled =
+		onDemandPrototypeEnabled &&
+		browser &&
+		$page.url.searchParams.get("strictExposureOnly") === "1";
+	$: compareHours = strictExposureOnlyEnabled ? getCompareHoursFromQuery() : [];
+	$: compareHoursEnabled =
+		strictExposureOnlyEnabled &&
+		compareHours.length > 0 &&
+		$page.url.searchParams.get("baseline") === "separateRunAll";
+	$: debugOnDemandSelection = getDebugOnDemandSelection({
+		monthIndex: $viewerStore.currentMonth ?? 7,
+		hourIndex: $page.url.searchParams.has("timeIndex")
+			? getStrictExposureOnlyTimeIndex()
+			: $viewerStore.currentHour,
+		parityMode,
+	});
+	$: debugOnDemandSelectionKey =
+		debugOnDemandMode === "f32"
+			? `${debugOnDemandSelection.monthIndex}:${debugOnDemandSelection.timeIndex}`
+			: "off";
+	$: if (
+		browser &&
+		debugOnDemandMode === "f32" &&
+		$page.url.searchParams.has("timeIndex")
+	) {
+		if (($viewerStore.currentMonth ?? 7) !== debugOnDemandSelection.monthIndex) {
+			setCurrentMonth(debugOnDemandSelection.monthIndex);
+		}
+		if ($viewerStore.currentHour !== debugOnDemandSelection.hourIndex) {
+			setCurrentHour(debugOnDemandSelection.hourIndex);
+		}
+	}
+	$: if (
+		browser &&
+		mounted &&
+		onDemandPrototypeEnabled &&
+		debugOnDemandMode === "f32" &&
+		!strictExposureOnlyEnabled &&
+		$analysisStore &&
+		model &&
+		modelFileForLoadedModel === $analysisStore.metadata.model_file &&
+		onDemandDebugPrepared
+	) {
+		const nextScrubTriggerKey = `${analysisId}|${liveComputeModeKey}|${debugOnDemandSelectionKey}`;
+		if (nextScrubTriggerKey !== lastDebugOnDemandScrubTriggerKey) {
+			lastDebugOnDemandScrubTriggerKey = nextScrubTriggerKey;
+			scheduleDebugOnDemandScrubRecompute(nextScrubTriggerKey);
+		}
+	} else if (
+		!browser ||
+		!onDemandPrototypeEnabled ||
+		debugOnDemandMode !== "f32" ||
+		strictExposureOnlyEnabled
+	) {
+		lastDebugOnDemandScrubTriggerKey = null;
+		debugOnDemandScrubScheduleRunId += 1;
+	}
+	$: syntheticBridgeEnabled =
+		onDemandPrototypeEnabled &&
+		browser &&
+		$page.url.searchParams.get("syntheticBridge") === "1";
+	$: liveComputeModeKey = strictExposureOnlyEnabled
+		? parityMode
+			? `strict-parity-${getStrictExposureOnlyTimeIndex()}${compareHoursEnabled ? `|compareHours=${compareHours.join(",")}|baseline=separateRunAll` : ""}`
+			: `strict-full-year-${getStrictExposureOnlyTimeIndex()}${compareHoursEnabled ? `|compareHours=${compareHours.join(",")}|baseline=separateRunAll` : ""}`
+		: debugOnDemandMode === "f32"
+			? parityMode
+				? "debug-on-demand-parity-f32"
+				: "debug-on-demand-full-year-f32"
+			: parityMode
+				? "parity"
+				: normalCollectMode
+					? "collect-normal"
+					: "full-year";
+
+	$: if (mounted && lastLiveComputeModeKey !== null && lastLiveComputeModeKey !== liveComputeModeKey) {
+		liveAbortController?.abort();
+		liveAnalysis = null;
+		liveError = null;
+		lastLiveKey = null;
+		onDemandDebugPrepared = undefined;
+		lastDebugOnDemandScrubTriggerKey = null;
+		debugOnDemandScrubScheduleRunId += 1;
+		onDemandScrubState = createOnDemandScrubState();
+		invalidateOnDemandPrototypeComparison();
+	}
+
+	$: lastLiveComputeModeKey = liveComputeModeKey;
+
+	const SYNTHETIC_BRIDGE_VALIDATION_ATTEMPTS = 10;
+	const SYNTHETIC_BRIDGE_VALIDATION_DELAY_MS = 48;
+	const SYNTHETIC_BRIDGE_SAMPLE_SIZE = 48;
+
+	function getSyntheticBridgeIdentity(targetModel: Group): string {
+		return `${analysisId}:${targetModel.uuid}`;
+	}
+
+	function resetSyntheticBridgeDiagnostics(error?: string): void {
+		updateOnDemandPrototypeDiagnostics({
+			bridgeAttached: false,
+			debugReadbackCount: 0,
+			dataTextureBuildCount: 0,
+			visibleColorVariance: 0,
+			error,
+		});
+	}
+
+	function cancelSyntheticBridgeValidation(): void {
+		syntheticBridgeValidationRunId += 1;
+		syntheticBridgeValidationStartedForKey = null;
+		if (syntheticBridgeValidationTimer) {
+			clearTimeout(syntheticBridgeValidationTimer);
+			syntheticBridgeValidationTimer = null;
+		}
+	}
+
+	function computeCanvasVisibleColorVariance(canvas: HTMLCanvasElement): number {
+		const sampleWidth = Math.min(SYNTHETIC_BRIDGE_SAMPLE_SIZE, Math.max(1, canvas.width));
+		const sampleHeight = Math.min(SYNTHETIC_BRIDGE_SAMPLE_SIZE, Math.max(1, canvas.height));
+		const sourceWidth = Math.max(1, Math.floor(canvas.width * 0.5));
+		const sourceHeight = Math.max(1, Math.floor(canvas.height * 0.5));
+		const sourceX = Math.max(0, Math.floor((canvas.width - sourceWidth) / 2));
+		const sourceY = Math.max(0, Math.floor((canvas.height - sourceHeight) / 2));
+
+		const sampleCanvas = document.createElement("canvas");
+		sampleCanvas.width = sampleWidth;
+		sampleCanvas.height = sampleHeight;
+		const context = sampleCanvas.getContext("2d", { willReadFrequently: true });
+		if (!context) {
+			throw new Error("Synthetic bridge validation could not acquire a 2D canvas context.");
+		}
+
+		context.drawImage(
+			canvas,
+			sourceX,
+			sourceY,
+			sourceWidth,
+			sourceHeight,
+			0,
+			0,
+			sampleWidth,
+			sampleHeight,
+		);
+
+		const { data } = context.getImageData(0, 0, sampleWidth, sampleHeight);
+		if (data.length <= 4) return 0;
+
+		let luminanceSum = 0;
+		const sampleCount = data.length / 4;
+		for (let index = 0; index < data.length; index += 4) {
+			luminanceSum +=
+				(data[index] * 0.2126 + data[index + 1] * 0.7152 + data[index + 2] * 0.0722) /
+				255;
+		}
+
+		const mean = luminanceSum / sampleCount;
+		let squaredDeviationSum = 0;
+		for (let index = 0; index < data.length; index += 4) {
+			const luminance =
+				(data[index] * 0.2126 + data[index + 1] * 0.7152 + data[index + 2] * 0.0722) /
+				255;
+			const delta = luminance - mean;
+			squaredDeviationSum += delta * delta;
+		}
+
+		return squaredDeviationSum / sampleCount;
+	}
+
+	function maybeStartSyntheticBridgeRenderValidation(): void {
+		if (
+			!browser ||
+			!syntheticBridgeEnabled ||
+			!syntheticBridge ||
+			!syntheticBridgeKey ||
+			!canvasElement ||
+			syntheticBridgeMountedKey !== syntheticBridgeKey
+		) {
+			return;
+		}
+
+		const diagnostics = getParityWindow().__onDemandPrototypeDiagnostics__;
+		if (
+			diagnostics?.rendererBackend !== "webgpu" ||
+			diagnostics.bridgeAttached !== true ||
+			(diagnostics.visibleColorVariance ?? 0) > 0 ||
+			diagnostics.error ||
+			syntheticBridgeValidationStartedForKey === syntheticBridgeKey
+		) {
+			return;
+		}
+
+		cancelSyntheticBridgeValidation();
+		const runId = syntheticBridgeValidationRunId;
+		const validationKey = syntheticBridgeKey;
+		syntheticBridgeValidationStartedForKey = validationKey;
+		let attempts = 0;
+
+		const validate = () => {
+			if (
+				runId !== syntheticBridgeValidationRunId ||
+				validationKey !== syntheticBridgeKey ||
+				validationKey !== syntheticBridgeMountedKey
+			) {
+				return;
+			}
+
+			requestAnimationFrame(() => {
+				if (
+					runId !== syntheticBridgeValidationRunId ||
+					validationKey !== syntheticBridgeKey ||
+					validationKey !== syntheticBridgeMountedKey ||
+					!canvasElement
+				) {
+					return;
+				}
+
+				try {
+					const visibleColorVariance = computeCanvasVisibleColorVariance(canvasElement);
+					if (visibleColorVariance > 0) {
+						syntheticBridgeValidationTimer = null;
+						updateOnDemandPrototypeDiagnostics({
+							visibleColorVariance,
+							error: undefined,
+						});
+						return;
+					}
+				} catch (error) {
+					syntheticBridgeValidationTimer = null;
+					updateOnDemandPrototypeDiagnostics({
+						bridgeAttached: true,
+						debugReadbackCount: 0,
+						dataTextureBuildCount: 0,
+						visibleColorVariance: 0,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return;
+				}
+
+				attempts += 1;
+				if (attempts >= SYNTHETIC_BRIDGE_VALIDATION_ATTEMPTS) {
+					syntheticBridgeValidationTimer = null;
+					updateOnDemandPrototypeDiagnostics({
+						bridgeAttached: true,
+						debugReadbackCount: 0,
+						dataTextureBuildCount: 0,
+						visibleColorVariance: 0,
+						error: "Synthetic bridge mounted but render validation observed no visible color variance.",
+					});
+					return;
+				}
+
+				syntheticBridgeValidationTimer = setTimeout(
+					validate,
+					SYNTHETIC_BRIDGE_VALIDATION_DELAY_MS,
+				);
+			});
+		};
+
+		validate();
+	}
+
+	function initializeOnDemandPrototypeDiagnostics(): void {
+		if (!browser || !onDemandPrototypeEnabled) return;
+
+		const navigatorGpu = Boolean(navigator.gpu);
+		const error =
+			syntheticBridgeEnabled && !navigatorGpu
+				? "Synthetic bridge requires a WebGPU-capable browser runtime."
+				: undefined;
+		invalidateOnDemandPrototypeComparison();
+		getParityWindow().__onDemandPrototypeDiagnostics__ = {
+			...createEmptyOnDemandDiagnostics(),
+			navigatorGpu,
+			rendererBackend,
+			utciRenderRequested: utciRenderMode,
+			utciRenderResolved: resolvedUtciSurfaceBackend,
+			...(syntheticBridgeEnabled
+				? {
+					bridgeAttached: false,
+					visibleColorVariance: 0,
+				}
+				: {}),
+			...(error ? { error } : {}),
+		};
+		onDemandPrototypeError = error ?? null;
+		onDemandPrototypeStatus = syntheticBridgeEnabled
+			? error
+				? "error"
+				: "diagnostics"
+			: navigatorGpu
+				? "diagnostics"
+				: "unsupported";
+	}
+
+	function updateOnDemandPrototypeDiagnostics(
+		diagnostics: Partial<OnDemandPrototypeDiagnostics>,
+		options?: { replace?: boolean },
+	): void {
+		if (!browser || !onDemandPrototypeEnabled) return;
+
+		const win = getParityWindow();
+		const existing = options?.replace ? undefined : win.__onDemandPrototypeDiagnostics__;
+		const nextDiagnostics: OnDemandPrototypeDiagnostics = {
+			...createEmptyOnDemandDiagnostics(),
+			...existing,
+			...diagnostics,
+			navigatorGpu: diagnostics.navigatorGpu ?? existing?.navigatorGpu ?? Boolean(navigator.gpu),
+			rendererBackend: diagnostics.rendererBackend ?? existing?.rendererBackend ?? "unknown",
+			utciRenderRequested:
+				diagnostics.utciRenderRequested ?? existing?.utciRenderRequested ?? utciRenderMode,
+			utciRenderResolved:
+				diagnostics.utciRenderResolved ??
+				existing?.utciRenderResolved ??
+				resolvedUtciSurfaceBackend,
+			utciSurfaceSource:
+				"utciSurfaceSource" in diagnostics
+					? diagnostics.utciSurfaceSource
+					: existing?.utciSurfaceSource,
+		};
+		win.__onDemandPrototypeDiagnostics__ = nextDiagnostics;
+		onDemandPrototypeError = nextDiagnostics.error ?? null;
+
+		if (nextDiagnostics.error) {
+			onDemandPrototypeStatus = "error";
+			return;
+		}
+
+		if (!nextDiagnostics.navigatorGpu) {
+			onDemandPrototypeStatus = syntheticBridgeEnabled ? "error" : "unsupported";
+			return;
+		}
+
+		if (syntheticBridgeEnabled) {
+			onDemandPrototypeStatus =
+				nextDiagnostics.rendererBackend === "webgpu" &&
+				nextDiagnostics.bridgeAttached === true &&
+				(nextDiagnostics.visibleColorVariance ?? 0) > 0
+					? "ready"
+					: "diagnostics";
+			maybeStartSyntheticBridgeRenderValidation();
+			return;
+		}
+
+		if (strictExposureOnlyEnabled) {
+			onDemandPrototypeStatus =
+				nextDiagnostics.path === "exposure-only-f32" &&
+				nextDiagnostics.usedExposureOnlyPrecompute === true &&
+				nextDiagnostics.usedRunAllForSelectedHour === false &&
+				nextDiagnostics.liveAnalysisConstructedForSelectedHour === false &&
+				(nextDiagnostics.oneHourOutputBytes ?? 0) > 0 &&
+				(!compareHoursEnabled || hasOnDemandMultiHourComparison())
+					? "ready"
+					: "diagnostics";
+			return;
+		}
+
+		onDemandPrototypeStatus =
+			nextDiagnostics.rendererBackend === "webgpu" &&
+			(!compareOneHourEnabled || hasOnDemandPrototypeComparison())
+				? "ready"
+				: "diagnostics";
+	}
+
+	function disposeSyntheticBridge(): void {
+		cancelSyntheticBridgeValidation();
+		syntheticBridge?.dispose();
+		syntheticBridge = null;
+		syntheticBridgeKey = null;
+		syntheticBridgeMountedKey = null;
+	}
+
+	async function runOnDemandPrototypeComparison(params: {
+		pipeline: UTCIComputePipeline;
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+		comparisonKey: string;
+	}): Promise<void> {
+		if (!browser || !onDemandPrototypeEnabled || !compareOneHourEnabled) {
+			clearOnDemandPrototypeComparison();
+			return;
+		}
+
+		const { pipeline, numPoints, numHours, numMonths, comparisonKey } = params;
+		if (!pipeline.runUtciForTimeIndex || !pipeline.readOnDemandUtciForDebug) {
+			clearOnDemandPrototypeComparison();
+			updateOnDemandPrototypeDiagnostics({
+				error:
+					"Current WebGPU UTCI pipeline does not expose the on-demand comparison APIs."
+			});
+			return;
+		}
+
+		const timeIndex = 12;
+		const requestToken = ++onDemandPrototypeComparisonRunToken;
+		const expectedLiveKey = lastLiveKey;
+		lastOnDemandPrototypeComparisonAttemptKey = comparisonKey;
+		clearOnDemandPrototypeComparison();
+
+		const isStaleRequest = () =>
+			!browser ||
+			!onDemandPrototypeEnabled ||
+			!compareOneHourEnabled ||
+			onDemandPrototypeComparisonRunToken !== requestToken ||
+			lastPipeline !== pipeline ||
+			lastLiveKey !== expectedLiveKey ||
+			lastOnDemandPrototypeComparisonAttemptKey !== comparisonKey;
+
+		try {
+			await pipeline.runUtciForTimeIndex({
+				timeIndex,
+				numPoints,
+				numHours,
+				numMonths,
+				format: "f32-utci",
+			});
+			const onDemandUtci = await pipeline.readOnDemandUtciForDebug({ numPoints });
+			const baselineUtci = await pipeline.readUtcisSlice({
+				monthIndex: 0,
+				hourIndex: timeIndex,
+				numPoints,
+				numHours,
+				numMonths,
+			});
+
+			const numCompared = Math.min(onDemandUtci.length, baselineUtci.length, numPoints);
+			if (numCompared <= 0) {
+				throw new Error("On-demand one-hour comparison produced no comparable values.");
+			}
+
+			let maxAbsDiff = 0;
+			let sumSquaredDiff = 0;
+			for (let index = 0; index < numCompared; index += 1) {
+				const delta = onDemandUtci[index] - baselineUtci[index];
+				if (!Number.isFinite(delta)) {
+					throw new Error(`On-demand comparison produced a non-finite delta at index ${index}.`);
+				}
+				const absDelta = Math.abs(delta);
+				if (absDelta > maxAbsDiff) {
+					maxAbsDiff = absDelta;
+				}
+				sumSquaredDiff += delta * delta;
+			}
+
+			if (isStaleRequest()) {
+				return;
+			}
+
+			const debugReadbackCount = getOnDemandPrototypeDebugReadbackCount() + 1;
+			getParityWindow().__onDemandPrototypeComparison__ = {
+				timeIndex,
+				numCompared,
+				maxAbsDiff,
+				rmse: Math.sqrt(sumSquaredDiff / numCompared),
+				debugReadbackCount,
+			};
+			updateOnDemandPrototypeDiagnostics({
+				debugReadbackCount,
+				error: undefined,
+			});
+		} catch (error) {
+			if (isStaleRequest()) {
+				return;
+			}
+			clearOnDemandPrototypeComparison();
+			updateOnDemandPrototypeDiagnostics({
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	function buildStrictOnDemandPrototypeDiagnostics(params: {
+		strictDiagnostics?: OnDemandRuntimeDiagnostics;
+		pointCount: number;
+		modelId: string;
+		fallbackTimeIndices: number[];
+	}): OnDemandPrototypeDiagnostics {
+		const { strictDiagnostics, pointCount, modelId, fallbackTimeIndices } = params;
+		return {
+			...createEmptyOnDemandDiagnostics(),
+			...getParityWindow().__onDemandPrototypeDiagnostics__,
+			...strictDiagnostics,
+			bridgeAttached: false,
+			visibleColorVariance: 0,
+			debugReadbackCount: 0,
+			dataTextureBuildCount: 0,
+			navigatorGpu: Boolean(navigator.gpu),
+			rendererBackend,
+			modelId,
+			pointCount,
+			timeIndices:
+				strictDiagnostics?.timeIndices?.length
+					? [...strictDiagnostics.timeIndices]
+					: [...fallbackTimeIndices],
+			timings: strictDiagnostics?.timings ? { ...strictDiagnostics.timings } : {},
+			utciRenderRequested: utciRenderMode,
+			utciRenderResolved: resolvedUtciSurfaceBackend,
+			liveAnalysisConstructedForSelectedHour: false,
+			error: undefined,
+		};
+	}
+
+	function buildSelectedHourLiveAnalysis(params: {
+		base: Analysis;
+		utciValues: Float32Array;
+		monthIndex: number;
+		timeIndex: number;
+	}): Analysis {
+		let min = Number.POSITIVE_INFINITY;
+		let max = Number.NEGATIVE_INFINITY;
+		for (const value of params.utciValues) {
+			if (value < min) min = value;
+			if (value > max) max = value;
+		}
+
+		return {
+			metadata: {
+				...params.base.metadata,
+				analysis_type: "single_hour",
+				num_positions: params.utciValues.length,
+				num_months: 1,
+				utci_range:
+					Number.isFinite(min) && Number.isFinite(max)
+						? { min, max }
+						: params.base.metadata.utci_range,
+			},
+			data: {
+				numPositions: params.utciValues.length,
+				numHours: 1,
+				positions: params.base.data.positions,
+				utciValues: params.utciValues,
+				utciByHour: [params.utciValues],
+				shadingIndex:
+					"shadingIndex" in params.base.data ? params.base.data.shadingIndex : undefined,
+				selectedMonthIndex: params.monthIndex,
+				selectedTimeIndex: params.timeIndex,
+			} as Analysis["data"],
+		};
+	}
+
+	function buildOnDemandScrubStateDiagnosticsPatch(
+		extra?: Partial<OnDemandPrototypeDiagnostics>,
+	): Partial<OnDemandPrototypeDiagnostics> {
+		return {
+			selectedMonthIndex: onDemandScrubState.selectedMonthIndex,
+			selectedTimeIndex: onDemandScrubState.selectedTimeIndex,
+			completedMonthIndex: onDemandScrubState.completedMonthIndex,
+			completedTimeIndex: onDemandScrubState.completedTimeIndex,
+			activeRequestId: onDemandScrubState.activeRequestId,
+			completedRequestId: onDemandScrubState.completedRequestId,
+			staleResultDiscardCount: onDemandScrubState.staleResultDiscardCount,
+			inFlightCount: onDemandScrubState.inFlightCount,
+			scrubSampleCount: onDemandScrubState.scrubSampleCount,
+			...extra,
+		};
+	}
+
+	async function runDebugOnDemandSelectedHour(params: {
+		base: Analysis;
+		monthIndex: number;
+		hourIndex: number;
+		timeIndex: number;
+		readbackForComparison: boolean;
+	}): Promise<Awaited<ReturnType<ComputeManager["runUtciForTimeIndex"]>> | undefined> {
+		let pendingReadbackPublished = false;
+		if (!onDemandDebugPrepared) {
+			const zHeight = params.base.metadata.bounds?.z ?? 0.9;
+			const signal = liveAbortController?.signal ?? new AbortController().signal;
+			const prepared = await prepareWebgpuDebugInputsForCurrentSelection({
+				base: params.base,
+				signal,
+				runId: liveRunCounter,
+				zHeight,
+			});
+			onDemandDebugPrepared = {
+				...prepared,
+				base: params.base,
+				signal,
+				runId: liveRunCounter,
+				zHeight,
+				exposureReady: false,
+				exposurePrecomputePromise: null,
+				pendingRenderUpdate: null,
+			};
+		}
+		const prepared = onDemandDebugPrepared;
+		if (!prepared.exposureReady) {
+			if (!prepared.exposurePrecomputePromise) {
+				prepared.exposurePrecomputePromise = prepared.computeManager
+					.runExposurePrecompute({
+						numPoints: prepared.numPoints,
+						numHours: prepared.numHours,
+						numMonths: prepared.numMonths,
+					})
+					.then(() => {
+						prepared.exposureReady = true;
+					})
+					.finally(() => {
+						if (prepared.exposurePrecomputePromise) {
+							prepared.exposurePrecomputePromise = null;
+						}
+					});
+			}
+			await prepared.exposurePrecomputePromise;
+			if (onDemandDebugPrepared !== prepared || prepared.signal.aborted) {
+				return undefined;
+			}
+		}
+
+		const started = startOnDemandRequest(onDemandScrubState, {
+			monthIndex: params.monthIndex,
+			timeIndex: params.timeIndex,
+		});
+		onDemandScrubState = started.state;
+
+		const output = await prepared.computeManager.runUtciForTimeIndex({
+			timeIndex: params.timeIndex,
+			numPoints: prepared.numPoints,
+			numHours: prepared.numHours,
+			numMonths: prepared.numMonths,
+			format: "f32-utci",
+		});
+
+		const forcedOverlapMs = Number($page.url.searchParams.get("forceOnDemandOverlapMs") ?? "0");
+		if (forcedOverlapMs > 0) {
+			await new Promise((resolve) => setTimeout(resolve, forcedOverlapMs));
+		}
+
+		const completed = markOnDemandRequestCompleted(onDemandScrubState, started.request);
+		onDemandScrubState = completed.state;
+		if (!completed.accepted) return undefined;
+
+		updateOnDemandPrototypeDiagnostics(
+			buildOnDemandScrubStateDiagnosticsPatch({
+				pendingReadbackRequestId: started.request.requestId,
+				pendingReadbackTimeIndex: params.timeIndex,
+			}),
+		);
+		pendingReadbackPublished = true;
+
+		try {
+			const postAcceptDelayMs = Number($page.url.searchParams.get("forceOnDemandPostAcceptDelayMs") ?? "0");
+			if (postAcceptDelayMs > 0) {
+				await new Promise((resolve) => setTimeout(resolve, postAcceptDelayMs));
+			}
+
+			const selectedHourUtci = params.readbackForComparison
+				? await prepared.pipeline.readOnDemandUtciForDebug?.({
+						numPoints: prepared.numPoints,
+					})
+				: undefined;
+
+			if (
+				!doesDebugOnDemandRequestStillOwnSelection({
+					prepared,
+					requestId: started.request.requestId,
+					monthIndex: params.monthIndex,
+					timeIndex: params.timeIndex,
+				})
+			) {
+				onDemandScrubState = {
+					...onDemandScrubState,
+					staleResultDiscardCount: onDemandScrubState.staleResultDiscardCount + 1,
+				};
+				updateOnDemandPrototypeDiagnostics(
+					buildOnDemandScrubStateDiagnosticsPatch({
+						pendingReadbackRequestId: undefined,
+						pendingReadbackTimeIndex: undefined,
+					}),
+				);
+				pendingReadbackPublished = false;
+				return output;
+			}
+
+			if (selectedHourUtci) {
+				const selectedHourAnalysis = buildSelectedHourLiveAnalysis({
+					base: prepared.base,
+					utciValues: selectedHourUtci,
+					monthIndex: params.monthIndex,
+					timeIndex: params.timeIndex,
+				});
+				prepared.pendingRenderUpdate = {
+					requestId: started.request.requestId,
+					monthIndex: params.monthIndex,
+					timeIndex: params.timeIndex,
+					startedAt: performance.now(),
+				};
+				liveAnalysis = selectedHourAnalysis;
+				comparisonStore.update((state) => ({
+					...state,
+					isComparing: true,
+					comparisonAnalysis: selectedHourAnalysis,
+				}));
+			}
+
+			const pipelineDiagnostics = prepared.computeManager.getOnDemandDiagnostics();
+			const pythonBinSampleComparison = selectedHourUtci
+				? compareSampledPointsAgainstPythonBin({
+					referenceAnalysis: params.base,
+					debugValues: selectedHourUtci,
+					monthIndex: params.monthIndex,
+					timeIndex: params.timeIndex,
+				})
+				: undefined;
+			updateOnDemandPrototypeDiagnostics({
+				...pipelineDiagnostics,
+				...buildOnDemandScrubStateDiagnosticsPatch({
+					pendingReadbackRequestId: undefined,
+					pendingReadbackTimeIndex: undefined,
+				}),
+				debugComparisonReference: "python-bin",
+				pythonBinComparisonActive: true,
+				debugComparisonMonthIndex: params.monthIndex,
+				pythonComparisonHourIndex: params.hourIndex,
+				webgpuComparisonHourIndex: params.hourIndex,
+				pythonBinSampleComparison,
+				appVisibleSelectedHour: Boolean(selectedHourUtci),
+				selectedHourReadbackCount: selectedHourUtci ? 1 : 0,
+				liveAnalysisConstructedForSelectedHour: Boolean(selectedHourUtci),
+				renderTransport: selectedHourUtci ? "cpu-uploaded-selected-hour" : "none",
+			});
+			pendingReadbackPublished = false;
+		} catch (error) {
+			if (pendingReadbackPublished) {
+				updateOnDemandPrototypeDiagnostics(
+					buildOnDemandScrubStateDiagnosticsPatch({
+						pendingReadbackRequestId: undefined,
+						pendingReadbackTimeIndex: undefined,
+					}),
+				);
+			}
+			throw error;
+		}
+
+		return output;
+	}
+
+	function compareFloatArrays(
+		hour: number,
+		onDemand: Float32Array,
+		baseline: Float32Array,
+	): OnDemandMultiHourComparisonResult {
+		const numCompared = Math.min(onDemand.length, baseline.length);
+		if (numCompared <= 0) {
+			throw new Error(`On-demand multi-hour comparison produced no comparable values for hour ${hour}.`);
+		}
+
+		let maxAbsDiff = 0;
+		let sumSquaredDiff = 0;
+		for (let index = 0; index < numCompared; index += 1) {
+			const delta = onDemand[index] - baseline[index];
+			if (!Number.isFinite(delta)) {
+				throw new Error(
+					`On-demand multi-hour comparison produced a non-finite delta at hour ${hour}, index ${index}.`,
+				);
+			}
+			const absDelta = Math.abs(delta);
+			if (absDelta > maxAbsDiff) {
+				maxAbsDiff = absDelta;
+			}
+			sumSquaredDiff += delta * delta;
+		}
+
+		const result: OnDemandMultiHourComparisonResult = {
+			hour,
+			numCompared,
+			maxAbsDiff,
+			rmse: Math.sqrt(sumSquaredDiff / numCompared),
+		};
+
+		if (numCompared > 31079) {
+			result.onDemandAt31079 = onDemand[31079];
+			result.baselineAt31079 = baseline[31079];
+			result.diffAt31079 = onDemand[31079] - baseline[31079];
+		}
+
+		return result;
+	}
+
+	function compareSampledPointsAgainstPythonBin(params: {
+		referenceAnalysis: Analysis | null;
+		debugValues: Float32Array;
+		monthIndex: number;
+		timeIndex: number;
+	}): OnDemandPythonSampleComparison {
+		const uniquePointIndices = [...new Set([0, 31079, params.debugValues.length - 1])].filter(
+			(pointIndex) => pointIndex >= 0 && pointIndex < params.debugValues.length,
+		);
+		const samples: OnDemandPythonSampleRecord[] = [];
+		let maxAbsDiff = 0;
+
+		for (const pointIndex of uniquePointIndices) {
+			const referenceValue = getUtciAtPoint(params.referenceAnalysis, pointIndex, params.timeIndex);
+			if (referenceValue === null) {
+				continue;
+			}
+
+			const debugValue = params.debugValues[pointIndex];
+			if (!Number.isFinite(debugValue) || !Number.isFinite(referenceValue)) {
+				throw new Error(
+					`Python sampled comparison produced a non-finite value at monthIndex ${params.monthIndex}, timeIndex ${params.timeIndex}, point ${pointIndex}.`,
+				);
+			}
+
+			const absDiff = Math.abs(debugValue - referenceValue);
+			if (absDiff > maxAbsDiff) {
+				maxAbsDiff = absDiff;
+			}
+
+			samples.push({
+				pointIndex,
+				debugValue,
+				referenceValue,
+				absDiff,
+			});
+		}
+
+		return {
+			numCompared: samples.length,
+			maxAbsDiff,
+			samples,
+		};
+	}
+
+	async function createSeparateRunAllBaselineManager(params: {
+		prepared: Awaited<ReturnType<typeof prepareWebgpuDebugInputsForCurrentSelection>>;
+		signal: AbortSignal;
+	}): Promise<{
+		baselineManager: ComputeManager;
+		baselinePipeline: UTCIComputePipeline;
+	}> {
+		const { prepared, signal } = params;
+		const { analysisParams, numHours, numMonths, gridResolution } = prepared;
+		const baseMetadata = analysisParams.baseMetadata;
+		const bounds = baseMetadata.bounds as
+			| { x_min: number; x_max: number; y_min: number; y_max: number; z?: number }
+			| undefined;
+		if (!bounds) {
+			throw new Error(
+				"Analysis metadata is missing bounds; separate runAll baseline cannot build canonical grid.",
+			);
+		}
+
+		const baselinePipeline = await createWebgpuUtciPipeline({ enableDiagnostics: parityMode });
+		const baselineManager = new ComputeManager(baselinePipeline, {
+			numMonths,
+			numHoursPerDay: numHours,
+			startMonth: analysisParams.startMonth,
+		});
+		const coordinateSystem =
+			(baseMetadata.coordinate_system as "xy_ground" | "xz_ground") ?? "xy_ground";
+		const gridOriginOffset = getGridOriginOffset(baseMetadata);
+		const computeGridHeight =
+			(bounds.z ?? analysisParams.zHeight) + PARITY_SAMPLE_HEIGHT_OFFSET_M;
+		const sunVectorsFixture =
+			numMonths === 1
+				? buildSunVectorsFixtureFromMetadata({
+					baseMetadata,
+					numHours,
+					numMonths,
+				})
+				: undefined;
+
+		await baselineManager.initFromModelAndWeather({
+			serializedBvh: analysisParams.workerResult.serializedBvh,
+			sunVectorsFixture,
+			useRectangularGridFromBounds: true,
+			analysisBounds: bounds,
+			coordinateSystem,
+			gridOriginOffset,
+			epwContent: analysisParams.epwContent,
+			gridResolution,
+			zHeight: computeGridHeight,
+			signal,
+		});
+
+		return {
+			baselineManager,
+			baselinePipeline,
+		};
+	}
+
+	async function runOnDemandMultiHourComparison(params: {
+		prepared: Awaited<ReturnType<typeof prepareWebgpuDebugInputsForCurrentSelection>>;
+		signal: AbortSignal;
+	}): Promise<void> {
+		if (!browser || !onDemandPrototypeEnabled || !strictExposureOnlyEnabled || !compareHoursEnabled) {
+			clearOnDemandMultiHourComparison();
+			return;
+		}
+
+		const { prepared, signal } = params;
+		const strictPipeline = prepared.pipeline;
+		if (!strictPipeline.readOnDemandUtciForDebug) {
+			clearOnDemandMultiHourComparison();
+			updateOnDemandPrototypeDiagnostics({
+				error:
+					"Current WebGPU UTCI pipeline does not expose the strict multi-hour debug readback API.",
+			});
+			return;
+		}
+
+		clearOnDemandMultiHourComparison();
+		let baselinePipeline: UTCIComputePipeline | null = null;
+
+		try {
+			const { baselineManager, baselinePipeline: createdBaselinePipeline } =
+				await createSeparateRunAllBaselineManager({
+					prepared,
+					signal,
+				});
+			baselinePipeline = createdBaselinePipeline;
+			const strictPath =
+				prepared.computeManager.getOnDemandDiagnostics() ?? createEmptyOnDemandDiagnostics();
+
+			const hourResults: OnDemandMultiHourComparisonResult[] = [];
+			for (const hour of compareHours) {
+				if (signal.aborted) {
+					return;
+				}
+
+				await prepared.computeManager.runUtciForTimeIndex({
+					timeIndex: hour,
+					numPoints: prepared.numPoints,
+					numHours: prepared.numHours,
+					numMonths: prepared.numMonths,
+					format: "f32-utci",
+				});
+				const onDemandUtci = await strictPipeline.readOnDemandUtciForDebug({
+					numPoints: prepared.numPoints,
+				});
+				const baselineUtci = await baselineManager.getUtcisForMonthHour({
+					monthIndex: 0,
+					hourIndex: hour,
+					numPoints: prepared.numPoints,
+					numHours: prepared.numHours,
+					numMonths: prepared.numMonths,
+				});
+				hourResults.push(compareFloatArrays(hour, onDemandUtci, baselineUtci));
+			}
+
+			if (signal.aborted) {
+				return;
+			}
+			const knownPointResults =
+				prepared.numPoints > 31079
+					? hourResults.filter(
+						(result) =>
+							(result.hour === 16 || result.hour === 17) &&
+							result.onDemandAt31079 !== undefined,
+					)
+					: [];
+
+			getParityWindow().__onDemandMultiHourComparison__ = {
+				baselineSource: "separateRunAll",
+				baselineMonthContext: {
+					monthIndex: 0,
+					sliceKind: "representative-day-full-year",
+					note: "compareHours uses the separate runAll baseline monthIndex 0 representative-day slice.",
+				},
+				strictPath,
+				hours: [...compareHours],
+				hourResults,
+				...(knownPointResults.length > 0
+					? {
+						knownPoint31079: {
+							pointIndex: 31079,
+							hours: knownPointResults.map((result) => ({
+								hour: result.hour,
+								onDemand: result.onDemandAt31079 ?? Number.NaN,
+								baseline: result.baselineAt31079 ?? Number.NaN,
+								diff: result.diffAt31079 ?? Number.NaN,
+							})),
+						},
+					}
+					: {}),
+			};
+
+			updateOnDemandPrototypeDiagnostics(
+				buildStrictOnDemandPrototypeDiagnostics({
+					strictDiagnostics: strictPath,
+					pointCount: prepared.numPoints,
+					modelId: prepared.analysisParams.baseMetadata.model_file ?? analysisId,
+					fallbackTimeIndices: compareHours,
+				}),
+				{ replace: true },
+			);
+		} catch (error) {
+			if (signal.aborted) {
+				return;
+			}
+			clearOnDemandMultiHourComparison();
+			updateOnDemandPrototypeDiagnostics({
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			baselinePipeline?.dispose?.();
+		}
+	}
+
+	function attachSyntheticBridge(targetModel: Group): void {
+		const nextKey = getSyntheticBridgeIdentity(targetModel);
+		if (syntheticBridgeKey === nextKey && syntheticBridge) return;
+
+		disposeSyntheticBridge();
+		resetSyntheticBridgeDiagnostics();
+
+		try {
+			const { center, size } = getBoundsCenterAndSize(targetModel);
+			syntheticBridge = createSyntheticGpuUtciBridge({ center, size });
+			syntheticBridgeKey = nextKey;
+		} catch (error) {
+			resetSyntheticBridgeDiagnostics(
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	function resetAnalysisSceneState(): void {
+		liveAbortController?.abort();
+		model = null;
+		utciMesh = null;
+		liveUtciMesh = null;
+		modelFileForLoadedModel = null;
+		liveAnalysis = null;
+		liveError = null;
+		liveComputeProgress = null;
+		liveUtciSurfaceDiagnostics = {};
+		lastLiveKey = null;
+		onDemandDebugPrepared = undefined;
+		lastDebugOnDemandScrubTriggerKey = null;
+		debugOnDemandScrubScheduleRunId += 1;
+		onDemandScrubState = createOnDemandScrubState();
+		invalidateOnDemandPrototypeComparison();
+		disposeSyntheticBridge();
+		if (browser) {
+			const parityWindow = getParityWindow();
+			parityWindow.__parityModel__ = null;
+			parityWindow.__parityThree__ = undefined;
+		}
+		if (onDemandPrototypeEnabled && compareOneHourEnabled) {
+			updateOnDemandPrototypeDiagnostics({
+				debugReadbackCount: 0,
+				dataTextureBuildCount: 0,
+				error: undefined,
+			});
+		}
+		if (onDemandPrototypeEnabled) {
+			resetSyntheticBridgeDiagnostics();
+		}
+	}
+
+	function handleSyntheticBridgeMount(ref: Group): void {
+		if (!syntheticBridge || !syntheticBridgeKey) return;
+
+		ref.add(syntheticBridge.group);
+		syntheticBridgeMountedKey = syntheticBridgeKey;
+		updateOnDemandPrototypeDiagnostics({
+			bridgeAttached: true,
+			debugReadbackCount: 0,
+			dataTextureBuildCount: 0,
+			visibleColorVariance: 0,
+			error: undefined,
+		});
+	}
+
+	function handleRendererDiagnostics(diagnostics: {
+		rendererBackend: UtciRendererBackend;
+		error?: string;
+	}): void {
+		rendererBackend = diagnostics.rendererBackend;
+		if (!onDemandPrototypeEnabled) return;
+
+		updateOnDemandPrototypeDiagnostics({
+			rendererBackend: diagnostics.rendererBackend,
+			utciRenderRequested: utciRenderMode,
+			utciRenderResolved: resolveUtciSurfaceBackend(
+				utciRenderMode,
+				diagnostics.rendererBackend,
+			),
+			error: diagnostics.error,
+		});
+	}
+
+	function handleLiveUtciSurfaceDiagnostics(diagnostics: {
+		utciSurfaceSource?: string;
+		selectedHourTransferCount?: number;
+		dataTextureBuildCount?: number;
+	}): void {
+		liveUtciSurfaceDiagnostics = diagnostics;
+		if (!onDemandPrototypeEnabled) return;
+
+		const nextDiagnostics: Partial<OnDemandPrototypeDiagnostics> = {};
+		if (!Object.keys(diagnostics).length) {
+			nextDiagnostics.utciSurfaceSource = undefined;
+			nextDiagnostics.selectedHourTransferCount = 0;
+			nextDiagnostics.dataTextureBuildCount = 0;
+		} else {
+			if (diagnostics.utciSurfaceSource !== undefined) {
+				nextDiagnostics.utciSurfaceSource = diagnostics.utciSurfaceSource;
+			}
+			if (diagnostics.selectedHourTransferCount !== undefined) {
+				nextDiagnostics.selectedHourTransferCount = diagnostics.selectedHourTransferCount;
+			}
+			if (diagnostics.dataTextureBuildCount !== undefined) {
+				nextDiagnostics.dataTextureBuildCount = diagnostics.dataTextureBuildCount;
+			}
+		}
+		const prepared = onDemandDebugPrepared;
+		const pendingRenderUpdate = prepared?.pendingRenderUpdate;
+		if (
+			prepared &&
+			pendingRenderUpdate &&
+			(diagnostics.selectedHourTransferCount !== undefined ||
+				diagnostics.utciSurfaceSource?.includes("selected-hour"))
+		) {
+			const stillOwned = doesDebugOnDemandRequestStillOwnSelection({
+				prepared,
+				requestId: pendingRenderUpdate.requestId,
+				monthIndex: pendingRenderUpdate.monthIndex,
+				timeIndex: pendingRenderUpdate.timeIndex,
+			});
+			if (
+				stillOwned
+			) {
+				nextDiagnostics.timings = {
+					...getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
+					renderUpdateMs: performance.now() - pendingRenderUpdate.startedAt,
+				};
+				prepared.pendingRenderUpdate = null;
+			} else if (!stillOwned) {
+				prepared.pendingRenderUpdate = null;
+			}
+		}
+
+		updateOnDemandPrototypeDiagnostics(nextDiagnostics);
+	}
+
+	$: if (browser) {
+		if (onDemandPrototypeEnabled) {
+			if (!wasOnDemandPrototypeEnabled) {
+				initializeOnDemandPrototypeDiagnostics();
+			} else if (!getParityWindow().__onDemandPrototypeDiagnostics__) {
+				initializeOnDemandPrototypeDiagnostics();
+			}
+		} else if (wasOnDemandPrototypeEnabled) {
+			onDemandPrototypeStatus = "idle";
+			onDemandPrototypeError = null;
+			onDemandDebugPrepared = undefined;
+			debugOnDemandScrubScheduleRunId += 1;
+			onDemandScrubState = createOnDemandScrubState();
+			liveUtciSurfaceDiagnostics = {};
+			getParityWindow().__onDemandPrototypeDiagnostics__ = undefined;
+			invalidateOnDemandPrototypeComparison();
+		}
+		wasOnDemandPrototypeEnabled = onDemandPrototypeEnabled;
+	}
+
+	$: if (browser) {
+		if (compareOneHourEnabled && !wasCompareOneHourEnabled) {
+			invalidateOnDemandPrototypeComparison();
+			if (onDemandPrototypeEnabled) {
+				updateOnDemandPrototypeDiagnostics({
+					debugReadbackCount: 0,
+					dataTextureBuildCount: 0,
+					error: undefined,
+				});
+			}
+		} else if (!compareOneHourEnabled && wasCompareOneHourEnabled) {
+			invalidateOnDemandPrototypeComparison();
+			if (onDemandPrototypeEnabled) {
+				updateOnDemandPrototypeDiagnostics({
+					debugReadbackCount: 0,
+					dataTextureBuildCount: 0,
+					error: undefined,
+				});
+			}
+		}
+		wasCompareOneHourEnabled = compareOneHourEnabled;
+	}
+
+	$: if (browser && onDemandPrototypeEnabled) {
+		updateOnDemandPrototypeDiagnostics({
+			rendererBackend,
+			utciRenderRequested: utciRenderMode,
+			utciRenderResolved: resolvedUtciSurfaceBackend,
+		});
+	}
+
+	$: if (browser) {
+		const comparisonKey = getOnDemandPrototypeComparisonKey();
+		if (
+			comparisonKey &&
+			lastOnDemandPrototypeComparisonAttemptKey !== comparisonKey &&
+			lastPipeline &&
+			liveAnalysis
+		) {
+			void runOnDemandPrototypeComparison({
+				pipeline: lastPipeline,
+				numPoints: liveAnalysis.data.numPositions,
+				numHours: "numHours" in liveAnalysis.data ? liveAnalysis.data.numHours : 24,
+				numMonths: liveAnalysis.metadata.num_months ?? (parityMode ? 1 : 12),
+				comparisonKey,
+			});
+		}
+	}
+
+	$: if (syntheticBridgeEnabled && model) {
+		attachSyntheticBridge(model);
+	}
+
+	$: if (
+		syntheticBridgeEnabled &&
+		syntheticBridge &&
+		syntheticBridgeKey &&
+		syntheticBridgeMountedKey === syntheticBridgeKey &&
+		canvasElement
+	) {
+		maybeStartSyntheticBridgeRenderValidation();
+	}
+
+	$: if ((!syntheticBridgeEnabled || !model) && syntheticBridge) {
+		disposeSyntheticBridge();
+		if (onDemandPrototypeEnabled) {
+			resetSyntheticBridgeDiagnostics();
+		}
+	}
 
 	const setParityStatus = (
 		runId: number,
@@ -217,6 +1775,7 @@
 	async function loadAnalysis(id: string) {
 		try {
 			modelLoading = true;
+			resetAnalysisSceneState();
 			setLoading(true);
 			setError(null);
 			setAnalysisId(id);
@@ -282,10 +1841,7 @@
 		if (currentModelFile !== lastModelFile) {
 			modelLoading = true;
 			lastModelFile = currentModelFile;
-			modelFileForLoadedModel = null;
-			liveAnalysis = null;
-			lastLiveKey = null;
-			liveAbortController?.abort();
+			resetAnalysisSceneState();
 		}
 	}
 
@@ -293,8 +1849,323 @@
 
 	// Live analysis trigger: when base analysis or model changes, recompute.
 	// Only run when the loaded model is for the current analysis's model_file (avoids Ben Gurion grid on Nes Ziona after project switch).
+	function scheduleLiveAnalysisRecompute(): void {
+		requestAnimationFrame(() => {
+			if (
+				$analysisStore &&
+				model &&
+				mounted &&
+				modelFileForLoadedModel === $analysisStore?.metadata?.model_file
+			) {
+				void computeLiveAnalysis();
+			}
+		});
+	}
+
+	function scheduleDebugOnDemandScrubRecompute(expectedScrubTriggerKey: string): void {
+		const scheduledRunId = ++debugOnDemandScrubScheduleRunId;
+		const scheduledAnalysisId = analysisId;
+		const scheduledLiveComputeModeKey = liveComputeModeKey;
+		const scheduledDebugOnDemandSelectionKey = debugOnDemandSelectionKey;
+		const scheduledBase = $analysisStore;
+		const scheduledPrepared = onDemandDebugPrepared;
+		const scheduledMonthIndex = debugOnDemandSelection.monthIndex;
+		const scheduledHourIndex = debugOnDemandSelection.hourIndex;
+		const scheduledTimeIndex = scheduledBase
+			? getEffectiveHourIndex(scheduledBase, scheduledHourIndex, scheduledMonthIndex)
+			: null;
+
+		requestAnimationFrame(() => {
+			if (
+				scheduledRunId !== debugOnDemandScrubScheduleRunId ||
+				lastDebugOnDemandScrubTriggerKey !== expectedScrubTriggerKey ||
+				!browser ||
+				!mounted ||
+				!onDemandPrototypeEnabled ||
+				debugOnDemandMode !== "f32" ||
+				strictExposureOnlyEnabled ||
+				!$analysisStore ||
+				!model ||
+				!onDemandDebugPrepared ||
+				!scheduledBase ||
+				scheduledTimeIndex === null ||
+				modelFileForLoadedModel !== $analysisStore.metadata.model_file ||
+				analysisId !== scheduledAnalysisId ||
+				liveComputeModeKey !== scheduledLiveComputeModeKey ||
+				debugOnDemandSelectionKey !== scheduledDebugOnDemandSelectionKey ||
+				$analysisStore !== scheduledBase ||
+				onDemandDebugPrepared !== scheduledPrepared
+			) {
+				return;
+			}
+
+			void runDebugOnDemandSelectedHour({
+				base: scheduledBase,
+				monthIndex: scheduledMonthIndex,
+				hourIndex: scheduledHourIndex,
+				timeIndex: scheduledTimeIndex,
+				readbackForComparison: true,
+			});
+		});
+	}
+
+	function doesDebugOnDemandRequestStillOwnSelection(params: {
+		prepared: NonNullable<typeof onDemandDebugPrepared>;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+	}): boolean {
+		return (
+			onDemandDebugPrepared === params.prepared &&
+			!params.prepared.signal.aborted &&
+			onDemandScrubState.activeRequestId === null &&
+			onDemandScrubState.completedRequestId === params.requestId &&
+			onDemandScrubState.completedMonthIndex === params.monthIndex &&
+			onDemandScrubState.completedTimeIndex === params.timeIndex &&
+			onDemandScrubState.selectedMonthIndex === params.monthIndex &&
+			onDemandScrubState.selectedTimeIndex === params.timeIndex
+		);
+	}
+
+	type PreparedWebgpuDebugInputs = {
+		analysisParams: {
+			analysisId: string;
+			baseMetadata: AnalysisMetadata;
+			workerResult: { serializedBvh: SerializedBvhForGpu; gridPoints?: Float32Array };
+			epwContent: string;
+			gridResolution: number;
+			zHeight: number;
+			numHours: number;
+			startMonth: number;
+			numMonths: number;
+		};
+		pipeline: UTCIComputePipeline;
+		computeManager: ComputeManager;
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+		gridResolution: number;
+	};
+
+	async function prepareWebgpuDebugInputsForCurrentSelection(params: {
+		base: Analysis;
+		signal: AbortSignal;
+		runId: number;
+		zHeight: number;
+	}): Promise<PreparedWebgpuDebugInputs> {
+		if (!model) {
+			throw new Error("Model is not loaded for the current selection.");
+		}
+
+		const { base, signal, runId, zHeight } = params;
+		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
+		const epwUrl = getEpwUrlForProject(projectId);
+		const baseGrid = base.metadata.grid_size || 2;
+		const numHours = base.data.numHours ?? base.metadata.hours.length ?? 24;
+		const numMonths = parityMode ? 1 : 12;
+		const startMonth = numMonths > 1 ? 1 : 8;
+
+		setParityStatus(runId, "running", "preflight");
+		const GRID_FALLBACKS = [2, 4, 6, 8];
+		const startIdx = GRID_FALLBACKS.findIndex((resolution) => resolution >= baseGrid);
+		const resolutionsToTry =
+			startIdx >= 0 ? GRID_FALLBACKS.slice(startIdx) : [Math.max(baseGrid, 8)];
+
+		let meshes: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>["meshes"] | null =
+			null;
+		let totalTriangles = 0;
+		let preflight: Awaited<
+			ReturnType<typeof prepareMeshPayloadForWorkerAsync>
+		>["preflight"] | null = null;
+		let effectiveGridResolution = baseGrid;
+		let lastErr: unknown = null;
+
+		for (const tryRes of resolutionsToTry) {
+			try {
+				const result = await prepareMeshPayloadForWorkerAsync(model, {
+					signal,
+					gridResolution: tryRes,
+					numHours,
+					numMonths,
+					hasWorkerSupport: typeof Worker !== "undefined",
+				});
+				meshes = result.meshes;
+				totalTriangles = result.totalTriangles;
+				preflight = result.preflight;
+				effectiveGridResolution = tryRes;
+				break;
+			} catch (error) {
+				lastErr = error;
+				const message = error instanceof Error ? error.message : String(error);
+				if (
+					message.includes("exceeds budget") &&
+					tryRes < resolutionsToTry[resolutionsToTry.length - 1]
+				) {
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		if (!meshes || !preflight) {
+			throw lastErr ?? new Error("Preflight failed");
+		}
+
+		emitComputeTelemetry("live.preflight.done", {
+			data: {
+				totalTriangles,
+				estimatedGridPoints: preflight.estimatedGridPoints,
+				estimatedBytes: preflight.estimatedBytes,
+				effectiveGridResolution,
+			},
+		});
+		if (effectiveGridResolution !== baseGrid) {
+			console.warn(
+				`[DEBUG UTCI] Memory budget: using ${effectiveGridResolution}m grid (requested ${baseGrid}m) for ~${(preflight.estimatedBytes / (1024 * 1024)).toFixed(0)} MB estimate`,
+			);
+		}
+		(window as Window & {
+			__computePreflight__?: {
+				numPoints: number;
+				estimatedBytes: number;
+				effectiveGridResolution: number;
+			};
+		}).__computePreflight__ = {
+			numPoints: preflight.estimatedGridPoints,
+			estimatedBytes: preflight.estimatedBytes,
+			effectiveGridResolution,
+		};
+
+		setParityStatus(runId, "running", "epw");
+		const response = await fetch(epwUrl);
+		if (!response.ok) {
+			throw new Error(
+				`Failed to load EPW file for project ${projectId}: ${response.status}`,
+			);
+		}
+		const epwContent = await response.text();
+
+		setParityStatus(runId, "running", "pipelineInit");
+		lastPipeline?.dispose?.();
+		lastPipeline = null;
+		const pipeline = await createWebgpuUtciPipeline({ enableDiagnostics: parityMode });
+		lastPipeline = pipeline;
+
+		let workerResult:
+			| { gridPoints: Float32Array; serializedBvh: SerializedBvhForGpu }
+			| null = null;
+
+		if (typeof Worker !== "undefined") {
+			setParityStatus(runId, "running", "worker");
+			try {
+				workerResult = await runMergeAndBvhInWorker({
+					meshes,
+					gridResolution: effectiveGridResolution,
+					zHeight,
+					signal,
+					maxGridPoints: MAX_GRID_POINTS_GUARD,
+					bvhOnly: true,
+				});
+			} catch (workerError) {
+				if (workerError instanceof DOMException && workerError.name === "AbortError") {
+					throw workerError;
+				}
+				throw new Error(
+					`Worker BVH generation failed; rectangular parity path requires workerResult.serializedBvh (triangles ${(totalTriangles / 1e6).toFixed(1)}M): ${workerError instanceof Error ? workerError.message : String(workerError)}`,
+				);
+			}
+		}
+
+		if (!workerResult) {
+			throw new Error(
+				"Worker did not produce BVH output; rectangular parity path requires workerResult.serializedBvh.",
+			);
+		}
+
+		const bounds = base.metadata.bounds as
+			| { x_min: number; x_max: number; y_min: number; y_max: number; z?: number }
+			| undefined;
+		if (!bounds) {
+			throw new Error(
+				"Analysis metadata is missing bounds; rectangular parity path cannot build canonical grid.",
+			);
+		}
+
+		const coordinateSystem =
+			(base.metadata.coordinate_system as "xy_ground" | "xz_ground") ?? "xy_ground";
+		const gridOriginOffset = getGridOriginOffset(base.metadata);
+		const computeGridHeight = (bounds.z ?? zHeight) + PARITY_SAMPLE_HEIGHT_OFFSET_M;
+		const sunVectorsFixture =
+			numMonths === 1
+				? buildSunVectorsFixtureFromMetadata({
+					baseMetadata: base.metadata,
+					numHours,
+					numMonths,
+				})
+				: undefined;
+
+		const uploadOnlyPipeline: UTCIComputePipeline = {
+			uploadStaticData: (uploadParams) => pipeline.uploadStaticData(uploadParams),
+			runAll: async () => {},
+			readUtcisSlice: (sliceParams) => pipeline.readUtcisSlice(sliceParams),
+		};
+		const uploadManager = new ComputeManager(uploadOnlyPipeline, {
+			numMonths,
+			numHoursPerDay: numHours,
+			startMonth,
+		});
+		const computeManager = new ComputeManager(pipeline, {
+			numMonths,
+			numHoursPerDay: numHours,
+			startMonth,
+		});
+
+		const uploadStartedAt = performance.now();
+		const initResult = await uploadManager.initFromModelAndWeather({
+			serializedBvh: workerResult.serializedBvh,
+			sunVectorsFixture,
+			useRectangularGridFromBounds: true,
+			analysisBounds: bounds,
+			coordinateSystem,
+			gridOriginOffset,
+			epwContent,
+			gridResolution: effectiveGridResolution,
+			zHeight: computeGridHeight,
+			signal,
+		});
+
+		emitComputeTelemetry("pipeline.upload.done", {
+			ms: performance.now() - uploadStartedAt,
+			data: { numPoints: initResult.numPoints, numHours, numMonths },
+		});
+
+		return {
+			analysisParams: {
+				analysisId,
+				baseMetadata: base.metadata,
+				workerResult,
+				epwContent,
+				gridResolution: effectiveGridResolution,
+				zHeight,
+				numHours,
+				startMonth,
+				numMonths,
+			},
+			pipeline,
+			computeManager,
+			numPoints: initResult.numPoints,
+			numHours,
+			numMonths,
+			gridResolution: effectiveGridResolution,
+		};
+	}
+
 	async function computeLiveAnalysis() {
-		if (liveLoading) return;
+		if (liveLoading) {
+			rerunLiveAnalysisAfterCurrentCompute = true;
+			return;
+		}
+		rerunLiveAnalysisAfterCurrentCompute = false;
 		const base = $analysisStore;
 		if (!base || !model) {
 			liveAnalysis = null;
@@ -305,13 +2176,18 @@
 			return;
 		}
 
-		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
-		const epwUrl = getEpwUrlForProject(projectId);
 		const gridResolution = base.metadata.grid_size || 2;
 		const zHeight = base.metadata.bounds?.z ?? 0.9;
-
-		const liveKey = `${base.metadata.model_file}|${base.metadata.grid_size}|${analysisId}`;
-		if (liveKey === lastLiveKey && liveAnalysis) {
+		const strictTimeIndex = strictExposureOnlyEnabled
+			? getStrictExposureOnlyTimeIndex()
+			: "full";
+		const liveKey = `${base.metadata.model_file}|${base.metadata.grid_size}|${analysisId}|${liveComputeModeKey}|${strictTimeIndex}`;
+		if (
+			liveKey === lastLiveKey &&
+			(liveAnalysis ||
+				(strictExposureOnlyEnabled &&
+					(onDemandPrototypeStatus === "ready" || onDemandPrototypeStatus === "error")))
+		) {
 			return;
 		}
 
@@ -344,135 +2220,112 @@
 		}, LIVE_COMPUTE_WATCHDOG_MS);
 
 		try {
-			setParityStatus(runId, "running", "preflight");
-			// Try progressively coarser grid resolutions when budget is exceeded.
-			const GRID_FALLBACKS = [2, 4, 6, 8];
-			const baseGrid = base.metadata.grid_size || 2;
-			const startIdx = GRID_FALLBACKS.findIndex((r) => r >= baseGrid);
-			const resolutionsToTry =
-				startIdx >= 0 ? GRID_FALLBACKS.slice(startIdx) : [Math.max(baseGrid, 8)];
+			if (strictExposureOnlyEnabled) {
+				const prepared = await prepareWebgpuDebugInputsForCurrentSelection({
+					base,
+					signal,
+					runId,
+					zHeight,
+				});
 
-			let meshes: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>["meshes"];
-			let totalTriangles: number;
-			let preflight: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>["preflight"];
-			let effectiveGridResolution = baseGrid;
-			let lastErr: unknown = null;
-
-			for (const tryRes of resolutionsToTry) {
-				try {
-					const result = await prepareMeshPayloadForWorkerAsync(model, {
-						signal,
-						gridResolution: tryRes,
-						numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-						numMonths: parityMode ? 1 : 12,
-						hasWorkerSupport: typeof Worker !== "undefined",
-					});
-					meshes = result.meshes;
-					totalTriangles = result.totalTriangles;
-					preflight = result.preflight;
-					effectiveGridResolution = tryRes;
-					break;
-				} catch (err) {
-					lastErr = err;
-					const msg = err instanceof Error ? err.message : String(err);
-					if (msg.includes("exceeds budget") && tryRes < resolutionsToTry[resolutionsToTry.length - 1]) {
-						continue;
-					}
-					throw err;
+				liveAnalysis = null;
+				liveComputeProgress = null;
+				comparisonStore.update((state) => ({
+					...state,
+					isComparing: false,
+					comparisonAnalysis: null,
+				}));
+				await prepared.computeManager.runExposurePrecompute({
+					numPoints: prepared.numPoints,
+					numHours: prepared.numHours,
+					numMonths: prepared.numMonths,
+				});
+				await prepared.computeManager.runUtciForTimeIndex({
+					timeIndex: getStrictExposureOnlyTimeIndex(),
+					numPoints: prepared.numPoints,
+					numHours: prepared.numHours,
+					numMonths: prepared.numMonths,
+					format: "f32-utci",
+				});
+				const strictDiagnostics = prepared.computeManager.getOnDemandDiagnostics();
+				if (compareHoursEnabled) {
+					clearOnDemandMultiHourComparison();
 				}
+				const mergedDiagnostics = buildStrictOnDemandPrototypeDiagnostics({
+					strictDiagnostics,
+					pointCount: prepared.numPoints,
+					modelId: base.metadata.model_file ?? analysisId,
+					fallbackTimeIndices: [getStrictExposureOnlyTimeIndex()],
+				});
+				updateOnDemandPrototypeDiagnostics(mergedDiagnostics, { replace: true });
+				if (compareHoursEnabled) {
+					await runOnDemandMultiHourComparison({
+						prepared,
+						signal,
+					});
+				}
+				setParityStatus(runId, "success", "done");
+				return;
 			}
 
-			if (!meshes! || !preflight!) {
-				throw lastErr ?? new Error("Preflight failed");
-			}
-
-			emitComputeTelemetry("live.preflight.done", {
-				data: {
-					totalTriangles,
-					estimatedGridPoints: preflight.estimatedGridPoints,
-					estimatedBytes: preflight.estimatedBytes,
-					effectiveGridResolution,
-				},
-			});
-			if (effectiveGridResolution !== baseGrid) {
-				console.warn(
-					`[DEBUG UTCI] Memory budget: using ${effectiveGridResolution}m grid (requested ${baseGrid}m) for ~${(preflight.estimatedBytes / (1024 * 1024)).toFixed(0)} MB estimate`
-				);
-			}
-			(window as any).__computePreflight__ = {
-				numPoints: preflight.estimatedGridPoints,
-				estimatedBytes: preflight.estimatedBytes,
-				effectiveGridResolution,
-			};
-
-			setParityStatus(runId, "running", "epw");
-			const response = await fetch(epwUrl);
-			if (!response.ok) {
-				throw new Error(
-					`Failed to load EPW file for project ${projectId}: ${response.status}`,
-				);
-			}
-			const epwContent = await response.text();
-
-			setParityStatus(runId, "running", "pipelineInit");
-			lastPipeline?.dispose?.();
-			lastPipeline = null;
-			const pipeline = await createWebgpuUtciPipeline({ enableDiagnostics: parityMode });
-			lastPipeline = pipeline;
-
-			let workerResult: { gridPoints: Float32Array; serializedBvh: import("$lib/compute/gpu-pipeline").SerializedBvhForGpu } | null = null;
-
-			if (typeof Worker !== "undefined") {
-				setParityStatus(runId, "running", "worker");
-				try {
-					workerResult = await runMergeAndBvhInWorker({
-						meshes,
-						gridResolution: effectiveGridResolution,
+			if (debugOnDemandMode === "f32") {
+				if (!onDemandDebugPrepared) {
+					const prepared = await prepareWebgpuDebugInputsForCurrentSelection({
+						base,
+						signal,
+						runId,
 						zHeight,
-						signal,
-						maxGridPoints: MAX_GRID_POINTS_GUARD,
-						bvhOnly: true,
 					});
-				} catch (workerErr) {
-					if (workerErr instanceof DOMException && workerErr.name === "AbortError") {
-						throw workerErr;
-					}
-					throw new Error(
-						`Worker BVH generation failed; rectangular parity path requires workerResult.serializedBvh (triangles ${(totalTriangles / 1e6).toFixed(1)}M): ${workerErr instanceof Error ? workerErr.message : String(workerErr)}`,
-					);
+					onDemandDebugPrepared = {
+						...prepared,
+						base,
+						signal,
+						runId,
+						zHeight,
+						exposureReady: false,
+						exposurePrecomputePromise: null,
+						pendingRenderUpdate: null,
+					};
+				} else {
+					onDemandDebugPrepared = {
+						...onDemandDebugPrepared,
+						base,
+						signal,
+						runId,
+						zHeight,
+					};
 				}
+
+				liveAnalysis = null;
+				liveComputeProgress = null;
+				lastDebugOnDemandScrubTriggerKey =
+					`${analysisId}|${liveComputeModeKey}|${debugOnDemandSelectionKey}`;
+				const output = await runDebugOnDemandSelectedHour({
+					base,
+					monthIndex: debugOnDemandSelection.monthIndex,
+					hourIndex: debugOnDemandSelection.hourIndex,
+					timeIndex: debugOnDemandSelection.timeIndex,
+					readbackForComparison: true,
+				});
+				if (!output) return;
+				setParityStatus(runId, "success", "done");
+				return;
 			}
 
-			if (!workerResult) {
-				throw new Error(
-					"Worker did not produce BVH output; rectangular parity path requires workerResult.serializedBvh.",
-				);
-			}
-
-			if (!base.metadata?.bounds) {
-				throw new Error(
-					"Analysis metadata is missing bounds; rectangular parity path cannot build canonical grid.",
-				);
-			}
-
-			const analysisParams = {
-				analysisId,
-				baseMetadata: base.metadata,
-				workerResult,
-				epwContent,
-				gridResolution: effectiveGridResolution,
+			const prepared = await prepareWebgpuDebugInputsForCurrentSelection({
+				base,
+				signal,
+				runId,
 				zHeight,
-				numHours: base.data.numHours ?? base.metadata.hours.length ?? 24,
-				startMonth: parityMode ? 8 : 1,
-				numMonths: parityMode ? 1 : 12
-			};
+			});
+			const pipeline = prepared.pipeline;
 
 			setParityStatus(runId, "running", "runAll");
 			liveComputeProgress = null;
 			const result = await createLiveUtciAnalysisFromCompute(
-				analysisParams,
+				prepared.analysisParams,
 				{
-					pipeline,
+					pipeline: prepared.pipeline,
 					signal,
 					onProgress: (completed, total) => {
 						liveComputeProgress = { current: completed, total };
@@ -489,6 +2342,18 @@
 			liveComputeProgress = null;
 
 			const fullDayData = result.data && "numHours" in result.data ? (result.data as import("$lib/types/analysis").FullDayData) : null;
+			const comparisonKey =
+				compareOneHourEnabled && lastLiveKey ? `${lastLiveKey}|compareOneHour` : null;
+
+			if (comparisonKey) {
+				await runOnDemandPrototypeComparison({
+					pipeline: prepared.pipeline,
+					numPoints: result.data.numPositions,
+					numHours: fullDayData?.numHours ?? 24,
+					numMonths: result.metadata.num_months ?? (parityMode ? 1 : 12),
+					comparisonKey,
+				});
+			}
 
 
 			// Treat the live WebGPU analysis as the comparison analysis so that
@@ -657,6 +2522,14 @@
 				error instanceof Error
 					? error.message
 					: "Failed to compute live UTCI";
+			if (onDemandPrototypeEnabled) {
+				updateOnDemandPrototypeDiagnostics({
+					error: liveError,
+					liveAnalysisConstructedForSelectedHour: strictExposureOnlyEnabled
+						? false
+						: undefined,
+				});
+			}
 			(
 				window as unknown as {
 					__parityIntermediatesError__?: string;
@@ -677,6 +2550,10 @@
 			}
 			liveLoading = false;
 			emitComputeTelemetry("live.compute.finish");
+			if (rerunLiveAnalysisAfterCurrentCompute) {
+				rerunLiveAnalysisAfterCurrentCompute = false;
+				scheduleLiveAnalysisRecompute();
+			}
 		}
 	}
 
@@ -686,13 +2563,17 @@
 		mounted &&
 		modelFileForLoadedModel === $analysisStore?.metadata?.model_file
 	) {
+		const scheduledLiveComputeModeKey = liveComputeModeKey;
+		const scheduledDebugOnDemandSelectionKey = debugOnDemandSelectionKey;
 		// Defer by one frame so the first paint after model load can run before sync triangle count and payload prep.
 		requestAnimationFrame(() => {
 			if (
 				$analysisStore &&
 				model &&
 				mounted &&
-				modelFileForLoadedModel === $analysisStore?.metadata?.model_file
+				modelFileForLoadedModel === $analysisStore?.metadata?.model_file &&
+				scheduledLiveComputeModeKey === liveComputeModeKey &&
+				scheduledDebugOnDemandSelectionKey === debugOnDemandSelectionKey
 			) {
 				void computeLiveAnalysis();
 			}
@@ -710,8 +2591,7 @@
 		side: "python" | "webgpu";
 	} {
 		const comparing = get(comparisonStore).isComparing;
-		const currentHour = $viewerStore.currentHour;
-		const currentMonth = $viewerStore.currentMonth ?? 7;
+		const comparisonSelection = getDebugComparisonSelectionView();
 
 		if (comparing && canvasElement) {
 			const canvasRect = canvasElement.getBoundingClientRect();
@@ -721,7 +2601,7 @@
 				return {
 					mesh: utciMesh,
 					analysis: $analysisStore,
-					hourIndex: currentHour,
+					hourIndex: comparisonSelection.hourIndex,
 					side: "python"
 				};
 			}
@@ -731,8 +2611,12 @@
 			mesh: liveUtciMesh,
 			analysis: liveAnalysis,
 			hourIndex: liveAnalysis
-				? getEffectiveHourIndex(liveAnalysis, currentHour, currentMonth)
-				: currentHour,
+				? getEffectiveHourIndex(
+						liveAnalysis,
+						comparisonSelection.hourIndex,
+						comparisonSelection.monthIndex
+					)
+				: comparisonSelection.hourIndex,
 			side: "webgpu"
 		};
 	}
@@ -785,12 +2669,15 @@
 		);
 		if (!tooltipData) return;
 
-		const currentHour = $viewerStore.currentHour;
-		const currentMonth = $viewerStore.currentMonth ?? 7;
-		const pythonHourIndex = currentHour;
+		const comparisonSelection = getDebugComparisonSelectionView();
+		const pythonHourIndex = comparisonSelection.hourIndex;
 		const webgpuHourIndex = liveAnalysis
-			? getEffectiveHourIndex(liveAnalysis, currentHour, currentMonth)
-			: currentHour;
+			? getEffectiveHourIndex(
+					liveAnalysis,
+					comparisonSelection.hourIndex,
+					comparisonSelection.monthIndex
+				)
+			: comparisonSelection.hourIndex;
 		const pythonUtci = getUtciAtPoint($analysisStore, tooltipData.positionIndex, pythonHourIndex);
 		const webgpuUtci = getUtciAtPoint(liveAnalysis, tooltipData.positionIndex, webgpuHourIndex);
 		const payload = {
@@ -800,8 +2687,8 @@
 			clickedSide: target.side,
 			pointIndex: tooltipData.positionIndex,
 			coords: tooltipData.position,
-			hour: currentHour,
-			monthIndex: currentMonth,
+			hour: comparisonSelection.hourIndex,
+			monthIndex: comparisonSelection.monthIndex,
 			pythonHourIndex,
 			webgpuHourIndex,
 			pythonUtci,
@@ -886,6 +2773,7 @@
 	onDestroy(() => {
 		liveAbortController?.abort();
 		liveAbortController = null;
+		disposeSyntheticBridge();
 		if (canvasElement && eventListenersAttached) {
 			canvasElement.removeEventListener("mousemove", handleMouseMove);
 			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
@@ -1008,6 +2896,24 @@
 				</div>
 			{/if}
 
+			{#if onDemandPrototypeEnabled}
+				<div
+					class={`overlay-message on-demand-prototype-status${onDemandPrototypeStatus === "error" ? " on-demand-prototype-error" : ""}`}
+					data-testid="on-demand-prototype-status"
+				>
+					On-demand prototype: {onDemandPrototypeStatus}
+					<span
+						class="prototype-render-detail"
+						data-testid="on-demand-render-selection"
+					>
+						utciRender {utciRenderMode} -> {resolvedUtciSurfaceBackend} ({rendererBackend})
+					</span>
+					{#if onDemandPrototypeError}
+						<span class="prototype-error-detail">{onDemandPrototypeError}</span>
+					{/if}
+				</div>
+			{/if}
+
 			{#if showFullLoadOverlay}
 				<div
 					class="model-loading-backdrop"
@@ -1033,6 +2939,7 @@
 					? 0x4b5563
 					: 0x111827}
 				bind:canvasElement
+				onRendererDiagnostics={handleRendererDiagnostics}
 			>
 				<Camera
 					bind:cameraRef
@@ -1098,12 +3005,18 @@
 
 					{#if model}
 						<GridHelper {model} visible={gridVisible} />
+						{#if syntheticBridge}
+							{#key syntheticBridge.group.uuid}
+								<T is={THREE.Group} oncreate={handleSyntheticBridgeMount} />
+							{/key}
+						{/if}
 						<!-- Left: .bin-backed UTCI (only when comparison curtain is active) -->
 						{#if $comparisonStore.isComparing}
 							<UTCIPointCloud
 								analysis={$analysisStore}
 								{model}
 								bind:utciSurface={utciMesh}
+								utciSurfaceBackend={resolvedUtciSurfaceBackend}
 							/>
 						{/if}
 
@@ -1113,6 +3026,8 @@
 								analysis={liveAnalysis}
 								{model}
 								bind:utciSurface={liveUtciMesh}
+								utciSurfaceBackend={resolvedUtciSurfaceBackend}
+								onUtciSurfaceDiagnostics={handleLiveUtciSurfaceDiagnostics}
 							/>
 						{/if}
 
@@ -1381,6 +3296,23 @@
 
 	.overlay-message.error {
 		border: 1px solid var(--color-danger);
+	}
+
+	.on-demand-prototype-status {
+		top: 64px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		max-width: min(70vw, 720px);
+	}
+
+	.on-demand-prototype-error {
+		border: 1px solid var(--color-danger);
+	}
+
+	.prototype-error-detail {
+		color: var(--color-text-secondary);
+		font-size: 12px;
 	}
 
 	.model-loading-backdrop {
