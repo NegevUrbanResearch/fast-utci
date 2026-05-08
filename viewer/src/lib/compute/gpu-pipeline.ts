@@ -1,3 +1,6 @@
+import type { OnDemandOutputFormat } from '$lib/compute/onDemandOutputFormat';
+import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+
 export interface PipelineConfig {
 	numPoints: number;
 	numHours: number;
@@ -96,6 +99,28 @@ export interface SerializedBvhForGpu {
 	indexBuffer: Uint32Array;
 }
 
+export interface ExposurePrecomputeParams {
+	numPoints: number;
+	numHours: number;
+	numMonths: number;
+}
+
+export interface RunUtciForTimeIndexParams {
+	timeIndex: number;
+	numPoints: number;
+	numHours: number;
+	numMonths: number;
+	format: OnDemandOutputFormat;
+}
+
+export interface OnDemandUtciOutput {
+	format: OnDemandOutputFormat;
+	numPoints: number;
+	timeIndex: number;
+	gpuBuffer?: unknown;
+	debugLabel?: string;
+}
+
 export interface UTCIComputePipeline {
 	/**
 	 * Upload static data required for all dispatches.
@@ -135,6 +160,14 @@ export interface UTCIComputePipeline {
 		numHours: number;
 		numMonths: number;
 	}): Promise<Float32Array>;
+
+	runExposurePrecompute?(params: ExposurePrecomputeParams): Promise<void>;
+
+	runUtciForTimeIndex?(params: RunUtciForTimeIndexParams): Promise<OnDemandUtciOutput>;
+
+	readOnDemandUtciForDebug?(params: { numPoints: number }): Promise<Float32Array>;
+
+	getOnDemandDiagnostics?(): OnDemandRuntimeDiagnostics;
 
 	/**
 	 * Read the entire UTCI results buffer in a single GPU→CPU transfer.

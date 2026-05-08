@@ -1,5 +1,12 @@
 import type { Analysis } from '$lib/types/analysis';
-import type { UTCIComputePipeline, SerializedBvhForGpu } from '$lib/compute/gpu-pipeline';
+import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type {
+	ExposurePrecomputeParams,
+	OnDemandUtciOutput,
+	RunUtciForTimeIndexParams,
+	SerializedBvhForGpu,
+	UTCIComputePipeline
+} from '$lib/compute/gpu-pipeline';
 import { parseEPW } from '$lib/compute/epw-parser';
 import { getSunVectors } from '$lib/compute/sunpath';
 import { getTregenzaDome } from '$lib/compute/tregenza';
@@ -290,6 +297,24 @@ export class ComputeManager {
 		numHours: number;
 	}): Promise<Float32Array> {
 		return this.pipeline.readUtcisSlice(params);
+	}
+
+	async runExposurePrecompute(params: ExposurePrecomputeParams): Promise<void> {
+		if (!this.pipeline.runExposurePrecompute) {
+			throw new Error('The configured UTCI pipeline does not support exposure-only precompute.');
+		}
+		return this.pipeline.runExposurePrecompute(params);
+	}
+
+	async runUtciForTimeIndex(params: RunUtciForTimeIndexParams): Promise<OnDemandUtciOutput> {
+		if (!this.pipeline.runUtciForTimeIndex) {
+			throw new Error('The configured UTCI pipeline does not support one-hour UTCI compute.');
+		}
+		return this.pipeline.runUtciForTimeIndex(params);
+	}
+
+	getOnDemandDiagnostics(): OnDemandRuntimeDiagnostics | undefined {
+		return this.pipeline.getOnDemandDiagnostics?.();
 	}
 
 	/** Expose pipeline for advanced readback patterns (bulk read). */
