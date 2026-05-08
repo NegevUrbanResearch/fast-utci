@@ -44,7 +44,7 @@
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
-	import { resolveModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
+	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
 	import nurLogo from "$lib/assets/Nur Logo white.svg";
 	import mitLogo from "$lib/assets/MIT.svg";
@@ -526,8 +526,8 @@
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
 						<Model
-							modelPath={resolveModelPath(
-								$analysisStore.metadata.model_file,
+							modelPath={resolveAnalysisModelPath(
+								$analysisStore.metadata,
 								analysisId,
 							).replace("data/", `${getDataBasePath()}/data/`)}
 							coordinateSystem={$analysisStore.metadata

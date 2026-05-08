@@ -226,7 +226,10 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
 	console.log(`[LOAD] Loading analysis: ${analysisId}`);
 	
 	// Load metadata
-	const metadata = await loadMetadata(metadataPath);
+	const metadata = {
+		...(await loadMetadata(metadataPath)),
+		source_analysis_id: analysisId
+	};
 	console.log(`[OK] Metadata loaded: ${metadata.num_positions} positions, ${metadata.hours.length} hours`);
 	
 	// Load binary data (pass metadata for format detection)

@@ -619,6 +619,44 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 	expect(diagnostics.staleResultDiscardCount).toBeGreaterThan(0);
 });
 
+test('debug on-demand honors the selected month when computing a selected hour', async ({
+	page
+}) => {
+	test.setTimeout(180_000);
+	try {
+		await page.goto(
+			'/debug-webgpu-utci?onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&monthIndex=7&timeIndex=12'
+		);
+
+		const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
+		test.skip(!hasWebGpu && process.env.REQUIRE_WEBGPU_ON_DEMAND !== '1', 'WebGPU unavailable.');
+
+		await page.waitForFunction(() => {
+			const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
+				.__onDemandPrototypeDiagnostics__;
+			return (
+				diagnostics?.selectedMonthIndex === 7 &&
+				diagnostics?.completedMonthIndex === 7 &&
+				diagnostics?.selectedTimeIndex === 7 * 24 + 12 &&
+				diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
+				diagnostics?.pythonComparisonHourIndex === 12 &&
+				diagnostics?.webgpuComparisonHourIndex === 12
+			);
+		}, undefined, { timeout: 180_000 });
+
+		const diagnostics = await readDiagnostics(page);
+
+		expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);
+		expect(diagnostics?.usedExposureOnlyPrecompute).toBe(true);
+		expect(diagnostics?.allHoursUtciBytesAllocated).toBe(0);
+		expect(diagnostics?.allHoursMrtBytesAllocated).toBe(0);
+		expect(diagnostics?.dataTextureBuildCount).toBe(0);
+		expect(diagnostics?.pythonBinComparisonActive).toBe(true);
+	} finally {
+		await page.goto('about:blank').catch(() => undefined);
+	}
+});
+
 test('debug on-demand publishes sampled python-bin comparison metadata for the selected hour', async ({
 	page
 }) => {

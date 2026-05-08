@@ -20,5 +20,23 @@ export function resolveModelPath(
 	if (modelFile.startsWith(projectPrefix)) return modelFile;
 
 	const remainder = modelFile.slice(basePrefix.length);
+	if (projectId !== 'Ben-Gurion' && isLegacyBenGurionModelPath(remainder)) {
+		return `${basePrefix}Ben-Gurion/${remainder}`;
+	}
+
 	return `${projectPrefix}${remainder}`;
+}
+
+function isLegacyBenGurionModelPath(remainder: string): boolean {
+	return remainder === 'original_with_layers.glb' || remainder.startsWith('scenarios/');
+}
+
+export function resolveAnalysisModelPath(
+	metadata: { model_file: string; source_analysis_id?: string | null },
+	fallbackAnalysisId?: string | null
+): string {
+	return resolveModelPath(
+		metadata.model_file,
+		metadata.source_analysis_id ?? fallbackAnalysisId
+	);
 }

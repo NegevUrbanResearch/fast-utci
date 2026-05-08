@@ -38,7 +38,7 @@
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import {
-		resolveModelPath,
+		resolveAnalysisModelPath,
 		resolveProjectId,
 	} from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
@@ -383,6 +383,12 @@
 		return Number.isInteger(raw) && raw >= 0 ? raw : 12;
 	}
 
+	function getDebugQueryMonthIndex(defaultMonthIndex: number): number {
+		const raw = Number($page.url.searchParams.get("monthIndex") ?? String(defaultMonthIndex));
+		if (!Number.isInteger(raw)) return defaultMonthIndex;
+		return Math.min(Math.max(raw, 0), 11);
+	}
+
 	function getDebugOnDemandSelection(params: {
 		monthIndex: number;
 		hourIndex: number;
@@ -513,8 +519,9 @@
 		strictExposureOnlyEnabled &&
 		compareHours.length > 0 &&
 		$page.url.searchParams.get("baseline") === "separateRunAll";
+	$: debugOnDemandMonthIndex = getDebugQueryMonthIndex($viewerStore.currentMonth ?? 7);
 	$: debugOnDemandSelection = getDebugOnDemandSelection({
-		monthIndex: $viewerStore.currentMonth ?? 7,
+		monthIndex: debugOnDemandMonthIndex,
 		hourIndex: $page.url.searchParams.has("timeIndex")
 			? getStrictExposureOnlyTimeIndex()
 			: $viewerStore.currentHour,
@@ -527,7 +534,7 @@
 	$: if (
 		browser &&
 		debugOnDemandMode === "f32" &&
-		$page.url.searchParams.has("timeIndex")
+		($page.url.searchParams.has("timeIndex") || $page.url.searchParams.has("monthIndex"))
 	) {
 		if (($viewerStore.currentMonth ?? 7) !== debugOnDemandSelection.monthIndex) {
 			setCurrentMonth(debugOnDemandSelection.monthIndex);
@@ -1205,6 +1212,7 @@
 					referenceAnalysis: params.base,
 					debugValues: selectedHourUtci,
 					monthIndex: params.monthIndex,
+					hourIndex: params.hourIndex,
 					timeIndex: params.timeIndex,
 				})
 				: undefined;
@@ -1287,6 +1295,7 @@
 		referenceAnalysis: Analysis | null;
 		debugValues: Float32Array;
 		monthIndex: number;
+		hourIndex: number;
 		timeIndex: number;
 	}): OnDemandPythonSampleComparison {
 		const uniquePointIndices = [...new Set([0, 31079, params.debugValues.length - 1])].filter(
@@ -1296,7 +1305,12 @@
 		let maxAbsDiff = 0;
 
 		for (const pointIndex of uniquePointIndices) {
-			const referenceValue = getUtciAtPoint(params.referenceAnalysis, pointIndex, params.timeIndex);
+			const referenceHourIndex = getEffectiveHourIndex(
+				params.referenceAnalysis,
+				params.hourIndex,
+				params.monthIndex,
+			);
+			const referenceValue = getUtciAtPoint(params.referenceAnalysis, pointIndex, referenceHourIndex);
 			if (referenceValue === null) {
 				continue;
 			}
@@ -1871,9 +1885,7 @@
 		const scheduledPrepared = onDemandDebugPrepared;
 		const scheduledMonthIndex = debugOnDemandSelection.monthIndex;
 		const scheduledHourIndex = debugOnDemandSelection.hourIndex;
-		const scheduledTimeIndex = scheduledBase
-			? getEffectiveHourIndex(scheduledBase, scheduledHourIndex, scheduledMonthIndex)
-			: null;
+		const scheduledTimeIndex = debugOnDemandSelection.timeIndex;
 
 		requestAnimationFrame(() => {
 			if (
@@ -1888,7 +1900,6 @@
 				!model ||
 				!onDemandDebugPrepared ||
 				!scheduledBase ||
-				scheduledTimeIndex === null ||
 				modelFileForLoadedModel !== $analysisStore.metadata.model_file ||
 				analysisId !== scheduledAnalysisId ||
 				liveComputeModeKey !== scheduledLiveComputeModeKey ||
@@ -2951,8 +2962,8 @@
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
 						<Model
-							modelPath={resolveModelPath(
-								$analysisStore.metadata.model_file,
+							modelPath={resolveAnalysisModelPath(
+								$analysisStore.metadata,
 								analysisId,
 							).replace("data/", `${getDataBasePath()}/data/`)}
 							coordinateSystem={$analysisStore.metadata

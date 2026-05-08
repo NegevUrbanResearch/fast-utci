@@ -36,7 +36,7 @@
 	} from '$lib/services/pointCloudService';
 	import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
-	import { resolveModelPath } from '$lib/utils/analysisPaths';
+	import { resolveAnalysisModelPath } from '$lib/utils/analysisPaths';
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 	import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 	import * as THREE from 'three';
@@ -254,8 +254,8 @@
 		}
 
 		const analysisId = $comparisonStore.comparisonAnalysisId;
-		const modelPath = resolveModelPath(
-			analysis.metadata.model_file,
+		const modelPath = resolveAnalysisModelPath(
+			analysis.metadata,
 			analysisId
 		).replace('data/', `${getDataBasePath()}/data/`);
 		

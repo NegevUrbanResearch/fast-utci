@@ -99,6 +99,8 @@ export interface AnalysisMetadata {
 	grid_size: number;
 	coordinate_system: 'xy_ground' | 'xz_ground';
 	model_file: string;
+	/** Analysis id used to load this metadata, including project prefix when available. */
+	source_analysis_id?: string;
 	sun_positions?: SunPosition[];
 	hour_statistics?: HourStatistics[];
 	location?: {
@@ -130,5 +132,4 @@ export interface Position {
 	y: number;
 	z: number;
 }
-
 
