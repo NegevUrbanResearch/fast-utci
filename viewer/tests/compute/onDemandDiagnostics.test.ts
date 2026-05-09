@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	createEmptyOnDemandDiagnostics,
 	mergeTrackedGpuAllocationBytes,
-	recordOnDemandTiming
+	recordColdStartLifecycleTiming,
+	recordOnDemandTiming,
+	resetColdStartLifecycleTimings
 } from '$lib/compute/onDemandDiagnostics';
 
 describe('on-demand diagnostics helpers', () => {
@@ -141,6 +143,87 @@ describe('on-demand diagnostics helpers', () => {
 
 		expect(withSurface.timings.selectedHourReadbackMs).toBe(11.5);
 		expect(withSurface.timings.gpuSurfaceUpdateMs).toBe(7.25);
+	});
+
+	it('records route-level cold-start timings without overwriting earlier phases', () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+
+		const withPrepare = recordOnDemandTiming(diagnostics, 'payloadPrepareMs', 101.25);
+		const withWorker = recordOnDemandTiming(withPrepare, 'workerBvhMs', 202.5);
+		const withUpload = recordOnDemandTiming(withWorker, 'pipelineUploadMs', 303.75);
+		const withReady = recordOnDemandTiming(withUpload, 'firstSelectedHourReadyMs', 404);
+		const withVisible = recordOnDemandTiming(withReady, 'firstSelectedHourVisibleMs', 505.5);
+
+		expect(withVisible.timings).toEqual({
+			payloadPrepareMs: 101.25,
+			workerBvhMs: 202.5,
+			pipelineUploadMs: 303.75,
+			firstSelectedHourReadyMs: 404,
+			firstSelectedHourVisibleMs: 505.5
+		});
+	});
+
+	it('resets only cold-start timing fields for a new prepare lifecycle', () => {
+		const diagnostics = {
+			...createEmptyOnDemandDiagnostics(),
+			timings: {
+				payloadPrepareMs: 10,
+				workerBvhMs: 20,
+				pipelineUploadMs: 30,
+				firstSelectedHourReadyMs: 40,
+				firstSelectedHourVisibleMs: 50,
+				exposurePrecomputeMs: 60,
+				oneHourDispatchMs: 70
+			}
+		};
+
+		const next = resetColdStartLifecycleTimings(diagnostics);
+
+		expect(next.timings).toEqual({
+			exposurePrecomputeMs: 60,
+			oneHourDispatchMs: 70
+		});
+	});
+
+	it('records ready and visible once per cold-start lifecycle, then allows a fresh lifecycle to replace them', () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+
+		const firstReady = recordColdStartLifecycleTiming(
+			diagnostics,
+			'firstSelectedHourReadyMs',
+			125
+		);
+		const ignoredReadyOverwrite = recordColdStartLifecycleTiming(
+			firstReady,
+			'firstSelectedHourReadyMs',
+			250
+		);
+		const firstVisible = recordColdStartLifecycleTiming(
+			ignoredReadyOverwrite,
+			'firstSelectedHourVisibleMs',
+			300
+		);
+		const ignoredVisibleOverwrite = recordColdStartLifecycleTiming(
+			firstVisible,
+			'firstSelectedHourVisibleMs',
+			450
+		);
+		const reset = resetColdStartLifecycleTimings(ignoredVisibleOverwrite);
+		const secondReady = recordColdStartLifecycleTiming(
+			reset,
+			'firstSelectedHourReadyMs',
+			25
+		);
+		const secondVisible = recordColdStartLifecycleTiming(
+			secondReady,
+			'firstSelectedHourVisibleMs',
+			35
+		);
+
+		expect(ignoredVisibleOverwrite.timings.firstSelectedHourReadyMs).toBe(125);
+		expect(ignoredVisibleOverwrite.timings.firstSelectedHourVisibleMs).toBe(300);
+		expect(secondVisible.timings.firstSelectedHourReadyMs).toBe(25);
+		expect(secondVisible.timings.firstSelectedHourVisibleMs).toBe(35);
 	});
 
 	it('tracks selected-hour output high-watermark without pretending to know total browser VRAM', () => {

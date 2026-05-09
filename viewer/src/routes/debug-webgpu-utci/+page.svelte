@@ -53,7 +53,26 @@
 		runMergeAndBvhInWorker,
 		MAX_GRID_POINTS_GUARD,
 	} from "$lib/compute/mergeAndBvhWorkerClient";
-	import { getTooltipData } from "$lib/services/tooltipService";
+	import {
+		createEmptyTooltipInteractionDiagnostics,
+		getTooltipData,
+		recordTooltipInteractionMeasurement,
+		type TooltipInteractionDiagnostics,
+	} from "$lib/services/tooltipService";
+	import {
+		TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS,
+		armTooltipMotionSuppression,
+		createTooltipMotionSuppressionState,
+		releaseTooltipMotionPointer,
+		setTooltipMotionPointerDown,
+		shouldSuppressTooltipMotion,
+	} from "$lib/services/tooltipMotionSuppression";
+	import {
+		createEmptyCameraInteractionTelemetry,
+		recordCameraInteractionFrame,
+		type CameraInteractionDiagnostics,
+		type CameraInteractionTelemetry,
+	} from "$lib/services/cameraInteractionTelemetry";
 	import { getUTCIForHour, getUtciByHourForExport } from "$lib/services/dataLoader";
 	import { getEffectiveHourIndex, getUtciRangeForDisplay } from "$lib/utils/effectiveHourIndex";
 	import {
@@ -64,9 +83,15 @@
 	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
 	import { ComputeManager } from "$lib/compute/compute-manager";
 	import {
+		recordColdStartLifecycleTiming,
+		resetColdStartLifecycleTimings,
 		createEmptyOnDemandDiagnostics,
 		type OnDemandRuntimeDiagnostics,
 	} from "$lib/compute/onDemandDiagnostics";
+	import {
+		deriveOnDemandPrototypeStatus,
+		type OnDemandPrototypeStatus,
+	} from "$lib/compute/onDemandPrototypeStatus";
 	import type {
 		WebgpuLargeBufferDeviceLimits,
 		WebgpuLargeBufferRequiredLimits,
@@ -191,6 +216,20 @@
 
 	// Camera reference - will be set from Camera component
 	let cameraRef: PerspectiveCamera | undefined = undefined;
+	const CAMERA_INTERACTION_ARM_WINDOW_MS = TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS;
+	const CAMERA_INTERACTION_POSITION_EPSILON_SQ = 1e-6;
+	const CAMERA_INTERACTION_QUATERNION_EPSILON = 1e-6;
+	let tooltipMotionSuppression = createTooltipMotionSuppressionState();
+	let cameraInteractionTelemetry: CameraInteractionTelemetry =
+		createEmptyCameraInteractionTelemetry();
+	let cameraInteractionFrameId: number | null = null;
+	let cameraInteractionLastFrameTimeMs: number | null = null;
+	let cameraInteractionPointerDown = false;
+	let cameraInteractionSequenceActive = false;
+	let cameraInteractionArmedUntilMs = 0;
+	let hasCameraInteractionSnapshot = false;
+	const lastCameraInteractionPosition = new THREE.Vector3();
+	const lastCameraInteractionQuaternion = new THREE.Quaternion();
 
 	// Main viewport element reference for curtain positioning
 	let mainViewportElement: HTMLElement | null = null;
@@ -251,6 +290,9 @@
 		pendingReadbackRequestId?: number;
 		pendingReadbackTimeIndex?: number;
 		acceptedGpuResidentUtciRange?: { min: number; max: number };
+		tooltipInteraction?: TooltipInteractionDiagnostics;
+		cameraInteraction?: CameraInteractionDiagnostics;
+		tooltipProbeClientPoint?: { clientX: number; clientY: number } | null;
 	};
 
 	type OnDemandPythonSampleRecord = {
@@ -361,17 +403,11 @@
 		__parityModel__?: Group | null;
 		__parityThree__?: typeof THREE;
 		__onDemandPrototypeDiagnostics__?: OnDemandPrototypeDiagnostics;
+		__debugTooltipProbe__?: (() => { clientX: number; clientY: number } | null) | undefined;
 		__onDemandPrototypeComparison__?: OnDemandPrototypeComparison;
 		__onDemandMultiHourComparison__?: OnDemandPrototypeMultiHourComparison;
 		__onDemandMonthHourComparison__?: OnDemandMonthHourComparisonResult;
 	};
-
-	type OnDemandPrototypeStatus =
-		| "idle"
-		| "diagnostics"
-		| "ready"
-		| "unsupported"
-		| "error";
 
 	const getParityWindow = (): ParityWindow =>
 		window as unknown as ParityWindow;
@@ -631,6 +667,7 @@
 				zHeight: number;
 				exposureReady: boolean;
 				exposurePrecomputePromise: Promise<void> | null;
+				coldStartStartedAt: number;
 				pendingRenderUpdate:
 					| {
 							requestId: number;
@@ -665,6 +702,7 @@
 	$: onDemandPrototypeEnabled =
 		browser &&
 		($page.url.searchParams.get("onDemandPrototype") === "1" || onDemandDebugModeEnabled);
+	$: debugTooltipHoverDisabled = $page.url.searchParams.get("disableTooltip") === "1";
 	$: compareOneHourEnabled =
 		onDemandPrototypeEnabled &&
 		browser &&
@@ -938,6 +976,13 @@
 	function initializeOnDemandPrototypeDiagnostics(): void {
 		if (!browser || !onDemandPrototypeEnabled) return;
 
+		cameraInteractionTelemetry = createEmptyCameraInteractionTelemetry();
+		cameraInteractionPointerDown = false;
+		cameraInteractionSequenceActive = false;
+		cameraInteractionArmedUntilMs = 0;
+		cameraInteractionLastFrameTimeMs = null;
+		hasCameraInteractionSnapshot = false;
+		tooltipMotionSuppression = createTooltipMotionSuppressionState();
 		const navigatorGpu = Boolean(navigator.gpu);
 		const error =
 			syntheticBridgeEnabled && !navigatorGpu
@@ -958,6 +1003,10 @@
 					}
 					: {}),
 				...(error ? { error } : {}),
+				tooltipInteraction: createEmptyTooltipInteractionDiagnostics(
+					debugTooltipHoverDisabled,
+				),
+				cameraInteraction: cameraInteractionTelemetry.diagnostics,
 			},
 			{ replace: true },
 		);
@@ -1035,6 +1084,42 @@
 		};
 	}
 
+	function resetOnDemandPrototypeColdStartTimings(): void {
+		if (!browser || !onDemandPrototypeEnabled) return;
+
+		const existingDiagnostics = getParityWindow().__onDemandPrototypeDiagnostics__;
+		if (!existingDiagnostics) return;
+		const nextDiagnostics = resetColdStartLifecycleTimings({
+			...createEmptyOnDemandDiagnostics(),
+			...existingDiagnostics,
+		});
+		updateOnDemandPrototypeDiagnostics({
+			timings: nextDiagnostics.timings,
+		});
+	}
+
+	function updateOnDemandPrototypeColdStartTiming(
+		key: "payloadPrepareMs" | "workerBvhMs" | "pipelineUploadMs" | "firstSelectedHourReadyMs" | "firstSelectedHourVisibleMs",
+		value: number | undefined,
+	): void {
+		if (!browser || !onDemandPrototypeEnabled || value === undefined) return;
+
+		const existingDiagnostics = getParityWindow().__onDemandPrototypeDiagnostics__;
+		if (!existingDiagnostics) return;
+		const nextDiagnostics = recordColdStartLifecycleTiming(
+			{
+				...createEmptyOnDemandDiagnostics(),
+				...existingDiagnostics,
+			},
+			key,
+			value,
+		);
+		if (nextDiagnostics === existingDiagnostics) return;
+		updateOnDemandPrototypeDiagnostics({
+			timings: nextDiagnostics.timings,
+		});
+	}
+
 	function updateOnDemandPrototypeDiagnostics(
 		diagnostics: Partial<OnDemandPrototypeDiagnostics>,
 		options?: { replace?: boolean; computeManager?: ComputeManager },
@@ -1063,50 +1148,118 @@
 				"utciSurfaceSource" in diagnostics
 					? diagnostics.utciSurfaceSource
 					: existing?.utciSurfaceSource,
+			tooltipInteraction:
+				diagnostics.tooltipInteraction ??
+				existing?.tooltipInteraction ??
+				createEmptyTooltipInteractionDiagnostics(debugTooltipHoverDisabled),
+			cameraInteraction:
+				diagnostics.cameraInteraction ??
+				existing?.cameraInteraction ??
+				cameraInteractionTelemetry.diagnostics,
 		};
 		win.__onDemandPrototypeDiagnostics__ = nextDiagnostics;
 		onDemandPrototypeError = nextDiagnostics.error ?? null;
-
-		if (nextDiagnostics.error) {
-			onDemandPrototypeStatus = "error";
-			return;
-		}
-
-		if (!nextDiagnostics.navigatorGpu) {
-			onDemandPrototypeStatus = syntheticBridgeEnabled ? "error" : "unsupported";
-			return;
-		}
-
+		onDemandPrototypeStatus = deriveOnDemandPrototypeStatus({
+			diagnostics: nextDiagnostics,
+			syntheticBridgeEnabled,
+			strictExposureOnlyEnabled,
+			compareOneHourEnabled,
+			hasOnDemandPrototypeComparison: hasOnDemandPrototypeComparison(),
+			compareHoursEnabled,
+			hasOnDemandMultiHourComparison: hasOnDemandMultiHourComparison(),
+			compareMonthHoursEnabled,
+			hasCompletedOnDemandMonthHourComparison:
+				hasCompletedOnDemandMonthHourComparison(),
+		});
 		if (syntheticBridgeEnabled) {
-			onDemandPrototypeStatus =
-				nextDiagnostics.rendererBackend === "webgpu" &&
-				nextDiagnostics.bridgeAttached === true &&
-				(nextDiagnostics.visibleColorVariance ?? 0) > 0
-					? "ready"
-					: "diagnostics";
 			maybeStartSyntheticBridgeRenderValidation();
-			return;
 		}
+	}
 
-		if (strictExposureOnlyEnabled) {
-			onDemandPrototypeStatus =
-				nextDiagnostics.path === "exposure-only-f32" &&
-				nextDiagnostics.usedExposureOnlyPrecompute === true &&
-				nextDiagnostics.usedRunAllForSelectedHour === false &&
-				nextDiagnostics.liveAnalysisConstructedForSelectedHour === false &&
-				(nextDiagnostics.oneHourOutputBytes ?? 0) > 0 &&
-				(!compareHoursEnabled || hasOnDemandMultiHourComparison()) &&
-				(!compareMonthHoursEnabled || hasCompletedOnDemandMonthHourComparison())
-					? "ready"
-					: "diagnostics";
-			return;
+	function armCameraInteractionTelemetry(windowMs = CAMERA_INTERACTION_ARM_WINDOW_MS): void {
+		cameraInteractionArmedUntilMs = Math.max(
+			cameraInteractionArmedUntilMs,
+			performance.now() + windowMs,
+		);
+	}
+
+	function snapshotCameraInteractionTransform(camera: PerspectiveCamera): void {
+		lastCameraInteractionPosition.copy(camera.position);
+		lastCameraInteractionQuaternion.copy(camera.quaternion);
+		hasCameraInteractionSnapshot = true;
+	}
+
+	function hasCameraInteractionTransformChanged(camera: PerspectiveCamera): boolean {
+		return (
+			camera.position.distanceToSquared(lastCameraInteractionPosition) >
+				CAMERA_INTERACTION_POSITION_EPSILON_SQ ||
+			1 - Math.abs(camera.quaternion.dot(lastCameraInteractionQuaternion)) >
+				CAMERA_INTERACTION_QUATERNION_EPSILON
+		);
+	}
+
+	function stopCameraInteractionTelemetryLoop(): void {
+		if (cameraInteractionFrameId !== null) {
+			cancelAnimationFrame(cameraInteractionFrameId);
+			cameraInteractionFrameId = null;
 		}
+		cameraInteractionLastFrameTimeMs = null;
+		hasCameraInteractionSnapshot = false;
+	}
 
-		onDemandPrototypeStatus =
-			nextDiagnostics.rendererBackend === "webgpu" &&
-			(!compareOneHourEnabled || hasOnDemandPrototypeComparison())
-				? "ready"
-				: "diagnostics";
+	function startCameraInteractionTelemetryLoop(): void {
+		if (!browser || cameraInteractionFrameId !== null) return;
+
+		const tick = (frameTimeMs: number) => {
+			cameraInteractionFrameId = requestAnimationFrame(tick);
+
+			const activeCamera = cameraRef;
+			if (!activeCamera) {
+				cameraInteractionLastFrameTimeMs = frameTimeMs;
+				hasCameraInteractionSnapshot = false;
+				return;
+			}
+
+			if (!hasCameraInteractionSnapshot) {
+				snapshotCameraInteractionTransform(activeCamera);
+				cameraInteractionLastFrameTimeMs = frameTimeMs;
+				return;
+			}
+
+			const frameMs =
+				cameraInteractionLastFrameTimeMs == null
+					? 0
+					: frameTimeMs - cameraInteractionLastFrameTimeMs;
+			const cameraChanged = hasCameraInteractionTransformChanged(activeCamera);
+			const interactionArmed =
+				cameraInteractionPointerDown ||
+				frameTimeMs <= cameraInteractionArmedUntilMs ||
+				cameraInteractionSequenceActive;
+
+			if (cameraChanged && interactionArmed) {
+				cameraInteractionTelemetry = recordCameraInteractionFrame(
+					cameraInteractionTelemetry,
+					frameMs,
+				);
+				cameraInteractionSequenceActive = true;
+				armCameraInteractionTelemetry();
+				tooltipMotionSuppression = armTooltipMotionSuppression(
+					tooltipMotionSuppression,
+					frameTimeMs,
+				);
+				hideTooltip();
+				updateOnDemandPrototypeDiagnostics({
+					cameraInteraction: cameraInteractionTelemetry.diagnostics,
+				});
+			} else if (!cameraChanged) {
+				cameraInteractionSequenceActive = false;
+			}
+
+			snapshotCameraInteractionTransform(activeCamera);
+			cameraInteractionLastFrameTimeMs = frameTimeMs;
+		};
+
+		cameraInteractionFrameId = requestAnimationFrame(tick);
 	}
 
 	function disposeSyntheticBridge(): void {
@@ -1665,6 +1818,12 @@
 					}));
 				}
 			}
+			updateOnDemandPrototypeColdStartTiming(
+				"firstSelectedHourReadyMs",
+				performance.now() - prepared.coldStartStartedAt,
+			);
+			const firstSelectedHourReadyMs =
+				getParityWindow().__onDemandPrototypeDiagnostics__?.timings?.firstSelectedHourReadyMs;
 
 			const pipelineDiagnostics = prepared.computeManager.getOnDemandDiagnostics();
 			const pythonBinSampleComparison =
@@ -1711,7 +1870,9 @@
 							: "none",
 				gpuResidentCopyStatus: useGpuResidentSelectedHourRender ? "pending" : undefined,
 				timings: {
+					...getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
 					...pipelineDiagnostics?.timings,
+					firstSelectedHourReadyMs,
 					selectedHourReadbackMs: needsSelectedHourAnalysisForImmediateRender
 						? selectedHourReadbackMs
 						: undefined,
@@ -2409,10 +2570,17 @@
 				stillOwned
 			) {
 				const surfaceUpdateMs = performance.now() - pendingRenderUpdate.startedAt;
+				updateOnDemandPrototypeColdStartTiming(
+					"firstSelectedHourVisibleMs",
+					performance.now() - prepared.coldStartStartedAt,
+				);
+				const firstSelectedHourVisibleMs =
+					getParityWindow().__onDemandPrototypeDiagnostics__?.timings?.firstSelectedHourVisibleMs;
 				nextDiagnostics.timings = {
 					...getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
 					renderUpdateMs: surfaceUpdateMs,
 					gpuSurfaceUpdateMs: surfaceUpdateMs,
+					firstSelectedHourVisibleMs,
 				};
 				prepared.pendingRenderUpdate = null;
 			} else if (!stillOwned) {
@@ -2732,6 +2900,7 @@
 		numMonths: number;
 		gridResolution: number;
 		deviceSource: "renderer" | "standalone";
+		coldStartStartedAt: number;
 	};
 
 	function getPreferredDebugComputeDevice(): GPUDevice | undefined {
@@ -2756,6 +2925,8 @@
 		}
 
 		const { base, signal, runId, zHeight } = params;
+		const coldStartStartedAt = performance.now();
+		resetOnDemandPrototypeColdStartTimings();
 		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
 		const epwUrl = getEpwUrlForProject(projectId);
 		const baseGrid = base.metadata.grid_size || 2;
@@ -2777,6 +2948,7 @@
 		>["preflight"] | null = null;
 		let effectiveGridResolution = baseGrid;
 		let lastErr: unknown = null;
+		const payloadPrepareStartedAt = performance.now();
 
 		for (const tryRes of resolutionsToTry) {
 			try {
@@ -2791,6 +2963,10 @@
 				totalTriangles = result.totalTriangles;
 				preflight = result.preflight;
 				effectiveGridResolution = tryRes;
+				updateOnDemandPrototypeColdStartTiming(
+					"payloadPrepareMs",
+					performance.now() - payloadPrepareStartedAt,
+				);
 				break;
 			} catch (error) {
 				lastErr = error;
@@ -2860,6 +3036,7 @@
 		if (typeof Worker !== "undefined") {
 			setParityStatus(runId, "running", "worker");
 			try {
+				const workerBvhStartedAt = performance.now();
 				workerResult = await runMergeAndBvhInWorker({
 					meshes,
 					gridResolution: effectiveGridResolution,
@@ -2868,6 +3045,10 @@
 					maxGridPoints: MAX_GRID_POINTS_GUARD,
 					bvhOnly: true,
 				});
+				updateOnDemandPrototypeColdStartTiming(
+					"workerBvhMs",
+					performance.now() - workerBvhStartedAt,
+				);
 			} catch (workerError) {
 				if (workerError instanceof DOMException && workerError.name === "AbortError") {
 					throw workerError;
@@ -2935,6 +3116,10 @@
 			zHeight: computeGridHeight,
 			signal,
 		});
+		updateOnDemandPrototypeColdStartTiming(
+			"pipelineUploadMs",
+			performance.now() - uploadStartedAt,
+		);
 
 		emitComputeTelemetry("pipeline.upload.done", {
 			ms: performance.now() - uploadStartedAt,
@@ -2960,7 +3145,132 @@
 			numMonths,
 			gridResolution: effectiveGridResolution,
 			deviceSource: preferredDevice ? "renderer" : "standalone",
+			coldStartStartedAt,
 		};
+	}
+
+	function computeTooltipProbeClientPoint(params: {
+		canvas: HTMLCanvasElement | null;
+		camera: PerspectiveCamera | undefined;
+		mesh: Mesh | null;
+	}): { clientX: number; clientY: number } | null {
+		const { canvas, camera, mesh } = params;
+		if (!canvas || !camera || !mesh) return null;
+		const positionAttribute = mesh.geometry?.getAttribute?.("position");
+		if (!positionAttribute || positionAttribute.count <= 0) return null;
+
+		const rect = canvas.getBoundingClientRect();
+		const sampleStep = Math.max(1, Math.floor(positionAttribute.count / 256));
+		const localPoint = new THREE.Vector3();
+		const worldPoint = new THREE.Vector3();
+		const projectedPoint = new THREE.Vector3();
+		let bestPoint: { clientX: number; clientY: number } | null = null;
+		let bestDistanceToCenter = Number.POSITIVE_INFINITY;
+
+		for (let index = 0; index < positionAttribute.count; index += sampleStep) {
+			localPoint.fromBufferAttribute(positionAttribute, index);
+			worldPoint.copy(localPoint);
+			mesh.localToWorld(worldPoint);
+			projectedPoint.copy(worldPoint).project(camera);
+			if (
+				!Number.isFinite(projectedPoint.x) ||
+				!Number.isFinite(projectedPoint.y) ||
+				!Number.isFinite(projectedPoint.z) ||
+				projectedPoint.z < -1 ||
+				projectedPoint.z > 1 ||
+				projectedPoint.x < -1 ||
+				projectedPoint.x > 1 ||
+				projectedPoint.y < -1 ||
+				projectedPoint.y > 1
+			) {
+				continue;
+			}
+
+			const clientX = rect.left + ((projectedPoint.x + 1) * 0.5) * rect.width;
+			const clientY = rect.top + ((1 - projectedPoint.y) * 0.5) * rect.height;
+			const hitElement: Element | null = canvas.ownerDocument.elementFromPoint(clientX, clientY);
+			if (hitElement !== canvas) {
+				continue;
+			}
+			const distanceToCenter = Math.abs(projectedPoint.x) + Math.abs(projectedPoint.y);
+			if (distanceToCenter < bestDistanceToCenter) {
+				bestDistanceToCenter = distanceToCenter;
+				bestPoint = { clientX, clientY };
+			}
+		}
+
+		return bestPoint;
+	}
+
+	let lastTooltipProbeClientPointKey: string | null = null;
+
+	function publishTooltipProbePoint(params: {
+		enabled: boolean;
+		canvas: HTMLCanvasElement | null;
+		camera: PerspectiveCamera | undefined;
+		mesh: Mesh | null;
+	}): void {
+		if (!browser) return;
+
+		const win = getParityWindow();
+		win.__debugTooltipProbe__ = params.enabled
+			? () =>
+					computeTooltipProbeClientPoint({
+						canvas: params.canvas,
+						camera: params.camera,
+						mesh: params.mesh,
+					})
+			: undefined;
+
+		if (!params.enabled) {
+			lastTooltipProbeClientPointKey = null;
+			return;
+		}
+
+		const nextProbePoint = computeTooltipProbeClientPoint(params);
+		const nextProbeKey = nextProbePoint
+			? `${nextProbePoint.clientX.toFixed(2)}:${nextProbePoint.clientY.toFixed(2)}`
+			: "null";
+		if (nextProbeKey !== lastTooltipProbeClientPointKey) {
+			updateOnDemandPrototypeDiagnostics({
+				tooltipProbeClientPoint: nextProbePoint,
+			});
+			lastTooltipProbeClientPointKey = nextProbeKey;
+		}
+	}
+
+	$: if (browser) {
+		const probeEnabled = onDemandPrototypeEnabled;
+		const probeCanvas = canvasElement;
+		const probeCamera = cameraRef;
+		const probeMesh = liveUtciMesh;
+		publishTooltipProbePoint({
+			enabled: probeEnabled,
+			canvas: probeCanvas,
+			camera: probeCamera,
+			mesh: probeMesh,
+		});
+	}
+
+	let lastTooltipDisableState: boolean | null = null;
+
+	$: if (browser) {
+		if (onDemandPrototypeEnabled) {
+			if (lastTooltipDisableState !== debugTooltipHoverDisabled) {
+				updateOnDemandPrototypeDiagnostics({
+					tooltipInteraction: createEmptyTooltipInteractionDiagnostics(
+						debugTooltipHoverDisabled,
+					),
+				});
+				lastTooltipDisableState = debugTooltipHoverDisabled;
+				if (debugTooltipHoverDisabled) {
+					tooltipVisible = false;
+					tooltipPosition = null;
+				}
+			}
+		} else {
+			lastTooltipDisableState = null;
+		}
 	}
 
 	async function computeLiveAnalysis() {
@@ -3537,8 +3847,22 @@
 		}, 2000);
 	}
 
+	function hideTooltip(): void {
+		tooltipVisible = false;
+		tooltipPosition = null;
+	}
+
 	function handleMouseMove(event: MouseEvent) {
+		if (debugTooltipHoverDisabled) {
+			hideTooltip();
+			return;
+		}
+
 		const now = performance.now();
+		if (shouldSuppressTooltipMotion(tooltipMotionSuppression, now)) {
+			hideTooltip();
+			return;
+		}
 		if (now - lastTooltipUpdate < TOOLTIP_THROTTLE_MS) {
 			return;
 		}
@@ -3549,8 +3873,7 @@
 			!canvasElement ||
 			!cameraRef
 		) {
-			tooltipVisible = false;
-			tooltipPosition = null;
+			hideTooltip();
 			return;
 		}
 
@@ -3565,6 +3888,20 @@
 			$viewerStore.metricType,
 			target.hourIndex,
 			canvasRect,
+			{
+				onDiagnosticsSample: (measurement) => {
+					if (!browser || !onDemandPrototypeEnabled) return;
+					const currentDiagnostics =
+						getParityWindow().__onDemandPrototypeDiagnostics__?.tooltipInteraction ??
+						createEmptyTooltipInteractionDiagnostics(debugTooltipHoverDisabled);
+					updateOnDemandPrototypeDiagnostics({
+						tooltipInteraction: recordTooltipInteractionMeasurement(
+							currentDiagnostics,
+							measurement,
+						),
+					});
+				},
+			},
 		);
 
 		if (tooltipData) {
@@ -3574,40 +3911,159 @@
 			tooltipValue = tooltipData.value;
 			tooltipPosition = tooltipData.position;
 		} else {
-			tooltipVisible = false;
-			tooltipPosition = null;
+			hideTooltip();
 		}
 	}
 
 	function handleMouseLeave() {
-		tooltipVisible = false;
-		tooltipPosition = null;
+		hideTooltip();
 	}
 
-	let eventListenersAttached = false;
+	let hoverListenersCanvas: HTMLCanvasElement | null = null;
+	let pointerListenerCanvas: HTMLCanvasElement | null = null;
+	let cameraInteractionListenerCanvas: HTMLCanvasElement | null = null;
 
-	$: if (canvasElement && mounted && !eventListenersAttached) {
-		const canvas = canvasElement;
-		canvas.addEventListener("mousemove", handleMouseMove, {
-			passive: true,
-		});
-		canvas.addEventListener("mouseleave", handleMouseLeave, {
-			passive: true,
-		});
-		canvas.addEventListener("pointerdown", copyClickedPointData);
-		eventListenersAttached = true;
+	function detachHoverListeners(): void {
+		if (!hoverListenersCanvas) return;
+		hoverListenersCanvas.removeEventListener("mousemove", handleMouseMove);
+		hoverListenersCanvas.removeEventListener("mouseleave", handleMouseLeave);
+		hoverListenersCanvas = null;
+	}
+
+	function detachPointerListener(): void {
+		if (!pointerListenerCanvas) return;
+		pointerListenerCanvas.removeEventListener("pointerdown", copyClickedPointData);
+		pointerListenerCanvas = null;
+	}
+
+	function handleCameraInteractionPointerDown(): void {
+		tooltipMotionSuppression = setTooltipMotionPointerDown(
+			tooltipMotionSuppression,
+			true,
+			performance.now(),
+		);
+		cameraInteractionPointerDown = true;
+		armCameraInteractionTelemetry();
+		hideTooltip();
+	}
+
+	function handleCameraInteractionPointerRelease(): void {
+		const hadCanvasPointerInteraction = tooltipMotionSuppression.pointerDown;
+		tooltipMotionSuppression = releaseTooltipMotionPointer(
+			tooltipMotionSuppression,
+			performance.now(),
+		);
+		cameraInteractionPointerDown = false;
+		if (hadCanvasPointerInteraction) {
+			armCameraInteractionTelemetry();
+			hideTooltip();
+		}
+	}
+
+	function handleCameraInteractionWheel(): void {
+		tooltipMotionSuppression = armTooltipMotionSuppression(
+			tooltipMotionSuppression,
+			performance.now(),
+		);
+		armCameraInteractionTelemetry();
+		hideTooltip();
+	}
+
+	function detachCameraInteractionListeners(): void {
+		if (cameraInteractionListenerCanvas) {
+			cameraInteractionListenerCanvas.removeEventListener(
+				"pointerdown",
+				handleCameraInteractionPointerDown,
+			);
+			cameraInteractionListenerCanvas.removeEventListener(
+				"wheel",
+				handleCameraInteractionWheel,
+			);
+			cameraInteractionListenerCanvas = null;
+		}
+		if (browser) {
+			window.removeEventListener(
+				"pointerup",
+				handleCameraInteractionPointerRelease,
+			);
+			window.removeEventListener(
+				"pointercancel",
+				handleCameraInteractionPointerRelease,
+			);
+		}
+	}
+
+	$: if (mounted) {
+		if (hoverListenersCanvas && hoverListenersCanvas !== canvasElement) {
+			detachHoverListeners();
+		}
+		if (
+			canvasElement &&
+			!debugTooltipHoverDisabled &&
+			hoverListenersCanvas !== canvasElement
+		) {
+			canvasElement.addEventListener("mousemove", handleMouseMove, {
+				passive: true,
+			});
+			canvasElement.addEventListener("mouseleave", handleMouseLeave, {
+				passive: true,
+			});
+			hoverListenersCanvas = canvasElement;
+		} else if (debugTooltipHoverDisabled) {
+			detachHoverListeners();
+		}
+
+		if (pointerListenerCanvas && pointerListenerCanvas !== canvasElement) {
+			detachPointerListener();
+		}
+		if (canvasElement && pointerListenerCanvas !== canvasElement) {
+			canvasElement.addEventListener("pointerdown", copyClickedPointData);
+			pointerListenerCanvas = canvasElement;
+		}
+
+		if (
+			cameraInteractionListenerCanvas &&
+			cameraInteractionListenerCanvas !== canvasElement
+		) {
+			detachCameraInteractionListeners();
+		}
+		if (canvasElement && cameraInteractionListenerCanvas !== canvasElement) {
+			canvasElement.addEventListener(
+				"pointerdown",
+				handleCameraInteractionPointerDown,
+				{ passive: true },
+			);
+			canvasElement.addEventListener("wheel", handleCameraInteractionWheel, {
+				passive: true,
+			});
+			window.addEventListener("pointerup", handleCameraInteractionPointerRelease, {
+				passive: true,
+			});
+			window.addEventListener(
+				"pointercancel",
+				handleCameraInteractionPointerRelease,
+				{ passive: true },
+			);
+			cameraInteractionListenerCanvas = canvasElement;
+		}
+	}
+
+	$: if (browser) {
+		if (onDemandPrototypeEnabled) {
+			startCameraInteractionTelemetryLoop();
+		} else {
+			stopCameraInteractionTelemetryLoop();
+		}
 	}
 
 	onDestroy(() => {
 		liveAbortController?.abort();
 		liveAbortController = null;
 		disposeSyntheticBridge();
-		if (canvasElement && eventListenersAttached) {
-			canvasElement.removeEventListener("mousemove", handleMouseMove);
-			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
-			canvasElement.removeEventListener("pointerdown", copyClickedPointData);
-			eventListenersAttached = false;
-		}
+		detachHoverListeners();
+		detachPointerListener();
+		detachCameraInteractionListeners();
+		stopCameraInteractionTelemetryLoop();
 		lastPipeline?.dispose?.();
 		lastPipeline = null;
 	});

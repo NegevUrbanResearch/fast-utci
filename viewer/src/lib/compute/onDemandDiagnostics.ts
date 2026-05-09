@@ -3,6 +3,11 @@ export type OnDemandRendererBackend = 'webgpu' | 'unknown';
 export type OnDemandPath = 'idle' | 'run-all-baseline' | 'exposure-only-f32' | 'error';
 
 export interface OnDemandTimings {
+	payloadPrepareMs?: number;
+	workerBvhMs?: number;
+	pipelineUploadMs?: number;
+	firstSelectedHourReadyMs?: number;
+	firstSelectedHourVisibleMs?: number;
 	exposurePrecomputeMs?: number;
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
@@ -12,6 +17,16 @@ export interface OnDemandTimings {
 	cpuColorBuildMs?: number;
 	gpuSurfaceUpdateMs?: number;
 }
+
+export const COLD_START_TIMING_KEYS = [
+	'payloadPrepareMs',
+	'workerBvhMs',
+	'pipelineUploadMs',
+	'firstSelectedHourReadyMs',
+	'firstSelectedHourVisibleMs'
+] as const;
+
+export type ColdStartTimingKey = (typeof COLD_START_TIMING_KEYS)[number];
 
 export interface TrackedGpuAllocationBytes {
 	persistentExposureBytes: number;
@@ -122,6 +137,30 @@ export function recordOnDemandTiming<K extends keyof OnDemandTimings>(
 			[key]: value
 		}
 	};
+}
+
+export function resetColdStartLifecycleTimings(
+	diagnostics: OnDemandRuntimeDiagnostics
+): OnDemandRuntimeDiagnostics {
+	const nextTimings: OnDemandTimings = { ...diagnostics.timings };
+	for (const key of COLD_START_TIMING_KEYS) {
+		delete nextTimings[key];
+	}
+	return {
+		...diagnostics,
+		timings: nextTimings
+	};
+}
+
+export function recordColdStartLifecycleTiming<K extends ColdStartTimingKey>(
+	diagnostics: OnDemandRuntimeDiagnostics,
+	key: K,
+	value: OnDemandTimings[K]
+): OnDemandRuntimeDiagnostics {
+	if (value === undefined || diagnostics.timings[key] !== undefined) {
+		return diagnostics;
+	}
+	return recordOnDemandTiming(diagnostics, key, value);
 }
 
 export function mergeTrackedGpuAllocationBytes(

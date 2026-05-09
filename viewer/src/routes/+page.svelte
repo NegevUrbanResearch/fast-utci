@@ -58,6 +58,13 @@
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
 	import {
+		armTooltipMotionSuppression,
+		createTooltipMotionSuppressionState,
+		releaseTooltipMotionPointer,
+		setTooltipMotionPointerDown,
+		shouldSuppressTooltipMotion,
+	} from "$lib/services/tooltipMotionSuppression";
+	import {
 		sceneConfigStore,
 		updateSceneConfigFromBounds,
 	} from "$lib/stores/sceneConfigStore";
@@ -188,6 +195,7 @@
 
 	// Camera reference - will be set from Camera component
 	let cameraRef: PerspectiveCamera | undefined = undefined;
+	let tooltipMotionSuppression = createTooltipMotionSuppressionState();
 
 	// Main viewport element reference for comparison curtain positioning
 	let mainViewportElement: HTMLElement | null = null;
@@ -286,9 +294,46 @@
 	let lastTooltipUpdate = 0;
 	const TOOLTIP_THROTTLE_MS = 16; // ~60fps
 
+	function hideTooltip() {
+		tooltipVisible = false;
+		tooltipPosition = null;
+	}
+
+	function handleTooltipMotionPointerDown() {
+		tooltipMotionSuppression = setTooltipMotionPointerDown(
+			tooltipMotionSuppression,
+			true,
+			performance.now(),
+		);
+		hideTooltip();
+	}
+
+	function handleTooltipMotionPointerRelease() {
+		const hadCanvasPointerInteraction = tooltipMotionSuppression.pointerDown;
+		tooltipMotionSuppression = releaseTooltipMotionPointer(
+			tooltipMotionSuppression,
+			performance.now(),
+		);
+		if (hadCanvasPointerInteraction) {
+			hideTooltip();
+		}
+	}
+
+	function handleTooltipMotionWheel() {
+		tooltipMotionSuppression = armTooltipMotionSuppression(
+			tooltipMotionSuppression,
+			performance.now(),
+		);
+		hideTooltip();
+	}
+
 	// Handle mouse move for tooltip
 	function handleMouseMove(event: MouseEvent) {
 		const now = performance.now();
+		if (shouldSuppressTooltipMotion(tooltipMotionSuppression, now)) {
+			hideTooltip();
+			return;
+		}
 		if (now - lastTooltipUpdate < TOOLTIP_THROTTLE_MS) {
 			return; // Throttle updates
 		}
@@ -301,8 +346,7 @@
 			!canvasElement ||
 			!cameraRef
 		) {
-			tooltipVisible = false;
-			tooltipPosition = null;
+			hideTooltip();
 			return;
 		}
 
@@ -347,8 +391,7 @@
 			tooltipValue = tooltipData.value;
 			tooltipPosition = tooltipData.position;
 		} else {
-			tooltipVisible = false;
-			tooltipPosition = null;
+			hideTooltip();
 		}
 	}
 
@@ -364,22 +407,75 @@
 	}
 
 	function handleMouseLeave() {
-		tooltipVisible = false;
-		tooltipPosition = null;
+		hideTooltip();
 	}
 
 	// Attach event listeners to canvas element when available
-	let eventListenersAttached = false;
+	let hoverListenersCanvas: HTMLCanvasElement | null = null;
+	let tooltipMotionListenersCanvas: HTMLCanvasElement | null = null;
 
-	$: if (canvasElement && mounted && !eventListenersAttached) {
-		const canvas = canvasElement;
-		canvas.addEventListener("mousemove", handleMouseMove, {
-			passive: true,
-		});
-		canvas.addEventListener("mouseleave", handleMouseLeave, {
-			passive: true,
-		});
-		eventListenersAttached = true;
+	function detachHoverListeners() {
+		if (!hoverListenersCanvas) return;
+		hoverListenersCanvas.removeEventListener("mousemove", handleMouseMove);
+		hoverListenersCanvas.removeEventListener("mouseleave", handleMouseLeave);
+		hoverListenersCanvas = null;
+	}
+
+	function detachTooltipMotionListeners() {
+		if (tooltipMotionListenersCanvas) {
+			tooltipMotionListenersCanvas.removeEventListener(
+				"pointerdown",
+				handleTooltipMotionPointerDown,
+			);
+			tooltipMotionListenersCanvas.removeEventListener(
+				"wheel",
+				handleTooltipMotionWheel,
+			);
+			tooltipMotionListenersCanvas = null;
+		}
+		if (typeof window !== "undefined") {
+			window.removeEventListener("pointerup", handleTooltipMotionPointerRelease);
+			window.removeEventListener("pointercancel", handleTooltipMotionPointerRelease);
+		}
+	}
+
+	$: if (mounted) {
+		if (hoverListenersCanvas && hoverListenersCanvas !== canvasElement) {
+			detachHoverListeners();
+		}
+		if (canvasElement && hoverListenersCanvas !== canvasElement) {
+			canvasElement.addEventListener("mousemove", handleMouseMove, {
+				passive: true,
+			});
+			canvasElement.addEventListener("mouseleave", handleMouseLeave, {
+				passive: true,
+			});
+			hoverListenersCanvas = canvasElement;
+		}
+
+		if (
+			tooltipMotionListenersCanvas &&
+			tooltipMotionListenersCanvas !== canvasElement
+		) {
+			detachTooltipMotionListeners();
+		}
+		if (canvasElement && tooltipMotionListenersCanvas !== canvasElement) {
+			canvasElement.addEventListener(
+				"pointerdown",
+				handleTooltipMotionPointerDown,
+				{ passive: true },
+			);
+			canvasElement.addEventListener("wheel", handleTooltipMotionWheel, {
+				passive: true,
+			});
+			window.addEventListener("pointerup", handleTooltipMotionPointerRelease, {
+				passive: true,
+			});
+			window.addEventListener("pointercancel", handleTooltipMotionPointerRelease, {
+				passive: true,
+			});
+			tooltipMotionListenersCanvas = canvasElement;
+		}
 	}
 
 	onDestroy(() => {
@@ -387,11 +483,8 @@
 			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
 		}
 
-		if (canvasElement && eventListenersAttached) {
-			canvasElement.removeEventListener("mousemove", handleMouseMove);
-			canvasElement.removeEventListener("mouseleave", handleMouseLeave);
-			eventListenersAttached = false;
-		}
+		detachHoverListeners();
+		detachTooltipMotionListeners();
 	});
 </script>
 

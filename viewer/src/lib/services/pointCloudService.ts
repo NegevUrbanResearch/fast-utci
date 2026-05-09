@@ -26,6 +26,7 @@ import {
 const VISUAL_LAYER_OFFSET = -0.05;
 const DEFAULT_OPACITY = 0.9;
 const TEXTURE_ALPHA = 255;
+const AMBIGUOUS_CELL_POINT_INDEX = -2;
 
 export interface UtciGridLayout {
 	width: number;
@@ -42,6 +43,7 @@ export interface UtciGridLayout {
 	baseY: number;
 	indexToRow: Uint32Array;
 	indexToColumn: Uint32Array;
+	cellToPointIndex?: Int32Array;
 	indexToTexel: Uint32Array;
 	colorBuffer: Uint8Array;
 	texture?: THREE.DataTexture;
@@ -706,6 +708,14 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		indexToTexel[i] = texelIndex;
 	}
 
+	const cellToPointIndex = createCellToPointIndex({
+		rows,
+		cols,
+		numPositions,
+		width,
+		height,
+		layoutValid
+	});
 	const colorBuffer = new Uint8Array(width * height * 4);
 	// centerX/Z and baseY are in viewer space: we already applied transformToWorld(analysis)+normalizationOffset above to get min/max.
 	const centerX = layoutValid ? minX + ((width - 1) * gridSize) / 2 : 0;
@@ -727,6 +737,7 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		baseY,
 		indexToRow: rows,
 		indexToColumn: cols,
+		cellToPointIndex,
 		indexToTexel,
 		colorBuffer
 	};
@@ -784,6 +795,44 @@ function assignFallbackGridCoordinates(
 		cols[i] = col;
 		rows[i] = row;
 	}
+}
+
+function createCellToPointIndex(params: {
+	rows: Uint32Array;
+	cols: Uint32Array;
+	numPositions: number;
+	width: number;
+	height: number;
+	layoutValid: boolean;
+}): Int32Array {
+	const { rows, cols, numPositions, width, height, layoutValid } = params;
+	const cellToPointIndex = new Int32Array(width * height);
+	cellToPointIndex.fill(-1);
+
+	if (!layoutValid) {
+		return cellToPointIndex;
+	}
+
+	for (let pointIndex = 0; pointIndex < numPositions; pointIndex += 1) {
+		const row = rows[pointIndex];
+		const col = cols[pointIndex];
+		if (row >= height || col >= width) {
+			continue;
+		}
+
+		const cellIndex = row * width + col;
+		const existingPointIndex = cellToPointIndex[cellIndex];
+		if (existingPointIndex === -1) {
+			cellToPointIndex[cellIndex] = pointIndex;
+			continue;
+		}
+
+		if (existingPointIndex !== pointIndex) {
+			cellToPointIndex[cellIndex] = AMBIGUOUS_CELL_POINT_INDEX;
+		}
+	}
+
+	return cellToPointIndex;
 }
 
 function fillColorBuffer(layout: UtciGridLayout, colors: Float32Array): void {

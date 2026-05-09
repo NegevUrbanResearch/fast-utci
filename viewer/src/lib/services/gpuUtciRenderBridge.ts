@@ -385,8 +385,27 @@ function createUtciColorNode(
 export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Array {
 	const cellCount = layout.width * layout.height;
 	const fallbackPointIndex = 0;
-	const cellToPoint = new Uint32Array(cellCount);
-	cellToPoint.fill(fallbackPointIndex);
+	const cellToPoint = getCellToPointIndex(layout, cellCount);
+	const indices = new Uint32Array(cellCount * SURFACE_VERTICES_PER_CELL);
+	let offset = 0;
+	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+		const mappedPointIndex = cellToPoint[cellIndex] ?? -1;
+		const pointIndex = mappedPointIndex >= 0 ? mappedPointIndex : fallbackPointIndex;
+		for (let vertex = 0; vertex < SURFACE_VERTICES_PER_CELL; vertex += 1) {
+			indices[offset++] = pointIndex;
+		}
+	}
+
+	return indices;
+}
+
+function getCellToPointIndex(layout: UtciGridLayout, cellCount: number): Int32Array {
+	if (layout.cellToPointIndex?.length === cellCount && !hasAmbiguousCellEntries(layout.cellToPointIndex)) {
+		return layout.cellToPointIndex;
+	}
+
+	const cellToPoint = new Int32Array(cellCount);
+	cellToPoint.fill(-1);
 
 	for (let pointIndex = 0; pointIndex < layout.numPositions; pointIndex += 1) {
 		const row = layout.indexToRow[pointIndex];
@@ -398,16 +417,17 @@ export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Arr
 		cellToPoint[row * layout.width + column] = pointIndex;
 	}
 
-	const indices = new Uint32Array(cellCount * SURFACE_VERTICES_PER_CELL);
-	let offset = 0;
-	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
-		const pointIndex = cellToPoint[cellIndex];
-		for (let vertex = 0; vertex < SURFACE_VERTICES_PER_CELL; vertex += 1) {
-			indices[offset++] = pointIndex;
+	return cellToPoint;
+}
+
+function hasAmbiguousCellEntries(cellToPointIndex: Int32Array): boolean {
+	for (let index = 0; index < cellToPointIndex.length; index += 1) {
+		if (cellToPointIndex[index] < -1) {
+			return true;
 		}
 	}
 
-	return indices;
+	return false;
 }
 
 function createGpuNativeSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeometry {
