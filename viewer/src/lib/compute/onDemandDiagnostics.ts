@@ -11,12 +11,63 @@ export interface OnDemandTimings {
 	exposurePrecomputeMs?: number;
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
+	renderSceneSyncStartDelayMs?: number;
+	renderSceneSyncTotalMs?: number;
+	renderLayoutBuildMs?: number;
+	renderSurfaceMeshMs?: number;
+	renderStorageInitWaitMs?: number;
+	renderBufferCopyMs?: number;
+	renderQueueDrainMs?: number;
 	debugReadbackMs?: number;
 	selectedHourReadbackMs?: number;
 	selectedHourAnalysisBuildMs?: number;
 	cpuColorBuildMs?: number;
 	gpuSurfaceUpdateMs?: number;
 }
+
+export function invokeDiagnosticsCallbackSafely<T>(
+	callback: ((payload: T) => void | Promise<void>) | undefined,
+	payload: T,
+	contextLabel: string
+): void {
+	try {
+		const result = callback?.(payload);
+		if (result && typeof (result as Promise<void>).catch === 'function') {
+			void result.catch((error) => {
+				console.error(`[${contextLabel}] diagnostics callback failed.`, error);
+			});
+		}
+	} catch (error) {
+		console.error(`[${contextLabel}] diagnostics callback failed.`, error);
+	}
+}
+
+export type SelectedHourRenderTimingSubsteps = Pick<
+	OnDemandTimings,
+	| 'renderSceneSyncStartDelayMs'
+	| 'renderSceneSyncTotalMs'
+	| 'renderLayoutBuildMs'
+	| 'renderSurfaceMeshMs'
+	| 'renderStorageInitWaitMs'
+	| 'renderBufferCopyMs'
+	| 'renderQueueDrainMs'
+>;
+
+const SELECTED_HOUR_RENDER_SUBSTEP_KEYS = [
+	'renderSceneSyncStartDelayMs',
+	'renderSceneSyncTotalMs',
+	'renderLayoutBuildMs',
+	'renderSurfaceMeshMs',
+	'renderStorageInitWaitMs',
+	'renderBufferCopyMs',
+	'renderQueueDrainMs'
+] as const satisfies ReadonlyArray<keyof SelectedHourRenderTimingSubsteps>;
+
+const SELECTED_HOUR_RENDER_TIMING_KEYS = [
+	'renderUpdateMs',
+	'gpuSurfaceUpdateMs',
+	...SELECTED_HOUR_RENDER_SUBSTEP_KEYS
+] as const satisfies ReadonlyArray<keyof OnDemandTimings>;
 
 export const COLD_START_TIMING_KEYS = [
 	'payloadPrepareMs',
@@ -136,6 +187,101 @@ export function recordOnDemandTiming<K extends keyof OnDemandTimings>(
 			...diagnostics.timings,
 			[key]: value
 		}
+	};
+}
+
+export function mergeSelectedHourRenderTimings(params: {
+	existingTimings?: OnDemandTimings;
+	renderUpdateMs: number;
+	gpuSurfaceUpdateMs: number;
+	firstSelectedHourVisibleMs?: number;
+	renderSubsteps?: SelectedHourRenderTimingSubsteps;
+}): OnDemandTimings {
+	const {
+		existingTimings,
+		renderUpdateMs,
+		gpuSurfaceUpdateMs,
+		firstSelectedHourVisibleMs,
+		renderSubsteps
+	} = params;
+
+	const nextTimings: OnDemandTimings = {
+		...existingTimings,
+		renderUpdateMs,
+		gpuSurfaceUpdateMs
+	};
+	for (const key of SELECTED_HOUR_RENDER_SUBSTEP_KEYS) delete nextTimings[key];
+
+	if (firstSelectedHourVisibleMs !== undefined) {
+		nextTimings.firstSelectedHourVisibleMs = firstSelectedHourVisibleMs;
+	}
+
+	if (!renderSubsteps) {
+		return nextTimings;
+	}
+
+	for (const [key, value] of Object.entries(renderSubsteps) as Array<
+		[keyof SelectedHourRenderTimingSubsteps, number | undefined]
+	>) {
+		if (value !== undefined) {
+			nextTimings[key] = value;
+		}
+	}
+
+	return nextTimings;
+}
+
+export function clearSelectedHourRenderTimings(existingTimings?: OnDemandTimings): OnDemandTimings {
+	const nextTimings: OnDemandTimings = { ...existingTimings };
+	for (const key of SELECTED_HOUR_RENDER_TIMING_KEYS) {
+		delete nextTimings[key];
+	}
+	return nextTimings;
+}
+
+export function prepareSelectedHourCycleTimings(params: {
+	existingTimings?: OnDemandTimings;
+	pipelineTimings?: OnDemandTimings;
+	firstSelectedHourReadyMs?: number;
+	selectedHourReadbackMs?: number;
+	selectedHourAnalysisBuildMs?: number;
+}): OnDemandTimings {
+	const {
+		existingTimings,
+		pipelineTimings,
+		firstSelectedHourReadyMs,
+		selectedHourReadbackMs,
+		selectedHourAnalysisBuildMs
+	} = params;
+
+	return {
+		...clearSelectedHourRenderTimings(existingTimings),
+		...pipelineTimings,
+		firstSelectedHourReadyMs,
+		selectedHourReadbackMs,
+		selectedHourAnalysisBuildMs
+	};
+}
+
+export function buildGpuResidentSurfaceResetPatch(params: {
+	existingTimings?: OnDemandTimings;
+}): {
+	utciSurfaceSource: undefined;
+	selectedHourTransferCount: 0;
+	dataTextureBuildCount: 0;
+	gpuResidentCopyStatus: 'idle';
+	gpuResidentCopyError: undefined;
+	gpuResidentCopyRequestId: undefined;
+	timings: OnDemandTimings;
+} {
+	return {
+		utciSurfaceSource: undefined,
+		selectedHourTransferCount: 0,
+		dataTextureBuildCount: 0,
+		gpuResidentCopyStatus: 'idle',
+		gpuResidentCopyError: undefined,
+		gpuResidentCopyRequestId: undefined,
+		timings: clearSelectedHourRenderTimings(params.existingTimings)
 	};
 }
 

@@ -202,8 +202,8 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 		});
 	});
 
-	test('reports prototype diagnostics on the debug route', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1');
+	test('plain debug route defaults to on-demand diagnostics', async ({ page }) => {
+		await page.goto('/debug-webgpu-utci');
 
 		const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
 		const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -247,6 +247,77 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 		) {
 			await expect(prototypeStatus).not.toContainText(/unsupported/i);
 		}
+	});
+
+	test('debug route honors utciOnDemand=off explicit opt-out', async ({ page }) => {
+		await page.goto('/debug-webgpu-utci?utciOnDemand=off');
+		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
+
+		await page.waitForLoadState('domcontentloaded');
+		await expect(page.getByTestId('project-select')).toBeVisible();
+
+		await expect
+			.poll(async () => {
+				return page.evaluate(() => {
+					return (window as Window & {
+						__onDemandPrototypeDiagnostics__?: PrototypeDiagnostics;
+					}).__onDemandPrototypeDiagnostics__;
+				});
+			})
+			.toBeUndefined();
+	});
+
+	test('parity-only debug route does not silently enable on-demand diagnostics', async ({ page }) => {
+		await page.goto('/debug-webgpu-utci?parity=1');
+		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
+
+		await page.waitForLoadState('domcontentloaded');
+		await expect(page.getByTestId('project-select')).toBeVisible();
+
+		await expect
+			.poll(async () => {
+				return page.evaluate(() => {
+					return (window as Window & {
+						__onDemandPrototypeDiagnostics__?: PrototypeDiagnostics;
+					}).__onDemandPrototypeDiagnostics__;
+				});
+			})
+			.toBeUndefined();
+	});
+
+	test('normal collect route preserves full-day collection harness by default', async ({ page }) => {
+		test.setTimeout(120_000);
+		await page.goto('/debug-webgpu-utci?collect=normal');
+		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
+
+		await expect
+			.poll(async () => {
+				return page.evaluate(() => {
+					const win = window as Window & {
+						__normalUtciResults__?: {
+							numPoints: number;
+							numHours: number;
+							monthIndex: number;
+							utciByHour: number[][];
+						};
+						__onDemandPrototypeDiagnostics__?: PrototypeDiagnostics;
+					};
+					return {
+						hasNormalResults: win.__normalUtciResults__ != null,
+						numHours: win.__normalUtciResults__?.numHours ?? null,
+						monthIndex: win.__normalUtciResults__?.monthIndex ?? null,
+						hourCount: win.__normalUtciResults__?.utciByHour?.length ?? null,
+						hasOnDemandDiagnostics: win.__onDemandPrototypeDiagnostics__ != null
+					};
+				});
+			}, { timeout: 120_000 })
+			.toMatchObject({
+				hasNormalResults: true,
+				numHours: 24,
+				monthIndex: 7,
+				hourCount: 24,
+				hasOnDemandDiagnostics: false
+			});
 	});
 
 	test('honors explicit UTCI render override diagnostics on the debug route', async ({ page }) => {
@@ -503,6 +574,7 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 	});
 
 	test('one-hour f32 on-demand output matches all-hours UTCI slice', async ({ page }) => {
+		test.setTimeout(120_000);
 		await page.goto('/debug-webgpu-utci?parity=1&onDemandPrototype=1&compareOneHour=1');
 
 		const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -513,9 +585,15 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 			'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
 		);
 
-		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-			timeout: 120_000
-		});
+		await expect
+			.poll(async () => {
+				return page.evaluate(() => {
+					return (window as Window & {
+						__onDemandPrototypeComparison__?: PrototypeComparison;
+					}).__onDemandPrototypeComparison__;
+				});
+			}, { timeout: 120_000 })
+			.toBeTruthy();
 
 		const result = await page.evaluate(() => {
 			return (window as Window & {

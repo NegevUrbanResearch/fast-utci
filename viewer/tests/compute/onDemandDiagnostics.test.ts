@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+	buildGpuResidentSurfaceResetPatch,
 	createEmptyOnDemandDiagnostics,
+	invokeDiagnosticsCallbackSafely,
+	mergeSelectedHourRenderTimings,
 	mergeTrackedGpuAllocationBytes,
+	prepareSelectedHourCycleTimings,
 	recordColdStartLifecycleTiming,
 	recordOnDemandTiming,
 	resetColdStartLifecycleTimings
@@ -140,9 +144,205 @@ describe('on-demand diagnostics helpers', () => {
 
 		const withReadback = recordOnDemandTiming(diagnostics, 'selectedHourReadbackMs', 11.5);
 		const withSurface = recordOnDemandTiming(withReadback, 'gpuSurfaceUpdateMs', 7.25);
+		const withSceneDelay = recordOnDemandTiming(
+			withSurface,
+			'renderSceneSyncStartDelayMs',
+			0.75
+		);
+		const withSceneTotal = recordOnDemandTiming(withSceneDelay, 'renderSceneSyncTotalMs', 6.5);
+		const withLayout = recordOnDemandTiming(withSceneTotal, 'renderLayoutBuildMs', 1.5);
+		const withDrain = recordOnDemandTiming(withLayout, 'renderQueueDrainMs', 2.25);
 
-		expect(withSurface.timings.selectedHourReadbackMs).toBe(11.5);
-		expect(withSurface.timings.gpuSurfaceUpdateMs).toBe(7.25);
+		expect(withDrain.timings.selectedHourReadbackMs).toBe(11.5);
+		expect(withDrain.timings.gpuSurfaceUpdateMs).toBe(7.25);
+		expect(withDrain.timings.renderSceneSyncStartDelayMs).toBe(0.75);
+		expect(withDrain.timings.renderSceneSyncTotalMs).toBe(6.5);
+		expect(withDrain.timings.renderLayoutBuildMs).toBe(1.5);
+		expect(withDrain.timings.renderQueueDrainMs).toBe(2.25);
+	});
+
+	it('merges GPU-resident render timing substeps into the selected-hour timing bucket', () => {
+		const merged = mergeSelectedHourRenderTimings({
+			existingTimings: {
+				exposurePrecomputeMs: 12
+			},
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5,
+			firstSelectedHourVisibleMs: 44,
+			renderSubsteps: {
+				renderSceneSyncStartDelayMs: 1,
+				renderSceneSyncTotalMs: 18.5,
+				renderLayoutBuildMs: 1.25,
+				renderSurfaceMeshMs: 2.5,
+				renderStorageInitWaitMs: 3.75,
+				renderBufferCopyMs: 4.5,
+				renderQueueDrainMs: 5.25
+			}
+		});
+
+		expect(merged).toEqual({
+			exposurePrecomputeMs: 12,
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5,
+			firstSelectedHourVisibleMs: 44,
+			renderSceneSyncStartDelayMs: 1,
+			renderSceneSyncTotalMs: 18.5,
+			renderLayoutBuildMs: 1.25,
+			renderSurfaceMeshMs: 2.5,
+			renderStorageInitWaitMs: 3.75,
+			renderBufferCopyMs: 4.5,
+			renderQueueDrainMs: 5.25
+		});
+	});
+
+	it('keeps render timing substeps optional when the scene did not measure them', () => {
+		const merged = mergeSelectedHourRenderTimings({
+			existingTimings: {
+				exposurePrecomputeMs: 12
+			},
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5
+		});
+
+		expect(merged).toEqual({
+			exposurePrecomputeMs: 12,
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5
+		});
+		expect(merged.renderSceneSyncStartDelayMs).toBeUndefined();
+		expect(merged.renderSceneSyncTotalMs).toBeUndefined();
+		expect(merged.renderLayoutBuildMs).toBeUndefined();
+		expect(merged.renderSurfaceMeshMs).toBeUndefined();
+		expect(merged.renderStorageInitWaitMs).toBeUndefined();
+		expect(merged.renderBufferCopyMs).toBeUndefined();
+		expect(merged.renderQueueDrainMs).toBeUndefined();
+	});
+
+	it('clears stale render timing substeps from earlier GPU-resident renders', () => {
+		const merged = mergeSelectedHourRenderTimings({
+			existingTimings: {
+				exposurePrecomputeMs: 12,
+				renderSceneSyncStartDelayMs: 1,
+				renderSceneSyncTotalMs: 18.5,
+				renderLayoutBuildMs: 1.25,
+				renderSurfaceMeshMs: 2.5,
+				renderStorageInitWaitMs: 3.75,
+				renderBufferCopyMs: 4.5,
+				renderQueueDrainMs: 5.25
+			},
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5,
+			renderSubsteps: {
+				renderSceneSyncStartDelayMs: undefined,
+				renderSceneSyncTotalMs: 14.25,
+				renderLayoutBuildMs: undefined,
+				renderSurfaceMeshMs: 6.5,
+				renderStorageInitWaitMs: undefined,
+				renderBufferCopyMs: undefined,
+				renderQueueDrainMs: 7.25
+			}
+		});
+
+		expect(merged).toEqual({
+			exposurePrecomputeMs: 12,
+			renderUpdateMs: 22.5,
+			gpuSurfaceUpdateMs: 22.5,
+			renderSceneSyncTotalMs: 14.25,
+			renderSurfaceMeshMs: 6.5,
+			renderQueueDrainMs: 7.25
+		});
+		expect(merged.renderSceneSyncStartDelayMs).toBeUndefined();
+		expect(merged.renderLayoutBuildMs).toBeUndefined();
+		expect(merged.renderStorageInitWaitMs).toBeUndefined();
+		expect(merged.renderBufferCopyMs).toBeUndefined();
+	});
+
+	it('clears stale GPU render timings when the route starts a new selected-hour cycle', () => {
+		const nextTimings = prepareSelectedHourCycleTimings({
+			existingTimings: {
+				exposurePrecomputeMs: 12,
+				renderUpdateMs: 22.5,
+				gpuSurfaceUpdateMs: 22.5,
+				renderSceneSyncStartDelayMs: 1,
+				renderSceneSyncTotalMs: 18.5,
+				renderLayoutBuildMs: 1.25,
+				renderSurfaceMeshMs: 2.5,
+				renderStorageInitWaitMs: 3.75,
+				renderBufferCopyMs: 4.5,
+				renderQueueDrainMs: 5.25
+			},
+			pipelineTimings: {
+				oneHourDispatchMs: 9.5
+			},
+			firstSelectedHourReadyMs: 44,
+			selectedHourReadbackMs: 5.5
+		});
+
+		expect(nextTimings).toEqual({
+			exposurePrecomputeMs: 12,
+			oneHourDispatchMs: 9.5,
+			firstSelectedHourReadyMs: 44,
+			selectedHourReadbackMs: 5.5
+		});
+		expect(nextTimings.renderUpdateMs).toBeUndefined();
+		expect(nextTimings.gpuSurfaceUpdateMs).toBeUndefined();
+		expect(nextTimings.renderSceneSyncStartDelayMs).toBeUndefined();
+		expect(nextTimings.renderSceneSyncTotalMs).toBeUndefined();
+		expect(nextTimings.renderLayoutBuildMs).toBeUndefined();
+		expect(nextTimings.renderSurfaceMeshMs).toBeUndefined();
+		expect(nextTimings.renderStorageInitWaitMs).toBeUndefined();
+		expect(nextTimings.renderBufferCopyMs).toBeUndefined();
+		expect(nextTimings.renderQueueDrainMs).toBeUndefined();
+	});
+
+	it('clears stale GPU copy completion and render timings when the route resets surface diagnostics', () => {
+		const resetPatch = buildGpuResidentSurfaceResetPatch({
+			existingTimings: {
+				exposurePrecomputeMs: 12,
+				renderUpdateMs: 22.5,
+				gpuSurfaceUpdateMs: 22.5,
+				renderSceneSyncStartDelayMs: 1,
+				renderSceneSyncTotalMs: 18.5,
+				renderLayoutBuildMs: 1.25,
+				renderSurfaceMeshMs: 2.5,
+				renderStorageInitWaitMs: 3.75,
+				renderBufferCopyMs: 4.5,
+				renderQueueDrainMs: 5.25
+			}
+		});
+
+		expect(resetPatch).toEqual({
+			utciSurfaceSource: undefined,
+			selectedHourTransferCount: 0,
+			dataTextureBuildCount: 0,
+			gpuResidentCopyStatus: 'idle',
+			gpuResidentCopyError: undefined,
+			gpuResidentCopyRequestId: undefined,
+			timings: {
+				exposurePrecomputeMs: 12
+			}
+		});
+	});
+
+	it('catches rejected async diagnostics callbacks so they do not leak unhandled promises', async () => {
+		const error = new Error('surface diagnostics failed');
+		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		invokeDiagnosticsCallbackSafely(
+			async () => {
+				throw error;
+			},
+			{ phase: 'surface-reset' },
+			'UTCIPointCloud onUtciSurfaceDiagnostics'
+		);
+
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(consoleError).toHaveBeenCalledWith(
+			'[UTCIPointCloud onUtciSurfaceDiagnostics] diagnostics callback failed.',
+			error
+		);
 	});
 
 	it('records route-level cold-start timings without overwriting earlier phases', () => {

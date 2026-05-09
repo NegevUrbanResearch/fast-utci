@@ -83,9 +83,13 @@
 	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
 	import { ComputeManager } from "$lib/compute/compute-manager";
 	import {
+		buildGpuResidentSurfaceResetPatch,
 		recordColdStartLifecycleTiming,
 		resetColdStartLifecycleTimings,
 		createEmptyOnDemandDiagnostics,
+		mergeSelectedHourRenderTimings,
+		prepareSelectedHourCycleTimings,
+		type SelectedHourRenderTimingSubsteps,
 		type OnDemandRuntimeDiagnostics,
 	} from "$lib/compute/onDemandDiagnostics";
 	import {
@@ -177,8 +181,11 @@
 	$: parityMode = $page.url.searchParams.get("parity") === "1";
 	/** E2E-only normal-mode export; keeps parityMode false while exposing one app-visible month slice. */
 	$: normalCollectMode = !parityMode && $page.url.searchParams.get("collect") === "normal";
-	$: onDemandDebugModeEnabled = $page.url.searchParams.get("utciOnDemand") === "f32";
-	$: debugOnDemandMode = onDemandDebugModeEnabled ? "f32" : "off";
+	$: debugOnDemandMode = resolveDebugOnDemandMode({
+		searchParams: $page.url.searchParams,
+		parityMode,
+	});
+	$: onDemandDebugModeEnabled = debugOnDemandMode === "f32";
 	// Default the debug route to auto so prototype coverage exercises the live
 	// renderer-backend resolution path.
 	$: utciRenderMode = parseUtciRenderMode(
@@ -211,7 +218,7 @@
 		gpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
 		gpuResidentCopyError?: string;
 		gpuResidentCopyRequestId?: number;
-	} = {};
+	} & SelectedHourRenderTimingSubsteps = {};
 	let canvasElement: HTMLCanvasElement | null = null;
 
 	// Camera reference - will be set from Camera component
@@ -493,6 +500,23 @@
 		return Math.min(Math.max(raw, 0), 11);
 	}
 
+	function resolveDebugOnDemandMode(params: {
+		searchParams: URLSearchParams;
+		parityMode: boolean;
+	}): "f32" | "off" {
+		const { searchParams, parityMode } = params;
+		if (searchParams.has("utciOnDemand")) {
+			return searchParams.get("utciOnDemand") === "f32" ? "f32" : "off";
+		}
+		if (searchParams.get("onDemandPrototype") === "1") {
+			return "f32";
+		}
+		if (!parityMode && searchParams.get("collect") === "normal") {
+			return "off";
+		}
+		return parityMode ? "off" : "f32";
+	}
+
 	function getDebugOnDemandSelection(params: {
 		monthIndex: number;
 		hourIndex: number;
@@ -699,9 +723,7 @@
 	}
 	let wasOnDemandPrototypeEnabled = false;
 	let wasCompareOneHourEnabled = false;
-	$: onDemandPrototypeEnabled =
-		browser &&
-		($page.url.searchParams.get("onDemandPrototype") === "1" || onDemandDebugModeEnabled);
+	$: onDemandPrototypeEnabled = browser && onDemandDebugModeEnabled;
 	$: debugTooltipHoverDisabled = $page.url.searchParams.get("disableTooltip") === "1";
 	$: compareOneHourEnabled =
 		onDemandPrototypeEnabled &&
@@ -1869,9 +1891,9 @@
 							? "cpu-uploaded-selected-hour"
 							: "none",
 				gpuResidentCopyStatus: useGpuResidentSelectedHourRender ? "pending" : undefined,
-				timings: {
-					...getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
-					...pipelineDiagnostics?.timings,
+				timings: prepareSelectedHourCycleTimings({
+					existingTimings: getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
+					pipelineTimings: pipelineDiagnostics?.timings,
 					firstSelectedHourReadyMs,
 					selectedHourReadbackMs: needsSelectedHourAnalysisForImmediateRender
 						? selectedHourReadbackMs
@@ -1879,7 +1901,7 @@
 					selectedHourAnalysisBuildMs: useGpuResidentSelectedHourRender
 						? undefined
 						: selectedHourAnalysisBuildMs,
-				},
+				}),
 			});
 			pendingReadbackPublished = false;
 		} catch (error) {
@@ -2483,15 +2505,18 @@
 		gpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
 		gpuResidentCopyError?: string;
 		gpuResidentCopyRequestId?: number;
-	}): void {
+	} & SelectedHourRenderTimingSubsteps): Promise<void> {
 		liveUtciSurfaceDiagnostics = diagnostics;
 		if (!onDemandPrototypeEnabled) return;
 
 		const nextDiagnostics: Partial<OnDemandPrototypeDiagnostics> = {};
 		if (!Object.keys(diagnostics).length) {
-			nextDiagnostics.utciSurfaceSource = undefined;
-			nextDiagnostics.selectedHourTransferCount = 0;
-			nextDiagnostics.dataTextureBuildCount = 0;
+			Object.assign(
+				nextDiagnostics,
+				buildGpuResidentSurfaceResetPatch({
+					existingTimings: getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
+				}),
+			);
 		} else {
 			if (diagnostics.utciSurfaceSource !== undefined) {
 				nextDiagnostics.utciSurfaceSource = diagnostics.utciSurfaceSource;
@@ -2576,12 +2601,21 @@
 				);
 				const firstSelectedHourVisibleMs =
 					getParityWindow().__onDemandPrototypeDiagnostics__?.timings?.firstSelectedHourVisibleMs;
-				nextDiagnostics.timings = {
-					...getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
+				nextDiagnostics.timings = mergeSelectedHourRenderTimings({
+					existingTimings: getParityWindow().__onDemandPrototypeDiagnostics__?.timings,
 					renderUpdateMs: surfaceUpdateMs,
 					gpuSurfaceUpdateMs: surfaceUpdateMs,
 					firstSelectedHourVisibleMs,
-				};
+					renderSubsteps: {
+						renderSceneSyncStartDelayMs: diagnostics.renderSceneSyncStartDelayMs,
+						renderSceneSyncTotalMs: diagnostics.renderSceneSyncTotalMs,
+						renderLayoutBuildMs: diagnostics.renderLayoutBuildMs,
+						renderSurfaceMeshMs: diagnostics.renderSurfaceMeshMs,
+						renderStorageInitWaitMs: diagnostics.renderStorageInitWaitMs,
+						renderBufferCopyMs: diagnostics.renderBufferCopyMs,
+						renderQueueDrainMs: diagnostics.renderQueueDrainMs,
+					},
+				});
 				prepared.pendingRenderUpdate = null;
 			} else if (!stillOwned) {
 				prepared.pendingRenderUpdate = null;
@@ -2661,7 +2695,7 @@
 			void runOnDemandPrototypeComparison({
 				pipeline: lastPipeline,
 				numPoints: liveAnalysis.data.numPositions,
-				numHours: "numHours" in liveAnalysis.data ? liveAnalysis.data.numHours : 24,
+				numHours: liveAnalysis.metadata.hours.length || 24,
 				numMonths: liveAnalysis.metadata.num_months ?? (parityMode ? 1 : 12),
 				comparisonKey,
 			});
@@ -3392,7 +3426,7 @@
 				return;
 			}
 
-			if (debugOnDemandMode === "f32") {
+			if (debugOnDemandMode === "f32" && !compareOneHourEnabled) {
 				if (!onDemandDebugPrepared) {
 					const prepared = await prepareWebgpuDebugInputsForCurrentSelection({
 						base,
@@ -3432,6 +3466,17 @@
 					readbackForComparison: parityMode,
 				});
 				if (!output) return;
+				const comparisonKey =
+					compareOneHourEnabled && lastLiveKey ? `${lastLiveKey}|compareOneHour` : null;
+				if (comparisonKey && onDemandDebugPrepared) {
+					await runOnDemandPrototypeComparison({
+						pipeline: onDemandDebugPrepared.pipeline,
+						numPoints: onDemandDebugPrepared.numPoints,
+						numHours: onDemandDebugPrepared.numHours,
+						numMonths: onDemandDebugPrepared.numMonths,
+						comparisonKey,
+					});
+				}
 				setParityStatus(runId, "success", "done");
 				return;
 			}
@@ -3473,8 +3518,8 @@
 				await runOnDemandPrototypeComparison({
 					pipeline: prepared.pipeline,
 					numPoints: result.data.numPositions,
-					numHours: fullDayData?.numHours ?? 24,
-					numMonths: result.metadata.num_months ?? (parityMode ? 1 : 12),
+					numHours: prepared.numHours,
+					numMonths: prepared.numMonths,
 					comparisonKey,
 				});
 			}
@@ -4307,6 +4352,7 @@
 								bind:utciSurface={liveUtciMesh}
 								utciSurfaceBackend={resolvedUtciSurfaceBackend}
 								acceptedGpuResidentOutput={acceptedGpuResidentUtciOutput}
+								pendingRenderUpdateStartedAt={onDemandDebugPrepared?.pendingRenderUpdate?.startedAt}
 								onUtciSurfaceDiagnostics={handleLiveUtciSurfaceDiagnostics}
 							/>
 						{/if}
