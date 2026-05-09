@@ -434,3 +434,89 @@ Interpretation kept intentionally narrow:
 
 - This fresh capture supports the debug on-demand integration gates above, but it still shows the selected-hour render transport as `cpu-uploaded-selected-hour`, not direct compute-buffer rendering.
 - The same debug capture also reported `liveAnalysisConstructedForSelectedHour=true`, so this update only claims selected-hour on-demand compute, preserved Python `.bin` comparison, tracked UTCI-owned allocation shape, and preserved fallback behavior.
+
+## 2026-05-09 Task 9 GPU-Resident Debug Verification
+
+Fresh Task 9 verification after the GPU-resident selected-hour bridge and renderer-device large-limit gate.
+
+Verification commands:
+
+```powershell
+cd viewer
+npm test -- tests/compute/onDemandDiagnostics.test.ts tests/compute/onDemandSizing.test.ts tests/compute/onDemandOutputFormat.test.ts tests/compute/compute-manager-on-demand.test.ts tests/compute/webgpu-on-demand-source-locks.test.ts tests/services/pointCloudService.surface.test.ts
+$env:REQUIRE_WEBGPU_ON_DEMAND='1'
+npx playwright test tests/e2e/webgpu-on-demand-prototype.spec.ts --project=chromium --reporter=list
+npx playwright test tests/e2e/webgpu-f32-on-demand-vertical-slice.spec.ts --project=chromium --reporter=list
+npx playwright test tests/e2e/webgpu-f32-on-demand-vertical-slice.spec.ts --project=chromium --grep "dataTexture fallback|python-bin comparison|debug route can use f32 on-demand" --reporter=list
+```
+
+Verification results:
+
+| Gate | Fresh evidence |
+| --- | --- |
+| Compute/unit coverage | `6 passed`, `38 passed`. |
+| Prototype E2E coverage | `7 passed`. |
+| Full f32 vertical slice | `13 passed`. |
+| Explicit GPU-resident, fallback, and Python `.bin` grep | `4 passed`. |
+| Old full-run timing context | `webgpu_1m.compute_s=5.305`, `webgpu_12m.compute_s=6.795`; both old logs include `runAll` and `readback` phases. |
+
+Final GPU-resident render snapshot:
+
+```json
+{
+  "path": "exposure-only-f32",
+  "renderTransport": "compute-buffer-selected-hour",
+  "sameDeviceForComputeAndRender": true,
+  "gpuResidentRenderAvailable": true,
+  "gpuResidentCopyStatus": "complete",
+  "selectedHourReadbackCount": 0,
+  "selectedHourTransferCount": 0,
+  "dataTextureBuildCount": 0,
+  "debugReadbackCount": 1,
+  "pythonBinComparisonActive": true,
+  "pythonComparisonHourIndex": 12,
+  "webgpuComparisonHourIndex": 12,
+  "oneHourOutputBytes": 417780,
+  "trackedGpuAllocationBytes": {
+    "persistentExposureBytes": 731116,
+    "allHoursOutputBytes": 0,
+    "selectedHourOutputBytes": 417780,
+    "selectedHourOutputBytesHighWatermark": 417780,
+    "trackingScope": "utci-owned-webgpu-buffers"
+  },
+  "timings": {
+    "exposurePrecomputeMs": 405.89999997615814,
+    "oneHourDispatchMs": 3.299999952316284,
+    "debugReadbackMs": 2.3000000715255737,
+    "renderUpdateMs": 419.2999999523163,
+    "gpuSurfaceUpdateMs": 419.2999999523163
+  },
+  "rendererRequestedMaxStorageBufferBindingSize": 536870912,
+  "rendererRequestedMaxBufferSize": 1073741824,
+  "rendererDeviceMaxStorageBufferBindingSize": 536870912,
+  "rendererDeviceMaxBufferSize": 1073741824
+}
+```
+
+Final month/hour comparison snapshot:
+
+```json
+{
+  "status": "complete",
+  "baselineSource": "separateRunAll",
+  "pairs": [
+    { "monthIndex": 0, "hourIndex": 12, "timeIndex": 12, "numCompared": 104445, "maxAbsDiff": 0, "rmse": 0, "diffAt31079": 0 },
+    { "monthIndex": 3, "hourIndex": 15, "timeIndex": 87, "numCompared": 104445, "maxAbsDiff": 0, "rmse": 0, "diffAt31079": 0 },
+    { "monthIndex": 7, "hourIndex": 23, "timeIndex": 191, "numCompared": 104445, "maxAbsDiff": 0, "rmse": 0, "diffAt31079": 0 },
+    { "monthIndex": 10, "hourIndex": 18, "timeIndex": 258, "numCompared": 104445, "maxAbsDiff": 0, "rmse": 0, "diffAt31079": 0 }
+  ]
+}
+```
+
+Interpretation kept intentionally narrow:
+
+- The debug GPU path now supports `renderTransport='compute-buffer-selected-hour'` only after `sameDeviceForComputeAndRender=true` and `gpuResidentCopyStatus='complete'`.
+- Selected-hour rendering did not use CPU readback or CPU color upload: `selectedHourReadbackCount=0`, `selectedHourTransferCount=0`, and `dataTextureBuildCount=0`.
+- The Python `.bin` readback remains debug-only in parity mode, shown by `debugReadbackCount=1`.
+- The explicit `utciRender=data` fallback and sampled Python `.bin` comparison both remain covered by the focused E2E grep.
+- Timing values above are app/runtime timings and UTCI-owned allocation counters, not total browser/OS VRAM or pure GPU time.

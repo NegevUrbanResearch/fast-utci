@@ -7,6 +7,10 @@ export interface OnDemandTimings {
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
 	debugReadbackMs?: number;
+	selectedHourReadbackMs?: number;
+	selectedHourAnalysisBuildMs?: number;
+	cpuColorBuildMs?: number;
+	gpuSurfaceUpdateMs?: number;
 }
 
 export interface TrackedGpuAllocationBytes {
@@ -25,10 +29,18 @@ export interface OnDemandRuntimeDiagnostics {
 	navigatorGpu: boolean;
 	rendererBackend: OnDemandRendererBackend;
 	path: OnDemandPath;
+	gpuResidentRenderAvailable: boolean;
+	sameDeviceForComputeAndRender: boolean | null;
+	gpuResidentCopyStatus: 'idle' | 'pending' | 'complete' | 'failed';
+	gpuResidentCopyError?: string;
 	adapterInfo?: string | null;
 	maxStorageBufferBindingSize?: number | null;
 	maxBufferSize?: number | null;
 	maxStorageBuffersPerShaderStage?: number | null;
+	rendererRequestedMaxStorageBufferBindingSize?: number | null;
+	rendererRequestedMaxBufferSize?: number | null;
+	rendererDeviceMaxStorageBufferBindingSize?: number | null;
+	rendererDeviceMaxBufferSize?: number | null;
 	modelId?: string | null;
 	scenarioId?: string | null;
 	gridResolution?: number | null;
@@ -65,6 +77,9 @@ export function createEmptyOnDemandDiagnostics(): OnDemandRuntimeDiagnostics {
 		navigatorGpu: false,
 		rendererBackend: 'unknown',
 		path: 'idle',
+		gpuResidentRenderAvailable: false,
+		sameDeviceForComputeAndRender: null,
+		gpuResidentCopyStatus: 'idle',
 		selectedMonthIndex: null,
 		selectedTimeIndex: null,
 		completedMonthIndex: null,

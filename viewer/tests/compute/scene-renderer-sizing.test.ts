@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/svelte/svelte5';
 import { getLastRenderer, resetLastRenderer } from '../mocks/threlteCanvasHarness';
-import { resetMockWebgpuRenderer, setSizeSpy } from '../mocks/mockWebgpuRenderer';
+import {
+	getLastRendererOptions,
+	resetMockWebgpuRenderer,
+	setSizeSpy
+} from '../mocks/mockWebgpuRenderer';
+import { LARGE_BUFFER_REQUIRED_LIMITS } from '$lib/compute/webgpuDeviceLimits';
 
 vi.mock('@threlte/core', async () => {
 	const Canvas = (await import('../mocks/MockCanvas.svelte')).default;
@@ -46,5 +51,36 @@ describe('Scene WebGPU renderer sizing guard', () => {
 
 		expect(setSizeSpy).toHaveBeenCalledTimes(1);
 		expect(setSizeSpy).toHaveBeenCalledWith(320, 240);
+	});
+
+	it('requests large WebGPU buffer limits when enabled for GPU-resident compute rendering', () => {
+		const onRendererDiagnostics = vi.fn();
+
+		render(Scene, {
+			backgroundColor: 0x000000,
+			enableShadows: false,
+			requestLargeWebgpuLimits: true,
+			onRendererDiagnostics
+		});
+
+		expect(getLastRendererOptions()).toMatchObject({
+			requiredLimits: LARGE_BUFFER_REQUIRED_LIMITS
+		});
+		expect(onRendererDiagnostics).toHaveBeenCalledWith(
+			expect.objectContaining({
+				rendererRequiredLimits: LARGE_BUFFER_REQUIRED_LIMITS
+			})
+		);
+	});
+
+	it('keeps default renderer construction unchanged when large limits are not requested', () => {
+		render(Scene, {
+			backgroundColor: 0x000000,
+			enableShadows: false
+		});
+
+		expect(getLastRendererOptions()).not.toMatchObject({
+			requiredLimits: expect.anything()
+		});
 	});
 });

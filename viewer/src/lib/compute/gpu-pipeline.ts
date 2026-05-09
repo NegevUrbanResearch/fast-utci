@@ -169,6 +169,8 @@ export interface UTCIComputePipeline {
 
 	getOnDemandDiagnostics?(): OnDemandRuntimeDiagnostics;
 
+	getDeviceForDebug?(): GPUDevice;
+
 	/**
 	 * Read the entire UTCI results buffer in a single GPU→CPU transfer.
 	 * Returns a flat Float32Array of length numPoints × numHours × numMonths,

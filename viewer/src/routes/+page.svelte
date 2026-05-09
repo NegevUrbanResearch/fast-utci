@@ -28,6 +28,10 @@
 		calculateModelSize,
 	} from "$lib/utils/bounds";
 	import Scene from "$lib/components/scene/Scene.svelte";
+	import type {
+		WebgpuLargeBufferDeviceLimits,
+		WebgpuLargeBufferRequiredLimits,
+	} from "$lib/compute/webgpuDeviceLimits";
 	import Camera from "$lib/components/scene/Camera.svelte";
 	import Lights from "$lib/components/scene/Lights.svelte";
 	import GridHelper from "$lib/components/scene/GridHelper.svelte";
@@ -109,6 +113,8 @@
 		utciRenderRequested: UtciRenderMode;
 		utciRenderResolved: "dataTexture" | "gpuNative";
 		rendererBackend: UtciRendererBackend;
+		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
+		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
 		utciSurfaceSource?: string;
 		selectedHourTransferCount?: number;
 		dataTextureBuildCount?: number;
@@ -119,6 +125,9 @@
 	};
 
 	let utciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics = {};
+	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
+	let rendererDeviceLimits: WebgpuLargeBufferDeviceLimits | undefined = undefined;
+	$: requestLargeWebgpuLimits = utciOnDemandMode === "f32" && utciRenderMode === "gpu";
 
 	function updateUtciRenderDiagnostics(diagnostics: {
 		utciRenderDiagnosticsEnabled: boolean;
@@ -141,6 +150,8 @@
 			utciRenderRequested: diagnostics.utciRenderMode,
 			utciRenderResolved: diagnostics.resolvedUtciSurfaceBackend,
 			rendererBackend: diagnostics.rendererBackend,
+			rendererRequiredLimits,
+			rendererDeviceLimits,
 			utciSurfaceSource: diagnostics.utciSurfaceDiagnostics.utciSurfaceSource,
 			selectedHourTransferCount:
 				diagnostics.utciSurfaceDiagnostics.selectedHourTransferCount,
@@ -151,9 +162,13 @@
 
 	function handleRendererDiagnostics(diagnostics: {
 		rendererBackend: UtciRendererBackend;
+		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
+		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
 		error?: string;
 	}): void {
 		rendererBackend = diagnostics.rendererBackend;
+		rendererRequiredLimits = diagnostics.rendererRequiredLimits;
+		rendererDeviceLimits = diagnostics.rendererDeviceLimits;
 	}
 
 	function handleUtciSurfaceDiagnostics(
@@ -509,19 +524,21 @@
 				</div>
 			{/if}
 
-			<Scene
-				backgroundColor={$viewerStore.theme === "light"
-					? 0x4b5563
-					: 0x111827}
-				bind:canvasElement
-				onRendererDiagnostics={handleRendererDiagnostics}
-			>
-				<Camera
-					bind:cameraRef
-					near={$sceneConfigStore.cameraNear}
-					far={$sceneConfigStore.cameraFar}
-				/>
-				<Lights />
+			{#key requestLargeWebgpuLimits}
+				<Scene
+					backgroundColor={$viewerStore.theme === "light"
+						? 0x4b5563
+						: 0x111827}
+					bind:canvasElement
+					onRendererDiagnostics={handleRendererDiagnostics}
+					{requestLargeWebgpuLimits}
+				>
+					<Camera
+						bind:cameraRef
+						near={$sceneConfigStore.cameraNear}
+						far={$sceneConfigStore.cameraFar}
+					/>
+					<Lights />
 
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
@@ -598,7 +615,8 @@
 						/>
 					{/if}
 				{/if}
-			</Scene>
+				</Scene>
+			{/key}
 
 			<!-- Comparison curtain overlay (only visible when comparing) -->
 			{#if isComparing}

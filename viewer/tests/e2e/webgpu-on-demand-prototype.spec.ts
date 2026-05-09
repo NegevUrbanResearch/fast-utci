@@ -34,11 +34,21 @@ async function readPrototypeDiagnostics(page: Page) {
 }
 
 async function readMainRouteUtciRenderDiagnostics(page: Page) {
-	return page.evaluate(() => {
-		return (window as Window & {
-			__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
-		}).__utciRenderDiagnostics__;
-	});
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			return await page.evaluate(() => {
+				return (window as Window & {
+					__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+				}).__utciRenderDiagnostics__;
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!message.includes('Execution context was destroyed') || attempt === 2) {
+				throw error;
+			}
+			await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+		}
+	}
 }
 
 test.describe('WebGPU on-demand prototype diagnostics', () => {

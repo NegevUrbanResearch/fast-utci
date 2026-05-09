@@ -523,7 +523,7 @@ function createUtciSurfacePlaneGeometry(layout: UtciGridLayout): THREE.PlaneGeom
 	return geometry;
 }
 
-function applySurfaceMeshState(
+export function applySurfaceMeshState(
 	mesh: THREE.Mesh,
 	layout: UtciGridLayout,
 	backend: UtciSurfaceBackendType
@@ -564,7 +564,7 @@ function disposeSurfaceMeshAssets(mesh: THREE.Mesh): void {
 	mesh.geometry.dispose();
 }
 
-function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
+export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	const { data, metadata } = analysis;
 	const coordinateSystem = metadata.coordinate_system || 'xy_ground';
 	const gridSize = metadata.grid_size || 1;

@@ -152,6 +152,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		};
 	}
 
+	getDeviceForDebug(): GPUDevice {
+		return this.device;
+	}
+
 	private async ensurePipeline(): Promise<GPUComputePipeline> {
 		if (this.pipeline) return this.pipeline;
 		if (!this.pipelinePromise) {
@@ -867,12 +871,17 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			]
 		});
 
+		const snapshotBuffer = this.device.createBuffer({
+			size: outputBytes,
+			usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+		});
 		const encoder = this.device.createCommandEncoder();
 		const pass = encoder.beginComputePass();
 		pass.setPipeline(onDemandPipeline);
 		pass.setBindGroup(0, bindGroup);
 		pass.dispatchWorkgroups(Math.ceil(numPoints / 64), 1, 1);
 		pass.end();
+		encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
 
 		const oneHourDispatchStart = performance.now();
 		this.queue.submit([encoder.finish()]);
@@ -905,7 +914,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			format,
 			numPoints,
 			timeIndex,
-			gpuBuffer: onDemandOutputBuffer,
+			gpuBuffer: snapshotBuffer,
 			debugLabel: 'webgpu-on-demand-f32-utci'
 		};
 	}
@@ -1452,12 +1461,29 @@ async function getWebgpuDevice(enableDiagnostics: boolean): Promise<{ device: GP
 	return { device, supportsMrtComponents };
 }
 
+type CreateWebgpuUtciPipelineOptions = {
+	enableDiagnostics?: boolean;
+	device?: GPUDevice;
+};
+
 let cachedDevicePromise: Promise<GPUDevice> | null = null;
 let cachedDevice: GPUDevice | null = null;
 let cachedSupportsMrtComponents = false;
 
-export async function createWebgpuUtciPipeline(options: { enableDiagnostics?: boolean } = {}): Promise<UTCIComputePipeline> {
+export async function createWebgpuUtciPipeline(
+	options: CreateWebgpuUtciPipelineOptions = {}
+): Promise<UTCIComputePipeline> {
 	const enableDiagnostics = options.enableDiagnostics ?? false;
+	if (options.device) {
+		const requiredStorageBuffersPerStage = 10;
+		const supportsMrtComponents =
+			enableDiagnostics &&
+			options.device.limits.maxStorageBuffersPerShaderStage >= requiredStorageBuffersPerStage;
+		if (enableDiagnostics && !supportsMrtComponents) {
+			console.warn("MRT diagnostics were requested but the provided WebGPU device does not support them.");
+		}
+		return new WebgpuUtciComputePipeline(options.device, supportsMrtComponents);
+	}
 
 	if (!cachedDevicePromise || (enableDiagnostics && !cachedSupportsMrtComponents)) {
 		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(({ device, supportsMrtComponents }) => {

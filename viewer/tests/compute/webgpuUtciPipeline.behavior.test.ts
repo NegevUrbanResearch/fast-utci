@@ -1,5 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { __TEST_ONLY_WebgpuUtciComputePipeline } from '$lib/compute/webgpuUtciPipeline';
+import {
+	__TEST_ONLY_WebgpuUtciComputePipeline,
+	createWebgpuUtciPipeline
+} from '$lib/compute/webgpuUtciPipeline';
 
 function createFakeBuffer(size: number) {
 	return {
@@ -10,12 +13,24 @@ function createFakeBuffer(size: number) {
 
 function createFakeDevice() {
 	return {
+		limits: {
+			maxStorageBuffersPerShaderStage: 8
+		},
 		queue: {
 			writeBuffer: vi.fn(),
 			submit: vi.fn(),
 			onSubmittedWorkDone: vi.fn().mockResolvedValue(undefined)
 		},
 		createBuffer: vi.fn(({ size }: { size: number }) => createFakeBuffer(size))
+	};
+}
+
+function createFakeDeviceWithStorageLimit(maxStorageBuffersPerShaderStage: number) {
+	return {
+		...createFakeDevice(),
+		limits: {
+			maxStorageBuffersPerShaderStage
+		}
 	};
 }
 
@@ -62,6 +77,31 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 				rel_humidity: 4
 			}
 		]);
+	});
+
+	it('can wrap a provided renderer-owned GPUDevice instead of requesting a standalone device', async () => {
+		const device = createFakeDeviceWithStorageLimit(8);
+		const pipeline = await createWebgpuUtciPipeline({ device: device as unknown as GPUDevice });
+
+		expect(pipeline.getDeviceForDebug?.()).toBe(device);
+		expect(pipeline.supportsMrtComponentDiagnostics()).toBe(false);
+	});
+
+	it('enables MRT component diagnostics for a provided device only when its limits support them', async () => {
+		const limitedDevice = createFakeDeviceWithStorageLimit(8);
+		const capableDevice = createFakeDeviceWithStorageLimit(10);
+
+		const limitedPipeline = await createWebgpuUtciPipeline({
+			device: limitedDevice as unknown as GPUDevice,
+			enableDiagnostics: true
+		});
+		const capablePipeline = await createWebgpuUtciPipeline({
+			device: capableDevice as unknown as GPUDevice,
+			enableDiagnostics: true
+		});
+
+		expect(limitedPipeline.supportsMrtComponentDiagnostics()).toBe(false);
+		expect(capablePipeline.supportsMrtComponentDiagnostics()).toBe(true);
 	});
 
 	it('clears stale BVH and optional upload buffers when a later upload omits them', async () => {

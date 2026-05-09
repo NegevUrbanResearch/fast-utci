@@ -317,6 +317,10 @@ export class ComputeManager {
 		return this.pipeline.getOnDemandDiagnostics?.();
 	}
 
+	getDeviceForDebug(): GPUDevice | undefined {
+		return this.pipeline.getDeviceForDebug?.();
+	}
+
 	/** Expose pipeline for advanced readback patterns (bulk read). */
 	getPipeline(): UTCIComputePipeline {
 		return this.pipeline;

@@ -2,12 +2,24 @@ import { expect, test, type Page } from '@playwright/test';
 
 type StrictExposureOnlyDiagnostics = {
 	navigatorGpu?: boolean;
+	error?: string;
 	rendererBackend?: string;
 	utciRenderRequested?: string;
 	utciRenderResolved?: string;
 	utciOnDemand?: string;
+	rendererRequestedMaxStorageBufferBindingSize?: number;
+	rendererRequestedMaxBufferSize?: number;
+	rendererDeviceMaxStorageBufferBindingSize?: number;
+	rendererDeviceMaxBufferSize?: number;
 	utciSurfaceSource?: string;
 	selectedHourTransferCount?: number;
+	selectedHourReadbackCount?: number;
+	gpuResidentRenderAvailable?: boolean;
+	sameDeviceForComputeAndRender?: boolean | null;
+	gpuResidentCopyStatus?: 'idle' | 'pending' | 'complete' | 'failed';
+	gpuResidentCopyError?: string;
+	acceptedGpuResidentUtciRange?: { min: number; max: number };
+	renderTransport?: 'none' | 'compute-buffer-selected-hour' | 'cpu-uploaded-selected-hour';
 	path?: string;
 	usedExposureOnlyPrecompute?: boolean;
 	usedRunAllForSelectedHour?: boolean;
@@ -15,6 +27,15 @@ type StrictExposureOnlyDiagnostics = {
 	allHoursUtciBytesAllocated?: number;
 	allHoursMrtBytesAllocated?: number;
 	oneHourOutputBytes?: number;
+	selectedMonthIndex?: number;
+	selectedTimeIndex?: number;
+	completedMonthIndex?: number;
+	completedTimeIndex?: number;
+	inFlightCount?: number;
+	scrubSampleCount?: number;
+	staleResultDiscardCount?: number;
+	pendingReadbackRequestId?: number;
+	pendingReadbackTimeIndex?: number;
 	debugReadbackCount?: number;
 	dataTextureBuildCount?: number;
 	bridgeAttached?: boolean;
@@ -34,10 +55,22 @@ type StrictExposureOnlyDiagnostics = {
 			absDiff: number;
 		}>;
 	};
+	trackedGpuAllocationBytes?: {
+		persistentExposureBytes?: number;
+		allHoursOutputBytes?: number;
+		selectedHourOutputBytes?: number;
+		selectedHourOutputBytesHighWatermark?: number;
+		trackingScope?: string;
+	};
 	timings?: {
 		exposurePrecomputeMs?: number;
 		oneHourDispatchMs?: number;
 		debugReadbackMs?: number;
+		selectedHourReadbackMs?: number;
+		selectedHourAnalysisBuildMs?: number;
+		cpuColorBuildMs?: number;
+		gpuSurfaceUpdateMs?: number;
+		renderUpdateMs?: number;
 	};
 };
 
@@ -74,6 +107,25 @@ type MultiHourComparisonResult = {
 	knownPoint31079?: MultiHourComparisonKnownPoint;
 };
 
+type MonthHourComparisonPairResult = {
+	monthIndex: number;
+	hourIndex: number;
+	timeIndex: number;
+	numCompared: number;
+	maxAbsDiff: number;
+	rmse: number;
+	onDemandAt31079?: number;
+	baselineAt31079?: number;
+	diffAt31079?: number;
+};
+
+type MonthHourComparisonResult = {
+	status: 'idle' | 'running' | 'complete' | 'error';
+	baselineSource: string;
+	pairs: MonthHourComparisonPairResult[];
+	error?: string;
+};
+
 const KNOWN_LOCALIZED_HOTSPOT_POINT_INDEX = 31079;
 const NON_HOTSPOT_SAMPLE_TOLERANCE = 0.05;
 const KNOWN_HOTSPOT_MIN_ABS_DIFF = 1.7;
@@ -95,6 +147,55 @@ async function readMultiHourComparison(page: Page) {
 	});
 }
 
+async function readMonthHourComparison(page: Page) {
+	return page.evaluate(() => {
+		return (window as Window & {
+			__onDemandMonthHourComparison__?: MonthHourComparisonResult;
+		}).__onDemandMonthHourComparison__;
+	});
+}
+
+function expectSelectedHourTransportMatchesFeasibility(
+	diagnostics: StrictExposureOnlyDiagnostics | undefined
+) {
+	expect(diagnostics?.error).toBeUndefined();
+	if (diagnostics?.sameDeviceForComputeAndRender === true) {
+		expect(diagnostics.gpuResidentRenderAvailable).toBe(true);
+		expect(diagnostics.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(diagnostics.selectedHourReadbackCount).toBe(0);
+		expect(diagnostics.selectedHourTransferCount).toBe(0);
+		expect(diagnostics.dataTextureBuildCount).toBe(0);
+		expect(diagnostics.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics.gpuResidentCopyStatus).toBe('complete');
+		expect(diagnostics.gpuResidentCopyError).toBeUndefined();
+		expect(diagnostics.liveAnalysisConstructedForSelectedHour).toBe(false);
+	} else {
+		expect(diagnostics?.gpuResidentRenderAvailable).toBe(false);
+		expect(diagnostics?.renderTransport).toBe('cpu-uploaded-selected-hour');
+		expect(diagnostics?.selectedHourReadbackCount).toBe(1);
+		expect(diagnostics?.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+		expect(diagnostics?.liveAnalysisConstructedForSelectedHour).toBe(true);
+		expect(diagnostics?.gpuResidentCopyStatus).not.toBe('complete');
+		if (diagnostics?.gpuResidentCopyError !== undefined) {
+			expect(diagnostics.gpuResidentCopyError).toMatch(/GPU-resident render feasibility gate failed:/);
+		}
+	}
+}
+
+function expectGpuResidentSelectedHourTransport(diagnostics: StrictExposureOnlyDiagnostics | undefined) {
+	expect(diagnostics?.error).toBeUndefined();
+	expect(diagnostics?.gpuResidentRenderAvailable).toBe(true);
+	expect(diagnostics?.sameDeviceForComputeAndRender).toBe(true);
+	expect(diagnostics?.renderTransport).toBe('compute-buffer-selected-hour');
+	expect(diagnostics?.gpuResidentCopyStatus).toBe('complete');
+	expect(diagnostics?.gpuResidentCopyError).toBeUndefined();
+	expect(diagnostics?.selectedHourReadbackCount).toBe(0);
+	expect(diagnostics?.selectedHourTransferCount).toBe(0);
+	expect(diagnostics?.dataTextureBuildCount).toBe(0);
+	expect(diagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+	expect(diagnostics?.liveAnalysisConstructedForSelectedHour).toBe(false);
+}
+
 async function switchQueryMode(
 	page: Page,
 	params: Record<string, string | null>
@@ -113,6 +214,10 @@ async function switchQueryMode(
 	}, params);
 }
 
+test.afterEach(async ({ page }) => {
+	await page.goto('about:blank', { timeout: 5_000 }).catch(() => undefined);
+});
+
 test('strict static-upload path computes one selected hour without constructing live analysis', async ({
 	page
 }) => {
@@ -129,7 +234,7 @@ test('strict static-upload path computes one selected hour without constructing 
 	);
 
 	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-		timeout: 120_000
+		timeout: 60_000
 	});
 
 	const diagnostics = await page.evaluate(() => {
@@ -177,7 +282,7 @@ test('same-route synthetic bridge to strict mode clears stale bridge diagnostics
 	});
 
 	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-		timeout: 120_000
+		timeout: 60_000
 	});
 
 	await page.waitForFunction(() => {
@@ -205,7 +310,7 @@ test('same-route synthetic bridge to strict mode clears stale bridge diagnostics
 test('same-route compareOneHour to strict mode clears stale comparison counters', async ({
 	page
 }) => {
-	test.setTimeout(120_000);
+	test.setTimeout(60_000);
 	await page.goto('/debug-webgpu-utci?parity=1&onDemandPrototype=1&compareOneHour=1');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -221,7 +326,11 @@ test('same-route compareOneHour to strict mode clears stale comparison counters'
 			__onDemandPrototypeDiagnostics__?: StrictExposureOnlyDiagnostics;
 		}).__onDemandPrototypeDiagnostics__;
 		return (diagnostics?.debugReadbackCount ?? 0) > 0;
-	}, undefined, { timeout: 120_000 });
+	}, undefined, { timeout: 60_000 });
+
+	const compareOneHourDiagnostics = await readDiagnostics(page);
+	expect(compareOneHourDiagnostics?.debugComparisonReference).toBeUndefined();
+	expect(compareOneHourDiagnostics?.pythonBinComparisonActive).not.toBe(true);
 
 	await switchQueryMode(page, {
 		compareOneHour: null,
@@ -230,7 +339,7 @@ test('same-route compareOneHour to strict mode clears stale comparison counters'
 	});
 
 	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-		timeout: 120_000
+		timeout: 60_000
 	});
 
 	await page.waitForFunction(() => {
@@ -245,7 +354,9 @@ test('same-route compareOneHour to strict mode clears stale comparison counters'
 			(diagnostics.oneHourOutputBytes ?? 0) > 0 &&
 			(diagnostics.timings?.exposurePrecomputeMs ?? 0) > 0 &&
 			(diagnostics.timings?.oneHourDispatchMs ?? -1) >= 0 &&
-			diagnostics.timings?.debugReadbackMs === undefined
+			diagnostics.timings?.debugReadbackMs === undefined &&
+			diagnostics.timings?.selectedHourReadbackMs === undefined &&
+			diagnostics.timings?.selectedHourAnalysisBuildMs === undefined
 		);
 	});
 
@@ -257,12 +368,21 @@ test('same-route compareOneHour to strict mode clears stale comparison counters'
 	expect(diagnostics?.timings?.exposurePrecomputeMs ?? 0).toBeGreaterThan(0);
 	expect(diagnostics?.timings?.oneHourDispatchMs ?? -1).toBeGreaterThanOrEqual(0);
 	expect(diagnostics?.timings?.debugReadbackMs).toBeUndefined();
+	expect(diagnostics?.timings?.selectedHourReadbackMs).toBeUndefined();
+	expect(diagnostics?.timings?.selectedHourAnalysisBuildMs).toBeUndefined();
+	expect(diagnostics?.debugComparisonReference).toBeUndefined();
+	expect(diagnostics?.pythonBinComparisonActive).toBe(false);
+	expect(diagnostics?.debugComparisonMonthIndex).toBeUndefined();
+	expect(diagnostics?.pythonComparisonHourIndex).toBeUndefined();
+	expect(diagnostics?.webgpuComparisonHourIndex).toBeUndefined();
+	expect(diagnostics?.pythonBinSampleComparison).toBeUndefined();
+	expect(diagnostics?.selectedHourReadbackCount).toBe(0);
 });
 
 test('strict exposure-only compareHours matches a separate runAll baseline across multiple hours', async ({
 	page
 }) => {
-	test.setTimeout(120_000);
+	test.setTimeout(60_000);
 	await page.goto(
 		'/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&compareHours=12,23,16,17&baseline=separateRunAll'
 	);
@@ -276,7 +396,7 @@ test('strict exposure-only compareHours matches a separate runAll baseline acros
 	);
 
 	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-		timeout: 120_000
+		timeout: 60_000
 	});
 
 	const result = await readMultiHourComparison(page);
@@ -319,10 +439,73 @@ test('strict exposure-only compareHours matches a separate runAll baseline acros
 	}
 });
 
+test('strict exposure-only month/hour outputs compareMonthHours against a separate runAll baseline', async ({
+	page
+}) => {
+	test.setTimeout(60_000);
+	await page.goto(
+		'/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&compareMonthHours=0:12,3:15,7:23,10:18&baseline=separateRunAll'
+	);
+
+	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
+	const requireWebGpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
+
+	test.skip(
+		!hasWebGpu && !requireWebGpu,
+		'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
+	);
+
+	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
+		timeout: 60_000
+	});
+
+	await page.waitForFunction(() => {
+		const result = (window as Window & {
+			__onDemandMonthHourComparison__?: MonthHourComparisonResult;
+		}).__onDemandMonthHourComparison__;
+		return result?.status === 'complete' || result?.status === 'error';
+	}, undefined, { timeout: 60_000 });
+
+	const result = await readMonthHourComparison(page);
+	const diagnostics = await readDiagnostics(page);
+	const expectedPairs = [
+		{ monthIndex: 0, hourIndex: 12, timeIndex: 12 },
+		{ monthIndex: 3, hourIndex: 15, timeIndex: 87 },
+		{ monthIndex: 7, hourIndex: 23, timeIndex: 191 },
+		{ monthIndex: 10, hourIndex: 18, timeIndex: 258 }
+	];
+
+	expect(result).toBeTruthy();
+	expect(result?.status).toBe('complete');
+	expect(result?.error).toBeUndefined();
+	expect(result?.baselineSource).toBe('separateRunAll');
+	expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);
+	expect(diagnostics?.debugReadbackCount).toBe(0);
+	expect(diagnostics?.path).toBe('exposure-only-f32');
+	expect(diagnostics?.usedExposureOnlyPrecompute).toBe(true);
+	expect(diagnostics?.liveAnalysisConstructedForSelectedHour).toBe(false);
+	expect(diagnostics?.dataTextureBuildCount).toBe(0);
+	expect(diagnostics?.selectedHourReadbackCount).toBe(0);
+	expect(result?.pairs).toHaveLength(expectedPairs.length);
+	expect(
+		result?.pairs.map((pair) => ({
+			monthIndex: pair.monthIndex,
+			hourIndex: pair.hourIndex,
+			timeIndex: pair.timeIndex
+		}))
+	).toEqual(expectedPairs);
+
+	for (const pair of result?.pairs ?? []) {
+		expect(pair.numCompared).toBeGreaterThan(1000);
+		expect(pair.maxAbsDiff).toBeLessThanOrEqual(1e-5);
+		expect(pair.rmse).toBeLessThanOrEqual(1e-6);
+	}
+});
+
 test('strict exposure-only diagnostics publish timing fields on the window object', async ({
 	page
 }) => {
-	test.setTimeout(120_000);
+	test.setTimeout(60_000);
 	await page.goto('/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&timeIndex=12');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -334,7 +517,7 @@ test('strict exposure-only diagnostics publish timing fields on the window objec
 	);
 
 	await expect(page.getByTestId('on-demand-prototype-status')).toContainText(/ready|error/i, {
-		timeout: 120_000
+		timeout: 60_000
 	});
 
 	const diagnostics = await readDiagnostics(page);
@@ -346,7 +529,7 @@ test('strict exposure-only diagnostics publish timing fields on the window objec
 test('main route publishes f32 on-demand diagnostics and preserves dataTexture fallback', async ({
 	page
 }) => {
-	test.setTimeout(120_000);
+	test.setTimeout(60_000);
 	await page.goto('/?utciRenderDiagnostics=1&utciOnDemand=f32&utciRender=gpu');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -408,7 +591,7 @@ test('main route publishes f32 on-demand diagnostics and preserves dataTexture f
 test('debug route can use f32 on-demand as the visible WebGPU side while keeping comparison active', async ({
 	page
 }) => {
-	test.setTimeout(180_000);
+	test.setTimeout(60_000);
 	await page.goto(
 		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
 	);
@@ -419,16 +602,17 @@ test('debug route can use f32 on-demand as the visible WebGPU side while keeping
 	await page.waitForFunction(() => {
 		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
 		return (
 			diagnostics?.path === 'exposure-only-f32' &&
 			diagnostics?.usedExposureOnlyPrecompute === true &&
 			diagnostics?.usedRunAllForSelectedHour === false &&
-			diagnostics?.completedTimeIndex === 12 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
 			diagnostics?.pythonComparisonHourIndex === 12 &&
 			diagnostics?.webgpuComparisonHourIndex === 12 &&
 			diagnostics?.appVisibleSelectedHour === true
 		);
-	}, undefined, { timeout: 180_000 });
+	}, undefined, { timeout: 60_000 });
 
 	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toHaveAttribute(
 		'aria-valuenow',
@@ -442,13 +626,39 @@ test('debug route can use f32 on-demand as the visible WebGPU side while keeping
 			.__onDemandPrototypeDiagnostics__;
 	});
 
-	expect(diagnostics.renderTransport).toMatch(/selected-hour|none/);
+	expectGpuResidentSelectedHourTransport(diagnostics);
 	expect(diagnostics.debugComparisonReference).toBe('python-bin');
 	expect(diagnostics.pythonBinComparisonActive).toBe(true);
 	expect(diagnostics.pythonComparisonHourIndex).toBe(12);
 	expect(diagnostics.webgpuComparisonHourIndex).toBe(12);
-	expect(diagnostics.selectedHourReadbackCount).toBeLessThanOrEqual(1);
-	expect(typeof diagnostics.dataTextureBuildCount === 'number' || diagnostics.dataTextureBuildCount === undefined).toBe(true);
+	expect(diagnostics.acceptedGpuResidentUtciRange).toBeTruthy();
+	expect(diagnostics.rendererRequestedMaxStorageBufferBindingSize).toBeGreaterThanOrEqual(
+		512 * 1024 * 1024
+	);
+	expect(diagnostics.rendererRequestedMaxBufferSize).toBeGreaterThanOrEqual(1024 * 1024 * 1024);
+	expect(diagnostics.rendererDeviceMaxStorageBufferBindingSize).toBeGreaterThanOrEqual(
+		512 * 1024 * 1024
+	);
+	expect(diagnostics.rendererDeviceMaxBufferSize).toBeGreaterThanOrEqual(1024 * 1024 * 1024);
+	expect(diagnostics.timings.oneHourDispatchMs).toBeGreaterThanOrEqual(0);
+
+	const fullDayRange = diagnostics.acceptedGpuResidentUtciRange;
+	await page.getByRole('button', { name: /per hour/i }).click();
+	await page.waitForFunction((previousRange) => {
+		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
+			.__onDemandPrototypeDiagnostics__;
+		const range = diagnostics?.acceptedGpuResidentUtciRange;
+		return (
+			range &&
+			previousRange &&
+			(range.min !== previousRange.min || range.max !== previousRange.max) &&
+			diagnostics?.gpuResidentCopyStatus === 'complete'
+		);
+	}, fullDayRange, { timeout: 60_000 });
+
+	const perHourDiagnostics = await readDiagnostics(page);
+	expect(perHourDiagnostics?.acceptedGpuResidentUtciRange).toBeTruthy();
+	expect(perHourDiagnostics?.acceptedGpuResidentUtciRange).not.toEqual(fullDayRange);
 
 	await switchQueryMode(page, {
 		timeIndex: '13'
@@ -457,16 +667,17 @@ test('debug route can use f32 on-demand as the visible WebGPU side while keeping
 	await page.waitForFunction(() => {
 		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
 		return (
 			diagnostics?.path === 'exposure-only-f32' &&
 			diagnostics?.usedExposureOnlyPrecompute === true &&
 			diagnostics?.usedRunAllForSelectedHour === false &&
-			diagnostics?.completedTimeIndex === 13 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 13 &&
 			diagnostics?.pythonComparisonHourIndex === 13 &&
 			diagnostics?.webgpuComparisonHourIndex === 13 &&
 			diagnostics?.appVisibleSelectedHour === true
 		);
-	}, undefined, { timeout: 180_000 });
+	}, undefined, { timeout: 60_000 });
 
 	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toHaveAttribute(
 		'aria-valuenow',
@@ -479,14 +690,51 @@ test('debug route can use f32 on-demand as the visible WebGPU side while keeping
 			.__onDemandPrototypeDiagnostics__;
 	});
 
+	expectGpuResidentSelectedHourTransport(switchedDiagnostics);
 	expect(switchedDiagnostics.pythonComparisonHourIndex).toBe(13);
 	expect(switchedDiagnostics.webgpuComparisonHourIndex).toBe(13);
+});
+
+test('debug route only reports GPU-resident feasibility when compute and render share the same GPUDevice', async ({
+	page
+}) => {
+	test.setTimeout(60_000);
+	await page.goto(
+		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
+	);
+
+	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
+	test.skip(!hasWebGpu && process.env.REQUIRE_WEBGPU_ON_DEMAND !== '1', 'WebGPU unavailable.');
+
+	await page.waitForFunction(() => {
+		const diagnostics = (window as Window & {
+			__onDemandPrototypeDiagnostics__?: StrictExposureOnlyDiagnostics;
+		}).__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
+
+		return (
+			diagnostics?.path === 'exposure-only-f32' &&
+			diagnostics?.usedExposureOnlyPrecompute === true &&
+			diagnostics?.usedRunAllForSelectedHour === false &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
+			diagnostics?.pythonBinComparisonActive === true &&
+			diagnostics?.appVisibleSelectedHour === true
+		);
+	}, undefined, { timeout: 60_000 });
+
+	const diagnostics = await readDiagnostics(page);
+
+	expect(diagnostics?.error).toBeUndefined();
+	expect(typeof diagnostics?.gpuResidentRenderAvailable).toBe('boolean');
+	expect(['idle', 'pending', 'complete', 'failed']).toContain(diagnostics?.gpuResidentCopyStatus);
+
+	expectSelectedHourTransportMatchesFeasibility(diagnostics);
 });
 
 test('debug route preserves explicit dataTexture fallback when f32 on-demand is selected', async ({
 	page
 }) => {
-	test.setTimeout(120_000);
+	test.setTimeout(60_000);
 	await page.goto(
 		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=data&timeIndex=12'
 	);
@@ -503,7 +751,7 @@ test('debug route preserves explicit dataTexture fallback when f32 on-demand is 
 			diagnostics?.path === 'exposure-only-f32' &&
 			diagnostics?.usedExposureOnlyPrecompute === true &&
 			diagnostics?.usedRunAllForSelectedHour === false &&
-			diagnostics?.completedTimeIndex === 12 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
 			diagnostics?.pythonBinComparisonActive === true &&
 			(diagnostics?.oneHourOutputBytes ?? 0) > 0 &&
 			diagnostics?.allHoursUtciBytesAllocated === 0 &&
@@ -512,14 +760,14 @@ test('debug route preserves explicit dataTexture fallback when f32 on-demand is 
 			typeof diagnostics?.dataTextureBuildCount === 'number' &&
 			(diagnostics.dataTextureBuildCount ?? 0) >= 1
 		);
-	}, undefined, { timeout: 120_000 });
+	}, undefined, { timeout: 60_000 });
 
 	const diagnostics = await readDiagnostics(page);
 
 	expect(diagnostics?.path).toBe('exposure-only-f32');
 	expect(diagnostics?.usedExposureOnlyPrecompute).toBe(true);
 	expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);
-	expect(diagnostics?.completedTimeIndex).toBe(12);
+	expect(diagnostics?.completedTimeIndex).toBe(7 * 24 + 12);
 	expect(diagnostics?.pythonBinComparisonActive).toBe(true);
 	expect(diagnostics?.oneHourOutputBytes ?? 0).toBeGreaterThan(0);
 	expect(diagnostics?.allHoursUtciBytesAllocated).toBe(0);
@@ -531,7 +779,7 @@ test('debug route preserves explicit dataTexture fallback when f32 on-demand is 
 test('debug on-demand discards stale scrub results and ends on the final selected hour', async ({
 	page
 }) => {
-	test.setTimeout(180_000);
+	test.setTimeout(60_000);
 	await page.goto(
 		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
 	);
@@ -542,8 +790,9 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 	await page.waitForFunction(() => {
 		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
-		return diagnostics?.completedTimeIndex === 12;
-	}, undefined, { timeout: 180_000 });
+		if (diagnostics?.error) return true;
+		return diagnostics?.completedTimeIndex === 7 * 24 + 12;
+	}, undefined, { timeout: 60_000 });
 
 	await page.evaluate((nextTimeIndex) => {
 		const url = new URL(window.location.href);
@@ -556,12 +805,13 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 	await page.waitForFunction(() => {
 		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
 		return (
-			diagnostics?.completedTimeIndex === 13 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 13 &&
 			diagnostics?.pendingReadbackRequestId != null &&
-			diagnostics?.pendingReadbackTimeIndex === 13
+			diagnostics?.pendingReadbackTimeIndex === 7 * 24 + 13
 		);
-	}, undefined, { timeout: 180_000 });
+	}, undefined, { timeout: 60_000 });
 
 	await page.evaluate(async () => {
 		const pushScrubSelection = async (nextTimeIndex: number) => {
@@ -581,23 +831,25 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 	await page.waitForFunction(() => {
 		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
 		return (
-			diagnostics?.selectedTimeIndex === 23 &&
-			diagnostics?.completedTimeIndex === 23 &&
+			diagnostics?.selectedTimeIndex === 7 * 24 + 23 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 23 &&
 			diagnostics?.pythonComparisonHourIndex === 23 &&
 			diagnostics?.webgpuComparisonHourIndex === 23 &&
 			diagnostics?.inFlightCount === 0 &&
 			diagnostics?.pendingReadbackRequestId == null &&
-			(diagnostics?.selectedHourTransferCount ?? 0) > 0 &&
+			diagnostics?.appVisibleSelectedHour === true &&
 			(diagnostics?.timings?.renderUpdateMs ?? 0) > 0
 		);
-	}, undefined, { timeout: 180_000 });
+	}, undefined, { timeout: 60_000 });
 
 	const diagnostics = await page.evaluate(() => {
 		return (window as Window & { __onDemandPrototypeDiagnostics__?: any })
 			.__onDemandPrototypeDiagnostics__;
 	});
 
+	expectSelectedHourTransportMatchesFeasibility(diagnostics);
 	expect(diagnostics.usedRunAllForSelectedHour).toBe(false);
 	expect(diagnostics.usedExposureOnlyPrecompute).toBe(true);
 	expect(diagnostics.allHoursUtciBytesAllocated).toBe(0);
@@ -608,12 +860,12 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes
 	);
 	expect(diagnostics.dataTextureBuildCount).toBe(0);
-	expect(diagnostics.selectedTimeIndex).toBe(23);
-	expect(diagnostics.completedTimeIndex).toBe(23);
+	expect(diagnostics.selectedTimeIndex).toBe(7 * 24 + 23);
+	expect(diagnostics.completedTimeIndex).toBe(7 * 24 + 23);
 	expect(diagnostics.pythonComparisonHourIndex).toBe(23);
 	expect(diagnostics.webgpuComparisonHourIndex).toBe(23);
-	expect(diagnostics.selectedHourTransferCount).toBeGreaterThan(0);
 	expect(diagnostics.timings.renderUpdateMs).toBeGreaterThan(0);
+	expect(diagnostics.timings.gpuSurfaceUpdateMs).toBeGreaterThan(0);
 	expect(diagnostics.scrubSampleCount).toBeGreaterThanOrEqual(4);
 	expect(diagnostics.pendingReadbackRequestId).toBeUndefined();
 	expect(diagnostics.staleResultDiscardCount).toBeGreaterThan(0);
@@ -622,45 +874,50 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 test('debug on-demand honors the selected month when computing a selected hour', async ({
 	page
 }) => {
-	test.setTimeout(180_000);
-	try {
-		await page.goto(
-			'/debug-webgpu-utci?onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&monthIndex=7&timeIndex=12'
+	test.setTimeout(60_000);
+	await page.goto(
+		'/debug-webgpu-utci?onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&monthIndex=7&timeIndex=12'
+	);
+
+	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
+	test.skip(!hasWebGpu && process.env.REQUIRE_WEBGPU_ON_DEMAND !== '1', 'WebGPU unavailable.');
+
+	await page.waitForFunction(() => {
+		const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
+			.__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
+		return (
+			diagnostics?.selectedMonthIndex === 7 &&
+			diagnostics?.completedMonthIndex === 7 &&
+			diagnostics?.selectedTimeIndex === 7 * 24 + 12 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
+			diagnostics?.appVisibleSelectedHour === true
 		);
+	}, undefined, { timeout: 60_000 });
 
-		const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
-		test.skip(!hasWebGpu && process.env.REQUIRE_WEBGPU_ON_DEMAND !== '1', 'WebGPU unavailable.');
+	const diagnostics = await readDiagnostics(page);
 
-		await page.waitForFunction(() => {
-			const diagnostics = (window as Window & { __onDemandPrototypeDiagnostics__?: any })
-				.__onDemandPrototypeDiagnostics__;
-			return (
-				diagnostics?.selectedMonthIndex === 7 &&
-				diagnostics?.completedMonthIndex === 7 &&
-				diagnostics?.selectedTimeIndex === 7 * 24 + 12 &&
-				diagnostics?.completedTimeIndex === 7 * 24 + 12 &&
-				diagnostics?.pythonComparisonHourIndex === 12 &&
-				diagnostics?.webgpuComparisonHourIndex === 12
-			);
-		}, undefined, { timeout: 180_000 });
-
-		const diagnostics = await readDiagnostics(page);
-
-		expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);
-		expect(diagnostics?.usedExposureOnlyPrecompute).toBe(true);
-		expect(diagnostics?.allHoursUtciBytesAllocated).toBe(0);
-		expect(diagnostics?.allHoursMrtBytesAllocated).toBe(0);
-		expect(diagnostics?.dataTextureBuildCount).toBe(0);
-		expect(diagnostics?.pythonBinComparisonActive).toBe(true);
-	} finally {
-		await page.goto('about:blank').catch(() => undefined);
+	expect(diagnostics?.error).toBeUndefined();
+	expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);
+	expect(diagnostics?.usedExposureOnlyPrecompute).toBe(true);
+	expect(diagnostics?.allHoursUtciBytesAllocated).toBe(0);
+	expect(diagnostics?.allHoursMrtBytesAllocated).toBe(0);
+	expect(diagnostics?.dataTextureBuildCount).toBe(0);
+	if (diagnostics?.sameDeviceForComputeAndRender === true) {
+		expect(diagnostics?.selectedHourReadbackCount).toBe(0);
+	} else {
+		expect(diagnostics?.selectedHourReadbackCount).toBe(1);
 	}
+	expect(diagnostics?.pythonBinComparisonActive).toBe(false);
+	expect(diagnostics?.debugComparisonReference).toBeUndefined();
+	expect(diagnostics?.pythonComparisonHourIndex).toBeUndefined();
+	expect(diagnostics?.webgpuComparisonHourIndex).toBeUndefined();
 });
 
 test('debug on-demand publishes sampled python-bin comparison metadata for the selected hour', async ({
 	page
 }) => {
-	test.setTimeout(180_000);
+	test.setTimeout(60_000);
 	await page.goto(
 		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=17'
 	);
@@ -672,14 +929,16 @@ test('debug on-demand publishes sampled python-bin comparison metadata for the s
 		const diagnostics = (window as Window & {
 			__onDemandPrototypeDiagnostics__?: StrictExposureOnlyDiagnostics;
 		}).__onDemandPrototypeDiagnostics__;
+		if (diagnostics?.error) return true;
 		return (
-			diagnostics?.completedTimeIndex === 17 &&
+			diagnostics?.completedTimeIndex === 7 * 24 + 17 &&
 			diagnostics?.pythonBinComparisonActive === true
 		);
-	}, undefined, { timeout: 180_000 });
+	}, undefined, { timeout: 60_000 });
 
 	const diagnostics = await readDiagnostics(page);
 
+	expect(diagnostics?.error).toBeUndefined();
 	expect(diagnostics?.debugComparisonReference).toBe('python-bin');
 	expect(diagnostics?.pythonBinComparisonActive).toBe(true);
 	expect(diagnostics?.usedRunAllForSelectedHour).toBe(false);

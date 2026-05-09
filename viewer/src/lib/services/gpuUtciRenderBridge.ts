@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { MeshBasicNodeMaterial, StorageBufferAttribute } from 'three/webgpu';
-import { storage, vertexIndex } from 'three/tsl';
+import { clamp, float, storage, texture, uniform, vec2, vertexIndex } from 'three/tsl';
 import type { UtciGridLayout } from './pointCloudService';
+import { mapUTCIToColor } from '$lib/services/colorScale';
 
 export type SyntheticGpuUtciBridge = {
 	group: THREE.Group;
@@ -19,13 +20,34 @@ export interface GpuNativeUtciSurfaceMeshOptions {
 	opacity?: number;
 }
 
+export type GpuNativeUtciSurfaceSource =
+	| 'cpu-uploaded-selected-hour'
+	| 'compute-buffer-selected-hour';
+
+export interface ComputeBufferUtciSurfaceMeshOptions {
+	layout: UtciGridLayout;
+	utciBuffer: GPUBuffer;
+	utciRange: { min: number; max: number };
+	opacity?: number;
+}
+
 interface GpuNativeUtciSurfaceState {
 	colorStorageAttribute: StorageBufferAttribute;
 	width: number;
 	height: number;
 	gridSize: number;
 	vertexCount: number;
-	source: 'cpu-uploaded-selected-hour' | 'compute-buffer-selected-hour';
+	source: GpuNativeUtciSurfaceSource;
+}
+
+interface ComputeBufferUtciSurfaceState extends GpuNativeUtciSurfaceState {
+	source: 'compute-buffer-selected-hour';
+	utciStorageAttribute: StorageBufferAttribute;
+	vertexToPointStorageAttribute: StorageBufferAttribute;
+	utciRange: { min: number; max: number };
+	minUniform: ReturnType<typeof uniform>;
+	maxUniform: ReturnType<typeof uniform>;
+	colorLutTexture: THREE.DataTexture;
 }
 
 const MIN_SPAN = 12;
@@ -35,7 +57,38 @@ const DEFAULT_SURFACE_OPACITY = 0.9;
 const SURFACE_VERTICES_PER_CELL = 6;
 const SURFACE_COLOR_COMPONENTS = 4;
 const GPU_NATIVE_SURFACE_STATE_KEY = 'gpuNativeUtciSurfaceState';
+const UTCI_COLOR_LUT_SIZE = 256;
 const workingColor = new THREE.Color();
+
+function createUtciColorLutTexture(): THREE.DataTexture {
+	const bytes = new Uint8Array(UTCI_COLOR_LUT_SIZE * 4);
+	for (let index = 0; index < UTCI_COLOR_LUT_SIZE; index += 1) {
+		const t = index / (UTCI_COLOR_LUT_SIZE - 1);
+		const color = mapUTCIToColor(t, 0, 1);
+		const offset = index * 4;
+		bytes[offset] = Math.round(color.r * 255);
+		bytes[offset + 1] = Math.round(color.g * 255);
+		bytes[offset + 2] = Math.round(color.b * 255);
+		bytes[offset + 3] = 255;
+	}
+
+	const lut = new THREE.DataTexture(
+		bytes,
+		UTCI_COLOR_LUT_SIZE,
+		1,
+		THREE.RGBAFormat,
+		THREE.UnsignedByteType
+	);
+	lut.needsUpdate = true;
+	lut.flipY = false;
+	lut.generateMipmaps = false;
+	lut.magFilter = THREE.LinearFilter;
+	lut.minFilter = THREE.LinearFilter;
+	lut.wrapS = THREE.ClampToEdgeWrapping;
+	lut.wrapT = THREE.ClampToEdgeWrapping;
+	lut.colorSpace = THREE.SRGBColorSpace;
+	return lut;
+}
 
 function createStorageBackedColorArray(geometry: THREE.BufferGeometry, span: number): Float32Array {
 	const positionAttribute = geometry.getAttribute('position');
@@ -138,6 +191,89 @@ export function createGpuNativeUtciSurfaceMesh(
 	return mesh;
 }
 
+export function createComputeBufferUtciSurfaceMesh(
+	options: ComputeBufferUtciSurfaceMeshOptions
+): THREE.Mesh {
+	const geometry = createGpuNativeSurfaceGeometry(options.layout);
+	const vertexCount = geometry.getAttribute('position').count;
+	const utciArray = new Float32Array(options.layout.numPositions);
+	const utciStorageAttribute = new StorageBufferAttribute(utciArray, 1);
+	const vertexToPointArray = createVertexToPointIndexArray(options.layout);
+	const vertexToPointStorageAttribute = new StorageBufferAttribute(vertexToPointArray, 1);
+	const minUniform = uniform(options.utciRange.min);
+	const maxUniform = uniform(options.utciRange.max);
+	const colorLutTexture = createUtciColorLutTexture();
+	const { colorNode, opacityNode } = createUtciColorNode(
+		utciStorageAttribute,
+		vertexToPointStorageAttribute,
+		minUniform,
+		maxUniform,
+		colorLutTexture
+	);
+
+	const material = new MeshBasicNodeMaterial({
+		side: THREE.DoubleSide,
+		transparent: true,
+		depthTest: true,
+		depthWrite: false
+	});
+	material.colorNode = colorNode;
+	material.opacityNode = opacityNode;
+	material.toneMapped = false;
+
+	const mesh = new THREE.Mesh(geometry, material);
+	mesh.name = 'UTCI GPU Resident Surface Overlay';
+	mesh.frustumCulled = false;
+	mesh.renderOrder = 2;
+	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
+	mesh.userData.utciLayout = options.layout;
+	mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] = {
+		colorStorageAttribute: utciStorageAttribute,
+		utciStorageAttribute,
+		vertexToPointStorageAttribute,
+		width: options.layout.width,
+		height: options.layout.height,
+		gridSize: options.layout.gridSize,
+		vertexCount,
+		source: 'compute-buffer-selected-hour',
+		utciRange: { ...options.utciRange },
+		minUniform,
+		maxUniform,
+		colorLutTexture
+	} satisfies ComputeBufferUtciSurfaceState;
+
+	return mesh;
+}
+
+export function updateComputeBufferUtciSurfaceMesh(
+	mesh: THREE.Mesh,
+	options: ComputeBufferUtciSurfaceMeshOptions
+): boolean {
+	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
+		| ComputeBufferUtciSurfaceState
+		| undefined;
+	if (!state || state.source !== 'compute-buffer-selected-hour') {
+		return false;
+	}
+
+	const expectedVertexCount = options.layout.width * options.layout.height * SURFACE_VERTICES_PER_CELL;
+	if (
+		state.width !== options.layout.width ||
+		state.height !== options.layout.height ||
+		state.gridSize !== options.layout.gridSize ||
+		state.vertexCount !== expectedVertexCount
+	) {
+		return false;
+	}
+
+	state.utciRange = { ...options.utciRange };
+	state.minUniform.value = options.utciRange.min;
+	state.maxUniform.value = options.utciRange.max;
+	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
+	mesh.userData.utciLayout = options.layout;
+	return true;
+}
+
 export function updateGpuNativeUtciSurfaceMesh(
 	mesh: THREE.Mesh,
 	options: GpuNativeUtciSurfaceMeshOptions
@@ -182,13 +318,96 @@ export function disposeGpuNativeUtciSurfaceMesh(mesh: THREE.Mesh): void {
 		material.dispose();
 	}
 
+	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
+		| ComputeBufferUtciSurfaceState
+		| GpuNativeUtciSurfaceState
+		| undefined;
+	if (state && 'colorLutTexture' in state) {
+		state.colorLutTexture.dispose();
+	}
+
 	mesh.geometry.dispose();
+	delete mesh.userData.pendingComputeBufferUtciSource;
 	delete mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY];
 }
 
-export function getGpuNativeUtciSurfaceSource(mesh: THREE.Mesh): string | undefined {
+export function getGpuNativeUtciSurfaceSource(
+	mesh: THREE.Mesh
+): GpuNativeUtciSurfaceSource | undefined {
 	return (mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as GpuNativeUtciSurfaceState | undefined)
 		?.source;
+}
+
+export function getComputeBufferUtciStorageAttribute(
+	mesh: THREE.Mesh
+): StorageBufferAttribute | undefined {
+	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
+		| ComputeBufferUtciSurfaceState
+		| undefined;
+	if (!state || state.source !== 'compute-buffer-selected-hour') {
+		return undefined;
+	}
+
+	return state.utciStorageAttribute;
+}
+
+function createUtciColorNode(
+	utciStorageAttribute: StorageBufferAttribute,
+	vertexToPointStorageAttribute: StorageBufferAttribute,
+	minUniform: ReturnType<typeof uniform>,
+	maxUniform: ReturnType<typeof uniform>,
+	colorLutTexture: THREE.DataTexture
+) {
+	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
+	const vertexToPointStorage = storage(
+		vertexToPointStorageAttribute,
+		'uint',
+		vertexToPointStorageAttribute.count
+	).toReadOnly();
+	const pointIndex = vertexToPointStorage.element(vertexIndex);
+	const value = utciStorage.element(pointIndex);
+	const t = clamp(
+		value.sub(minUniform).div(maxUniform.sub(minUniform).max(float(0.001))),
+		0,
+		1
+	);
+	const lutU = t.mul((UTCI_COLOR_LUT_SIZE - 1) / UTCI_COLOR_LUT_SIZE).add(
+		0.5 / UTCI_COLOR_LUT_SIZE
+	);
+	const colorNode = texture(colorLutTexture, vec2(lutU, 0.5)).rgb;
+
+	return {
+		colorNode,
+		opacityNode: t.mul(0).add(DEFAULT_SURFACE_OPACITY)
+	};
+}
+
+export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Array {
+	const cellCount = layout.width * layout.height;
+	const fallbackPointIndex = 0;
+	const cellToPoint = new Uint32Array(cellCount);
+	cellToPoint.fill(fallbackPointIndex);
+
+	for (let pointIndex = 0; pointIndex < layout.numPositions; pointIndex += 1) {
+		const row = layout.indexToRow[pointIndex];
+		const column = layout.indexToColumn[pointIndex];
+		if (row >= layout.height || column >= layout.width) {
+			continue;
+		}
+
+		cellToPoint[row * layout.width + column] = pointIndex;
+	}
+
+	const indices = new Uint32Array(cellCount * SURFACE_VERTICES_PER_CELL);
+	let offset = 0;
+	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+		const pointIndex = cellToPoint[cellIndex];
+		for (let vertex = 0; vertex < SURFACE_VERTICES_PER_CELL; vertex += 1) {
+			indices[offset++] = pointIndex;
+		}
+	}
+
+	return indices;
 }
 
 function createGpuNativeSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeometry {

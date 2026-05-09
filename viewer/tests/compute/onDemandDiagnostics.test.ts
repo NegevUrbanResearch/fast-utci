@@ -89,6 +89,9 @@ describe('on-demand diagnostics helpers', () => {
 			navigatorGpu: false,
 			rendererBackend: 'unknown',
 			path: 'idle',
+			gpuResidentRenderAvailable: false,
+			sameDeviceForComputeAndRender: null,
+			gpuResidentCopyStatus: 'idle',
 			adapterInfo: 'MockAdapter',
 			maxStorageBufferBindingSize: 134217728,
 			maxBufferSize: 268435456,
@@ -128,6 +131,16 @@ describe('on-demand diagnostics helpers', () => {
 				oneHourDispatchMs: 4
 			}
 		});
+	});
+
+	it('records selected-hour timing attribution fields without clearing existing timings', () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+
+		const withReadback = recordOnDemandTiming(diagnostics, 'selectedHourReadbackMs', 11.5);
+		const withSurface = recordOnDemandTiming(withReadback, 'gpuSurfaceUpdateMs', 7.25);
+
+		expect(withSurface.timings.selectedHourReadbackMs).toBe(11.5);
+		expect(withSurface.timings.gpuSurfaceUpdateMs).toBe(7.25);
 	});
 
 	it('tracks selected-hour output high-watermark without pretending to know total browser VRAM', () => {

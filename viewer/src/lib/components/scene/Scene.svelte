@@ -2,24 +2,43 @@
 	import { Canvas } from '@threlte/core';
 	import * as THREE from 'three';
 	import { WebGPURenderer } from 'three/webgpu';
+	import {
+		createLargeBufferRequiredLimits,
+		readLargeBufferDeviceLimits,
+		type WebgpuLargeBufferDeviceLimits,
+		type WebgpuLargeBufferRequiredLimits
+	} from '$lib/compute/webgpuDeviceLimits';
 	import SceneBackground from './SceneBackground.svelte';
 	import SceneInvalidateSetup from './SceneInvalidateSetup.svelte';
+
+	type RendererDiagnostics = {
+		rendererBackend: 'webgpu' | 'unknown';
+		rendererDevice?: GPUDevice;
+		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
+		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
+		error?: string;
+	};
 
 	// Default background; can be overridden by parent for theme-aware colors
 	export let backgroundColor: number = 0x4b5563;
 	export let enableShadows: boolean = true;
 	export let onRendererDiagnostics:
-		| ((diagnostics: { rendererBackend: 'webgpu' | 'unknown'; error?: string }) => void)
+		| ((diagnostics: RendererDiagnostics) => void)
 		| undefined = undefined;
+	export let requestLargeWebgpuLimits = false;
 
 	let canvasElement: HTMLCanvasElement | null = null;
 
 	function createRenderer(canvas: HTMLCanvasElement) {
 		canvasElement = canvas;
+		const rendererRequiredLimits = requestLargeWebgpuLimits
+			? createLargeBufferRequiredLimits()
+			: undefined;
 		const renderer = new WebGPURenderer({
 			canvas,
 			antialias: true,
-			alpha: false
+			alpha: false,
+			...(rendererRequiredLimits ? { requiredLimits: rendererRequiredLimits } : {})
 		});
 		const originalSetSize = renderer.setSize.bind(renderer);
 		// Layout/resize observers can briefly emit 0x0 during transitions; sending
@@ -33,10 +52,12 @@
 		const r = renderer as unknown as { info?: { dispose: () => void } };
 		if (!r.info) r.info = { dispose: () => {} };
 
-		const backend =
-			(renderer as unknown as { backend?: { isWebGPUBackend?: boolean } }).backend;
+		const backend = (
+			renderer as unknown as { backend?: { isWebGPUBackend?: boolean; device?: GPUDevice } }
+		).backend;
 		onRendererDiagnostics?.({
-			rendererBackend: backend?.isWebGPUBackend ? 'webgpu' : 'unknown'
+			rendererBackend: backend?.isWebGPUBackend ? 'webgpu' : 'unknown',
+			rendererRequiredLimits
 		});
 
 		// WebGPURenderer requires async initialization before first use. We fire
@@ -47,15 +68,20 @@
 			(renderer as any)
 				.init()
 				.then(() => {
-					const initializedBackend =
-						(renderer as unknown as { backend?: { isWebGPUBackend?: boolean } }).backend;
+					const initializedBackend = (
+						renderer as unknown as { backend?: { isWebGPUBackend?: boolean; device?: GPUDevice } }
+					).backend;
 					onRendererDiagnostics?.({
-						rendererBackend: initializedBackend?.isWebGPUBackend ? 'webgpu' : 'unknown'
+						rendererBackend: initializedBackend?.isWebGPUBackend ? 'webgpu' : 'unknown',
+						rendererDevice: initializedBackend?.device,
+						rendererRequiredLimits,
+						rendererDeviceLimits: readLargeBufferDeviceLimits(initializedBackend?.device)
 					});
 				})
 				.catch((error: unknown) => {
 					onRendererDiagnostics?.({
 						rendererBackend: 'unknown',
+						rendererRequiredLimits,
 						error: error instanceof Error ? error.message : String(error)
 					});
 				});

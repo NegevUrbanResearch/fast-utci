@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 describe('WebGPU on-demand source guards', () => {
 	const testDir = dirname(fileURLToPath(import.meta.url));
 	const source = readFileSync(resolve(testDir, '../../src/lib/compute/webgpuUtciPipeline.ts'), 'utf8');
+	const renderBridgeSource = readFileSync(
+		resolve(testDir, '../../src/lib/services/gpuUtciRenderBridge.ts'),
+		'utf8'
+	);
 	const onDemandShaderSource = readFileSync(
 		resolve(testDir, '../../src/lib/compute/shaders/mrt_utci_on_demand.wgsl'),
 		'utf8'
@@ -128,5 +132,21 @@ describe('WebGPU on-demand source guards', () => {
 		expect(source.includes('trackedGpuAllocationBytes')).toBe(true);
 		expect(source.includes('performance.memory')).toBe(false);
 		expect(source.includes('measureUserAgentSpecificMemory')).toBe(false);
+	});
+
+	it('keeps the UTCI render bridge honest about cpu-uploaded versus compute-buffer sources', () => {
+		expect(renderBridgeSource.includes('export type GpuNativeUtciSurfaceSource')).toBe(true);
+		expect(renderBridgeSource.includes("'cpu-uploaded-selected-hour'")).toBe(true);
+		expect(renderBridgeSource.includes("'compute-buffer-selected-hour'")).toBe(true);
+		expect(renderBridgeSource.includes("source: 'cpu-uploaded-selected-hour'")).toBe(true);
+		expect(renderBridgeSource.includes("source: 'compute-buffer-selected-hour'")).toBe(true);
+		expect(renderBridgeSource.includes('export function createComputeBufferUtciSurfaceMesh')).toBe(
+			true
+		);
+		expect(renderBridgeSource.includes('export function updateComputeBufferUtciSurfaceMesh')).toBe(
+			true
+		);
+		expect(renderBridgeSource.includes('pendingComputeBufferUtciSource')).toBe(true);
+		expect(renderBridgeSource.includes('createVertexToPointIndexArray')).toBe(true);
 	});
 });

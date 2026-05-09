@@ -6,6 +6,12 @@ import {
 	type UtciSurfaceMeshOptions,
 	updateUtciSurfaceMesh
 } from '$lib/services/pointCloudService';
+import {
+	createVertexToPointIndexArray,
+	createComputeBufferUtciSurfaceMesh,
+	getGpuNativeUtciSurfaceSource,
+	updateComputeBufferUtciSurfaceMesh
+} from '$lib/services/gpuUtciRenderBridge';
 import type { Analysis } from '$lib/types/analysis';
 
 function createAnalysis(params?: {
@@ -159,7 +165,152 @@ describe('pointCloudService UTCI surface seam', () => {
 
 		expect(mesh.userData.utciSurfaceBackend).toBe('gpuNative');
 		expect(mesh.userData.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('cpu-uploaded-selected-hour');
+		expect(getGpuNativeUtciSurfaceSource(mesh)).not.toBe('compute-buffer-selected-hour');
 		expect(material.map ?? null).toBeNull();
+	});
+
+	it('maps each surface vertex back to the shuffled source point index', () => {
+		const vertexToPoint = createVertexToPointIndexArray({
+			width: 2,
+			height: 2,
+			gridSize: 1,
+			numPositions: 4,
+			centerX: 0.5,
+			centerZ: 0.5,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			indexToRow: new Uint32Array([1, 0, 1, 0]),
+			indexToColumn: new Uint32Array([1, 0, 0, 1]),
+			indexToTexel: new Uint32Array([1, 2, 0, 3]),
+			colorBuffer: new Uint8Array(2 * 2 * 4)
+		});
+
+		expect(Array.from(vertexToPoint)).toEqual([
+			1, 1, 1, 1, 1, 1,
+			3, 3, 3, 3, 3, 3,
+			2, 2, 2, 2, 2, 2,
+			0, 0, 0, 0, 0, 0
+		]);
+	});
+
+	it('creates compute-buffer surfaces without uploading selected-hour UTCI from CPU readback', () => {
+		const computeBuffer = {} as GPUBuffer;
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: {
+				width: 1,
+				height: 1,
+				gridSize: 1,
+				numPositions: 1,
+				centerX: 0.5,
+				centerZ: 0.5,
+				minX: 0,
+				minZ: 0,
+				baseY: 0,
+				indexToRow: new Uint32Array([0]),
+				indexToColumn: new Uint32Array([0]),
+				indexToTexel: new Uint32Array([0]),
+				colorBuffer: new Uint8Array(4)
+			},
+			utciBuffer: computeBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('compute-buffer-selected-hour');
+		expect(mesh.userData.utciSurfaceSource).toBeUndefined();
+		expect(mesh.userData.pendingComputeBufferUtciSource).toBe(computeBuffer);
+		expect(Array.from(mesh.userData.gpuNativeUtciSurfaceState.utciStorageAttribute.array)).toEqual([0]);
+		expect(
+			Array.from(mesh.userData.gpuNativeUtciSurfaceState.vertexToPointStorageAttribute.array)
+		).toEqual([0, 0, 0, 0, 0, 0]);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 10, max: 40 });
+	});
+
+	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {
+		const layout = {
+			width: 2,
+			height: 1,
+			gridSize: 1,
+			numPositions: 2,
+			centerX: 1,
+			centerZ: 0.5,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			indexToRow: new Uint32Array([0, 0]),
+			indexToColumn: new Uint32Array([0, 1]),
+			indexToTexel: new Uint32Array([0, 1]),
+			colorBuffer: new Uint8Array(2 * 4)
+		};
+		const initialBuffer = {} as GPUBuffer;
+		const nextBuffer = {} as GPUBuffer;
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: initialBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(
+			updateComputeBufferUtciSurfaceMesh(mesh, {
+				layout,
+				utciBuffer: nextBuffer,
+				utciRange: { min: 5, max: 55 }
+			})
+		).toBe(true);
+
+		expect(mesh.userData.utciSurfaceSource).toBeUndefined();
+		expect(mesh.userData.pendingComputeBufferUtciSource).toBe(nextBuffer);
+		expect(Array.from(mesh.userData.gpuNativeUtciSurfaceState.utciStorageAttribute.array)).toEqual([
+			0, 0
+		]);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 5, max: 55 });
+		expect(mesh.userData.gpuNativeUtciSurfaceState.minUniform.value).toBe(5);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.maxUniform.value).toBe(55);
+	});
+
+	it('rejects compute-buffer surface updates when the layout changes', () => {
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: {
+				width: 1,
+				height: 1,
+				gridSize: 1,
+				numPositions: 1,
+				centerX: 0.5,
+				centerZ: 0.5,
+				minX: 0,
+				minZ: 0,
+				baseY: 0,
+				indexToRow: new Uint32Array([0]),
+				indexToColumn: new Uint32Array([0]),
+				indexToTexel: new Uint32Array([0]),
+				colorBuffer: new Uint8Array(4)
+			},
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(
+			updateComputeBufferUtciSurfaceMesh(mesh, {
+				layout: {
+					width: 2,
+					height: 1,
+					gridSize: 1,
+					numPositions: 2,
+					centerX: 1,
+					centerZ: 0.5,
+					minX: 0,
+					minZ: 0,
+					baseY: 0,
+					indexToRow: new Uint32Array([0, 0]),
+					indexToColumn: new Uint32Array([0, 1]),
+					indexToTexel: new Uint32Array([0, 1]),
+					colorBuffer: new Uint8Array(8)
+				},
+				utciBuffer: {} as GPUBuffer,
+				utciRange: { min: 5, max: 55 }
+			})
+		).toBe(false);
 	});
 
 	it('stores real per-backend surface diagnostics on mesh userData', () => {
