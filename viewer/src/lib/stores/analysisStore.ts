@@ -7,7 +7,7 @@
 import { writable, type Writable } from 'svelte/store';
 import { base } from '$app/paths';
 import type { Analysis } from '$lib/types/analysis';
-import { loadAnalysis } from '$lib/services/dataLoader';
+import { loadAnalysis, loadAnalysisMetadataOnly } from '$lib/services/dataLoader';
 import { LRUCache } from '$lib/services/lruCache';
 
 /**
@@ -35,23 +35,27 @@ const analysisCache = new LRUCache<Analysis>({
  */
 export async function loadAnalysisData(
 	analysisId: string,
-	dataDir?: string
+	dataDir?: string,
+	options?: { metadataOnly?: boolean }
 ): Promise<void> {
 	try {
+		const cacheKey = options?.metadataOnly ? `${analysisId}::metadata` : analysisId;
 		// Check cache first
-		const cached = analysisCache.get(analysisId);
+		const cached = analysisCache.get(cacheKey);
 		if (cached) {
-			console.log(`[ANALYSIS CACHE] Cache hit: ${analysisId}`);
+			console.log(`[ANALYSIS CACHE] Cache hit: ${cacheKey}`);
 			analysisStore.set(cached);
 			return;
 		}
 
 		// Load from server if not cached
-		console.log(`[ANALYSIS CACHE] Cache miss: ${analysisId}, loading...`);
-		const analysis = await loadAnalysis(analysisId, dataDir);
+		console.log(`[ANALYSIS CACHE] Cache miss: ${cacheKey}, loading...`);
+		const analysis = options?.metadataOnly
+			? await loadAnalysisMetadataOnly(analysisId, dataDir)
+			: await loadAnalysis(analysisId, dataDir);
 		
 		// Cache the loaded analysis
-		analysisCache.set(analysisId, analysis);
+		analysisCache.set(cacheKey, analysis);
 		
 		// Update store
 		analysisStore.set(analysis);

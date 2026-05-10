@@ -5,8 +5,10 @@ import {
 	calculateStatistics,
 	getUTCIValue,
 	getPosition,
-	getUTCIForHour
+	getUTCIForHour,
+	loadAnalysisMetadataOnly
 } from '$lib/services/dataLoader';
+import { buildUtciGridLayout } from '$lib/services/pointCloudService';
 import type { SingleHourData, FullDayData } from '$lib/types/analysis';
 
 // Helper to create ArrayBuffer with binary data
@@ -63,6 +65,121 @@ function createFullDayBinary(numPositions: number, numHours: number, positions: 
 }
 
 describe('dataLoader service', () => {
+	describe('loadAnalysisMetadataOnly', () => {
+		beforeEach(() => {
+			vi.restoreAllMocks();
+		});
+
+		it('loads metadata and derives positions without fetching binary UTCI data', async () => {
+			const requestedUrls: string[] = [];
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (url: string) => {
+					requestedUrls.push(url);
+					return {
+						ok: true,
+						json: async () => ({
+							analysis_type: 'full_day',
+							num_positions: 4,
+							hours: ['00:00', '01:00'],
+							utci_range: { min: 10, max: 40 },
+							grid_size: 1,
+							coordinate_system: 'xz_ground',
+							model_file: 'model.glb',
+							bounds: { x_min: 0, x_max: 1, y_min: 0, y_max: 1, z: 0 }
+						})
+					};
+				})
+			);
+
+			const analysis = await loadAnalysisMetadataOnly('Project/analysis');
+
+			expect(requestedUrls).toEqual(['/data/analyses/Project/analysis.json']);
+			expect(requestedUrls.some((url) => url.includes('.bin'))).toBe(false);
+			expect(analysis.metadata.source_analysis_id).toBe('Project/analysis');
+			expect(analysis.data.numPositions).toBe(4);
+			expect(analysis.data.positions).toEqual(
+				new Float32Array([0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1])
+			);
+			expect(analysis.data.utciByHour).toEqual([]);
+		});
+
+		it('stores xy-ground metadata-only grid positions in analysis coordinates', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => ({
+					ok: true,
+					json: async () => ({
+						analysis_type: 'full_day',
+						num_positions: 4,
+						hours: ['00:00'],
+						utci_range: { min: 10, max: 40 },
+						grid_size: 1,
+						coordinate_system: 'xy_ground',
+						model_file: 'model.glb',
+						bounds: { x_min: 0, x_max: 1, y_min: 10, y_max: 11, z: 2 }
+					})
+				}))
+			);
+
+			const analysis = await loadAnalysisMetadataOnly('Project/xy-analysis');
+
+			expect(analysis.data.positions).toEqual(
+				new Float32Array([0, 10, 2, 0, 11, 2, 1, 10, 2, 1, 11, 2])
+			);
+		});
+
+		it('builds a two-dimensional xy-ground surface layout from metadata-only positions', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => ({
+					ok: true,
+					json: async () => ({
+						analysis_type: 'full_day',
+						num_positions: 4,
+						hours: ['00:00'],
+						utci_range: { min: 10, max: 40 },
+						grid_size: 1,
+						coordinate_system: 'xy_ground',
+						model_file: 'model.glb',
+						bounds: { x_min: 0, x_max: 1, y_min: 10, y_max: 11, z: 2 }
+					})
+				}))
+			);
+
+			const analysis = await loadAnalysisMetadataOnly('Project/xy-layout');
+			const layout = buildUtciGridLayout(analysis);
+
+			expect(layout.width).toBe(2);
+			expect(layout.height).toBe(2);
+			expect(layout.centerX).toBeCloseTo(0);
+			expect(layout.centerZ).toBeCloseTo(0);
+		});
+
+		it('rejects metadata-derived positions when the grid count disagrees with metadata', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async () => ({
+					ok: true,
+					json: async () => ({
+						analysis_type: 'full_day',
+						num_positions: 3,
+						hours: ['00:00'],
+						utci_range: { min: 10, max: 40 },
+						grid_size: 1,
+						coordinate_system: 'xz_ground',
+						model_file: 'model.glb',
+						bounds: { x_min: 0, x_max: 1, y_min: 0, y_max: 1, z: 0 }
+					})
+				}))
+			);
+
+			await expect(loadAnalysisMetadataOnly('Project/mismatch')).rejects.toThrow(
+				/does not match metadata num_positions/
+			);
+		});
+	});
+
 	describe('parseSingleHourBinary', () => {
 		it('should parse single hour binary data', () => {
 			const numPositions = 2;

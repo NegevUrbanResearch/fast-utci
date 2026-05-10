@@ -126,7 +126,27 @@ async function readUtciLegendValues(page: Page): Promise<number[]> {
 		);
 }
 
+function isForbiddenDebugBoundaryRequest(url: string) {
+	const parsed = new URL(url);
+	const isMainRouteDocument = parsed.pathname === '/' && parsed.searchParams.has('utciRenderDiagnostics');
+	if (/\.bin(\?|$)|loadReferenceFromFs/i.test(url)) return true;
+	if (/parity/i.test(url) && !isMainRouteDocument) return true;
+	return false;
+}
+
 test.describe('main route manual diagnostics probe', () => {
+	let requestedUrls: string[] = [];
+
+	test.beforeEach(({ page }) => {
+		requestedUrls = [];
+		page.on('request', (request) => requestedUrls.push(request.url()));
+	});
+
+	test.afterEach(async ({ page }) => {
+		expect(requestedUrls.filter(isForbiddenDebugBoundaryRequest)).toEqual([]);
+		await page.goto('about:blank').catch(() => undefined);
+	});
+
 	test('publishes selected-hour diagnostics without waiting for the full e2e suite', async ({
 		page
 	}) => {
@@ -186,8 +206,30 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(value.utciRenderResolved).toBe('gpuNative');
 		expect(value.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(value.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(value.dataTextureBuildCount).toBe(0);
 		expect(value.baseLiveReady).toBe(true);
 		expect(value.baseSameDeviceForComputeAndRender).toBe(true);
+		expect(value.baseSelectionKey).toBe(value.baseSceneSelectionKey);
+		expect(value.baseSelectedTimeIndex).toBe(value.baseRenderContextTimeIndex);
+		expect(value.baseAcceptedUtciRange).toBeDefined();
+	});
+
+	test('ignores debug parity query params on the main route without bin requests', async ({
+		page
+	}) => {
+		test.setTimeout(30_000);
+		await page.goto(
+			'/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&utciRender=auto&utciRenderDiagnostics=1&parity=1&utciOnDemand=f32&monthIndex=7'
+		);
+
+		const value = await waitForSelectedHourPublication(page, {
+			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0'
+		});
+
+		expect(value.utciRenderResolved).toBe('gpuNative');
+		expect(JSON.stringify(value)).not.toMatch(
+			/pythonBin|binComparison|__onDemandPrototypeDiagnostics__|parityMode/i
+		);
 	});
 
 	test('publishes a new compute-buffer surface after changing the selected hour', async ({
@@ -217,6 +259,7 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.utciSurfaceSource).toBe('compute-buffer-selected-hour');
 		expect(updated.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(updated.baseLiveReady).toBe(true);
+		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expect(updated.baseSelectedTimeIndex).toBe(7 * 24 + 1);
 		expect(updated.baseRenderContextTimeIndex).toBe(7 * 24 + 1);
 		expect(updated.baseAcceptedUtciRange).toEqual(initial.baseAcceptedUtciRange);
@@ -257,6 +300,7 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.baseSurfaceRequestId).toBeGreaterThan(initial.baseSurfaceRequestId);
 		expect(updated.gpuResidentCopyRequestId).toBe(updated.baseSurfaceRequestId);
 		expect(updated.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expect(updated.baseSelectedTimeIndex).toBe(8 * 24);
 		expect(updated.baseRenderContextTimeIndex).toBe(8 * 24);
 	});
@@ -292,6 +336,7 @@ test.describe('main route manual diagnostics probe', () => {
 		});
 		expect(updated.baseSelectedTimeIndex).toBe(0);
 		expect(updated.baseRenderContextTimeIndex).toBe(0);
+		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expectFiniteUtciRange(updated.baseAcceptedUtciRange);
 		expect(updated.baseAcceptedUtciRange).not.toEqual(initial.baseAcceptedUtciRange);
 	});

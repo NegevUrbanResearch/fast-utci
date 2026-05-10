@@ -52,16 +52,18 @@
 	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
 	import type { Analysis } from "$lib/types/analysis";
-	import {
-		type LiveSelectedHourControllerSurfaceDiagnostics,
-		type LiveSelectedHourRenderTransport,
-	} from "$lib/compute/liveSelectedHourController";
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
 	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
 	import { projectMainRouteLiveSceneState } from "$lib/compute/liveSelectedHourRouteProjection";
 	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/liveSelectedHourSurfaceIdentity";
 	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
 	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/liveUtciSelectedHour";
 	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
+	import {
+		buildMainRouteUtciDiagnostics,
+		type MainRouteUtciDiagnosticsInputs,
+		type MainRouteUtciDiagnosticsPayload,
+	} from "$lib/diagnostics/mainRouteUtciDiagnostics";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
@@ -81,7 +83,6 @@
 		parseUtciRenderMode,
 		resolveMainRouteUtciSurfaceBackend,
 		type UtciRendererBackend,
-		type UtciRenderMode,
 	} from "$lib/utciRenderMode";
 	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
 
@@ -120,48 +121,8 @@
 
 	type MainRouteUtciSurfaceDiagnostics = LiveSelectedHourControllerSurfaceDiagnostics;
 
-	type MainRouteUtciRenderDiagnostics = {
-		utciOnDemand: UtciOnDemandMode;
-		utciRenderRequested: UtciRenderMode;
-		utciRenderResolved: "dataTexture" | "gpuNative";
-		rendererBackend: UtciRendererBackend;
-		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
-		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
-		utciSurfaceSource?: string;
-		selectedHourTransferCount?: number;
-		dataTextureBuildCount?: number;
-		gpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
-		gpuResidentCopyError?: string;
-		gpuResidentCopyRequestId?: number;
-		lastGpuResidentCopyFailureError?: string;
-		lastGpuResidentCopyFailureRequestId?: number;
-		baseRenderTransport: LiveSelectedHourRenderTransport;
-		comparisonRenderTransport: LiveSelectedHourRenderTransport;
-		baseLiveReady: boolean;
-		comparisonLiveReady: boolean;
-		baseSurfaceRequestId?: number;
-		baseSelectionKey?: string;
-		baseSceneSurfaceRequestId?: number;
-		baseSceneSelectionKey?: string;
-		baseSameDeviceForComputeAndRender: boolean | null;
-		baseSelectedMonthIndex: number;
-		baseSelectedHourIndex: number;
-		baseSelectedTimeIndex: number;
-		baseRenderContextTimeIndex?: number;
-		baseAcceptedUtciRange?: { min: number; max: number };
-		comparisonSurfaceRequestId?: number;
-		comparisonSelectionKey?: string;
-		comparisonSameDeviceForComputeAndRender: boolean | null;
-		comparisonUtciSurfaceSource?: string;
-		comparisonSelectedHourTransferCount?: number;
-		comparisonDataTextureBuildCount?: number;
-		comparisonGpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
-		comparisonGpuResidentCopyError?: string;
-		comparisonGpuResidentCopyRequestId?: number;
-	};
-
 	type MainRouteWindow = Window & {
-		__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+		__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
 	};
 
 	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
@@ -201,95 +162,13 @@
 	let showMainRouteOverlay = false;
 	let showMainRouteComparisonOverlay = false;
 
-	function updateUtciRenderDiagnostics(diagnostics: {
-		utciRenderDiagnosticsEnabled: boolean;
-		utciOnDemandMode: UtciOnDemandMode;
-		utciRenderMode: UtciRenderMode;
-		resolvedUtciSurfaceBackend: "dataTexture" | "gpuNative";
-		rendererBackend: UtciRendererBackend;
-		baseUtciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
-		comparisonUtciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
-		baseRenderTransport: LiveSelectedHourRenderTransport;
-		comparisonRenderTransport: LiveSelectedHourRenderTransport;
-		baseLiveReady: boolean;
-		comparisonLiveReady: boolean;
-		baseSurfaceRequestId?: number;
-		baseSelectionKey?: string;
-		baseSceneSurfaceRequestId?: number;
-		baseSceneSelectionKey?: string;
-		baseSameDeviceForComputeAndRender: boolean | null;
-		baseSelectedMonthIndex: number;
-		baseSelectedHourIndex: number;
-		baseSelectedTimeIndex: number;
-		baseRenderContextTimeIndex?: number;
-		baseAcceptedUtciRange?: { min: number; max: number };
-		comparisonSurfaceRequestId?: number;
-		comparisonSelectionKey?: string;
-		comparisonSameDeviceForComputeAndRender: boolean | null;
-	}): void {
+	function updateUtciRenderDiagnostics(
+		diagnostics: MainRouteUtciDiagnosticsInputs,
+	): void {
 		if (typeof window === "undefined") return;
 
 		const win = window as MainRouteWindow;
-		if (!diagnostics.utciRenderDiagnosticsEnabled) {
-			win.__utciRenderDiagnostics__ = undefined;
-			return;
-		}
-
-		win.__utciRenderDiagnostics__ = {
-			utciOnDemand: diagnostics.utciOnDemandMode,
-			utciRenderRequested: diagnostics.utciRenderMode,
-			utciRenderResolved: diagnostics.resolvedUtciSurfaceBackend,
-			rendererBackend: diagnostics.rendererBackend,
-			rendererRequiredLimits,
-			rendererDeviceLimits,
-			utciSurfaceSource:
-				diagnostics.baseUtciSurfaceDiagnostics.utciSurfaceSource,
-			selectedHourTransferCount:
-				diagnostics.baseUtciSurfaceDiagnostics.selectedHourTransferCount,
-			dataTextureBuildCount:
-				diagnostics.baseUtciSurfaceDiagnostics.dataTextureBuildCount,
-			gpuResidentCopyStatus:
-				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyStatus,
-			gpuResidentCopyError:
-				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyError,
-			gpuResidentCopyRequestId:
-				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyRequestId,
-			lastGpuResidentCopyFailureError:
-				lastBaseGpuResidentCopyFailure?.error,
-			lastGpuResidentCopyFailureRequestId:
-				lastBaseGpuResidentCopyFailure?.requestId,
-			baseRenderTransport: diagnostics.baseRenderTransport,
-			comparisonRenderTransport: diagnostics.comparisonRenderTransport,
-			baseLiveReady: diagnostics.baseLiveReady,
-			comparisonLiveReady: diagnostics.comparisonLiveReady,
-			baseSurfaceRequestId: diagnostics.baseSurfaceRequestId,
-			baseSelectionKey: diagnostics.baseSelectionKey,
-			baseSceneSurfaceRequestId: diagnostics.baseSceneSurfaceRequestId,
-			baseSceneSelectionKey: diagnostics.baseSceneSelectionKey,
-			baseSameDeviceForComputeAndRender:
-				diagnostics.baseSameDeviceForComputeAndRender,
-			baseSelectedMonthIndex: diagnostics.baseSelectedMonthIndex,
-			baseSelectedHourIndex: diagnostics.baseSelectedHourIndex,
-			baseSelectedTimeIndex: diagnostics.baseSelectedTimeIndex,
-			baseRenderContextTimeIndex: diagnostics.baseRenderContextTimeIndex,
-			baseAcceptedUtciRange: diagnostics.baseAcceptedUtciRange,
-			comparisonSurfaceRequestId: diagnostics.comparisonSurfaceRequestId,
-			comparisonSelectionKey: diagnostics.comparisonSelectionKey,
-			comparisonSameDeviceForComputeAndRender:
-				diagnostics.comparisonSameDeviceForComputeAndRender,
-			comparisonUtciSurfaceSource:
-				diagnostics.comparisonUtciSurfaceDiagnostics.utciSurfaceSource,
-			comparisonSelectedHourTransferCount:
-				diagnostics.comparisonUtciSurfaceDiagnostics.selectedHourTransferCount,
-			comparisonDataTextureBuildCount:
-				diagnostics.comparisonUtciSurfaceDiagnostics.dataTextureBuildCount,
-			comparisonGpuResidentCopyStatus:
-				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyStatus,
-			comparisonGpuResidentCopyError:
-				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyError,
-			comparisonGpuResidentCopyRequestId:
-				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyRequestId,
-		};
+		win.__utciRenderDiagnostics__ = buildMainRouteUtciDiagnostics(diagnostics);
 	}
 
 	function handleRendererDiagnostics(diagnostics: {
@@ -436,7 +315,7 @@
 			setLoading(true);
 			setError(null);
 			setAnalysisId(id);
-			await loadAnalysisData(id);
+			await loadAnalysisData(id, undefined, { metadataOnly: true });
 
 			if (model && $analysisStore) {
 				const bounds = calculateModelBounds(model);
@@ -620,14 +499,17 @@
 
 	$: if (typeof window !== "undefined") {
 		updateUtciRenderDiagnostics({
-			utciRenderDiagnosticsEnabled,
-			utciOnDemandMode,
-			utciRenderMode,
-			resolvedUtciSurfaceBackend,
+			enabled: utciRenderDiagnosticsEnabled,
+			utciOnDemand: utciOnDemandMode,
+			utciRenderRequested: utciRenderMode,
+			utciRenderResolved: resolvedUtciSurfaceBackend,
 			rendererBackend,
-			baseUtciSurfaceDiagnostics: liveRouteState.base.renderSurfaceDiagnostics,
-			comparisonUtciSurfaceDiagnostics:
+			rendererRequiredLimits,
+			rendererDeviceLimits,
+			baseSurfaceDiagnostics: liveRouteState.base.renderSurfaceDiagnostics,
+			comparisonSurfaceDiagnostics:
 				liveRouteState.comparison.renderSurfaceDiagnostics,
+			lastBaseGpuResidentCopyFailure,
 			baseRenderTransport: liveRouteState.base.renderTransport,
 			comparisonRenderTransport: liveRouteState.comparison.renderTransport,
 			baseLiveReady,

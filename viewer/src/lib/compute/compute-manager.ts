@@ -10,7 +10,7 @@ import type {
 import { parseEPW } from '$lib/compute/epw-parser';
 import { getSunVectors } from '$lib/compute/sunpath';
 import { getTregenzaDome } from '$lib/compute/tregenza';
-import { canonicalGridPoints } from '$lib/parity/gridCanonical';
+import { canonicalGridPoints } from '$lib/compute/canonicalGrid';
 
 /**
  * Rotate a direction vector from the Python/ladybug Z-up convention

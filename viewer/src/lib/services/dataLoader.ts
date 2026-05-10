@@ -15,6 +15,7 @@ import type {
 	HourStatistics,
 	UtciStorage
 } from '$lib/types/analysis';
+import { canonicalGridPoints } from '$lib/compute/canonicalGrid';
 
 // Data base path: strip /viewer/build from base path to get project root
 // e.g., /fast-utci/viewer/build -> /fast-utci
@@ -240,6 +241,71 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
 		metadata,
 		data: binaryData
 	};
+}
+
+/**
+ * Load analysis metadata without fetching UTCI binary data.
+ */
+export async function loadAnalysisMetadataOnly(
+	analysisId: string,
+	dataDir?: string
+): Promise<Analysis> {
+	const dataBasePath = getDataBasePath();
+	const baseDataDir = dataDir || `${dataBasePath}/data/analyses`;
+	const metadataPath = `${baseDataDir}/${analysisId}.json`;
+
+	console.log(`[LOAD] Loading analysis metadata: ${analysisId}`);
+
+	const metadata = {
+		...(await loadMetadata(metadataPath)),
+		source_analysis_id: analysisId
+	};
+	const positions =
+		metadata.bounds && metadata.grid_size > 0
+			? canonicalGridPointsToAnalysisPositions({
+					bounds: metadata.bounds,
+					gridSize: metadata.grid_size,
+					coordinateSystem: metadata.coordinate_system,
+					zHeight: metadata.bounds.z
+				})
+			: new Float32Array(0);
+	const derivedNumPositions = positions.length / 3;
+	if (derivedNumPositions > 0 && derivedNumPositions !== metadata.num_positions) {
+		throw new Error(
+			`Metadata-derived grid point count (${derivedNumPositions}) does not match metadata num_positions (${metadata.num_positions}) for ${analysisId}`
+		);
+	}
+
+	return {
+		metadata,
+		data: {
+			numPositions: derivedNumPositions,
+			numHours: metadata.hours.length,
+			positions,
+			utciByHour: []
+		}
+	};
+}
+
+function canonicalGridPointsToAnalysisPositions(params: {
+	bounds: NonNullable<Analysis['metadata']['bounds']>;
+	gridSize: number;
+	coordinateSystem: Analysis['metadata']['coordinate_system'];
+	zHeight?: number;
+}): Float32Array {
+	const canonicalGrid = canonicalGridPoints(params);
+	if (params.coordinateSystem !== 'xy_ground') {
+		return canonicalGrid.points;
+	}
+
+	const points = canonicalGrid.points;
+	const analysisPositions = new Float32Array(points.length);
+	for (let i = 0; i < points.length; i += 3) {
+		analysisPositions[i] = points[i];
+		analysisPositions[i + 1] = -points[i + 2];
+		analysisPositions[i + 2] = points[i + 1];
+	}
+	return analysisPositions;
 }
 
 /**

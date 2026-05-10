@@ -93,6 +93,17 @@
 
 	let validationCache: any = null;
 
+	function hasLoadedMetricData(analysis: Analysis | null): boolean {
+		if (!analysis) return false;
+		if (analysis.metadata.analysis_type === "single_hour") {
+			return ((analysis.data as any).utciValues?.length ?? 0) > 0;
+		}
+		return (
+			analysis.data.utciStorage != null ||
+			(analysis.data.utciByHour?.length ?? 0) > 0
+		);
+	}
+
 	async function loadValidation() {
 		try {
 			if (!validationCache) {
@@ -100,7 +111,7 @@
 			}
 			const validation = validationCache;
 
-			if ($analysisStore && validation) {
+			if ($analysisStore && validation && hasLoadedMetricData($analysisStore)) {
 				validationStats = compareWithValidation(
 					$analysisStore,
 					validation,
@@ -121,7 +132,13 @@
 	}
 
 	async function updateComparison(hourIndex: number) {
-		if (!$analysisStore || !validationLoaded || !validationCache) return;
+		if (
+			!$analysisStore ||
+			!validationLoaded ||
+			!validationCache ||
+			!hasLoadedMetricData($analysisStore)
+		)
+			return;
 
 		try {
 			validationStats = compareWithValidation(
