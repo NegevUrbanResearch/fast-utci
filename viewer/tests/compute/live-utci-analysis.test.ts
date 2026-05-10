@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
 import { createLiveUtciAnalysisFromCompute } from '$lib/compute/liveUtciAnalysis';
+import {
+	buildSelectedHourLiveAnalysis,
+	resolveAcceptedGpuResidentUtciRange
+} from '$lib/compute/liveUtciSelectedHour';
 import type { AnalysisMetadata } from '$lib/types/analysis';
 import {
 	clearComputeTelemetryHistory,
@@ -69,6 +73,31 @@ const createSerializedBvhFixture = () => {
 		}
 	};
 };
+
+const createBaseAnalysisFixture = () => ({
+	metadata: {
+		analysis_type: 'full_day' as const,
+		num_positions: 3,
+		hours: Array.from({ length: 24 }, (_, hour) => `${hour.toString().padStart(2, '0')}:00`),
+		utci_range: { min: -10, max: 50 },
+		grid_size: 2,
+		coordinate_system: 'xy_ground' as const,
+		model_file: 'test.glb',
+		num_months: 12,
+		hour_statistics: Array.from({ length: 24 * 12 }, (_, index) => ({
+			min: -20 + index,
+			max: 10 + index,
+			mean: -5 + index
+		}))
+	},
+	data: {
+		numPositions: 3,
+		numHours: 24 * 12,
+		positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+		utciByHour: Array.from({ length: 24 * 12 }, () => new Float32Array([0, 0, 0])),
+		shadingIndex: new Float32Array([0.1, 0.2, 0.3])
+	}
+});
 
 const createFakePipeline = () => {
 	const uploadStaticData = vi.fn().mockResolvedValue(undefined);
@@ -274,6 +303,62 @@ describe('liveUtciAnalysis adapter', () => {
 		expect(result.metadata.num_months).toBe(12);
 		expect(result.data.numHours).toBe(288);
 		expect(readUtcisSlice).toHaveBeenCalledTimes(288);
+	});
+});
+
+describe('selected-hour live UTCI helpers', () => {
+	it('builds a single-hour analysis and resolves display ranges for selected-hour rendering', () => {
+		const base = createBaseAnalysisFixture();
+		const utciValues = new Float32Array([12.5, 18.25, 5.75]);
+
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues,
+			monthIndex: 2,
+			timeIndex: 59
+		});
+
+		expect(analysis.metadata.analysis_type).toBe('single_hour');
+		expect(analysis.metadata.num_positions).toBe(3);
+		expect(analysis.metadata.num_months).toBe(1);
+		expect(analysis.metadata.utci_range).toEqual({ min: 5.75, max: 18.25 });
+		expect(analysis.data.numHours).toBe(1);
+		expect(analysis.data.utciValues).toBe(utciValues);
+		expect(analysis.data.utciByHour).toEqual([utciValues]);
+		expect(analysis.data.positions).toBe(base.data.positions);
+		expect(analysis.data.shadingIndex).toBe(base.data.shadingIndex);
+		expect((analysis.data as typeof analysis.data & { selectedMonthIndex: number }).selectedMonthIndex).toBe(2);
+		expect((analysis.data as typeof analysis.data & { selectedTimeIndex: number }).selectedTimeIndex).toBe(59);
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'discrete',
+				selectedHourUtci: utciValues
+			})
+		).toEqual({ min: 5.75, max: 18.25 });
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'normalized',
+				selectedHourUtci: utciValues
+			})
+		).toEqual({ min: 28, max: 81 });
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'discrete',
+				selectedHourUtci: new Float32Array([Number.NaN, Number.POSITIVE_INFINITY])
+			})
+		).toEqual({ min: -20, max: 60 });
 	});
 });
 

@@ -44,6 +44,8 @@ const defaultComparisonState: ComparisonState = {
 	error: null
 };
 
+let activeComparisonRequestToken = 0;
+
 /**
  * Comparison store
  */
@@ -183,6 +185,8 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		return;
 	}
 
+	const requestToken = ++activeComparisonRequestToken;
+
 	// Check if user is trying to compare base with itself
 	// (This would happen if the comparison ID matches the base ID)
 	// For now we allow it but log a warning
@@ -200,6 +204,7 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		isLoading: true,
 		error: null,
 		comparisonAnalysisId,
+		comparisonAnalysis: null,
 		curtainPosition: newCurtainPosition
 	}));
 
@@ -207,21 +212,40 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		// Load comparison analysis
 		const analysis = await loadAnalysis(comparisonAnalysisId);
 
-		comparisonStore.update((state) => ({
-			...state,
-			comparisonAnalysis: analysis,
-			isLoading: false
-		}));
+		comparisonStore.update((state) => {
+			if (
+				requestToken !== activeComparisonRequestToken ||
+				state.comparisonAnalysisId !== comparisonAnalysisId
+			) {
+				return state;
+			}
+
+			return {
+				...state,
+				comparisonAnalysis: analysis,
+				isLoading: false
+			};
+		});
 
 		console.log(`[COMPARISON] Loaded comparison analysis: ${comparisonAnalysisId}`);
 	} catch (error) {
 		console.error('[COMPARISON] Failed to load comparison analysis:', error);
 
-		comparisonStore.update((state) => ({
-			...state,
-			isLoading: false,
-			error: error instanceof Error ? error.message : 'Failed to load comparison analysis'
-		}));
+		comparisonStore.update((state) => {
+			if (
+				requestToken !== activeComparisonRequestToken ||
+				state.comparisonAnalysisId !== comparisonAnalysisId
+			) {
+				return state;
+			}
+
+			return {
+				...state,
+				isLoading: false,
+				comparisonAnalysis: null,
+				error: error instanceof Error ? error.message : 'Failed to load comparison analysis'
+			};
+		});
 	}
 }
 
@@ -230,6 +254,7 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
  */
 export function stopComparison(): void {
 	console.log('[COMPARISON] Stopping comparison mode');
+	activeComparisonRequestToken += 1;
 
 	comparisonStore.set({
 		...defaultComparisonState,

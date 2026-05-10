@@ -1,0 +1,1034 @@
+import type { Group } from 'three';
+import type { Analysis } from '$lib/types/analysis';
+import {
+	createLiveSelectedHourController,
+	type LiveSelectedHourController,
+	type LiveSelectedHourControllerRequest,
+	type LiveSelectedHourControllerState,
+	type LiveSelectedHourControllerSurfaceDiagnostics,
+	type LiveSelectedHourSessionConfig
+} from '$lib/compute/liveSelectedHourController';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
+import { getEpwUrlForAnalysis } from '$lib/compute/projectWeather';
+import {
+	createLiveSelectedHourPublishedRenderContext,
+	type LiveSelectedHourPublishedRenderContext,
+	type LiveSelectedHourRangeOverride
+} from '$lib/compute/liveSelectedHourRenderContext';
+import type { UtciRenderMode } from '$lib/utciRenderMode';
+import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
+import { resolveProjectId } from '$lib/utils/analysisPaths';
+
+export type LiveSelectedHourRouteInputs = {
+	enabled: boolean;
+	analysisId: string | null;
+	baseAnalysis: Analysis | null;
+	baseModel: Group | null;
+	selection: {
+		monthIndex: number;
+		hourIndex: number;
+		timeIndex: number;
+		selectionKey: string;
+	};
+	colorMode: 'normalized' | 'discrete';
+	utciRenderMode: UtciRenderMode;
+	rendererBackend: 'unknown' | 'webgpu';
+	rendererDevice?: GPUDevice;
+	utciSurfaceBackend: 'dataTexture' | 'gpuNative';
+	comparison: {
+		active: boolean;
+		analysisId: string | null;
+		sourceAnalysis: Analysis | null;
+		model: Group | null;
+		rendererDevice?: GPUDevice;
+	};
+};
+
+export type LiveSelectedHourRouteState = {
+	base: LiveSelectedHourControllerState;
+	comparison: LiveSelectedHourControllerState;
+	baseDisplayAnalysis: Analysis | null;
+	comparisonDisplayAnalysis: Analysis | null | undefined;
+	baseHasVisibleLiveSurface: boolean;
+	comparisonHasVisibleLiveSurface: boolean;
+	baseSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
+	comparisonSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null | undefined;
+	baseSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
+	comparisonSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
+	baseRenderContext: LiveSelectedHourPublishedRenderContext | null;
+	comparisonRenderContext: LiveSelectedHourPublishedRenderContext | null | undefined;
+	baseReady: boolean;
+	comparisonReady: boolean;
+	comparisonSourceAnalysisId: string | null;
+	liveUnifiedRange: LiveSelectedHourRangeOverride | null;
+};
+
+export type LiveSelectedHourRouteHost = {
+	setRouteInputs(inputs: LiveSelectedHourRouteInputs): void;
+	handleBaseSurfaceDiagnostics(diagnostics: LiveSelectedHourControllerSurfaceDiagnostics): void;
+	handleComparisonSurfaceDiagnostics(
+		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
+	): void;
+	getState(): LiveSelectedHourRouteState;
+	subscribe(listener: (state: LiveSelectedHourRouteState) => void): () => void;
+	flush(): Promise<void>;
+	dispose(): void;
+};
+
+export type LiveSelectedHourRouteHostDeps = {
+	createController?: () => LiveSelectedHourController;
+	prepareSession?: NonNullable<
+		Parameters<typeof createLiveSelectedHourController>[0]
+	>['prepareSession'];
+	resolveEpwUrl?: (params: {
+		analysisId?: string | null;
+		fallbackProjectId?: string | null;
+	}) => string;
+	dataBasePath?: string;
+};
+
+type ControllerSlot = 'base' | 'comparison';
+
+type ComparisonSourceContext = {
+	analysisId: string;
+	analysis: Analysis;
+	model: Group;
+	rendererDevice?: GPUDevice;
+};
+
+type SelectionPlan = {
+	preferGpuResident: boolean;
+	preferredDevice?: GPUDevice;
+	controllerIdentity: string;
+	selectionTriggerKey: string;
+};
+
+type PublishedSurfaceSnapshot = {
+	controllerIdentity: string;
+	selectionTriggerKey: string;
+	analysis: Analysis;
+	surfaceIdentity: LiveSelectedHourSurfaceIdentity;
+	renderContext: LiveSelectedHourPublishedRenderContext;
+};
+
+const objectIdentityIds = new WeakMap<object, number>();
+let nextObjectIdentityId = 1;
+
+const IDLE_CONTROLLER_STATE: LiveSelectedHourControllerState = {
+	analysis: null,
+	acceptedGpuResidentOutput: null,
+	surfaceIdentity: null,
+	loading: false,
+	error: null,
+	renderTransport: 'idle',
+	sameDeviceForComputeAndRender: null,
+	pendingRenderUpdateStartedAt: undefined,
+	renderSurfaceDiagnostics: {},
+	ready: false,
+	renderReady: false,
+	awaitingGpuSurface: false
+};
+
+function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteState {
+	return {
+		...state,
+		base: {
+			...state.base,
+			surfaceIdentity: state.base.surfaceIdentity ? { ...state.base.surfaceIdentity } : null,
+			renderSurfaceDiagnostics: { ...state.base.renderSurfaceDiagnostics }
+		},
+		comparison: {
+			...state.comparison,
+			surfaceIdentity: state.comparison.surfaceIdentity
+				? { ...state.comparison.surfaceIdentity }
+				: null,
+			renderSurfaceDiagnostics: { ...state.comparison.renderSurfaceDiagnostics }
+		},
+		baseSurfaceIdentity: state.baseSurfaceIdentity ? { ...state.baseSurfaceIdentity } : null,
+		baseSceneSurfaceIdentity: state.baseSceneSurfaceIdentity
+			? { ...state.baseSceneSurfaceIdentity }
+			: null,
+		comparisonSurfaceIdentity: state.comparisonSurfaceIdentity
+			? { ...state.comparisonSurfaceIdentity }
+			: null,
+		comparisonSceneSurfaceIdentity: state.comparisonSceneSurfaceIdentity
+			? { ...state.comparisonSceneSurfaceIdentity }
+			: state.comparisonSceneSurfaceIdentity,
+		baseRenderContext: state.baseRenderContext ? { ...state.baseRenderContext } : null,
+		comparisonRenderContext: state.comparisonRenderContext
+			? { ...state.comparisonRenderContext }
+			: state.comparisonRenderContext,
+		liveUnifiedRange: state.liveUnifiedRange ? { ...state.liveUnifiedRange } : null
+	};
+}
+
+function buildControllerIdentity(params: {
+	analysisId: string;
+	analysis: Analysis;
+	model: Group;
+	preferredDevice?: GPUDevice;
+}): string {
+	let analysisIdentity = objectIdentityIds.get(params.analysis);
+	if (analysisIdentity === undefined) {
+		analysisIdentity = nextObjectIdentityId++;
+		objectIdentityIds.set(params.analysis, analysisIdentity);
+	}
+
+	let modelIdentity = objectIdentityIds.get(params.model);
+	if (modelIdentity === undefined) {
+		modelIdentity = nextObjectIdentityId++;
+		objectIdentityIds.set(params.model, modelIdentity);
+	}
+
+	let deviceIdentity: number | null = null;
+	if (params.preferredDevice) {
+		deviceIdentity = objectIdentityIds.get(params.preferredDevice) ?? null;
+		if (deviceIdentity == null) {
+			deviceIdentity = nextObjectIdentityId++;
+			objectIdentityIds.set(params.preferredDevice, deviceIdentity);
+		}
+	}
+
+	return [
+		params.analysisId,
+		params.analysis.metadata.model_file,
+		`analysis:${analysisIdentity}`,
+		`model:${modelIdentity}`,
+		`device:${deviceIdentity ?? 'none'}`,
+		params.preferredDevice ? 'renderer' : 'standalone'
+	].join('|');
+}
+
+function buildSelectionTriggerKey(params: {
+	controllerIdentity: string;
+	selectionKey: string;
+	colorMode: 'normalized' | 'discrete';
+	preferGpuResident: boolean;
+}): string {
+	return [
+		params.controllerIdentity,
+		params.selectionKey,
+		params.colorMode,
+		params.preferGpuResident ? 'gpu' : 'cpu'
+	].join('|');
+}
+
+function isFullDayAnalysis(analysis: Analysis | null): analysis is Analysis {
+	return analysis?.metadata.analysis_type === 'full_day';
+}
+
+function resolveComparisonSourceContext(
+	inputs: LiveSelectedHourRouteInputs | null
+): ComparisonSourceContext | null {
+	if (
+		!inputs?.comparison.active ||
+		!inputs.comparison.analysisId ||
+		inputs.comparison.model == null ||
+		!isFullDayAnalysis(inputs.comparison.sourceAnalysis)
+	) {
+		return null;
+	}
+
+	const sourceAnalysisId =
+		inputs.comparison.sourceAnalysis.metadata.source_analysis_id ??
+		inputs.comparison.analysisId;
+	if (sourceAnalysisId !== inputs.comparison.analysisId) {
+		return null;
+	}
+
+	return {
+		analysisId: inputs.comparison.analysisId,
+		analysis: inputs.comparison.sourceAnalysis,
+		model: inputs.comparison.model,
+		rendererDevice: inputs.comparison.rendererDevice
+	};
+}
+
+function resolvePreferGpuResident(inputs: LiveSelectedHourRouteInputs | null): boolean {
+	return (
+		inputs?.rendererBackend === 'webgpu' && inputs.utciSurfaceBackend === 'gpuNative'
+	);
+}
+
+function shouldDeferLiveStartup(inputs: LiveSelectedHourRouteInputs | null): boolean {
+	if (!inputs?.enabled) return false;
+	if (inputs.utciRenderMode === 'data') {
+		return false;
+	}
+	return (
+		inputs.rendererBackend !== 'webgpu' ||
+		inputs.rendererDevice == null ||
+		inputs.utciSurfaceBackend !== 'gpuNative'
+	);
+}
+
+function buildSelectionPlan(params: {
+	analysisId: string;
+	analysis: Analysis;
+	model: Group;
+	rendererBackend: LiveSelectedHourRouteInputs['rendererBackend'];
+	rendererDevice?: GPUDevice;
+	utciSurfaceBackend: LiveSelectedHourRouteInputs['utciSurfaceBackend'];
+	selectionKey: string;
+	colorMode: LiveSelectedHourRouteInputs['colorMode'];
+}): SelectionPlan {
+	const preferGpuResident =
+		params.rendererBackend === 'webgpu' && params.utciSurfaceBackend === 'gpuNative';
+	const preferredDevice = preferGpuResident ? params.rendererDevice : undefined;
+	const controllerIdentity = buildControllerIdentity({
+		analysisId: params.analysisId,
+		analysis: params.analysis,
+		model: params.model,
+		preferredDevice
+	});
+	return {
+		preferGpuResident,
+		preferredDevice,
+		controllerIdentity,
+		selectionTriggerKey: buildSelectionTriggerKey({
+			controllerIdentity,
+			selectionKey: params.selectionKey,
+			colorMode: params.colorMode,
+			preferGpuResident
+		})
+	};
+}
+
+function resolveDisplayRange(params: {
+	analysis: Analysis;
+	colorMode: 'normalized' | 'discrete';
+	hourIndex: number;
+	monthIndex: number;
+}): { utciMin: number; utciMax: number } {
+	return getUtciRangeForDisplay(
+		params.analysis.metadata,
+		params.colorMode,
+		params.hourIndex,
+		params.monthIndex
+	);
+}
+
+function syncRequestedRenderContextAnalysis(params: {
+	renderContext: LiveSelectedHourPublishedRenderContext;
+	analysis: Analysis;
+}): LiveSelectedHourPublishedRenderContext {
+	return createLiveSelectedHourPublishedRenderContext({
+		...params.renderContext,
+		analysis: params.analysis
+	});
+}
+
+export function createLiveSelectedHourRouteHost(
+	deps: LiveSelectedHourRouteHostDeps = {}
+): LiveSelectedHourRouteHost {
+	const createController =
+		deps.createController ??
+		(() =>
+			createLiveSelectedHourController({
+				prepareSession: deps.prepareSession
+			}));
+	const resolveEpwUrl =
+		deps.resolveEpwUrl ??
+		((params: { analysisId?: string | null; fallbackProjectId?: string | null }) =>
+			getEpwUrlForAnalysis({
+				analysisId: params.analysisId,
+				fallbackProjectId: params.fallbackProjectId,
+				dataBasePath: deps.dataBasePath ?? ''
+			}));
+
+	let disposed = false;
+	let currentInputs: LiveSelectedHourRouteInputs | null = null;
+	let pendingWork = Promise.resolve();
+	let reconcileQueued = false;
+	let baseController = createController();
+	let comparisonController = createController();
+	let baseControllerState = baseController.getState();
+	let comparisonControllerState = comparisonController.getState();
+	let baseControllerIdentity: string | null = null;
+	let comparisonControllerIdentity: string | null = null;
+	let baseSelectionTriggerKey: string | null = null;
+	let comparisonSelectionTriggerKey: string | null = null;
+	let baseRequestedRenderContext: LiveSelectedHourPublishedRenderContext | null = null;
+	let comparisonRequestedRenderContext: LiveSelectedHourPublishedRenderContext | null = null;
+	let baseControllerGeneration = 0;
+	let comparisonControllerGeneration = 0;
+	let basePublishedSurface: PublishedSurfaceSnapshot | null = null;
+	let comparisonPublishedSurface: PublishedSurfaceSnapshot | null = null;
+	let unsubscribeBaseController: () => void = () => undefined;
+	let unsubscribeComparisonController: () => void = () => undefined;
+	const listeners = new Set<(state: LiveSelectedHourRouteState) => void>();
+	let state: LiveSelectedHourRouteState;
+
+	function emit(): void {
+		const snapshot = cloneState(state);
+		for (const listener of listeners) {
+			listener(snapshot);
+		}
+	}
+
+	function publishState(): void {
+		if (
+			baseControllerIdentity &&
+			baseSelectionTriggerKey &&
+			baseRequestedRenderContext != null &&
+			baseControllerState.renderReady &&
+			!baseControllerState.loading &&
+			baseControllerState.error == null &&
+			baseControllerState.surfaceIdentity != null
+		) {
+			basePublishedSurface = {
+				controllerIdentity: baseControllerIdentity,
+				selectionTriggerKey: baseSelectionTriggerKey,
+				analysis: baseControllerState.analysis ?? baseRequestedRenderContext.analysis,
+				surfaceIdentity: { ...baseControllerState.surfaceIdentity },
+				renderContext: baseRequestedRenderContext
+			};
+		}
+
+		if (
+			comparisonControllerIdentity &&
+			comparisonSelectionTriggerKey &&
+			comparisonRequestedRenderContext != null &&
+			comparisonControllerState.renderReady &&
+			!comparisonControllerState.loading &&
+			comparisonControllerState.error == null &&
+			comparisonControllerState.surfaceIdentity != null
+		) {
+			comparisonPublishedSurface = {
+				controllerIdentity: comparisonControllerIdentity,
+				selectionTriggerKey: comparisonSelectionTriggerKey,
+				analysis:
+					comparisonControllerState.analysis ?? comparisonRequestedRenderContext.analysis,
+				surfaceIdentity: { ...comparisonControllerState.surfaceIdentity },
+				renderContext: comparisonRequestedRenderContext
+			};
+		}
+
+		const startupDeferred = shouldDeferLiveStartup(currentInputs);
+		const comparisonSourceContext = resolveComparisonSourceContext(currentInputs);
+		const comparisonActive = currentInputs?.comparison.active ?? false;
+		const comparisonEligible = comparisonSourceContext != null;
+		const liveEnabled = (currentInputs?.enabled ?? false) && !startupDeferred;
+		let baseControllerIsCurrent = false;
+		let basePublishedSurfaceIsCurrent = false;
+		let baseHasVisiblePublishedSurface = false;
+		let baseVisibleSurface: PublishedSurfaceSnapshot | null = null;
+		if (
+			liveEnabled &&
+			currentInputs?.analysisId &&
+			isFullDayAnalysis(currentInputs.baseAnalysis) &&
+			currentInputs.baseModel
+		) {
+			const selectionPlan = buildSelectionPlan({
+				analysisId: currentInputs.analysisId,
+				analysis: currentInputs.baseAnalysis,
+				model: currentInputs.baseModel,
+				rendererBackend: currentInputs.rendererBackend,
+				rendererDevice: currentInputs.rendererDevice,
+				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
+				selectionKey: currentInputs.selection.selectionKey,
+				colorMode: currentInputs.colorMode
+			});
+			baseControllerIsCurrent = baseControllerIdentity === selectionPlan.controllerIdentity;
+			basePublishedSurfaceIsCurrent =
+				baseControllerIsCurrent &&
+				!baseControllerState.loading &&
+				baseControllerState.error == null &&
+				basePublishedSurface?.controllerIdentity === selectionPlan.controllerIdentity &&
+				basePublishedSurface.selectionTriggerKey === selectionPlan.selectionTriggerKey;
+			baseHasVisiblePublishedSurface =
+				basePublishedSurface?.controllerIdentity === selectionPlan.controllerIdentity &&
+				baseControllerIsCurrent &&
+				baseControllerState.error == null;
+			baseVisibleSurface = baseHasVisiblePublishedSurface ? basePublishedSurface : null;
+		}
+
+		let comparisonControllerIsCurrent = false;
+		let comparisonPublishedSurfaceIsCurrent = false;
+		let comparisonHasVisiblePublishedSurface = false;
+		let comparisonVisibleSurface: PublishedSurfaceSnapshot | null = null;
+		if (liveEnabled && comparisonEligible && currentInputs) {
+			const selectionPlan = buildSelectionPlan({
+				analysisId: comparisonSourceContext.analysisId,
+				analysis: comparisonSourceContext.analysis,
+				model: comparisonSourceContext.model,
+				rendererBackend: currentInputs.rendererBackend,
+				rendererDevice:
+					comparisonSourceContext.rendererDevice ?? currentInputs.rendererDevice,
+				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
+				selectionKey: currentInputs.selection.selectionKey,
+				colorMode: currentInputs.colorMode
+			});
+			comparisonControllerIsCurrent =
+				comparisonControllerIdentity === selectionPlan.controllerIdentity;
+			comparisonPublishedSurfaceIsCurrent =
+				comparisonControllerIsCurrent &&
+				!comparisonControllerState.loading &&
+				comparisonControllerState.error == null &&
+				comparisonPublishedSurface?.controllerIdentity === selectionPlan.controllerIdentity &&
+				comparisonPublishedSurface.selectionTriggerKey === selectionPlan.selectionTriggerKey;
+			comparisonHasVisiblePublishedSurface =
+				comparisonPublishedSurface?.controllerIdentity === selectionPlan.controllerIdentity &&
+				comparisonControllerIsCurrent &&
+				comparisonControllerState.error == null;
+			comparisonVisibleSurface = comparisonHasVisiblePublishedSurface
+				? comparisonPublishedSurface
+				: null;
+		}
+
+		const exposedBaseState =
+			liveEnabled && baseControllerIsCurrent ? baseControllerState : IDLE_CONTROLLER_STATE;
+		const exposedComparisonState =
+			liveEnabled && comparisonEligible && comparisonControllerIsCurrent
+				? comparisonControllerState
+				: IDLE_CONTROLLER_STATE;
+		const baseBootstrapAnalysis =
+			liveEnabled &&
+			!baseVisibleSurface &&
+			baseControllerIsCurrent &&
+			baseControllerState.error == null &&
+			baseRequestedRenderContext != null
+				? baseControllerState.analysis ?? baseRequestedRenderContext.analysis
+				: null;
+		const comparisonBootstrapAnalysis =
+			!comparisonActive
+				? undefined
+				: !comparisonEligible
+					? null
+					: liveEnabled &&
+						  !comparisonVisibleSurface &&
+						  comparisonControllerIsCurrent &&
+						  comparisonControllerState.error == null &&
+						  comparisonRequestedRenderContext != null
+						? comparisonControllerState.analysis ??
+							comparisonRequestedRenderContext.analysis
+						: null;
+		const baseDisplayAnalysis =
+			!(currentInputs?.enabled ?? false)
+				? currentInputs?.baseAnalysis ?? null
+				: startupDeferred
+					? null
+				: baseVisibleSurface
+					? baseVisibleSurface.analysis
+					: baseBootstrapAnalysis;
+		const comparisonDisplayAnalysis = !comparisonActive
+			? undefined
+			: !comparisonEligible
+				? null
+				: !(currentInputs?.enabled ?? false)
+					? comparisonSourceContext.analysis
+					: startupDeferred
+						? null
+					: comparisonVisibleSurface
+						? comparisonVisibleSurface.analysis
+						: comparisonBootstrapAnalysis;
+		const baseSceneSurfaceIdentity =
+			!liveEnabled
+				? null
+				: baseControllerIsCurrent && baseControllerState.error == null
+					? baseControllerState.surfaceIdentity
+					: baseVisibleSurface
+						? baseVisibleSurface.surfaceIdentity
+						: null;
+		const comparisonSceneSurfaceIdentity = !comparisonActive
+			? undefined
+			: !comparisonEligible
+				? null
+				: !liveEnabled
+					? null
+					: comparisonControllerIsCurrent && comparisonControllerState.error == null
+						? comparisonControllerState.surfaceIdentity
+						: comparisonVisibleSurface
+							? comparisonVisibleSurface.surfaceIdentity
+							: null;
+
+		let liveUnifiedRange: LiveSelectedHourRangeOverride | null = null;
+		if (
+			liveEnabled &&
+			comparisonEligible &&
+			baseVisibleSurface &&
+			comparisonVisibleSurface
+		) {
+			const baseRange = resolveDisplayRange({
+				analysis: baseVisibleSurface.analysis,
+				colorMode: baseVisibleSurface.renderContext.colorMode,
+				hourIndex: baseVisibleSurface.renderContext.hourIndex,
+				monthIndex: baseVisibleSurface.renderContext.monthIndex
+			});
+			const comparisonRange = resolveDisplayRange({
+				analysis: comparisonVisibleSurface.analysis,
+				colorMode: comparisonVisibleSurface.renderContext.colorMode,
+				hourIndex: comparisonVisibleSurface.renderContext.hourIndex,
+				monthIndex: comparisonVisibleSurface.renderContext.monthIndex
+			});
+			liveUnifiedRange = {
+				utciMin: Math.min(baseRange.utciMin, comparisonRange.utciMin),
+				utciMax: Math.max(baseRange.utciMax, comparisonRange.utciMax)
+			};
+		}
+		const currentBaseRequestedRenderContext =
+			liveEnabled &&
+			baseControllerIsCurrent &&
+			baseControllerState.error == null &&
+			baseRequestedRenderContext != null
+				? baseRequestedRenderContext
+				: null;
+		const currentComparisonRequestedRenderContext =
+			liveEnabled &&
+			comparisonEligible &&
+			comparisonControllerIsCurrent &&
+			comparisonControllerState.error == null &&
+			comparisonRequestedRenderContext != null
+				? comparisonRequestedRenderContext
+				: null;
+		const baseRenderContext = currentBaseRequestedRenderContext
+				? createLiveSelectedHourPublishedRenderContext({
+						...currentBaseRequestedRenderContext,
+						analysis:
+							baseControllerState.analysis ?? currentBaseRequestedRenderContext.analysis,
+						rangeOverride: liveUnifiedRange
+				  })
+				: liveEnabled && baseVisibleSurface
+					? createLiveSelectedHourPublishedRenderContext({
+							...baseVisibleSurface.renderContext,
+							rangeOverride: liveUnifiedRange
+					  })
+					: null;
+		const comparisonRenderContext = !comparisonActive
+			? undefined
+			: currentComparisonRequestedRenderContext
+				? createLiveSelectedHourPublishedRenderContext({
+						...currentComparisonRequestedRenderContext,
+						analysis:
+							comparisonControllerState.analysis ??
+							currentComparisonRequestedRenderContext.analysis,
+						rangeOverride: liveUnifiedRange
+				  })
+				: liveEnabled && comparisonEligible && comparisonVisibleSurface
+					? createLiveSelectedHourPublishedRenderContext({
+							...comparisonVisibleSurface.renderContext,
+							rangeOverride: liveUnifiedRange
+					  })
+					: null;
+
+		state = {
+			base: exposedBaseState,
+			comparison: exposedComparisonState,
+			baseDisplayAnalysis,
+			comparisonDisplayAnalysis,
+			baseHasVisibleLiveSurface: liveEnabled && baseVisibleSurface != null,
+			comparisonHasVisibleLiveSurface:
+				liveEnabled && comparisonEligible && comparisonVisibleSurface != null,
+			baseSceneSurfaceIdentity,
+			comparisonSceneSurfaceIdentity,
+			baseSurfaceIdentity: liveEnabled && baseVisibleSurface
+				? baseVisibleSurface.surfaceIdentity
+				: null,
+			comparisonSurfaceIdentity:
+				liveEnabled && comparisonEligible && comparisonVisibleSurface
+					? comparisonVisibleSurface.surfaceIdentity
+					: null,
+			baseRenderContext,
+			comparisonRenderContext,
+			baseReady:
+				liveEnabled && basePublishedSurfaceIsCurrent
+					? exposedBaseState.renderReady
+					: startupDeferred
+						? false
+						: !liveEnabled && currentInputs?.baseAnalysis != null,
+			comparisonReady: !comparisonActive
+				? true
+				: !comparisonEligible
+					? false
+					: liveEnabled
+						? comparisonPublishedSurfaceIsCurrent
+							? exposedComparisonState.renderReady
+							: false
+						: startupDeferred
+							? false
+							: true,
+			comparisonSourceAnalysisId: comparisonSourceContext?.analysisId ?? null,
+			liveUnifiedRange
+		};
+		emit();
+	}
+
+	function bindController(slot: ControllerSlot, controller: LiveSelectedHourController): () => void {
+		return controller.subscribe((nextState) => {
+			if (slot === 'base') {
+				baseControllerState = nextState;
+			} else {
+				comparisonControllerState = nextState;
+			}
+			publishState();
+		});
+	}
+
+	unsubscribeBaseController = bindController('base', baseController);
+	unsubscribeComparisonController = bindController('comparison', comparisonController);
+
+	function replaceController(slot: ControllerSlot): void {
+		if (slot === 'base') {
+			unsubscribeBaseController();
+			baseController.dispose();
+			baseController = createController();
+			baseControllerState = baseController.getState();
+			baseControllerIdentity = null;
+			baseSelectionTriggerKey = null;
+			baseRequestedRenderContext = null;
+			basePublishedSurface = null;
+			baseControllerGeneration += 1;
+			unsubscribeBaseController = bindController('base', baseController);
+			return;
+		}
+
+		unsubscribeComparisonController();
+		comparisonController.dispose();
+		comparisonController = createController();
+		comparisonControllerState = comparisonController.getState();
+		comparisonControllerIdentity = null;
+		comparisonSelectionTriggerKey = null;
+		comparisonRequestedRenderContext = null;
+		comparisonPublishedSurface = null;
+		comparisonControllerGeneration += 1;
+		unsubscribeComparisonController = bindController('comparison', comparisonController);
+	}
+
+	function queueReconcile(): void {
+		if (disposed) return;
+		reconcileQueued = true;
+		pendingWork = pendingWork
+			.catch(() => undefined)
+			.then(async () => {
+				while (reconcileQueued && !disposed) {
+					reconcileQueued = false;
+					await reconcileLatestInputs();
+				}
+			});
+	}
+
+	function queueTask(task: () => Promise<void>): void {
+		if (disposed) return;
+		pendingWork = pendingWork
+			.catch(() => undefined)
+			.then(async () => {
+				if (disposed) return;
+				await task();
+			});
+	}
+
+	async function requestControllerSelection(
+		controller: LiveSelectedHourController,
+		request: LiveSelectedHourControllerRequest
+	) {
+		return controller.requestSelection(request);
+	}
+
+	function createSessionConfig(params: {
+		analysisId: string;
+		analysis: Analysis;
+		model: Group;
+		preferredDevice?: GPUDevice;
+		fallbackProjectId?: string | null;
+	}): LiveSelectedHourSessionConfig {
+		return {
+			analysisId: params.analysisId,
+			base: params.analysis,
+			model: params.model,
+			epwUrl: resolveEpwUrl({
+				analysisId: params.analysisId,
+				fallbackProjectId: params.fallbackProjectId
+			}),
+			preferredDevice: params.preferredDevice
+		};
+	}
+
+	async function reconcileBase(inputs: LiveSelectedHourRouteInputs): Promise<void> {
+		if (
+			!inputs.enabled ||
+			shouldDeferLiveStartup(inputs) ||
+			!inputs.analysisId ||
+			!isFullDayAnalysis(inputs.baseAnalysis) ||
+			!inputs.baseModel
+		) {
+			if (baseControllerIdentity !== null || baseControllerState.ready || baseControllerState.loading) {
+				replaceController('base');
+				publishState();
+			}
+			return;
+		}
+
+		const selectionPlan = buildSelectionPlan({
+			analysisId: inputs.analysisId,
+			analysis: inputs.baseAnalysis,
+			model: inputs.baseModel,
+			rendererBackend: inputs.rendererBackend,
+			rendererDevice: inputs.rendererDevice,
+			utciSurfaceBackend: inputs.utciSurfaceBackend,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode
+		});
+		const controllerIdentity = selectionPlan.controllerIdentity;
+		if (baseControllerIdentity !== controllerIdentity) {
+			if (baseControllerIdentity !== null) {
+				replaceController('base');
+				publishState();
+			}
+			baseControllerIdentity = controllerIdentity;
+			baseSelectionTriggerKey = null;
+			baseRequestedRenderContext = null;
+		}
+
+		const selectionTriggerKey = selectionPlan.selectionTriggerKey;
+		if (baseSelectionTriggerKey === selectionTriggerKey && baseControllerState.error == null) {
+			return;
+		}
+
+		const sessionConfig = createSessionConfig({
+			analysisId: inputs.analysisId,
+			analysis: inputs.baseAnalysis,
+			model: inputs.baseModel,
+			preferredDevice: selectionPlan.preferredDevice,
+			fallbackProjectId: resolveProjectId(inputs.analysisId)
+		});
+		baseSelectionTriggerKey = selectionTriggerKey;
+		baseRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({
+			analysis: inputs.baseAnalysis,
+			monthIndex: inputs.selection.monthIndex,
+			hourIndex: inputs.selection.hourIndex,
+			timeIndex: inputs.selection.timeIndex,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode
+		});
+		const requestResult = await requestControllerSelection(baseController, {
+			sessionKey: controllerIdentity,
+			sessionConfig,
+			monthIndex: inputs.selection.monthIndex,
+			hourIndex: inputs.selection.hourIndex,
+			timeIndex: inputs.selection.timeIndex,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode,
+			preferGpuResident: selectionPlan.preferGpuResident,
+			rendererDevice: selectionPlan.preferredDevice
+		});
+		if (
+			requestResult.accepted &&
+			baseControllerIdentity === controllerIdentity &&
+			baseSelectionTriggerKey === selectionTriggerKey &&
+			baseRequestedRenderContext != null &&
+			requestResult.state.analysis != null
+		) {
+			baseRequestedRenderContext = syncRequestedRenderContextAnalysis({
+				renderContext: baseRequestedRenderContext,
+				analysis: requestResult.state.analysis
+			});
+			publishState();
+		}
+		if (
+			!requestResult.accepted &&
+			baseControllerIdentity === controllerIdentity &&
+			baseSelectionTriggerKey === selectionTriggerKey
+		) {
+			baseSelectionTriggerKey = null;
+			baseRequestedRenderContext = null;
+			publishState();
+		}
+	}
+
+	async function reconcileComparison(inputs: LiveSelectedHourRouteInputs): Promise<void> {
+		const comparisonSourceContext = resolveComparisonSourceContext(inputs);
+		if (
+			!inputs.enabled ||
+			shouldDeferLiveStartup(inputs) ||
+			comparisonSourceContext == null ||
+			comparisonSourceContext.model == null
+		) {
+			if (
+				comparisonControllerIdentity !== null ||
+				comparisonControllerState.ready ||
+				comparisonControllerState.loading
+			) {
+				replaceController('comparison');
+				publishState();
+			}
+			return;
+		}
+
+		const selectionPlan = buildSelectionPlan({
+			analysisId: comparisonSourceContext.analysisId,
+			analysis: comparisonSourceContext.analysis,
+			model: comparisonSourceContext.model,
+			rendererBackend: inputs.rendererBackend,
+			rendererDevice: comparisonSourceContext.rendererDevice ?? inputs.rendererDevice,
+			utciSurfaceBackend: inputs.utciSurfaceBackend,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode
+		});
+		const controllerIdentity = selectionPlan.controllerIdentity;
+		if (comparisonControllerIdentity !== controllerIdentity) {
+			if (comparisonControllerIdentity !== null) {
+				replaceController('comparison');
+				publishState();
+			}
+			comparisonControllerIdentity = controllerIdentity;
+			comparisonSelectionTriggerKey = null;
+			comparisonRequestedRenderContext = null;
+		}
+
+		const selectionTriggerKey = selectionPlan.selectionTriggerKey;
+		if (
+			comparisonSelectionTriggerKey === selectionTriggerKey &&
+			comparisonControllerState.error == null
+		) {
+			return;
+		}
+
+		const sessionConfig = createSessionConfig({
+			analysisId: comparisonSourceContext.analysisId,
+			analysis: comparisonSourceContext.analysis,
+			model: comparisonSourceContext.model,
+			preferredDevice: selectionPlan.preferredDevice,
+			fallbackProjectId: resolveProjectId(comparisonSourceContext.analysisId)
+		});
+		comparisonSelectionTriggerKey = selectionTriggerKey;
+		comparisonRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({
+			analysis: comparisonSourceContext.analysis,
+			monthIndex: inputs.selection.monthIndex,
+			hourIndex: inputs.selection.hourIndex,
+			timeIndex: inputs.selection.timeIndex,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode
+		});
+		const requestResult = await requestControllerSelection(comparisonController, {
+			sessionKey: controllerIdentity,
+			sessionConfig,
+			monthIndex: inputs.selection.monthIndex,
+			hourIndex: inputs.selection.hourIndex,
+			timeIndex: inputs.selection.timeIndex,
+			selectionKey: inputs.selection.selectionKey,
+			colorMode: inputs.colorMode,
+			preferGpuResident: selectionPlan.preferGpuResident,
+			rendererDevice: selectionPlan.preferredDevice
+		});
+		if (
+			requestResult.accepted &&
+			comparisonControllerIdentity === controllerIdentity &&
+			comparisonSelectionTriggerKey === selectionTriggerKey &&
+			comparisonRequestedRenderContext != null &&
+			requestResult.state.analysis != null
+		) {
+			comparisonRequestedRenderContext = syncRequestedRenderContextAnalysis({
+				renderContext: comparisonRequestedRenderContext,
+				analysis: requestResult.state.analysis
+			});
+			publishState();
+		}
+		if (
+			!requestResult.accepted &&
+			comparisonControllerIdentity === controllerIdentity &&
+			comparisonSelectionTriggerKey === selectionTriggerKey
+		) {
+			comparisonSelectionTriggerKey = null;
+			comparisonRequestedRenderContext = null;
+			publishState();
+		}
+	}
+
+	async function reconcileLatestInputs(): Promise<void> {
+		const inputs = currentInputs;
+		if (disposed || inputs == null) {
+			return;
+		}
+
+		await reconcileBase(inputs);
+		await reconcileComparison(inputs);
+		publishState();
+	}
+
+	state = {
+		base: baseControllerState,
+		comparison: comparisonControllerState,
+		baseDisplayAnalysis: null,
+		comparisonDisplayAnalysis: undefined,
+		baseHasVisibleLiveSurface: false,
+		comparisonHasVisibleLiveSurface: false,
+		baseSceneSurfaceIdentity: null,
+		comparisonSceneSurfaceIdentity: undefined,
+		baseSurfaceIdentity: null,
+		comparisonSurfaceIdentity: null,
+		baseRenderContext: null,
+		comparisonRenderContext: undefined,
+		baseReady: false,
+		comparisonReady: true,
+		comparisonSourceAnalysisId: null,
+		liveUnifiedRange: null
+	};
+
+	return {
+		setRouteInputs(inputs) {
+			if (disposed) {
+				return;
+			}
+
+			currentInputs = inputs;
+			publishState();
+			queueReconcile();
+		},
+
+		handleBaseSurfaceDiagnostics(diagnostics) {
+			const controllerAtEvent = baseController;
+			const generationAtEvent = baseControllerGeneration;
+			queueTask(async () => {
+				if (
+					controllerAtEvent !== baseController ||
+					generationAtEvent !== baseControllerGeneration
+				) {
+					return;
+				}
+				await controllerAtEvent.handleRenderSurfaceDiagnostics(diagnostics);
+			});
+		},
+
+		handleComparisonSurfaceDiagnostics(diagnostics) {
+			const controllerAtEvent = comparisonController;
+			const generationAtEvent = comparisonControllerGeneration;
+			queueTask(async () => {
+				if (
+					controllerAtEvent !== comparisonController ||
+					generationAtEvent !== comparisonControllerGeneration
+				) {
+					return;
+				}
+				await controllerAtEvent.handleRenderSurfaceDiagnostics(diagnostics);
+			});
+		},
+
+		getState() {
+			return cloneState(state);
+		},
+
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+
+		async flush() {
+			await pendingWork;
+		},
+
+		dispose() {
+			if (disposed) {
+				return;
+			}
+
+			disposed = true;
+			unsubscribeBaseController();
+			unsubscribeComparisonController();
+			baseController.dispose();
+			comparisonController.dispose();
+			listeners.clear();
+		}
+	};
+}
