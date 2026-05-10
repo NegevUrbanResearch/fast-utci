@@ -13,6 +13,7 @@
 
 	/** When set (e.g. debug page showing only live layer), use this for legend range instead of analysisStore. */
 	export let displayAnalysis: Analysis | null = null;
+	export let utciRangeOverride: { min: number; max: number } | null | undefined = undefined;
 
 	let utciMin = 0;
 	let utciMax = 100;
@@ -27,6 +28,14 @@
 			if (inComparison) {
 				utciMin = $unifiedUtciRange.utciMin;
 				utciMax = $unifiedUtciRange.utciMax;
+			} else if (
+				utciRangeOverride &&
+				Number.isFinite(utciRangeOverride.min) &&
+				Number.isFinite(utciRangeOverride.max) &&
+				utciRangeOverride.max > utciRangeOverride.min
+			) {
+				utciMin = utciRangeOverride.min;
+				utciMax = utciRangeOverride.max;
 			} else {
 				const range = getUtciRangeForDisplay(
 					effectiveAnalysis.metadata,

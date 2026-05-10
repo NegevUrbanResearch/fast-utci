@@ -6,16 +6,14 @@
 	 * When a scenario is selected, it triggers comparison mode instead of replacing
 	 * the base analysis, allowing side-by-side comparison with a curtain slider.
 	 */
-	import { loadAnalysisData } from "$lib/stores/analysisStore";
-	import { cameraStore, focusCameraOnModel } from "$lib/stores/cameraStore";
-	import {
-		comparisonStore,
-		startComparison,
-	} from "$lib/stores/comparisonStore";
-	import { get } from "svelte/store";
-	import type { Writable } from "svelte/store";
+	import { comparisonStore, startComparison } from "$lib/stores/comparisonStore";
 
 	export let projectId: string = "Ben-Gurion";
+	export let mode: "compare" | "replace-analysis" = "compare";
+	export let activeAnalysisId: string | null = null;
+	export let onSelectScenarioAnalysisId:
+		| ((analysisId: string) => Promise<void> | void)
+		| undefined = undefined;
 
 	let isExpanded = false;
 	let selectedCategory = "";
@@ -76,15 +74,62 @@
 		isExpanded = !isExpanded;
 	}
 
+	function resetSelection() {
+		selectedCategory = "";
+		selectedVariant = 1;
+	}
+
+	function syncSelectionFromAnalysisId(analysisId: string | null) {
+		if (mode !== "replace-analysis" || projectId !== "Ben-Gurion") return;
+		if (!analysisId) {
+			resetSelection();
+			return;
+		}
+
+		const match = analysisId.match(
+			/^Ben-Gurion\/([^/]+)\/\1_(\d{2})$/,
+		);
+		if (!match) {
+			resetSelection();
+			return;
+		}
+
+		const [, category, variantToken] = match;
+		const categoryExists = categories.some(({ value }) => value === category);
+		const variant = Number.parseInt(variantToken, 10);
+		if (!categoryExists || !Number.isInteger(variant) || variant < 1 || variant > 10) {
+			resetSelection();
+			return;
+		}
+
+		selectedCategory = category;
+		selectedVariant = variant;
+	}
+
 	async function applyCategory(category: string) {
 		if (projectId !== "Ben-Gurion") return;
-		selectedCategory = category;
-
-		if (selectedCategory) {
-			// Auto-load variant 1 when category is selected
-			selectedVariant = 1;
-			await loadScenario(selectedCategory, 1);
+		if (!category) {
+			resetSelection();
+			return;
 		}
+
+		if (mode === "replace-analysis") {
+			const previousCategory = selectedCategory;
+			const previousVariant = selectedVariant;
+			const success = await loadScenario(category, 1);
+			if (success) {
+				selectedCategory = category;
+				selectedVariant = 1;
+			} else {
+				selectedCategory = previousCategory;
+				selectedVariant = previousVariant;
+			}
+			return;
+		}
+
+		selectedCategory = category;
+		selectedVariant = 1;
+		await loadScenario(selectedCategory, 1);
 	}
 
 	async function handleCategoryChange(event: Event) {
@@ -95,23 +140,39 @@
 
 	async function handleVariantClick(variant: number) {
 		if (projectId !== "Ben-Gurion") return;
+		if (mode === "replace-analysis") {
+			const previousVariant = selectedVariant;
+			const success = await loadScenario(selectedCategory, variant);
+			selectedVariant = success ? variant : previousVariant;
+			return;
+		}
+
 		selectedVariant = variant;
 		await loadScenario(selectedCategory, selectedVariant);
 	}
 
-	async function loadScenario(category: string, variant: number) {
+	async function loadScenario(category: string, variant: number): Promise<boolean> {
 		try {
 			// Construct analysis ID: category/category_variant (e.g., "existing_buildings/existing_buildings_01")
 			const variantStr = variant.toString().padStart(2, "0");
 			const analysisId = `Ben-Gurion/${category}/${category}_${variantStr}`;
+
+			if (mode === "replace-analysis") {
+				if (!onSelectScenarioAnalysisId) return false;
+				console.log(`[SCENARIO] Replacing active analysis: ${analysisId}`);
+				await onSelectScenarioAnalysisId(analysisId);
+				return true;
+			}
 
 			console.log(`[SCENARIO] Starting comparison: ${analysisId}`);
 
 			// Start comparison mode instead of replacing base analysis
 			// This loads the comparison analysis and enables the curtain slider
 			await startComparison(analysisId);
+			return true;
 		} catch (error) {
 			console.error("[SCENARIO] Failed to load scenario:", error);
+			return false;
 		}
 	}
 
@@ -121,27 +182,38 @@
 	$: isProjectSupported = projectId === "Ben-Gurion";
 
 	// Reset selection when comparison is exited (via curtain or any other means)
-	$: if (!isComparing && selectedCategory) {
-		selectedCategory = "";
-		selectedVariant = 1;
+	$: if (mode === "compare" && !isComparing && selectedCategory) {
+		resetSelection();
+	}
+
+	$: if (!isProjectSupported && selectedCategory) {
+		resetSelection();
+	}
+
+	$: if (mode === "replace-analysis") {
+		syncSelectionFromAnalysisId(activeAnalysisId);
 	}
 </script>
 
 <div class="scenario-panel">
 	<div class="scenario-summary">
 		<div class="summary-label">
-			{#if isComparing}
+			{#if mode === "compare" && isComparing}
 				Comparing with
+			{:else if mode === "replace-analysis"}
+				Selected scenario
 			{:else}
 				Active scenario
 			{/if}
 		</div>
 		<div class="summary-value">
-			{#if isLoading}
+			{#if mode === "compare" && isLoading}
 				Loading scenario...
 			{:else if selectedCategory}
 				{categories.find((c) => c.value === selectedCategory)?.label ??
 					"Custom"} · Variant&nbsp;{selectedVariant}
+			{:else if mode === "replace-analysis"}
+				Base analysis
 			{:else}
 				No scenario selected
 			{/if}
@@ -150,9 +222,15 @@
 
 	<button class="scenario-toggle" type="button" on:click={togglePanel}>
 		<span class="toggle-title">Browse variants</span>
-		<span class="toggle-meta"
-			>{isExpanded ? "Hide options" : "Compare design scenarios"}</span
-		>
+		<span class="toggle-meta">
+			{#if isExpanded}
+				Hide options
+			{:else if mode === "replace-analysis"}
+				Load scenario analysis
+			{:else}
+				Compare design scenarios
+			{/if}
+		</span>
 		<span class="chevron" aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
 	</button>
 

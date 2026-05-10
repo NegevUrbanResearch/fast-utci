@@ -46,14 +46,22 @@
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
+	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
-	import nurLogo from "$lib/assets/Nur Logo white.svg";
-	import mitLogo from "$lib/assets/MIT.svg";
-	import bguLogo from "$lib/assets/bgu-logo.svg";
-	import sceLogo from "$lib/assets/sce-logo.svg";
+	import type { Analysis } from "$lib/types/analysis";
+	import {
+		type LiveSelectedHourControllerSurfaceDiagnostics,
+		type LiveSelectedHourRenderTransport,
+	} from "$lib/compute/liveSelectedHourController";
+	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
+	import { projectMainRouteLiveSceneState } from "$lib/compute/liveSelectedHourRouteProjection";
+	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/liveSelectedHourSurfaceIdentity";
+	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
+	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/liveUtciSelectedHour";
+	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
@@ -75,6 +83,7 @@
 		type UtciRendererBackend,
 		type UtciRenderMode,
 	} from "$lib/utciRenderMode";
+	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -97,10 +106,10 @@
 		$page.url.searchParams,
 		DEFAULT_MAIN_UTCI_RENDER_MODE,
 	);
-	type UtciOnDemandMode = "off" | "f32";
-	$: utciOnDemandMode =
-		$page.url.searchParams.get("utciOnDemand") === "f32" ? "f32" : "off";
+	type UtciOnDemandMode = "f32";
+	const utciOnDemandMode: UtciOnDemandMode = "f32";
 	let rendererBackend: UtciRendererBackend = "unknown";
+	let rendererDeviceForMain: GPUDevice | undefined = undefined;
 	$: resolvedUtciSurfaceBackend = resolveMainRouteUtciSurfaceBackend({
 		mode: utciRenderMode,
 		rendererBackend,
@@ -109,11 +118,7 @@
 	$: utciRenderDiagnosticsEnabled =
 		$page.url.searchParams.get("utciRenderDiagnostics") === "1";
 
-	type MainRouteUtciSurfaceDiagnostics = {
-		utciSurfaceSource?: string;
-		selectedHourTransferCount?: number;
-		dataTextureBuildCount?: number;
-	};
+	type MainRouteUtciSurfaceDiagnostics = LiveSelectedHourControllerSurfaceDiagnostics;
 
 	type MainRouteUtciRenderDiagnostics = {
 		utciOnDemand: UtciOnDemandMode;
@@ -125,16 +130,76 @@
 		utciSurfaceSource?: string;
 		selectedHourTransferCount?: number;
 		dataTextureBuildCount?: number;
+		gpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
+		gpuResidentCopyError?: string;
+		gpuResidentCopyRequestId?: number;
+		lastGpuResidentCopyFailureError?: string;
+		lastGpuResidentCopyFailureRequestId?: number;
+		baseRenderTransport: LiveSelectedHourRenderTransport;
+		comparisonRenderTransport: LiveSelectedHourRenderTransport;
+		baseLiveReady: boolean;
+		comparisonLiveReady: boolean;
+		baseSurfaceRequestId?: number;
+		baseSelectionKey?: string;
+		baseSceneSurfaceRequestId?: number;
+		baseSceneSelectionKey?: string;
+		baseSameDeviceForComputeAndRender: boolean | null;
+		baseSelectedMonthIndex: number;
+		baseSelectedHourIndex: number;
+		baseSelectedTimeIndex: number;
+		baseRenderContextTimeIndex?: number;
+		baseAcceptedUtciRange?: { min: number; max: number };
+		comparisonSurfaceRequestId?: number;
+		comparisonSelectionKey?: string;
+		comparisonSameDeviceForComputeAndRender: boolean | null;
+		comparisonUtciSurfaceSource?: string;
+		comparisonSelectedHourTransferCount?: number;
+		comparisonDataTextureBuildCount?: number;
+		comparisonGpuResidentCopyStatus?: "idle" | "pending" | "complete" | "failed";
+		comparisonGpuResidentCopyError?: string;
+		comparisonGpuResidentCopyRequestId?: number;
 	};
 
 	type MainRouteWindow = Window & {
 		__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
 	};
 
-	let utciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics = {};
 	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
 	let rendererDeviceLimits: WebgpuLargeBufferDeviceLimits | undefined = undefined;
-	$: requestLargeWebgpuLimits = utciOnDemandMode === "f32" && utciRenderMode === "gpu";
+	let lastBaseGpuResidentCopyFailure:
+		| { error?: string; requestId?: number }
+		| undefined = undefined;
+	$: requestLargeWebgpuLimits = utciRenderMode !== "data";
+	const liveRouteHost = createLiveSelectedHourRouteHost({
+		dataBasePath: getDataBasePath(),
+	});
+	let liveRouteState = liveRouteHost.getState();
+	const unsubscribeLiveRouteHost = liveRouteHost.subscribe((state) => {
+		liveRouteState = state;
+	});
+	let comparisonModelForLiveCompute: Group | null = null;
+	let baseDisplayedAnalysis: Analysis | null = null;
+	let comparisonRendererDisplayAnalysis: Analysis | null | undefined = undefined;
+	let useLiveUtciOnMainRoute = false;
+	let baseLiveReady = false;
+	let comparisonLiveReady = true;
+	let baseHasVisibleLiveSurface = false;
+	let comparisonHasVisibleLiveSurface = false;
+	let baseSceneAnalysis: Analysis | null = null;
+	let comparisonSceneAnalysis: Analysis | null | undefined = undefined;
+	let baseSceneRenderContext: LiveSelectedHourPublishedRenderContext | null = null;
+	let comparisonSceneRenderContext:
+		| LiveSelectedHourPublishedRenderContext
+		| null
+		| undefined = undefined;
+	let baseSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
+	let comparisonSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null | undefined = undefined;
+	let basePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
+	let comparisonPendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
+	let basePendingRenderUpdateStartedAt: number | undefined = undefined;
+	let comparisonPendingRenderUpdateStartedAt: number | undefined = undefined;
+	let showMainRouteOverlay = false;
+	let showMainRouteComparisonOverlay = false;
 
 	function updateUtciRenderDiagnostics(diagnostics: {
 		utciRenderDiagnosticsEnabled: boolean;
@@ -142,7 +207,25 @@
 		utciRenderMode: UtciRenderMode;
 		resolvedUtciSurfaceBackend: "dataTexture" | "gpuNative";
 		rendererBackend: UtciRendererBackend;
-		utciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
+		baseUtciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
+		comparisonUtciSurfaceDiagnostics: MainRouteUtciSurfaceDiagnostics;
+		baseRenderTransport: LiveSelectedHourRenderTransport;
+		comparisonRenderTransport: LiveSelectedHourRenderTransport;
+		baseLiveReady: boolean;
+		comparisonLiveReady: boolean;
+		baseSurfaceRequestId?: number;
+		baseSelectionKey?: string;
+		baseSceneSurfaceRequestId?: number;
+		baseSceneSelectionKey?: string;
+		baseSameDeviceForComputeAndRender: boolean | null;
+		baseSelectedMonthIndex: number;
+		baseSelectedHourIndex: number;
+		baseSelectedTimeIndex: number;
+		baseRenderContextTimeIndex?: number;
+		baseAcceptedUtciRange?: { min: number; max: number };
+		comparisonSurfaceRequestId?: number;
+		comparisonSelectionKey?: string;
+		comparisonSameDeviceForComputeAndRender: boolean | null;
 	}): void {
 		if (typeof window === "undefined") return;
 
@@ -159,21 +242,65 @@
 			rendererBackend: diagnostics.rendererBackend,
 			rendererRequiredLimits,
 			rendererDeviceLimits,
-			utciSurfaceSource: diagnostics.utciSurfaceDiagnostics.utciSurfaceSource,
+			utciSurfaceSource:
+				diagnostics.baseUtciSurfaceDiagnostics.utciSurfaceSource,
 			selectedHourTransferCount:
-				diagnostics.utciSurfaceDiagnostics.selectedHourTransferCount,
+				diagnostics.baseUtciSurfaceDiagnostics.selectedHourTransferCount,
 			dataTextureBuildCount:
-				diagnostics.utciSurfaceDiagnostics.dataTextureBuildCount,
+				diagnostics.baseUtciSurfaceDiagnostics.dataTextureBuildCount,
+			gpuResidentCopyStatus:
+				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyStatus,
+			gpuResidentCopyError:
+				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyError,
+			gpuResidentCopyRequestId:
+				diagnostics.baseUtciSurfaceDiagnostics.gpuResidentCopyRequestId,
+			lastGpuResidentCopyFailureError:
+				lastBaseGpuResidentCopyFailure?.error,
+			lastGpuResidentCopyFailureRequestId:
+				lastBaseGpuResidentCopyFailure?.requestId,
+			baseRenderTransport: diagnostics.baseRenderTransport,
+			comparisonRenderTransport: diagnostics.comparisonRenderTransport,
+			baseLiveReady: diagnostics.baseLiveReady,
+			comparisonLiveReady: diagnostics.comparisonLiveReady,
+			baseSurfaceRequestId: diagnostics.baseSurfaceRequestId,
+			baseSelectionKey: diagnostics.baseSelectionKey,
+			baseSceneSurfaceRequestId: diagnostics.baseSceneSurfaceRequestId,
+			baseSceneSelectionKey: diagnostics.baseSceneSelectionKey,
+			baseSameDeviceForComputeAndRender:
+				diagnostics.baseSameDeviceForComputeAndRender,
+			baseSelectedMonthIndex: diagnostics.baseSelectedMonthIndex,
+			baseSelectedHourIndex: diagnostics.baseSelectedHourIndex,
+			baseSelectedTimeIndex: diagnostics.baseSelectedTimeIndex,
+			baseRenderContextTimeIndex: diagnostics.baseRenderContextTimeIndex,
+			baseAcceptedUtciRange: diagnostics.baseAcceptedUtciRange,
+			comparisonSurfaceRequestId: diagnostics.comparisonSurfaceRequestId,
+			comparisonSelectionKey: diagnostics.comparisonSelectionKey,
+			comparisonSameDeviceForComputeAndRender:
+				diagnostics.comparisonSameDeviceForComputeAndRender,
+			comparisonUtciSurfaceSource:
+				diagnostics.comparisonUtciSurfaceDiagnostics.utciSurfaceSource,
+			comparisonSelectedHourTransferCount:
+				diagnostics.comparisonUtciSurfaceDiagnostics.selectedHourTransferCount,
+			comparisonDataTextureBuildCount:
+				diagnostics.comparisonUtciSurfaceDiagnostics.dataTextureBuildCount,
+			comparisonGpuResidentCopyStatus:
+				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyStatus,
+			comparisonGpuResidentCopyError:
+				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyError,
+			comparisonGpuResidentCopyRequestId:
+				diagnostics.comparisonUtciSurfaceDiagnostics.gpuResidentCopyRequestId,
 		};
 	}
 
 	function handleRendererDiagnostics(diagnostics: {
 		rendererBackend: UtciRendererBackend;
+		rendererDevice?: GPUDevice;
 		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
 		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
 		error?: string;
 	}): void {
 		rendererBackend = diagnostics.rendererBackend;
+		rendererDeviceForMain = diagnostics.rendererDevice;
 		rendererRequiredLimits = diagnostics.rendererRequiredLimits;
 		rendererDeviceLimits = diagnostics.rendererDeviceLimits;
 	}
@@ -181,7 +308,19 @@
 	function handleUtciSurfaceDiagnostics(
 		diagnostics: MainRouteUtciSurfaceDiagnostics,
 	): void {
-		utciSurfaceDiagnostics = diagnostics;
+		if (diagnostics.gpuResidentCopyStatus === "failed") {
+			lastBaseGpuResidentCopyFailure = {
+				error: diagnostics.gpuResidentCopyError,
+				requestId: diagnostics.gpuResidentCopyRequestId,
+			};
+		}
+		liveRouteHost.handleBaseSurfaceDiagnostics(diagnostics);
+	}
+
+	function handleComparisonUtciSurfaceDiagnostics(
+		diagnostics: MainRouteUtciSurfaceDiagnostics,
+	): void {
+		liveRouteHost.handleComparisonSurfaceDiagnostics(diagnostics);
 	}
 
 	// Tooltip state
@@ -209,6 +348,80 @@
 	// Track comparison mode
 	$: isComparing = $comparisonStore.isComparing;
 	$: currentProjectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
+	$: comparisonModelForLiveCompute =
+		isComparing && comparisonRenderer && !$comparisonStore.modelLoading
+			? comparisonRenderer.getComparisonModel()
+			: null;
+	$: useLiveUtciOnMainRoute =
+		$viewerStore.metricType === "utci" &&
+		$analysisStore?.metadata.analysis_type === "full_day";
+	$: selectedMonthIndex = $viewerStore.currentMonth ?? 7;
+	$: selectedHourIndex = $viewerStore.currentHour;
+	$: selectedTimeIndex = resolveLiveSelectedHourTimeIndex({
+		monthIndex: selectedMonthIndex,
+		hourIndex: selectedHourIndex,
+	});
+	$: liveRouteHost.setRouteInputs({
+		enabled: useLiveUtciOnMainRoute,
+		analysisId,
+		baseAnalysis: $analysisStore,
+		baseModel: modelLoading ? null : model,
+		selection: {
+			monthIndex: selectedMonthIndex,
+			hourIndex: selectedHourIndex,
+			timeIndex: selectedTimeIndex,
+			selectionKey: [analysisId, selectedMonthIndex, selectedHourIndex].join("|"),
+		},
+		colorMode: $viewerStore.colorMode,
+		utciRenderMode,
+		rendererBackend,
+		rendererDevice: rendererDeviceForMain,
+		utciSurfaceBackend: resolvedUtciSurfaceBackend,
+		comparison: {
+			active: isComparing,
+			analysisId: $comparisonStore.comparisonAnalysisId,
+			sourceAnalysis: $comparisonStore.isLoading ? null : $comparisonAnalysis,
+			model: comparisonModelForLiveCompute,
+			rendererDevice: rendererDeviceForMain,
+		},
+	});
+	$: ({
+		baseDisplayedAnalysis,
+		comparisonRendererDisplayAnalysis,
+		baseLiveReady,
+		comparisonLiveReady,
+		baseHasVisibleLiveSurface,
+		comparisonHasVisibleLiveSurface,
+		baseSceneAnalysis,
+		comparisonSceneAnalysis,
+		baseSceneRenderContext,
+		comparisonSceneRenderContext,
+		baseSceneSurfaceIdentity,
+		comparisonSceneSurfaceIdentity,
+		basePendingGpuResidentOutput,
+		comparisonPendingGpuResidentOutput,
+		basePendingRenderUpdateStartedAt,
+		comparisonPendingRenderUpdateStartedAt,
+	} = projectMainRouteLiveSceneState({
+		useLiveUtciOnMainRoute,
+		isComparing,
+		baseAnalysis: $analysisStore,
+		comparisonAnalysis: $comparisonAnalysis,
+		liveRouteState,
+	}));
+	$: ({
+		showOverlay: showMainRouteOverlay,
+		showComparisonModeOverlay: showMainRouteComparisonOverlay,
+	} = getMainRouteOverlayGating({
+		modelLoading,
+		useLiveUtciOnMainRoute,
+		baseLiveLoading: liveRouteState.base.loading,
+		baseHasVisibleLiveSurface,
+		isComparing: $comparisonStore.isComparing,
+		comparisonModelLoading: $comparisonStore.modelLoading,
+		comparisonLiveLoading: liveRouteState.comparison.loading,
+		comparisonHasVisibleLiveSurface,
+	}));
 
 	// Reactive scenario name for comparison curtain label
 	// Watch comparisonAnalysisId to trigger updates when scenarios change
@@ -286,6 +499,7 @@
 		const currentModelFile = $analysisStore.metadata.model_file;
 		if (currentModelFile !== lastModelFile) {
 			modelLoading = true;
+			model = null;
 			lastModelFile = currentModelFile;
 		}
 	}
@@ -341,7 +555,7 @@
 
 		if (
 			!utciMesh ||
-			!$analysisStore ||
+			!baseDisplayedAnalysis ||
 			!$viewerStore.utciVisible ||
 			!canvasElement ||
 			!cameraRef
@@ -355,7 +569,10 @@
 		// Determine which side of the comparison curtain the mouse is on
 		// If in comparison mode and mouse is on the right side, use comparison data
 		let meshToRaycast = utciMesh;
-		let analysisToUse = $analysisStore;
+		let analysisToUse = baseDisplayedAnalysis;
+		let tooltipHourIndex = useLiveUtciOnMainRoute
+			? (baseSceneRenderContext?.timeIndex ?? $viewerStore.currentHour)
+			: $viewerStore.currentHour;
 
 		if (isComparing && mainViewportElement) {
 			const viewportRect = mainViewportElement.getBoundingClientRect();
@@ -367,9 +584,15 @@
 			if (mouseXRelative > curtainPos) {
 				const comparisonMesh =
 					comparisonRenderer?.getComparisonUtciMesh();
-				if (comparisonMesh && $comparisonAnalysis) {
+				const comparisonTooltipAnalysis = useLiveUtciOnMainRoute
+					? comparisonRendererDisplayAnalysis
+					: $comparisonAnalysis;
+				if (comparisonMesh && comparisonTooltipAnalysis) {
 					meshToRaycast = comparisonMesh;
-					analysisToUse = $comparisonAnalysis;
+					analysisToUse = comparisonTooltipAnalysis;
+					tooltipHourIndex = useLiveUtciOnMainRoute
+						? (comparisonSceneRenderContext?.timeIndex ?? $viewerStore.currentHour)
+						: $viewerStore.currentHour;
 				}
 			}
 		}
@@ -380,7 +603,7 @@
 			meshToRaycast,
 			analysisToUse,
 			$viewerStore.metricType,
-			$viewerStore.currentHour,
+			tooltipHourIndex,
 			canvasRect,
 		);
 
@@ -402,7 +625,32 @@
 			utciRenderMode,
 			resolvedUtciSurfaceBackend,
 			rendererBackend,
-			utciSurfaceDiagnostics,
+			baseUtciSurfaceDiagnostics: liveRouteState.base.renderSurfaceDiagnostics,
+			comparisonUtciSurfaceDiagnostics:
+				liveRouteState.comparison.renderSurfaceDiagnostics,
+			baseRenderTransport: liveRouteState.base.renderTransport,
+			comparisonRenderTransport: liveRouteState.comparison.renderTransport,
+			baseLiveReady,
+			comparisonLiveReady,
+			baseSurfaceRequestId: liveRouteState.baseSurfaceIdentity?.requestId,
+			baseSelectionKey: liveRouteState.baseSurfaceIdentity?.selectionKey,
+			baseSceneSurfaceRequestId:
+				liveRouteState.baseSceneSurfaceIdentity?.requestId,
+			baseSceneSelectionKey:
+				liveRouteState.baseSceneSurfaceIdentity?.selectionKey,
+			baseSameDeviceForComputeAndRender:
+				liveRouteState.base.sameDeviceForComputeAndRender,
+			baseSelectedMonthIndex: selectedMonthIndex,
+			baseSelectedHourIndex: selectedHourIndex,
+			baseSelectedTimeIndex: selectedTimeIndex,
+			baseRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
+			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
+			comparisonSurfaceRequestId:
+				liveRouteState.comparisonSurfaceIdentity?.requestId,
+			comparisonSelectionKey:
+				liveRouteState.comparisonSurfaceIdentity?.selectionKey,
+			comparisonSameDeviceForComputeAndRender:
+				liveRouteState.comparison.sameDeviceForComputeAndRender,
 		});
 	}
 
@@ -483,6 +731,9 @@
 			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
 		}
 
+		unsubscribeLiveRouteHost();
+		liveRouteHost.dispose();
+
 		detachHoverListeners();
 		detachTooltipMotionListeners();
 	});
@@ -490,148 +741,156 @@
 
 <svelte:head></svelte:head>
 
-<div class="viewer-shell">
-	<header class="app-header">
-		<div class="header-left">
-			<div class="partner-logos">
-				<img
-					src={nurLogo}
-					alt="NUR Negev Urban Research"
-					class="logo logo-nur"
-				/>
-				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
-				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
-				<img src={sceLogo} alt="SCE" class="logo logo-sce" />
-			</div>
-		</div>
-		<div class="header-center">
-			<div class="header-title">
-				<div class="logo-final">
-					<div class="text">Score.CH</div>
-					<div class="underline-grad"></div>
-				</div>
-			</div>
-		</div>
-		<div class="header-right">
-			{#key analysisId}
-				<ProjectSelector
-					analysisId={analysisId}
-					onSelect={handleProjectSelection}
-				/>
-			{/key}
-		</div>
-	</header>
-
-	<div class="app-body">
-		<aside class="app-sidebar">
-			<div class="sidebar-section">
-				<div class="section-header">Scenario</div>
-				<ScenarioSelector
-					bind:this={scenarioSelector}
-					projectId={currentProjectId}
-				/>
-			</div>
-
-			<div class="sidebar-section analytics-section">
-				<button
-					type="button"
-					class="section-header section-header-toggle"
-					on:click={() => (analyticsOpen = !analyticsOpen)}
-				>
-					<span>Analytics</span>
-					<span class:open={analyticsOpen} class="chevron">▾</span>
-				</button>
-				{#if analyticsOpen}
-					<AnalyticsPanel />
-				{/if}
-			</div>
-
-			<div class="sidebar-section layers-sidebar-section">
-				<div class="section-header">Layers</div>
-				<LayerControls placement="sidebar" />
-			</div>
-
-			{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
-				<div class="sidebar-section">
-					<div class="section-header">Time of Day</div>
-					<div class="section-subtitle">
-						Select analysis hour for UTCI
-					</div>
-					<RadialTimePicker />
-				</div>
-			{/if}
-		</aside>
-
-		<main class="app-main" bind:this={mainViewportElement}>
-			<!-- Color Legend positioned at bottom right of screen -->
-			<div class="legend-container">
-				<ColorLegend />
-			</div>
-
-			<!-- Metric Tooltip -->
-			<MetricTooltip
-				visible={tooltipVisible}
-				x={tooltipX}
-				y={tooltipY}
-				value={tooltipValue}
-				position={tooltipPosition}
-				metricType={$viewerStore.metricType}
+<ViewerShell
+	bind:mainViewportElement
+	showTimeSection={$analysisStore != null &&
+		$analysisStore.metadata.analysis_type === "full_day" &&
+		$viewerStore.metricType === "utci"}
+>
+	<svelte:fragment slot="headerRight">
+		{#key analysisId}
+			<ProjectSelector
+				analysisId={analysisId}
+				onSelect={handleProjectSelection}
 			/>
-			{#if $viewerStore.loading}
-				<div class="overlay-message">Loading analysis data...</div>
-			{/if}
+		{/key}
+	</svelte:fragment>
 
-			{#if $viewerStore.error}
-				<div class="overlay-message error">
-					Error: {$viewerStore.error}
+	<svelte:fragment slot="scenario">
+		<div class="section-header">Scenario</div>
+		<ScenarioSelector
+			bind:this={scenarioSelector}
+			projectId={currentProjectId}
+			mode="compare"
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="analytics">
+		<button
+			type="button"
+			class="section-header section-header-toggle"
+			on:click={() => (analyticsOpen = !analyticsOpen)}
+		>
+			<span>Analytics</span>
+			<span class:open={analyticsOpen} class="chevron">v</span>
+		</button>
+		{#if analyticsOpen}
+			<AnalyticsPanel />
+		{/if}
+	</svelte:fragment>
+
+	<svelte:fragment slot="layers">
+		<div class="section-header">Layers</div>
+		<LayerControls placement="sidebar" />
+	</svelte:fragment>
+
+	<svelte:fragment slot="time">
+		{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
+			<div class="section-header">Time of Day</div>
+			<div class="section-subtitle">
+				Select analysis hour for UTCI
+			</div>
+			<RadialTimePicker />
+		{/if}
+	</svelte:fragment>
+
+	<svelte:fragment slot="legend">
+		<ColorLegend
+			displayAnalysis={useLiveUtciOnMainRoute ? baseDisplayedAnalysis : null}
+			utciRangeOverride={useLiveUtciOnMainRoute
+				? (basePendingGpuResidentOutput?.utciRange ?? null)
+				: undefined}
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="tooltip">
+		<MetricTooltip
+			visible={tooltipVisible}
+			x={tooltipX}
+			y={tooltipY}
+			value={tooltipValue}
+			position={tooltipPosition}
+			metricType={$viewerStore.metricType}
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="overlays">
+		{#if $viewerStore.loading}
+			<div class="overlay-message">Loading analysis data...</div>
+		{/if}
+
+		{#if $viewerStore.error}
+			<div class="overlay-message error">
+				Error: {$viewerStore.error}
+			</div>
+		{/if}
+
+		{#if liveRouteState.base.error}
+			<div class="overlay-message error">
+				Live UTCI error: {liveRouteState.base.error}
+			</div>
+		{/if}
+
+		{#if liveRouteState.comparison.error}
+			<div class="overlay-message error comparison-note">
+				Scenario live UTCI error: {liveRouteState.comparison.error}
+			</div>
+		{/if}
+
+		{#if showMainRouteOverlay}
+			<div
+				class="model-loading-backdrop"
+				class:comparison-mode={showMainRouteComparisonOverlay}
+				style={showMainRouteComparisonOverlay
+					? `--curtain-position: ${$comparisonStore.curtainPosition}`
+					: ""}
+				aria-hidden="true"
+			></div>
+			<div
+				class="model-loading-overlay"
+				class:comparison-mode={showMainRouteComparisonOverlay}
+				style={showMainRouteComparisonOverlay
+					? `--curtain-position: ${$comparisonStore.curtainPosition}`
+					: ""}
+				aria-live="polite"
+			>
+				<div class="spinner"></div>
+				<div class="loading-text">
+					{#if modelLoading || $comparisonStore.modelLoading}
+						Preparing model...
+					{:else if useLiveUtciOnMainRoute}
+						Computing live UTCI...
+					{:else}
+						Loading analysis...
+					{/if}
 				</div>
-			{/if}
+			</div>
+		{/if}
 
-			{#if modelLoading || ($comparisonStore.isComparing && $comparisonStore.modelLoading)}
-				<div
-					class="model-loading-backdrop"
-					class:comparison-mode={$comparisonStore.isComparing &&
-						$comparisonStore.modelLoading &&
-						!modelLoading}
-					style={$comparisonStore.isComparing &&
-					$comparisonStore.modelLoading &&
-					!modelLoading
-						? `--curtain-position: ${$comparisonStore.curtainPosition}`
-						: ""}
-					aria-hidden="true"
-				></div>
-				<div
-					class="model-loading-overlay"
-					class:comparison-mode={$comparisonStore.isComparing &&
-						$comparisonStore.modelLoading &&
-						!modelLoading}
-					style={$comparisonStore.isComparing &&
-					$comparisonStore.modelLoading &&
-					!modelLoading
-						? `--curtain-position: ${$comparisonStore.curtainPosition}`
-						: ""}
-					aria-live="polite"
-				>
-					<div class="spinner"></div>
-					<div class="loading-text">Preparing model…</div>
-				</div>
-			{/if}
+		{#if isComparing}
+			<ComparisonCurtain
+				containerElement={mainViewportElement}
+				{comparisonScenarioName}
+			/>
+		{/if}
+	</svelte:fragment>
 
-			{#key requestLargeWebgpuLimits}
-				<Scene
-					backgroundColor={$viewerStore.theme === "light"
-						? 0x4b5563
-						: 0x111827}
-					bind:canvasElement
-					onRendererDiagnostics={handleRendererDiagnostics}
-					{requestLargeWebgpuLimits}
-				>
-					<Camera
-						bind:cameraRef
-						near={$sceneConfigStore.cameraNear}
-						far={$sceneConfigStore.cameraFar}
-					/>
-					<Lights />
+	<svelte:fragment slot="viewport">
+		{#key requestLargeWebgpuLimits}
+			<Scene
+				backgroundColor={$viewerStore.theme === "light"
+					? 0x4b5563
+					: 0x111827}
+				bind:canvasElement
+				onRendererDiagnostics={handleRendererDiagnostics}
+				{requestLargeWebgpuLimits}
+			>
+				<Camera
+					bind:cameraRef
+					near={$sceneConfigStore.cameraNear}
+					far={$sceneConfigStore.cameraFar}
+				/>
+				<Lights />
 
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
@@ -651,12 +910,8 @@
 									const center = calculateModelCenter(model);
 									const size = calculateModelSize(model);
 
-									// Update scene config (radius / camera near/far) from bounds.
 									updateSceneConfigFromBounds(bounds);
 
-									// Preserve the existing top-down fit behavior, but the
-									// camera distance will now be consistent with the
-									// scene radius used for near/far.
 									if (!hasFitOnce) {
 										const maxDim = Math.max(
 											size.x,
@@ -691,454 +946,46 @@
 					{#if model}
 						<GridHelper {model} visible={gridVisible} />
 						<UTCIPointCloud
-							analysis={$analysisStore}
+							analysis={baseSceneAnalysis}
 							{model}
 							bind:utciSurface={utciMesh}
+							acceptedGpuResidentOutput={basePendingGpuResidentOutput}
+							selectedHourRenderContext={baseSceneRenderContext}
+							liveSelectedHourSurfaceIdentity={baseSceneSurfaceIdentity}
 							onUtciSurfaceDiagnostics={handleUtciSurfaceDiagnostics}
+							pendingRenderUpdateStartedAt={basePendingRenderUpdateStartedAt}
 							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>
 					{/if}
 
-					<!-- Comparison renderer (only active when comparing) -->
 					{#if isComparing}
 						<ComparisonRenderer
 							bind:this={comparisonRenderer}
+							acceptedGpuResidentOutput={comparisonPendingGpuResidentOutput}
 							baseCamera={cameraRef}
+							displayAnalysis={comparisonSceneAnalysis}
+							selectedHourRenderContext={comparisonSceneRenderContext}
+							liveSelectedHourSurfaceIdentity={comparisonSceneSurfaceIdentity}
+							onUtciSurfaceDiagnostics={handleComparisonUtciSurfaceDiagnostics}
+							pendingRenderUpdateStartedAt={comparisonPendingRenderUpdateStartedAt}
 							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>
 					{/if}
 				{/if}
-				</Scene>
-			{/key}
+			</Scene>
+		{/key}
+	</svelte:fragment>
+</ViewerShell>
 
-			<!-- Comparison curtain overlay (only visible when comparing) -->
-			{#if isComparing}
-				<ComparisonCurtain
-					containerElement={mainViewportElement}
-					{comparisonScenarioName}
-				/>
-			{/if}
-		</main>
-	</div>
-</div>
 
 <style>
-	:global(html, body) {
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-		width: 100%;
-		height: 100%;
-		font-family: var(--font-family);
-		background: var(--color-bg-page);
-		color: var(--color-text-primary);
-	}
-
-	.viewer-shell {
-		width: 100vw;
-		height: 100vh;
-		display: flex;
-		flex-direction: column;
-		background: radial-gradient(
-				circle at top left,
-				rgba(56, 189, 248, 0.18),
-				transparent 55%
-			),
-			var(--color-bg-page);
-	}
-
-	.app-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 8px 18px;
-		background: var(--color-bg-header);
-		backdrop-filter: blur(16px);
-		z-index: 10;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-		gap: 20px;
-	}
-
-	.header-left {
-		display: flex;
-		align-items: center;
-		flex: 1 1 0;
-		min-width: 0;
-		justify-content: flex-start;
-		overflow: hidden;
-	}
-
-	.header-title {
-		display: flex;
-		align-items: center;
-		padding: 0;
-		background: transparent;
-		border: none;
-		box-shadow: none;
-	}
-
-	/* Final Design: Space Grotesk + UTCI Gradient */
-	.logo-final {
-		position: relative;
-		font-family: "Space Grotesk", sans-serif;
-	}
-
-	.logo-final .text {
-		font-size: 34px; /* Requested "a bit bigger" (was 22px in old design, ~26px in lab) */
-		font-weight: 700;
-		color: var(--color-text-primary);
-		letter-spacing: -0.03em;
-		padding-bottom: 2px;
-	}
-
-	.logo-final .underline-grad {
-		position: absolute;
-		bottom: -2px;
-		left: 0;
-		right: 0;
-		height: 4px; /* Slightly thicker for the larger text */
-		/* 11-point UTCI Color Scale */
-		background: linear-gradient(
-			90deg,
-			#313695,
-			#4575b4,
-			#74add1,
-			#abd9e9,
-			#e0f3f8,
-			#ffffbf,
-			#fee090,
-			#fdae61,
-			#f46d43,
-			#d73027,
-			#a50026
-		);
-		border-radius: 2px;
-		opacity: 0.9;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-	}
-
-	.header-center {
-		display: flex;
-		align-items: center;
-		flex: 0 0 auto;
-		justify-content: center;
-		min-width: 0;
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		flex: 1 1 0;
-		min-width: 0;
-		justify-content: flex-end;
-	}
-
-	.partner-logos {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		flex-wrap: nowrap;
-		max-width: 100%;
-	}
-
-	.logo {
-		height: 30px;
-		object-fit: contain;
-		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
-		display: block;
-	}
-
-	.logo-nur {
-		height: 50px;
-	}
-
-	.logo-bgu {
-		height: 35px;
-	}
-
-	:global(html[data-theme="dark"] .logo-nur) {
-		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
-	}
-
-	:global(html[data-theme="light"] .logo-nur) {
-		filter: brightness(0) drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
-	}
-
-	:global(html[data-theme="dark"] .logo-bgu) {
-		filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.55));
-	}
-
-	:global(html[data-theme="light"] .logo-bgu) {
-		filter: drop-shadow(0 0 3px rgba(15, 23, 42, 0.45));
-	}
-
-	:global(html[data-theme="dark"] .logo-mit) {
-		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
-	}
-
-	:global(html[data-theme="light"] .logo-mit) {
-		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
-	}
-
-	.logo-sce {
-		height: 30px;
-		filter: invert(1) drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
-	}
-
-	.app-body {
-		flex: 1;
-		display: grid;
-		grid-template-columns: minmax(320px, 320px) 1fr;
-		grid-template-areas: "sidebar main";
-		height: 100%;
-		overflow: hidden;
-		position: relative;
-	}
-
-	.app-sidebar {
-		grid-area: sidebar;
-		background: var(--color-bg-sidebar);
-		padding: 12px 10px;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		overflow-y: auto;
-		overflow-x: hidden;
-		scrollbar-gutter: stable;
-		width: 320px;
-		min-width: 320px;
-		max-width: 320px;
-		box-sizing: border-box;
-		flex-shrink: 0;
-		contain: layout size;
-		position: relative;
-		box-shadow: 2px 0 12px rgba(0, 0, 0, 0.12);
-	}
-
-	.app-main {
-		grid-area: main;
-	}
-
-	.sidebar-section {
-		background: var(--color-bg-panel);
-		border-radius: var(--radius-panel);
-		box-shadow: var(--shadow-panel);
-		padding: 10px 12px;
-		min-width: 0;
-		max-width: 100%;
-		box-sizing: border-box;
-	}
-
-	:global(html[data-theme="dark"] .app-sidebar .sidebar-section) {
-		box-shadow:
-			0 14px 30px rgba(15, 23, 42, 0.7),
-			0 0 0 1px rgba(248, 250, 252, 0.03);
-	}
-
-	.section-header {
-		font-size: var(--font-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		margin-bottom: 8px;
-		color: var(--color-text-secondary);
-	}
-
-	.section-subtitle {
-		font-size: var(--font-sm);
-		color: var(--color-text-muted);
-		margin-bottom: 8px;
-	}
-
-	.section-header-toggle {
-		width: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 6px;
-		background: transparent;
-		border: none;
-		padding: 0;
-		cursor: pointer;
-		color: var(--color-text-secondary);
-		font-family: var(--font-family);
-	}
-
-	.analytics-section {
-		padding-top: 8px;
-	}
-
-	.analytics-section .section-header {
-		margin-bottom: 4px;
-	}
-
-	@media (max-width: 1400px) {
-		.app-header {
-			padding: 8px 14px;
-			gap: 14px;
-		}
-
-		.partner-logos {
-			gap: 8px;
-		}
-
-		.logo {
-			height: 30px;
-		}
-
-		.logo-nur {
-			height: 35px;
-		}
-
-		.logo-bgu {
-			height: 39px;
-		}
-
-		.logo-sce {
-			height: 32px;
-		}
-
-		.logo-final .text {
-			font-size: 28px;
-		}
-	}
-
-	@media (max-width: 1100px) {
-		.app-header {
-			gap: 10px;
-		}
-
-		.partner-logos {
-			gap: 6px;
-		}
-
-		.logo-mit,
-		.logo-sce {
-			display: none;
-		}
-
-		.header-title {
-			padding: 3px 10px;
-		}
-
-		.logo-final .text {
-			font-size: 24px;
-			letter-spacing: -0.02em;
-		}
-	}
-
-	.chevron {
-		transition: transform 0.15s ease;
-	}
-
-	.chevron.open {
-		transform: rotate(180deg);
-	}
-
-	.app-main {
-		position: relative;
-		background: var(--color-bg-page);
-		min-width: 0;
-		overflow: hidden;
-	}
-
-	.legend-container {
-		position: absolute;
-		bottom: 20px;
-		right: 20px;
-		z-index: var(--z-tooltip);
-	}
-
-	.overlay-message {
-		position: absolute;
-		top: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: var(--z-tooltip);
-		padding: 10px 16px;
-		border-radius: 999px;
-		background: var(--color-bg-panel);
-		color: var(--color-text-primary);
-		box-shadow: var(--shadow-panel);
-		font-size: 13px;
-	}
-
-	.overlay-message.error {
-		border: 1px solid var(--color-danger);
-	}
-
-	.model-loading-backdrop {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		z-index: calc(var(--z-tooltip) - 1);
-		background: rgba(17, 24, 39, 0.4);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		pointer-events: none;
-		transition: opacity 0.25s ease-out;
-	}
-
 	.model-loading-backdrop.comparison-mode {
 		left: calc(var(--curtain-position) * 100%);
 		right: 0;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.model-loading-backdrop {
-			transition: none;
-		}
-	}
-
-	.model-loading-overlay {
-		position: absolute;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		z-index: var(--z-tooltip);
-		min-width: 180px;
-		padding: 14px 18px;
-		border-radius: 14px;
-		background: rgba(17, 24, 39, 0.82);
-		backdrop-filter: blur(10px);
-		color: white;
-		box-shadow:
-			0 14px 30px rgba(0, 0, 0, 0.35),
-			0 0 0 1px rgba(255, 255, 255, 0.05);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 10px;
-		text-align: center;
-	}
-
 	.model-loading-overlay.comparison-mode {
 		left: calc(50% + var(--curtain-position) * 50%);
 		transform: translate(-50%, -50%);
-	}
-
-	.model-loading-overlay .loading-text {
-		font-size: 13px;
-		letter-spacing: 0.04em;
-	}
-
-	.spinner {
-		width: 36px;
-		height: 36px;
-		border-radius: 50%;
-		border: 3px solid rgba(255, 255, 255, 0.18);
-		border-top-color: var(--color-accent);
-		animation: spin 0.9s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 </style>
