@@ -41,8 +41,8 @@ test.describe('Collect WebGPU parity to files', () => {
 		const analysisSlug = PARITY_BASE_PATH.replace(/^data[/\\]analyses[/\\]/, '').replace(/\\/g, '/');
 		const url =
 			COLLECT_MODE === 'normal'
-				? `/debug-webgpu-utci?collect=normal&analysis=${encodeURIComponent(analysisSlug)}`
-				: `/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
+				? `/debug?collect=normal&analysis=${encodeURIComponent(analysisSlug)}`
+				: `/debug?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
 		await page.goto(url);
 
 		try {

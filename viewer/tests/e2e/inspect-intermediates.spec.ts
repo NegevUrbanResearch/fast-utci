@@ -61,7 +61,7 @@ test('inspect WebGPU intermediates', async ({ page }) => {
 	test.setTimeout(INTERMEDIATES_WAIT_MS + 10_000);
 
 	await page.goto(
-		`/debug-webgpu-utci?analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
+		`/debug?analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
 	);
 
 	await page.waitForFunction(

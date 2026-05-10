@@ -21,7 +21,7 @@ test.describe('WebGPU live UTCI (Ben-Gurion base)', () => {
 		expect(ref.data.numPositions).toBeGreaterThan(0);
 
 		await page.goto(
-			`/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
+			`/debug?parity=1&analysis=${encodeURIComponent('Ben-Gurion/20250815_grid_2m_fullday')}`
 		);
 
 		await page.waitForFunction(

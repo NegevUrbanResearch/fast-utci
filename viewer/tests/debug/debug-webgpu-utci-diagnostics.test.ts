@@ -48,6 +48,57 @@ describe('debugWebgpuUtciDiagnostics', () => {
 		expect(state.binComparisonEnabled).toBe(true);
 	});
 
+	it('carries bin comparison validity separately from parity enablement', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: true,
+			collectMode: 'off',
+			debugOnDemandMode: 'f32',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 3,
+			selectedHourIndex: 9,
+			selectedTimeIndex: 81,
+			selectedHourEngine: 'legacy-debug',
+			binComparisonValid: false
+		});
+
+		expect(state.binComparisonEnabled).toBe(true);
+		expect(state.binComparisonValid).toBe(false);
+	});
+
+	it('reports legacy debug selected-hour execution until shared host migration is proven', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: false,
+			collectMode: 'off',
+			debugOnDemandMode: 'f32',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 7,
+			selectedHourIndex: 12,
+			selectedTimeIndex: 180,
+			selectedHourEngine: 'legacy-debug'
+		});
+
+		expect(state.onDemandEnabled).toBe(true);
+		expect(state.binComparisonEnabled).toBe(false);
+		expect(state.selectedHourEngine).toBe('legacy-debug');
+	});
+
+	it('keeps parity comparison explicitly debug-only', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: true,
+			collectMode: 'off',
+			debugOnDemandMode: 'off',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 7,
+			selectedHourIndex: 12,
+			selectedTimeIndex: 180,
+			selectedHourEngine: 'legacy-debug'
+		});
+
+		expect(state.onDemandEnabled).toBe(false);
+		expect(state.binComparisonEnabled).toBe(true);
+		expect(state.selectedHourEngine).toBe('legacy-debug');
+	});
+
 	it('exposes debug window diagnostics while the helper remains a debug-only gate', () => {
 		const state = deriveDebugWebgpuUtciDiagnosticsState({
 			parityMode: false,
@@ -84,5 +135,61 @@ describe('debugWebgpuUtciDiagnostics', () => {
 				timeIndex: 6
 			}
 		});
+	});
+
+	it('keeps shared-host diagnostics honest before migration is proven', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: false,
+			collectMode: 'off',
+			debugOnDemandMode: 'f32',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 7,
+			selectedHourIndex: 0,
+			selectedTimeIndex: 168,
+			selectedHourEngine: 'legacy-debug',
+			legacySelectedHourDispatchCount: 1,
+			legacyScrubScheduleCount: 1
+		});
+
+		expect(state.selectedHourEngine).toBe('legacy-debug');
+		expect(state.legacySelectedHourDispatchCount).toBe(1);
+		expect(state.legacyScrubScheduleCount).toBe(1);
+	});
+
+	it('allows shared-host diagnostics only with zero legacy dispatch counters', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: false,
+			collectMode: 'off',
+			debugOnDemandMode: 'f32',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 7,
+			selectedHourIndex: 0,
+			selectedTimeIndex: 168,
+			selectedHourEngine: 'shared-host',
+			legacySelectedHourDispatchCount: 0,
+			legacyScrubScheduleCount: 0
+		});
+
+		expect(state.selectedHourEngine).toBe('shared-host');
+		expect(state.legacySelectedHourDispatchCount).toBe(0);
+		expect(state.legacyScrubScheduleCount).toBe(0);
+	});
+
+	it('preserves shared-host counter evidence when legacy counters are nonzero', () => {
+		const state = deriveDebugWebgpuUtciDiagnosticsState({
+			parityMode: false,
+			collectMode: 'off',
+			debugOnDemandMode: 'f32',
+			utciRenderMode: 'auto',
+			selectedMonthIndex: 7,
+			selectedHourIndex: 0,
+			selectedTimeIndex: 168,
+			selectedHourEngine: 'shared-host',
+			legacySelectedHourDispatchCount: 1,
+			legacyScrubScheduleCount: 0
+		});
+
+		expect(state.selectedHourEngine).toBe('shared-host');
+		expect(state.legacySelectedHourDispatchCount).toBe(1);
 	});
 });

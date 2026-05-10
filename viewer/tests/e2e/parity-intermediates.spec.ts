@@ -32,7 +32,7 @@ async function collectIntermediates(page: Page, includeMrt: boolean): Promise<{
 	debugMrt: number[] | null;
 }> {
 	await page.goto(
-		`/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(ANALYSIS_SLUG)}`
+		`/debug?parity=1&analysis=${encodeURIComponent(ANALYSIS_SLUG)}`
 	);
 	await page.waitForFunction(
 		() => {

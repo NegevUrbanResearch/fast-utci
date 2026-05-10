@@ -739,7 +739,7 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 			const initialMainDiagnostics = await readMainRouteUtciRenderDiagnostics(page);
 
 			await debugPage.goto(
-				`/debug-webgpu-utci?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&monthIndex=0&timeIndex=0`
+				`/debug?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&monthIndex=0&timeIndex=0`
 			);
 			const debugNavigatorGpuAvailable = await debugPage.evaluate(() => Boolean(navigator.gpu));
 			const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -815,7 +815,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 });
 
 	test('plain debug route defaults to on-demand diagnostics', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci');
+		await page.goto('/debug');
 
 		const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
 		const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -862,7 +862,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	});
 
 	test('debug route honors utciOnDemand=off explicit opt-out', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?utciOnDemand=off');
+		await page.goto('/debug?utciOnDemand=off');
 		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
 
 		await page.waitForLoadState('domcontentloaded');
@@ -880,7 +880,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	});
 
 	test('parity-only debug route does not silently enable on-demand diagnostics', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?parity=1');
+		await page.goto('/debug?parity=1');
 		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
 
 		await page.waitForLoadState('domcontentloaded');
@@ -899,7 +899,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 
 	test('normal collect route preserves full-day collection harness by default', async ({ page }) => {
 		test.setTimeout(120_000);
-		await page.goto('/debug-webgpu-utci?collect=normal');
+		await page.goto('/debug?collect=normal');
 		await expect(page.locator('[data-testid="on-demand-prototype-status"]')).toHaveCount(0);
 
 		await expect
@@ -933,7 +933,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	});
 
 	test('honors explicit UTCI render override diagnostics on the debug route', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1&utciRender=data');
+		await page.goto('/debug?onDemandPrototype=1&utciRender=data');
 
 		const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
 		const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -953,7 +953,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	});
 
 	test('debug route hover populates tooltip diagnostics by default', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1');
+		await page.goto('/debug?onDemandPrototype=1');
 		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
 			/diagnostics|ready|error/i
 		);
@@ -994,7 +994,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	test('debug route wheel interaction temporarily suppresses tooltip hover sampling until motion settles', async ({
 		page
 	}) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1');
+		await page.goto('/debug?onDemandPrototype=1');
 		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
 			/diagnostics|ready|error/i
 		);
@@ -1052,7 +1052,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	test('disableTooltip=1 keeps tooltip hover diagnostics at zero after mousemove attempts', async ({
 		page
 	}) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1&disableTooltip=1');
+		await page.goto('/debug?onDemandPrototype=1&disableTooltip=1');
 		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
 			/diagnostics|ready|error/i
 		);
@@ -1090,7 +1090,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	test('debug route wheel zoom populates camera interaction diagnostics only after movement', async ({
 		page
 	}) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1');
+		await page.goto('/debug?onDemandPrototype=1');
 		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
 			/diagnostics|ready|error/i
 		);
@@ -1137,7 +1137,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	});
 
 	test('reports synthetic bridge diagnostics on the debug route', async ({ page }) => {
-		await page.goto('/debug-webgpu-utci?onDemandPrototype=1&syntheticBridge=1');
+		await page.goto('/debug?onDemandPrototype=1&syntheticBridge=1');
 
 		const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
 		const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -1187,7 +1187,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 
 	test('one-hour f32 on-demand output matches all-hours UTCI slice', async ({ page }) => {
 		test.setTimeout(120_000);
-		await page.goto('/debug-webgpu-utci?parity=1&onDemandPrototype=1&compareOneHour=1');
+		await page.goto('/debug?parity=1&onDemandPrototype=1&compareOneHour=1');
 
 		const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
 		const requireWebGpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';

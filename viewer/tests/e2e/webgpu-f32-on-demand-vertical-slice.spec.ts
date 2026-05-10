@@ -222,7 +222,7 @@ test('strict static-upload path computes one selected hour without constructing 
 	page
 }) => {
 	await page.goto(
-		'/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&timeIndex=12'
+		'/debug?onDemandPrototype=1&strictExposureOnly=1&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -258,7 +258,7 @@ test('strict static-upload path computes one selected hour without constructing 
 test('same-route synthetic bridge to strict mode clears stale bridge diagnostics', async ({
 	page
 }) => {
-	await page.goto('/debug-webgpu-utci?onDemandPrototype=1&syntheticBridge=1');
+	await page.goto('/debug?onDemandPrototype=1&syntheticBridge=1');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
 	const requireWebGpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -311,7 +311,7 @@ test('same-route compareOneHour to strict mode clears stale comparison counters'
 	page
 }) => {
 	test.setTimeout(60_000);
-	await page.goto('/debug-webgpu-utci?parity=1&onDemandPrototype=1&compareOneHour=1');
+	await page.goto('/debug?parity=1&onDemandPrototype=1&compareOneHour=1');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
 	const requireWebGpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -384,7 +384,7 @@ test('strict exposure-only compareHours matches a separate runAll baseline acros
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&compareHours=12,23,16,17&baseline=separateRunAll'
+		'/debug?onDemandPrototype=1&strictExposureOnly=1&compareHours=12,23,16,17&baseline=separateRunAll'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -444,7 +444,7 @@ test('strict exposure-only month/hour outputs compareMonthHours against a separa
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&compareMonthHours=0:12,3:15,7:23,10:18&baseline=separateRunAll'
+		'/debug?onDemandPrototype=1&strictExposureOnly=1&compareMonthHours=0:12,3:15,7:23,10:18&baseline=separateRunAll'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -506,7 +506,7 @@ test('strict exposure-only diagnostics publish timing fields on the window objec
 	page
 }) => {
 	test.setTimeout(60_000);
-	await page.goto('/debug-webgpu-utci?onDemandPrototype=1&strictExposureOnly=1&timeIndex=12');
+	await page.goto('/debug?onDemandPrototype=1&strictExposureOnly=1&timeIndex=12');
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
 	const requireWebGpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -593,7 +593,7 @@ test('debug route can use f32 on-demand as the visible WebGPU side while keeping
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
+		'/debug?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -700,7 +700,7 @@ test('debug route only reports GPU-resident feasibility when compute and render 
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
+		'/debug?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -736,7 +736,7 @@ test('debug route preserves explicit dataTexture fallback when f32 on-demand is 
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=data&timeIndex=12'
+		'/debug?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=data&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -781,7 +781,7 @@ test('debug on-demand discards stale scrub results and ends on the final selecte
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
+		'/debug?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -876,7 +876,7 @@ test('debug on-demand honors the selected month when computing a selected hour',
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&monthIndex=7&timeIndex=12'
+		'/debug?onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&monthIndex=7&timeIndex=12'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));
@@ -919,7 +919,7 @@ test('debug on-demand publishes sampled python-bin comparison metadata for the s
 }) => {
 	test.setTimeout(60_000);
 	await page.goto(
-		'/debug-webgpu-utci?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=17'
+		'/debug?parity=1&onDemandPrototype=1&utciOnDemand=f32&utciRender=gpu&timeIndex=17'
 	);
 
 	const hasWebGpu = await page.evaluate(() => Boolean(navigator.gpu));

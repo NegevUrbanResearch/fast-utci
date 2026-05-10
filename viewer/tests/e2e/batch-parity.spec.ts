@@ -103,7 +103,7 @@ async function waitForCollectionSuccess(page: Page, label: string, timeoutMs: nu
 			console.log(`[batch] Starting ${analysisSlug}`);
 			try {
 				// --- Phase 1: 1-Month Mode (Parity & Timing) ---
-				const url1m = `/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
+				const url1m = `/debug?parity=1&analysis=${encodeURIComponent(analysisSlug)}`;
 				console.log(`  [1m] Navigating...`);
 				await page.goto(url1m);
 
@@ -184,7 +184,7 @@ async function waitForCollectionSuccess(page: Page, label: string, timeoutMs: nu
 				}
 
 				// --- Phase 2: 12-Month Mode (Timing Only) ---
-				const url12m = `/debug-webgpu-utci?parity=0&analysis=${encodeURIComponent(analysisSlug)}`;
+				const url12m = `/debug?parity=0&analysis=${encodeURIComponent(analysisSlug)}`;
 				console.log(`  [12m] Navigating...`);
 				await page.goto(url12m);
 
@@ -204,7 +204,7 @@ async function waitForCollectionSuccess(page: Page, label: string, timeoutMs: nu
 				const preflight = await page.evaluate(() => (window as any).__computePreflight__);
 
 				// --- Phase 3: Strict On-Demand One-Hour Mode (timing + allocation diagnostics) ---
-				const urlOnDemand = `/debug-webgpu-utci?analysis=${encodeURIComponent(
+				const urlOnDemand = `/debug?analysis=${encodeURIComponent(
 					analysisSlug
 				)}&onDemandPrototype=1&strictExposureOnly=1&timeIndex=${ON_DEMAND_TIME_INDEX}`;
 				console.log(`  [on-demand] Navigating...`);

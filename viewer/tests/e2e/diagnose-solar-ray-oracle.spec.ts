@@ -29,7 +29,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 		expect(topCells.length, `No flip cells found in ${flipPath}`).toBeGreaterThan(0);
 
 		const analysisSlug = PARITY_BASE_PATH.replace(/^data[/\\]analyses[/\\]/, '').replace(/\\/g, '/');
-		await page.goto(`/debug-webgpu-utci?parity=1&analysis=${encodeURIComponent(analysisSlug)}`);
+		await page.goto(`/debug?parity=1&analysis=${encodeURIComponent(analysisSlug)}`);
 
 		await page.waitForFunction(
 			() => {
