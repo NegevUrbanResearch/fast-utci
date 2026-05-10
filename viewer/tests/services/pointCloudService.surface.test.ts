@@ -269,6 +269,34 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.userData.gpuNativeUtciSurfaceState.maxUniform.value).toBe(55);
 	});
 
+	it('refuses generic gpuNative CPU updates on compute-buffer backed meshes', () => {
+		const analysis = createAnalysis();
+		const cpuUploadedMesh = createUtciSurfaceMesh({
+			analysis,
+			backend: 'gpuNative'
+		});
+		const layout = cpuUploadedMesh.userData.utciLayout;
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+		mesh.userData.utciLayout = layout;
+		mesh.userData.utciSurfaceBackend = 'gpuNative';
+
+		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('compute-buffer-selected-hour');
+
+		expect(
+			updateUtciSurfaceMesh(mesh, {
+				analysis,
+				backend: 'gpuNative'
+			})
+		).toBe(false);
+
+		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('compute-buffer-selected-hour');
+		expect(mesh.userData.utciSurfaceSource).toBeUndefined();
+	});
+
 	it('rejects compute-buffer surface updates when the layout changes', () => {
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout: {

@@ -33,9 +33,26 @@ type PrototypeDiagnostics = {
 };
 
 type MainRouteUtciRenderDiagnostics = {
+	utciOnDemand?: string;
 	rendererBackend?: string;
 	utciRenderRequested?: string;
 	utciRenderResolved?: string;
+	utciSurfaceSource?: string;
+	selectedHourTransferCount?: number;
+	dataTextureBuildCount?: number;
+	baseRenderTransport?: string;
+	comparisonRenderTransport?: string;
+	baseLiveReady?: boolean;
+	comparisonLiveReady?: boolean;
+	baseSurfaceRequestId?: number;
+	baseSelectionKey?: string;
+	baseSceneSurfaceRequestId?: number;
+	baseSceneSelectionKey?: string;
+	comparisonSurfaceRequestId?: number;
+	comparisonSelectionKey?: string;
+	comparisonUtciSurfaceSource?: string;
+	comparisonSelectedHourTransferCount?: number;
+	comparisonDataTextureBuildCount?: number;
 };
 
 type PrototypeComparison = {
@@ -45,6 +62,8 @@ type PrototypeComparison = {
 	rmse: number;
 	debugReadbackCount: number;
 };
+
+const BEN_GURION_BASE_ANALYSIS_ID = 'Ben-Gurion/20250815_grid_2m_fullday';
 
 async function readPrototypeDiagnostics(page: Page) {
 	return page.evaluate(() => {
@@ -115,12 +134,400 @@ async function readMainRouteUtciRenderDiagnostics(page: Page) {
 	}
 }
 
+async function skipIfMainRouteLiveComputeUnavailable(page: Page) {
+	const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
+	const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
+
+	test.skip(
+		!navigatorGpuAvailable && !requireWebgpu,
+		'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
+	);
+}
+
+function expectPublishedBaseSurface(diagnostics: MainRouteUtciRenderDiagnostics | undefined) {
+	expect(diagnostics?.baseLiveReady).toBe(true);
+	expect(['cpu-uploaded-selected-hour', 'compute-buffer-selected-hour']).toContain(
+		diagnostics?.baseRenderTransport
+	);
+
+	if (diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour') {
+		expect(diagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics?.dataTextureBuildCount ?? 0).toBe(0);
+		return;
+	}
+
+	expect(diagnostics?.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+	if (diagnostics?.utciRenderResolved === 'dataTexture') {
+		expect(diagnostics?.dataTextureBuildCount ?? 0).toBeGreaterThan(0);
+		return;
+	}
+
+	expect(diagnostics?.selectedHourTransferCount ?? 0).toBeGreaterThan(0);
+	expect(diagnostics?.dataTextureBuildCount ?? 0).toBe(0);
+}
+
+function expectPublishedComparisonSurface(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+) {
+	expect(diagnostics?.comparisonLiveReady).toBe(true);
+	expect(['cpu-uploaded-selected-hour', 'compute-buffer-selected-hour']).toContain(
+		diagnostics?.comparisonRenderTransport
+	);
+
+	if (diagnostics?.comparisonRenderTransport === 'compute-buffer-selected-hour') {
+		expect(diagnostics?.comparisonUtciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics?.comparisonDataTextureBuildCount ?? 0).toBe(0);
+		return;
+	}
+
+	expect(diagnostics?.comparisonUtciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+	if (diagnostics?.utciRenderResolved === 'dataTexture') {
+		expect(diagnostics?.comparisonDataTextureBuildCount ?? 0).toBeGreaterThan(0);
+		return;
+	}
+
+	expect(diagnostics?.comparisonSelectedHourTransferCount ?? 0).toBeGreaterThan(0);
+	expect(diagnostics?.comparisonDataTextureBuildCount ?? 0).toBe(0);
+}
+
+async function setRadialPickerSelection(
+	page: Page,
+	params: {
+		mode: 'day' | 'month';
+		index: number;
+		expectedValueText: RegExp;
+	}
+) {
+	const modeButton = page.getByRole('button', { name: new RegExp(`^${params.mode}$`, 'i') });
+	await expect(modeButton).toBeVisible();
+	await page.bringToFront();
+	await page.waitForFunction(() => document.hasFocus());
+	await modeButton.scrollIntoViewIfNeeded();
+	await modeButton.click();
+	const slider = page.getByRole('slider', {
+		name: params.mode === 'month' ? /select month/i : /select analysis hour/i
+	});
+	await expect(slider).toBeVisible();
+	await slider.click();
+	await slider.focus();
+	await expect(slider).toBeFocused();
+	const dispatchSliderKey = async (key: 'Home' | 'ArrowRight') => {
+		await slider.evaluate((node, keyValue: 'Home' | 'ArrowRight') => {
+			node.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: keyValue,
+					bubbles: true,
+					cancelable: true
+				})
+			);
+		}, key);
+	};
+	await dispatchSliderKey('Home');
+	for (let step = 0; step < params.index; step += 1) {
+		await dispatchSliderKey('ArrowRight');
+	}
+	const sliderValueAfterKeyboard = await slider.getAttribute('aria-valuenow');
+	if (sliderValueAfterKeyboard !== String(params.index)) {
+		const box = await slider.boundingBox();
+		if (!box) {
+			throw new Error('Expected radial picker slider to expose a bounding box.');
+		}
+		const angleDeg =
+			(params.index /
+				(params.mode === 'month' ? 12 : 24)) *
+				360 -
+			90;
+		const angleRad = (angleDeg * Math.PI) / 180;
+		const radius = Math.min(box.width, box.height) / 2 - 6;
+		await page.mouse.click(
+			box.x + box.width / 2 + Math.cos(angleRad) * radius,
+			box.y + box.height / 2 + Math.sin(angleRad) * radius
+		);
+	}
+	await expect(slider).toHaveAttribute('aria-valuenow', String(params.index));
+	await expect(slider).toHaveAttribute('aria-valuetext', params.expectedValueText);
+}
+
+async function setMonthSelection(page: Page, monthIndex: number, monthLabel: string) {
+	await setRadialPickerSelection(page, {
+		mode: 'month',
+		index: monthIndex,
+		expectedValueText: new RegExp(`Month\\s+${monthLabel}`, 'i')
+	});
+}
+
+async function setHourSelection(page: Page, hourIndex: number) {
+	await setRadialPickerSelection(page, {
+		mode: 'day',
+		index: hourIndex,
+		expectedValueText: new RegExp(`Time\\s+${hourIndex.toString().padStart(2, '0')}:00`, 'i')
+	});
+}
+
+function expectMainRouteBaseSelectedHourContract(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+) {
+	expect(diagnostics?.baseLiveReady).toBe(true);
+	expect(diagnostics?.utciRenderResolved).toBe('gpuNative');
+	expect(['cpu-uploaded-selected-hour', 'compute-buffer-selected-hour']).toContain(
+		diagnostics?.baseRenderTransport
+	);
+
+	if (diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour') {
+		expect(diagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics?.dataTextureBuildCount ?? 0).toBe(0);
+		return;
+	}
+
+	expect(diagnostics?.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+	expect(diagnostics?.selectedHourTransferCount ?? 0).toBeGreaterThan(0);
+	expect(diagnostics?.dataTextureBuildCount ?? 0).toBe(0);
+}
+
+function expectMainRouteComparisonSelectedHourContract(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+) {
+	expect(diagnostics?.comparisonLiveReady).toBe(true);
+	expect(['cpu-uploaded-selected-hour', 'compute-buffer-selected-hour']).toContain(
+		diagnostics?.comparisonRenderTransport
+	);
+	if (diagnostics?.comparisonRenderTransport === 'compute-buffer-selected-hour') {
+		expect(diagnostics?.comparisonUtciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics?.comparisonDataTextureBuildCount ?? 0).toBe(0);
+		return;
+	}
+	expect(diagnostics?.comparisonUtciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+	expect(diagnostics?.comparisonSelectedHourTransferCount ?? 0).toBeGreaterThan(0);
+	expect(diagnostics?.comparisonDataTextureBuildCount ?? 0).toBe(0);
+}
+
+function hasMainRouteBaseSelectedHourContract(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+): boolean {
+	if (
+		diagnostics?.baseLiveReady !== true ||
+		diagnostics?.utciRenderResolved !== 'gpuNative' ||
+		diagnostics?.baseSelectionKey == null ||
+		diagnostics?.baseSurfaceRequestId == null ||
+		(diagnostics?.baseRenderTransport !== 'cpu-uploaded-selected-hour' &&
+			diagnostics?.baseRenderTransport !== 'compute-buffer-selected-hour')
+	) {
+		return false;
+	}
+
+	if (diagnostics.baseRenderTransport === 'compute-buffer-selected-hour') {
+		return (
+			diagnostics.utciSurfaceSource === 'compute-buffer-selected-hour' &&
+			(diagnostics.dataTextureBuildCount ?? 0) === 0
+		);
+	}
+
+	return (
+		diagnostics.utciSurfaceSource === 'cpu-uploaded-selected-hour' &&
+		(diagnostics.selectedHourTransferCount ?? 0) > 0 &&
+		(diagnostics.dataTextureBuildCount ?? 0) === 0
+	);
+}
+
+function hasMainRouteComparisonSelectedHourContract(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+): boolean {
+	const comparisonTransport = diagnostics?.comparisonRenderTransport;
+	const comparisonContractSatisfied =
+		comparisonTransport === 'compute-buffer-selected-hour'
+			? diagnostics?.comparisonUtciSurfaceSource === 'compute-buffer-selected-hour' &&
+				(diagnostics?.comparisonDataTextureBuildCount ?? 0) === 0
+			: comparisonTransport === 'cpu-uploaded-selected-hour'
+				? diagnostics?.comparisonUtciSurfaceSource === 'cpu-uploaded-selected-hour' &&
+					(diagnostics?.comparisonSelectedHourTransferCount ?? 0) > 0 &&
+					(diagnostics?.comparisonDataTextureBuildCount ?? 0) === 0
+				: false;
+	return (
+		diagnostics?.baseLiveReady === true &&
+		diagnostics?.comparisonLiveReady === true &&
+		diagnostics?.comparisonSelectionKey != null &&
+		diagnostics?.comparisonSurfaceRequestId != null &&
+		hasMainRouteBaseSelectedHourContract(diagnostics) &&
+		comparisonContractSatisfied
+	);
+}
+
+function getMainRouteBaseSelectedHourSignature(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+): string {
+	return JSON.stringify({
+		utciRenderResolved: diagnostics?.utciRenderResolved ?? null,
+		baseRenderTransport: diagnostics?.baseRenderTransport ?? null,
+		baseLiveReady: diagnostics?.baseLiveReady ?? null,
+		baseSurfaceRequestId: diagnostics?.baseSurfaceRequestId ?? null,
+		baseSelectionKey: diagnostics?.baseSelectionKey ?? null,
+		utciSurfaceSource: diagnostics?.utciSurfaceSource ?? null,
+		selectedHourTransferCount: diagnostics?.selectedHourTransferCount ?? null,
+		dataTextureBuildCount: diagnostics?.dataTextureBuildCount ?? null
+	});
+}
+
+function getMainRouteComparisonSelectedHourSignature(
+	diagnostics: MainRouteUtciRenderDiagnostics | undefined
+): string {
+	return JSON.stringify({
+		base: getMainRouteBaseSelectedHourSignature(diagnostics),
+		comparisonRenderTransport: diagnostics?.comparisonRenderTransport ?? null,
+		comparisonLiveReady: diagnostics?.comparisonLiveReady ?? null,
+		comparisonSurfaceRequestId: diagnostics?.comparisonSurfaceRequestId ?? null,
+		comparisonSelectionKey: diagnostics?.comparisonSelectionKey ?? null,
+		comparisonUtciSurfaceSource: diagnostics?.comparisonUtciSurfaceSource ?? null,
+		comparisonSelectedHourTransferCount:
+			diagnostics?.comparisonSelectedHourTransferCount ?? null,
+		comparisonDataTextureBuildCount: diagnostics?.comparisonDataTextureBuildCount ?? null
+	});
+}
+
+async function waitForMainRouteInteractiveLiveReady(page: Page) {
+	await page.waitForFunction(() => {
+		const diagnostics = (window as Window & {
+			__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+		}).__utciRenderDiagnostics__;
+		if (!diagnostics) {
+			return false;
+		}
+		return (
+			diagnostics.rendererBackend === 'webgpu' &&
+			diagnostics.utciRenderResolved === 'gpuNative'
+		);
+	});
+	await expect(page.getByRole('button', { name: /^day$/i })).toBeVisible();
+	await expect(page.getByRole('button', { name: /^month$/i })).toBeVisible();
+	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toBeVisible();
+}
+
+async function waitForMainRouteBaseSelectedHourContract(
+	page: Page,
+	options: { previous?: MainRouteUtciRenderDiagnostics | undefined } = {}
+) {
+	await waitForMainRouteInteractiveLiveReady(page);
+	const previousSignature =
+		options.previous == null ? null : getMainRouteBaseSelectedHourSignature(options.previous);
+	let diagnostics: MainRouteUtciRenderDiagnostics | undefined;
+	await expect
+		.poll(async () => {
+			diagnostics = await readMainRouteUtciRenderDiagnostics(page);
+			if (!hasMainRouteBaseSelectedHourContract(diagnostics)) {
+				return false;
+			}
+			if (
+				previousSignature != null &&
+				getMainRouteBaseSelectedHourSignature(diagnostics) === previousSignature
+			) {
+				return false;
+			}
+			return true;
+		}, { timeout: 90_000 })
+		.toBe(true);
+
+	expectMainRouteBaseSelectedHourContract(diagnostics);
+	return diagnostics;
+}
+
+async function waitForMainRouteComparisonSelectedHourContract(
+	page: Page,
+	options: { previous?: MainRouteUtciRenderDiagnostics | undefined } = {}
+) {
+	const previousSignature =
+		options.previous == null
+			? null
+			: getMainRouteComparisonSelectedHourSignature(options.previous);
+	let diagnostics: MainRouteUtciRenderDiagnostics | undefined;
+	await expect
+		.poll(async () => {
+			diagnostics = await readMainRouteUtciRenderDiagnostics(page);
+			if (!hasMainRouteComparisonSelectedHourContract(diagnostics)) {
+				return false;
+			}
+			if (
+				previousSignature != null &&
+				getMainRouteComparisonSelectedHourSignature(diagnostics) === previousSignature
+			) {
+				return false;
+			}
+			return true;
+		}, { timeout: 90_000 })
+		.toBe(true);
+
+	expectMainRouteBaseSelectedHourContract(diagnostics);
+	expectMainRouteComparisonSelectedHourContract(diagnostics);
+	return diagnostics;
+}
+
+async function waitForDebugRouteSelectedHourSurface(page: Page) {
+	return waitForDebugRouteSelectedHourSurfaceAfterSelection(page);
+}
+
+async function waitForDebugRouteInteractiveReady(page: Page) {
+	await page.waitForFunction(() => {
+		const diagnostics = (window as Window & {
+			__onDemandPrototypeDiagnostics__?: PrototypeDiagnostics;
+		}).__onDemandPrototypeDiagnostics__;
+		return diagnostics?.rendererBackend === 'webgpu' && diagnostics?.utciRenderResolved === 'gpuNative';
+	});
+	await expect(page.getByRole('button', { name: /^day$/i })).toBeVisible();
+	await expect(page.getByRole('button', { name: /^month$/i })).toBeVisible();
+	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toBeVisible();
+}
+
+function getDebugRouteSelectedHourSignature(diagnostics: PrototypeDiagnostics | undefined): string {
+	return JSON.stringify({
+		rendererBackend: diagnostics?.rendererBackend ?? null,
+		utciRenderResolved: diagnostics?.utciRenderResolved ?? null,
+		renderTransport: diagnostics?.renderTransport ?? null,
+		utciSurfaceSource: diagnostics?.utciSurfaceSource ?? null,
+		debugReadbackCount: diagnostics?.debugReadbackCount ?? null,
+		dataTextureBuildCount: diagnostics?.dataTextureBuildCount ?? null
+	});
+}
+
+function hasDebugRouteSelectedHourContract(diagnostics: PrototypeDiagnostics | undefined): boolean {
+	return (
+		diagnostics?.rendererBackend === 'webgpu' &&
+		diagnostics?.utciRenderResolved === 'gpuNative' &&
+		diagnostics?.renderTransport === 'compute-buffer-selected-hour' &&
+		diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
+	);
+}
+
+async function waitForDebugRouteSelectedHourSurfaceAfterSelection(
+	page: Page,
+	options: { previous?: PrototypeDiagnostics | undefined } = {}
+) {
+	const previousSignature =
+		options.previous == null ? null : getDebugRouteSelectedHourSignature(options.previous);
+	let diagnostics: PrototypeDiagnostics | undefined;
+	await expect
+		.poll(async () => {
+			diagnostics = await readPrototypeDiagnostics(page);
+			if (!hasDebugRouteSelectedHourContract(diagnostics)) {
+				return false;
+			}
+			if (
+				previousSignature != null &&
+				getDebugRouteSelectedHourSignature(diagnostics) === previousSignature
+			) {
+				return false;
+			}
+			return true;
+		}, { timeout: 90_000 })
+		.toBe(true);
+
+	expect(diagnostics?.renderTransport).toBe('compute-buffer-selected-hour');
+	expect(diagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+	return diagnostics;
+}
+
 test.describe('WebGPU on-demand prototype diagnostics', () => {
 	test('main route default resolves to gpuNative when WebGPU is available', async ({ page }) => {
 		await page.goto('/?utciRenderDiagnostics=1');
 
-		const navigatorGpuAvailable = await page.evaluate(() => Boolean(navigator.gpu));
-		test.skip(!navigatorGpuAvailable, 'WebGPU unavailable in this runtime.');
+		await skipIfMainRouteLiveComputeUnavailable(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (
@@ -129,18 +536,28 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				}
 			).__utciRenderDiagnostics__;
 
-			return diagnostics?.rendererBackend === 'webgpu' && diagnostics?.utciRenderResolved === 'gpuNative';
+			return (
+				diagnostics?.rendererBackend === 'webgpu' &&
+				diagnostics?.utciRenderResolved === 'gpuNative' &&
+				diagnostics?.baseLiveReady === true &&
+				(diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour'
+					? diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
+					: (diagnostics?.selectedHourTransferCount ?? 0) > 0)
+			);
 		});
 
 		const diagnostics = await readMainRouteUtciRenderDiagnostics(page);
 		expect(diagnostics).toBeTruthy();
+		expect(diagnostics?.utciOnDemand).toBe('f32');
 		expect(diagnostics?.utciRenderRequested).toBe('auto');
 		expect(diagnostics?.rendererBackend).toBe('webgpu');
 		expect(diagnostics?.utciRenderResolved).toBe('gpuNative');
+		expectPublishedBaseSurface(diagnostics);
 	});
 
 	test('main route honors utciRender=data override with dataTexture resolution', async ({ page }) => {
 		await page.goto('/?utciRenderDiagnostics=1&utciRender=data');
+		await skipIfMainRouteLiveComputeUnavailable(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (
@@ -149,17 +566,25 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				}
 			).__utciRenderDiagnostics__;
 
-			return diagnostics?.utciRenderRequested === 'data' && diagnostics?.utciRenderResolved === 'dataTexture';
+			return (
+				diagnostics?.utciRenderRequested === 'data' &&
+				diagnostics?.utciRenderResolved === 'dataTexture' &&
+				diagnostics?.baseLiveReady === true &&
+				diagnostics?.baseRenderTransport === 'cpu-uploaded-selected-hour' &&
+				(diagnostics?.dataTextureBuildCount ?? 0) > 0
+			);
 		});
 
 		const diagnostics = await readMainRouteUtciRenderDiagnostics(page);
 		expect(diagnostics).toBeTruthy();
 		expect(diagnostics?.utciRenderRequested).toBe('data');
 		expect(diagnostics?.utciRenderResolved).toBe('dataTexture');
+		expectPublishedBaseSurface(diagnostics);
 	});
 
 	test('main route diagnostics update and clear on same-route query changes', async ({ page }) => {
 		await page.goto('/?utciRenderDiagnostics=1');
+		await skipIfMainRouteLiveComputeUnavailable(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (
@@ -168,7 +593,13 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				}
 			).__utciRenderDiagnostics__;
 
-			return diagnostics?.utciRenderRequested === 'auto';
+			return (
+				diagnostics?.utciRenderRequested === 'auto' &&
+				diagnostics?.baseLiveReady === true &&
+				(diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour'
+					? diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
+					: (diagnostics?.selectedHourTransferCount ?? 0) > 0)
+			);
 		});
 
 		await page.evaluate(() => {
@@ -185,7 +616,13 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				}
 			).__utciRenderDiagnostics__;
 
-			return diagnostics?.utciRenderRequested === 'data' && diagnostics?.utciRenderResolved === 'dataTexture';
+			return (
+				diagnostics?.utciRenderRequested === 'data' &&
+				diagnostics?.utciRenderResolved === 'dataTexture' &&
+				diagnostics?.baseLiveReady === true &&
+				diagnostics?.baseRenderTransport === 'cpu-uploaded-selected-hour' &&
+				(diagnostics?.dataTextureBuildCount ?? 0) > 0
+			);
 		});
 
 		await page.evaluate(() => {
@@ -201,6 +638,181 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 			}).__utciRenderDiagnostics__;
 		});
 	});
+
+	test('main route scenario comparison keeps live UTCI active on both sides', async ({ page }) => {
+		test.setTimeout(60_000);
+		await page.goto('/?utciRenderDiagnostics=1');
+		await skipIfMainRouteLiveComputeUnavailable(page);
+
+		await page.waitForFunction(() => {
+			const diagnostics = (window as Window & {
+				__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+			}).__utciRenderDiagnostics__;
+			return (
+				diagnostics?.baseLiveReady === true &&
+				(diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour'
+					? diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
+					: (diagnostics?.selectedHourTransferCount ?? 0) > 0)
+			);
+		});
+
+		await page.getByRole('button', { name: /browse variants/i }).click();
+		await page.getByRole('button', { name: /existing tree cover/i }).click();
+
+		await page.waitForFunction(() => {
+			const diagnostics = (window as Window & {
+				__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+			}).__utciRenderDiagnostics__;
+			return (
+				diagnostics?.baseLiveReady === true &&
+				diagnostics?.comparisonLiveReady === true &&
+				(diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour'
+					? diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
+					: diagnostics?.utciRenderResolved === 'dataTexture'
+						? (diagnostics?.dataTextureBuildCount ?? 0) > 0
+						: (diagnostics?.selectedHourTransferCount ?? 0) > 0) &&
+				(diagnostics?.comparisonRenderTransport === 'compute-buffer-selected-hour'
+					? diagnostics?.comparisonUtciSurfaceSource ===
+						'compute-buffer-selected-hour'
+					: diagnostics?.comparisonRenderTransport ===
+						  'cpu-uploaded-selected-hour' &&
+						(diagnostics?.utciRenderResolved === 'dataTexture'
+							? (diagnostics?.comparisonDataTextureBuildCount ?? 0) > 0
+							: (diagnostics?.comparisonSelectedHourTransferCount ?? 0) > 0))
+			);
+		});
+
+		await expect(page.getByRole('button', { name: /exit comparison mode/i })).toBeVisible();
+		await expect(page.getByRole('slider', { name: /comparison curtain position/i })).toBeVisible();
+
+		const diagnostics = await readMainRouteUtciRenderDiagnostics(page);
+		expectPublishedBaseSurface(diagnostics);
+		expectPublishedComparisonSurface(diagnostics);
+	});
+
+	test('main route matches debug selected-hour behavior', async ({ page }) => {
+		test.setTimeout(90_000);
+		await page.goto(
+			`/?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&utciRenderDiagnostics=1`
+		);
+		await skipIfMainRouteLiveComputeUnavailable(page);
+
+		const initialDiagnostics = await waitForMainRouteBaseSelectedHourContract(page);
+		expect(initialDiagnostics?.baseLiveReady).toBe(true);
+		expect(initialDiagnostics?.utciRenderRequested).toBe('auto');
+		expect(initialDiagnostics?.utciRenderResolved).toBe('gpuNative');
+
+		await setMonthSelection(page, 7, 'Aug');
+		const augustDiagnostics = await waitForMainRouteBaseSelectedHourContract(page, {
+			previous: initialDiagnostics
+		});
+		expect(augustDiagnostics?.baseLiveReady).toBe(true);
+
+		await page.getByRole('button', { name: /browse variants/i }).click();
+		await page.getByRole('button', { name: /existing tree cover/i }).click();
+		const comparisonDiagnostics = await waitForMainRouteComparisonSelectedHourContract(page, {
+			previous: augustDiagnostics
+		});
+		expect(comparisonDiagnostics?.comparisonLiveReady).toBe(true);
+
+		await setMonthSelection(page, 0, 'Jan');
+		const januaryDiagnostics = await waitForMainRouteComparisonSelectedHourContract(page, {
+			previous: comparisonDiagnostics
+		});
+		expect(januaryDiagnostics?.baseLiveReady).toBe(true);
+		expect(januaryDiagnostics?.comparisonLiveReady).toBe(true);
+	});
+
+	test('main route matches debug selected-hour baseline for the same selection', async ({
+		page,
+		context
+	}) => {
+		test.setTimeout(90_000);
+		const debugPage = await context.newPage();
+
+		try {
+			await page.goto(
+				`/?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&utciRenderDiagnostics=1`
+			);
+			await skipIfMainRouteLiveComputeUnavailable(page);
+			await waitForMainRouteInteractiveLiveReady(page);
+			const initialMainDiagnostics = await readMainRouteUtciRenderDiagnostics(page);
+
+			await debugPage.goto(
+				`/debug-webgpu-utci?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&monthIndex=0&timeIndex=0`
+			);
+			const debugNavigatorGpuAvailable = await debugPage.evaluate(() => Boolean(navigator.gpu));
+			const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
+			test.skip(
+				!debugNavigatorGpuAvailable && !requireWebgpu,
+				'WebGPU unavailable on the debug route and REQUIRE_WEBGPU_ON_DEMAND is not set.'
+			);
+
+			await waitForDebugRouteInteractiveReady(debugPage);
+			const initialDebugDiagnostics = await readPrototypeDiagnostics(debugPage);
+			await setMonthSelection(page, 7, 'Aug');
+			await setHourSelection(page, 12);
+			await setMonthSelection(debugPage, 7, 'Aug');
+			await setHourSelection(debugPage, 12);
+
+			const [mainDiagnostics, debugDiagnostics] = await Promise.all([
+				waitForMainRouteBaseSelectedHourContract(page, {
+					previous: initialMainDiagnostics
+				}),
+				waitForDebugRouteSelectedHourSurfaceAfterSelection(debugPage, {
+					previous: initialDebugDiagnostics
+				})
+			]);
+
+			expect(debugDiagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+			expect(debugDiagnostics?.renderTransport).toBe('compute-buffer-selected-hour');
+			expect(debugDiagnostics?.utciRenderResolved).toBe('gpuNative');
+			expectMainRouteBaseSelectedHourContract(mainDiagnostics);
+		} finally {
+			await debugPage.close();
+		}
+	});
+
+test('main route diagnostics export base scene identity during gpu-native bootstrap', async ({
+	page
+}) => {
+	test.setTimeout(45_000);
+	await page.goto(
+		`/?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&utciRenderDiagnostics=1`
+	);
+	await skipIfMainRouteLiveComputeUnavailable(page);
+	await waitForMainRouteInteractiveLiveReady(page);
+
+	let diagnostics: MainRouteUtciRenderDiagnostics | undefined;
+	await expect
+		.poll(async () => {
+			diagnostics = await readMainRouteUtciRenderDiagnostics(page);
+			return (
+				diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour' &&
+				diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour' &&
+				diagnostics?.baseSameDeviceForComputeAndRender === true &&
+				diagnostics?.baseLiveReady === false &&
+				diagnostics?.baseSceneSurfaceRequestId != null &&
+				diagnostics?.baseSceneSelectionKey != null &&
+				(diagnostics?.baseSurfaceRequestId == null ||
+					diagnostics.baseSurfaceRequestId !==
+						diagnostics.baseSceneSurfaceRequestId) &&
+				(diagnostics?.baseSelectionKey == null ||
+					diagnostics.baseSelectionKey !== diagnostics.baseSceneSelectionKey)
+			);
+		}, { timeout: 30_000 })
+		.toBe(true);
+
+	expect(diagnostics?.baseLiveReady).toBe(false);
+	expect(diagnostics?.baseSceneSurfaceRequestId).not.toBeNull();
+	expect(diagnostics?.baseSceneSelectionKey).toBeTruthy();
+	expect(diagnostics?.baseSurfaceRequestId ?? null).not.toBe(
+		diagnostics?.baseSceneSurfaceRequestId ?? null
+	);
+	expect(diagnostics?.baseSelectionKey ?? null).not.toBe(
+		diagnostics?.baseSceneSelectionKey ?? null
+	);
+});
 
 	test('plain debug route defaults to on-demand diagnostics', async ({ page }) => {
 		await page.goto('/debug-webgpu-utci');

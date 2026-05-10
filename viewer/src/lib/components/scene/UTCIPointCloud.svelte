@@ -1,8 +1,13 @@
 <script lang="ts">
 	import { useThrelte } from '@threlte/core';
 	import { onDestroy } from 'svelte';
-	import type { OnDemandUtciOutput } from '$lib/compute/gpu-pipeline';
 	import type { Analysis } from '$lib/types/analysis';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
+	import {
+		resolveLiveSelectedHourSurfaceRenderState,
+		type LiveSelectedHourPublishedRenderContext
+	} from '$lib/compute/liveSelectedHourRenderContext';
 	import {
 		applySurfaceMeshState,
 		buildUtciGridLayout,
@@ -14,40 +19,35 @@
 	import {
 		createComputeBufferUtciSurfaceMesh,
 		getComputeBufferUtciStorageAttribute,
-		getGpuNativeUtciSurfaceSource,
 		updateComputeBufferUtciSurfaceMesh
 	} from '$lib/services/gpuUtciRenderBridge';
-	import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 	import { viewerStore } from '$lib/stores/viewerStore';
 	import { unifiedUtciRange } from '$lib/stores/comparisonStore';
+	import type { UnifiedUtciRange } from '$lib/stores/comparisonStore';
 	import {
 		invokeDiagnosticsCallbackSafely,
 		type SelectedHourRenderTimingSubsteps
 	} from '$lib/compute/onDemandDiagnostics';
+	import {
+		buildCpuPublicationDiagnostics,
+		buildUtciSurfaceDiagnostics,
+		getAcceptedGpuResidentKey,
+		isComputeBufferUtciSurface,
+		type GpuResidentCopyStatus,
+		type UtciSurfaceDiagnostics
+	} from '$lib/components/scene/utciSurfaceSync';
 	import type { Group, Mesh } from 'three';
-
-	type AcceptedGpuResidentUtciOutput = {
-		requestId: number;
-		monthIndex: number;
-		hourIndex: number;
-		timeIndex: number;
-		output: OnDemandUtciOutput;
-		utciRange: { min: number; max: number };
-	};
-
-	type UtciSurfaceDiagnostics = {
-		utciSurfaceSource?: string;
-		selectedHourTransferCount?: number;
-		dataTextureBuildCount?: number;
-		gpuResidentCopyStatus?: 'idle' | 'pending' | 'complete' | 'failed';
-		gpuResidentCopyError?: string;
-		gpuResidentCopyRequestId?: number;
-	} & SelectedHourRenderTimingSubsteps;
 
 	export let analysis: Analysis | null = null;
 	export let model: Group | null = null;
 	export let utciSurfaceBackend: UtciSurfaceBackendType = 'dataTexture';
-	export let acceptedGpuResidentOutput: AcceptedGpuResidentUtciOutput | null = null;
+	export let acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
+	export let liveSelectedHourSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
+	export let selectedHourRenderContext:
+		| LiveSelectedHourPublishedRenderContext
+		| null
+		| undefined = undefined;
+	export let rangeOverride: UnifiedUtciRange | null | undefined = undefined;
 	export let pendingRenderUpdateStartedAt: number | undefined = undefined;
 	export let onUtciSurfaceDiagnostics:
 		| ((diagnostics: UtciSurfaceDiagnostics) => void | Promise<void>)
@@ -57,22 +57,24 @@
 	let lastAnalysis: Analysis | null = null;
 	let lastBackend: UtciSurfaceBackendType | null = null;
 	let activeGpuResidentSyncKey: string | null = null;
-	let gpuResidentCopyStatus: 'idle' | 'pending' | 'complete' | 'failed' = 'idle';
+	let gpuResidentCopyStatus: GpuResidentCopyStatus = 'idle';
 	let gpuResidentCopyError: string | undefined = undefined;
 	let gpuResidentCopyRequestId: number | undefined = undefined;
 	let gpuResidentRenderTimings: SelectedHourRenderTimingSubsteps | undefined = undefined;
 	let gpuResidentCopyRunToken = 0;
 	const { renderer, scene, invalidate } = useThrelte();
 
-	function getAcceptedGpuResidentKey(
-		value: AcceptedGpuResidentUtciOutput | null
-	): string | null {
-		if (!value) return null;
-		return `${value.requestId}:${value.monthIndex}:${value.timeIndex}:${value.utciRange.min}:${value.utciRange.max}`;
+	function setComputeBufferSurfacePendingStorageInit(mesh: Mesh): void {
+		mesh.visible = true;
+		mesh.scale.setScalar(0);
 	}
 
-	function isComputeBufferSurface(mesh: Mesh | null): boolean {
-		return mesh != null && getGpuNativeUtciSurfaceSource(mesh) === 'compute-buffer-selected-hour';
+	function setComputeBufferSurfacePublicationVisibility(
+		mesh: Mesh,
+		shouldBeVisible: boolean
+	): void {
+		mesh.scale.setScalar(1);
+		mesh.visible = shouldBeVisible;
 	}
 
 	function disposeUtciSurface(options: { invalidateGpuResidentCopies?: boolean } = {}) {
@@ -102,23 +104,22 @@
 	}
 
 	function publishUtciSurfaceDiagnostics(): void {
-		invokeUtciSurfaceDiagnostics({
-			utciSurfaceSource: utciSurface?.userData.utciSurfaceSource as string | undefined,
-			selectedHourTransferCount: utciSurface?.userData.selectedHourTransferCount as
-				| number
-				| undefined,
-			dataTextureBuildCount: utciSurface?.userData.dataTextureBuildCount as
-				| number
-				| undefined,
+		const cpuPublicationDiagnostics = buildCpuPublicationDiagnostics({
+			mesh: utciSurface,
+			liveSelectedHourSurfaceIdentity
+		});
+		invokeUtciSurfaceDiagnostics(buildUtciSurfaceDiagnostics({
+			mesh: utciSurface,
+			cpuPublicationDiagnostics,
 			gpuResidentCopyStatus,
 			gpuResidentCopyError,
 			gpuResidentCopyRequestId,
-			...gpuResidentRenderTimings
-		});
+			gpuResidentRenderTimings
+		}));
 	}
 
 	function setGpuResidentCopyDiagnostics(
-		status: 'idle' | 'pending' | 'complete' | 'failed',
+		status: GpuResidentCopyStatus,
 		options?: {
 			error?: string;
 			requestId?: number;
@@ -136,35 +137,25 @@
 		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 	}
 
-	function buildSurfaceOptions(
-		activeAnalysis: Analysis,
-		viewerState: typeof $viewerStore,
-		rangeOverride: typeof $unifiedUtciRange | undefined
-	) {
+	function buildSurfaceOptions(renderState: NonNullable<ReturnType<typeof resolveLiveSelectedHourSurfaceRenderState>>) {
 		return {
-			analysis: activeAnalysis,
-			hourIndex: getEffectiveHourIndex(
-				activeAnalysis,
-				viewerState?.currentHour ?? 0,
-				viewerState?.currentMonth ?? 7
-			),
-			colorMode: viewerState?.colorMode ?? 'normalized',
-			metricType: viewerState?.metricType ?? 'utci',
-			rangeOverride: rangeOverride ?? undefined,
-			monthIndex: viewerState?.currentMonth ?? 7,
+			analysis: renderState.analysis,
+			hourIndex: renderState.hourIndex,
+			colorMode: renderState.colorMode,
+			metricType: renderState.metricType,
+			rangeOverride: renderState.rangeOverride,
+			monthIndex: renderState.monthIndex,
 			backend: utciSurfaceBackend
 		} as const;
 	}
 
 	function recreateUtciSurface(
-		activeAnalysis: Analysis,
-		viewerState: typeof $viewerStore,
-		rangeOverride: typeof $unifiedUtciRange | undefined
+		renderState: NonNullable<ReturnType<typeof resolveLiveSelectedHourSurfaceRenderState>>
 	): void {
 		disposeUtciSurface();
-		utciSurface = createUtciSurfaceMesh(buildSurfaceOptions(activeAnalysis, viewerState, rangeOverride));
+		utciSurface = createUtciSurfaceMesh(buildSurfaceOptions(renderState));
 		scene.add(utciSurface);
-		lastAnalysis = activeAnalysis;
+		lastAnalysis = renderState.analysis;
 		lastBackend = utciSurfaceBackend;
 		publishUtciSurfaceDiagnostics();
 	}
@@ -223,7 +214,7 @@
 
 	function recreateComputeBufferSurface(
 		activeAnalysis: Analysis,
-		acceptedOutput: AcceptedGpuResidentUtciOutput,
+		acceptedOutput: SelectedHourGpuResidentOutput,
 		layout: ReturnType<typeof extractUtciLayout>
 	): void {
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
@@ -238,7 +229,7 @@
 			utciRange: acceptedOutput.utciRange
 		});
 		applySurfaceMeshState(utciSurface, layout, 'gpuNative');
-		utciSurface.visible = false;
+		setComputeBufferSurfacePendingStorageInit(utciSurface);
 		scene.add(utciSurface);
 		lastAnalysis = activeAnalysis;
 		lastBackend = utciSurfaceBackend;
@@ -250,7 +241,7 @@
 
 	async function copyComputeBufferIntoRenderOwnedStorage(params: {
 		mesh: Mesh;
-		acceptedOutput: AcceptedGpuResidentUtciOutput;
+		acceptedOutput: SelectedHourGpuResidentOutput;
 		copyRunToken: number;
 		syncKey: string;
 		syncStartedAt: number;
@@ -304,7 +295,10 @@
 		mesh.userData.utciSurfaceSource = 'compute-buffer-selected-hour';
 		mesh.userData.selectedHourTransferCount = 0;
 		mesh.userData.dataTextureBuildCount = 0;
-		mesh.visible = Boolean(analysis && $viewerStore?.utciVisible);
+		setComputeBufferSurfacePublicationVisibility(
+			mesh,
+			Boolean(analysis && $viewerStore?.utciVisible)
+		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
 		setGpuResidentCopyDiagnostics('complete', {
 			requestId: acceptedOutput.requestId,
@@ -315,7 +309,7 @@
 
 	async function syncAcceptedGpuResidentSurface(
 		activeAnalysis: Analysis,
-		acceptedOutput: AcceptedGpuResidentUtciOutput
+		acceptedOutput: SelectedHourGpuResidentOutput
 	): Promise<void> {
 		const syncKey = getAcceptedGpuResidentKey(acceptedOutput);
 		if (!syncKey) return;
@@ -339,7 +333,7 @@
 			const layout = extractUtciLayout(activeAnalysis);
 			renderTimings.renderLayoutBuildMs = performance.now() - layoutStartedAt;
 
-			if (!utciSurface || !isComputeBufferSurface(utciSurface) || activeAnalysis !== lastAnalysis) {
+			if (!utciSurface || !isComputeBufferUtciSurface(utciSurface) || activeAnalysis !== lastAnalysis) {
 				const surfaceMeshStartedAt = performance.now();
 				recreateComputeBufferSurface(activeAnalysis, acceptedOutput, layout);
 				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
@@ -367,7 +361,7 @@
 			}
 
 			activeGpuResidentSyncKey = syncKey;
-			utciSurface.visible = false;
+			setComputeBufferSurfacePendingStorageInit(utciSurface);
 			setGpuResidentCopyDiagnostics('pending', {
 				requestId: acceptedOutput.requestId
 			});
@@ -389,7 +383,7 @@
 			}
 
 			if (utciSurface) {
-				utciSurface.visible = false;
+				setComputeBufferSurfacePublicationVisibility(utciSurface, false);
 			}
 			setGpuResidentCopyDiagnostics('failed', {
 				error: error instanceof Error ? error.message : String(error),
@@ -413,16 +407,15 @@
 	 * This consolidates all texture update triggers into a single reactive block.
 	 */
 	function hasStateChanged(
-		viewerState: typeof $viewerStore,
-		unifiedRange: typeof $unifiedUtciRange
+		renderState: NonNullable<ReturnType<typeof resolveLiveSelectedHourSurfaceRenderState>>
 	): boolean {
 		const currentState = {
-			hour: viewerState.currentHour,
-			month: viewerState.currentMonth ?? 7,
-			colorMode: viewerState.colorMode,
-			metricType: viewerState.metricType ?? 'utci',
-			unifiedRangeMin: unifiedRange?.utciMin ?? null,
-			unifiedRangeMax: unifiedRange?.utciMax ?? null
+			hour: renderState.hourIndex,
+			month: renderState.monthIndex,
+			colorMode: renderState.colorMode,
+			metricType: renderState.metricType,
+			unifiedRangeMin: renderState.rangeOverride?.utciMin ?? null,
+			unifiedRangeMax: renderState.rangeOverride?.utciMax ?? null
 		};
 
 		if (!lastUpdateState) {
@@ -447,23 +440,37 @@
 
 	$: {
 		const viewerState = $viewerStore;
-		const currentUnifiedRange = $unifiedUtciRange;
+		const currentUnifiedRange =
+			rangeOverride !== undefined ? rangeOverride : $unifiedUtciRange;
+		const renderState = resolveLiveSelectedHourSurfaceRenderState({
+			analysis,
+			viewerState,
+			publishedRenderContext: selectedHourRenderContext,
+			rangeOverride: currentUnifiedRange
+		});
 		const acceptedKey =
-			analysis && utciSurfaceBackend === 'gpuNative'
+			renderState?.analysis && utciSurfaceBackend === 'gpuNative'
 				? getAcceptedGpuResidentKey(acceptedGpuResidentOutput)
 				: null;
 		const useGpuResidentComputeSurface =
-			Boolean(analysis) &&
+			Boolean(renderState?.analysis) &&
 			utciSurfaceBackend === 'gpuNative' &&
 			acceptedGpuResidentOutput != null;
 
-		if (!analysis) {
+		if (!renderState) {
 			disposeUtciSurface();
 			lastUpdateState = null;
 		} else if (useGpuResidentComputeSurface && acceptedGpuResidentOutput && acceptedKey) {
 			lastUpdateState = null;
-			if (activeGpuResidentSyncKey !== acceptedKey || analysis !== lastAnalysis || !isComputeBufferSurface(utciSurface)) {
-				void syncAcceptedGpuResidentSurface(analysis, acceptedGpuResidentOutput);
+			if (
+				activeGpuResidentSyncKey !== acceptedKey ||
+				renderState.analysis !== lastAnalysis ||
+				!isComputeBufferUtciSurface(utciSurface)
+			) {
+				void syncAcceptedGpuResidentSurface(
+					renderState.analysis,
+					acceptedGpuResidentOutput
+				);
 			}
 		} else {
 			activeGpuResidentSyncKey = null;
@@ -471,28 +478,29 @@
 			gpuResidentCopyError = undefined;
 			gpuResidentCopyRequestId = undefined;
 
-			if (utciSurface && isComputeBufferSurface(utciSurface)) {
+			if (utciSurface && isComputeBufferUtciSurface(utciSurface)) {
 				disposeUtciSurface();
 			}
 
-			if (!utciSurface || analysis !== lastAnalysis || utciSurfaceBackend !== lastBackend) {
-				recreateUtciSurface(analysis, viewerState, currentUnifiedRange);
+			if (
+				!utciSurface ||
+				renderState.analysis !== lastAnalysis ||
+				utciSurfaceBackend !== lastBackend
+			) {
+				recreateUtciSurface(renderState);
 				lastUpdateState = {
-					hour: viewerState?.currentHour ?? 0,
-					month: viewerState?.currentMonth ?? 7,
-					colorMode: viewerState?.colorMode ?? 'normalized',
-					metricType: viewerState?.metricType ?? 'utci',
-					unifiedRangeMin: currentUnifiedRange?.utciMin ?? null,
-					unifiedRangeMax: currentUnifiedRange?.utciMax ?? null
+					hour: renderState.hourIndex,
+					month: renderState.monthIndex,
+					colorMode: renderState.colorMode,
+					metricType: renderState.metricType,
+					unifiedRangeMin: renderState.rangeOverride?.utciMin ?? null,
+					unifiedRangeMax: renderState.rangeOverride?.utciMax ?? null
 				};
 				invalidate();
-			} else if (utciSurface && viewerState && hasStateChanged(viewerState, currentUnifiedRange)) {
-				const updated = updateUtciSurfaceMesh(
-					utciSurface,
-					buildSurfaceOptions(analysis, viewerState, currentUnifiedRange)
-				);
+			} else if (utciSurface && hasStateChanged(renderState)) {
+				const updated = updateUtciSurfaceMesh(utciSurface, buildSurfaceOptions(renderState));
 				if (!updated) {
-					recreateUtciSurface(analysis, viewerState, currentUnifiedRange);
+					recreateUtciSurface(renderState);
 				} else {
 					publishUtciSurfaceDiagnostics();
 				}
@@ -503,14 +511,29 @@
 
 	$: {
 		if (utciSurface) {
+			const isComputeSurface = isComputeBufferUtciSurface(utciSurface);
+			const shouldRenderForStorageInit =
+				isComputeSurface && gpuResidentCopyStatus === 'pending';
 			const shouldBeVisible =
 				Boolean(analysis && $viewerStore?.utciVisible) &&
-				(!isComputeBufferSurface(utciSurface) || gpuResidentCopyStatus === 'complete');
-			utciSurface.visible = shouldBeVisible;
+				(!isComputeSurface || gpuResidentCopyStatus === 'complete');
+			if (shouldRenderForStorageInit) {
+				setComputeBufferSurfacePendingStorageInit(utciSurface);
+			} else {
+				setComputeBufferSurfacePublicationVisibility(utciSurface, shouldBeVisible);
+			}
 			if (utciSurface.visible) {
 				invalidate();
 			}
 		}
+	}
+
+	$: if (
+		utciSurface &&
+		!isComputeBufferUtciSurface(utciSurface) &&
+		liveSelectedHourSurfaceIdentity
+	) {
+		publishUtciSurfaceDiagnostics();
 	}
 
 	onDestroy(() => {

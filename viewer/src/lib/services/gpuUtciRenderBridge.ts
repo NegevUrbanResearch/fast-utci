@@ -283,6 +283,12 @@ export function updateGpuNativeUtciSurfaceMesh(
 		console.warn('[UTCI] Missing gpuNative surface state. Recreate the mesh.');
 		return false;
 	}
+	if (state.source !== 'cpu-uploaded-selected-hour') {
+		console.warn(
+			`[UTCI] gpuNative surface source ${state.source} is not CPU-uploaded; recreate the mesh.`
+		);
+		return false;
+	}
 
 	const expectedVertexCount = options.layout.width * options.layout.height * SURFACE_VERTICES_PER_CELL;
 	if (

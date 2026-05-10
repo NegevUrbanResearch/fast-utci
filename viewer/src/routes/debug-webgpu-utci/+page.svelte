@@ -33,8 +33,10 @@
 	import RadialTimePicker from "$lib/components/ui/RadialTimePicker.svelte";
 	import LayerControls from "$lib/components/ui/LayerControls.svelte";
 	import ColorLegend from "$lib/components/ui/ColorLegend.svelte";
+	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
+	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import {
@@ -42,10 +44,6 @@
 		resolveProjectId,
 	} from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
-	import nurLogo from "$lib/assets/Nur Logo white.svg";
-	import mitLogo from "$lib/assets/MIT.svg";
-	import bguLogo from "$lib/assets/bgu-logo.svg";
-	import sceLogo from "$lib/assets/sce-logo.svg";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import {
@@ -74,13 +72,17 @@
 		type CameraInteractionTelemetry,
 	} from "$lib/services/cameraInteractionTelemetry";
 	import { getUTCIForHour, getUtciByHourForExport } from "$lib/services/dataLoader";
-	import { getEffectiveHourIndex, getUtciRangeForDisplay } from "$lib/utils/effectiveHourIndex";
+	import { getEffectiveHourIndex } from "$lib/utils/effectiveHourIndex";
 	import {
 		sceneConfigStore,
 		updateSceneConfigFromBounds,
 	} from "$lib/stores/sceneConfigStore";
 	import type { Analysis, AnalysisMetadata } from "$lib/types/analysis";
 	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
+	import {
+		buildSelectedHourLiveAnalysis,
+		resolveAcceptedGpuResidentUtciRange,
+	} from "$lib/compute/liveUtciSelectedHour";
 	import { ComputeManager } from "$lib/compute/compute-manager";
 	import {
 		buildGpuResidentSurfaceResetPatch,
@@ -122,6 +124,10 @@
 		type UtciRenderMode,
 		type UtciRendererBackend,
 	} from "$lib/utciRenderMode";
+	import {
+		deriveDebugWebgpuUtciDiagnosticsState,
+		shouldExposeDebugWindowDiagnostics,
+	} from "$lib/debug/debugWebgpuUtciDiagnostics";
 	import { calculateScenarioOrigin } from "$lib/utils/coordinates";
 	import { getAnchorOffset, isNormalizationEnabled } from "$lib/config/viewerConfig";
 
@@ -185,7 +191,6 @@
 		searchParams: $page.url.searchParams,
 		parityMode,
 	});
-	$: onDemandDebugModeEnabled = debugOnDemandMode === "f32";
 	// Default the debug route to auto so prototype coverage exercises the live
 	// renderer-backend resolution path.
 	$: utciRenderMode = parseUtciRenderMode(
@@ -723,7 +728,6 @@
 	}
 	let wasOnDemandPrototypeEnabled = false;
 	let wasCompareOneHourEnabled = false;
-	$: onDemandPrototypeEnabled = browser && onDemandDebugModeEnabled;
 	$: debugTooltipHoverDisabled = $page.url.searchParams.get("disableTooltip") === "1";
 	$: compareOneHourEnabled =
 		onDemandPrototypeEnabled &&
@@ -750,13 +754,23 @@
 			: $viewerStore.currentHour,
 		parityMode,
 	});
+	$: debugDiagnosticsState = deriveDebugWebgpuUtciDiagnosticsState({
+		parityMode,
+		collectMode: normalCollectMode ? "normal" : "off",
+		debugOnDemandMode,
+		utciRenderMode,
+		selectedMonthIndex: debugOnDemandSelection.monthIndex,
+		selectedHourIndex: debugOnDemandSelection.hourIndex,
+		selectedTimeIndex: debugOnDemandSelection.timeIndex,
+	});
+	$: onDemandPrototypeEnabled = browser && debugDiagnosticsState.onDemandEnabled;
 	$: debugOnDemandSelectionKey =
-		debugOnDemandMode === "f32"
-			? `${debugOnDemandSelection.monthIndex}:${debugOnDemandSelection.timeIndex}`
+		debugDiagnosticsState.onDemandEnabled
+			? `${debugDiagnosticsState.selection.monthIndex}:${debugDiagnosticsState.selection.timeIndex}`
 			: "off";
 	$: if (
 		browser &&
-		debugOnDemandMode === "f32" &&
+		debugDiagnosticsState.onDemandEnabled &&
 		($page.url.searchParams.has("timeIndex") || $page.url.searchParams.has("monthIndex"))
 	) {
 		if (($viewerStore.currentMonth ?? 7) !== debugOnDemandSelection.monthIndex) {
@@ -799,13 +813,13 @@
 		? parityMode
 			? `strict-parity-${getStrictExposureOnlyTimeIndex()}${compareHoursEnabled ? `|compareHours=${compareHours.join(",")}|baseline=separateRunAll` : ""}${compareMonthHoursEnabled ? `|compareMonthHours=${$page.url.searchParams.get("compareMonthHours") ?? ""}|baseline=separateRunAll` : ""}`
 			: `strict-full-year-${getStrictExposureOnlyTimeIndex()}${compareHoursEnabled ? `|compareHours=${compareHours.join(",")}|baseline=separateRunAll` : ""}${compareMonthHoursEnabled ? `|compareMonthHours=${$page.url.searchParams.get("compareMonthHours") ?? ""}|baseline=separateRunAll` : ""}`
-		: debugOnDemandMode === "f32"
-			? parityMode
+		: debugDiagnosticsState.onDemandEnabled
+			? debugDiagnosticsState.binComparisonEnabled
 				? "debug-on-demand-parity-f32"
 				: "debug-on-demand-full-year-f32"
-			: parityMode
+			: debugDiagnosticsState.binComparisonEnabled
 				? "parity"
-				: normalCollectMode
+				: debugDiagnosticsState.collectNormalMode
 					? "collect-normal"
 					: "full-year";
 
@@ -1146,7 +1160,11 @@
 		diagnostics: Partial<OnDemandPrototypeDiagnostics>,
 		options?: { replace?: boolean; computeManager?: ComputeManager },
 	): void {
-		if (!browser || !onDemandPrototypeEnabled) return;
+		if (
+			!browser ||
+			!onDemandPrototypeEnabled ||
+			!shouldExposeDebugWindowDiagnostics(debugDiagnosticsState)
+		) return;
 
 		const win = getParityWindow();
 		const existing = options?.replace ? undefined : win.__onDemandPrototypeDiagnostics__;
@@ -1427,96 +1445,6 @@
 			liveAnalysisConstructedForSelectedHour: false,
 			error: undefined,
 		};
-	}
-
-	function buildSelectedHourLiveAnalysis(params: {
-		base: Analysis;
-		utciValues: Float32Array;
-		monthIndex: number;
-		timeIndex: number;
-	}): Analysis {
-		let min = Number.POSITIVE_INFINITY;
-		let max = Number.NEGATIVE_INFINITY;
-		for (const value of params.utciValues) {
-			if (value < min) min = value;
-			if (value > max) max = value;
-		}
-
-		return {
-			metadata: {
-				...params.base.metadata,
-				analysis_type: "single_hour",
-				num_positions: params.utciValues.length,
-				num_months: 1,
-				utci_range:
-					Number.isFinite(min) && Number.isFinite(max)
-						? { min, max }
-						: params.base.metadata.utci_range,
-			},
-			data: {
-				numPositions: params.utciValues.length,
-				numHours: 1,
-				positions: params.base.data.positions,
-				utciValues: params.utciValues,
-				utciByHour: [params.utciValues],
-				shadingIndex:
-					"shadingIndex" in params.base.data ? params.base.data.shadingIndex : undefined,
-				selectedMonthIndex: params.monthIndex,
-				selectedTimeIndex: params.timeIndex,
-			} as Analysis["data"],
-		};
-	}
-
-	function resolveFiniteRange(range: { min: number; max: number } | null): { min: number; max: number } {
-		if (
-			range &&
-			Number.isFinite(range.min) &&
-			Number.isFinite(range.max) &&
-			range.max > range.min
-		) {
-			return range;
-		}
-
-		return { min: -20, max: 60 };
-	}
-
-	function getUtciValuesRange(values: Float32Array | undefined): { min: number; max: number } | null {
-		if (!values?.length) return null;
-
-		let min = Number.POSITIVE_INFINITY;
-		let max = Number.NEGATIVE_INFINITY;
-		for (const value of values) {
-			if (!Number.isFinite(value)) continue;
-			if (value < min) min = value;
-			if (value > max) max = value;
-		}
-
-		return resolveFiniteRange(Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null);
-	}
-
-	function resolveAcceptedGpuResidentUtciRange(params: {
-		base: Analysis;
-		monthIndex: number;
-		hourIndex: number;
-		colorMode: "normalized" | "discrete";
-		selectedHourUtci?: Float32Array;
-	}): { min: number; max: number } {
-		if (params.colorMode === "discrete") {
-			const selectedRange = getUtciValuesRange(params.selectedHourUtci);
-			if (selectedRange) return selectedRange;
-		}
-
-		const displayRange = getUtciRangeForDisplay(
-			params.base.metadata,
-			params.colorMode,
-			params.hourIndex,
-			params.monthIndex,
-		);
-
-		return resolveFiniteRange({
-			min: displayRange.utciMin,
-			max: displayRange.utciMax,
-		});
 	}
 
 	$: if (acceptedGpuResidentUtciOutput && $analysisStore) {
@@ -4122,155 +4050,146 @@
 
 <svelte:head></svelte:head>
 
-<div class="viewer-shell">
-	<header class="app-header">
-		<div class="header-left">
-			<div class="partner-logos">
-				<img
-					src={nurLogo}
-					alt="NUR Negev Urban Research"
-					class="logo logo-nur"
-				/>
-				<img src={bguLogo} alt="BGU" class="logo logo-bgu" />
-				<img src={mitLogo} alt="MIT" class="logo logo-mit" />
-				<img src={sceLogo} alt="SCE" class="logo logo-sce" />
-			</div>
-		</div>
-		<div class="header-center">
-			<div class="header-title">
-				<div class="logo-final">
-					<div class="text">Score.CH</div>
-					<div class="underline-grad"></div>
-				</div>
-				<div class="debug-label">
-					WebGPU UTCI Debug Viewer · .bin vs live compute (no parity
-					guaranteed)
-				</div>
-			</div>
-		</div>
-		<div class="header-right">
-			{#key analysisId}
-				<ProjectSelector
-					analysisId={analysisId}
-					onSelect={handleProjectSelection}
-				/>
-			{/key}
-		</div>
-	</header>
+<ViewerShell
+	bind:mainViewportElement
+	debugLabel="WebGPU UTCI Debug Viewer - .bin vs live compute (no parity guaranteed)"
+	showTimeSection={$analysisStore != null &&
+		$analysisStore.metadata.analysis_type === "full_day" &&
+		$viewerStore.metricType === "utci"}
+	showSidebarExtraSection={Boolean(liveError)}
+>
+	<svelte:fragment slot="headerRight">
+		{#key analysisId}
+			<ProjectSelector
+				analysisId={analysisId}
+				onSelect={handleProjectSelection}
+			/>
+		{/key}
+	</svelte:fragment>
 
-	<div class="app-body">
-		<aside class="app-sidebar">
-			<div class="sidebar-section">
-				<div class="section-header">Project & Time</div>
-				<div class="section-subtitle">
-					Select project and UTCI hour; left side uses .bin, right side
-					uses live compute.
-				</div>
-				{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
-					<RadialTimePicker />
+	<svelte:fragment slot="scenario">
+		<div class="section-header">Scenario</div>
+		<ScenarioSelector
+			projectId={currentProjectId}
+			mode="replace-analysis"
+			activeAnalysisId={analysisId}
+			onSelectScenarioAnalysisId={handleProjectSelection}
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="time">
+		{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
+			<div class="section-header">Time of Day</div>
+			<div class="section-subtitle">
+				Select analysis hour for UTCI
+			</div>
+			<RadialTimePicker />
+		{/if}
+	</svelte:fragment>
+
+	<svelte:fragment slot="layers">
+		<div class="section-header">Layers</div>
+		<LayerControls placement="sidebar" />
+	</svelte:fragment>
+
+	<svelte:fragment slot="sidebarExtra">
+		{#if liveError}
+			<div class="section-header">Live UTCI</div>
+			<div class="section-subtitle error">
+				Failed to compute live UTCI: {liveError}
+			</div>
+		{/if}
+	</svelte:fragment>
+
+	<svelte:fragment slot="legend">
+		<ColorLegend
+			displayAnalysis={
+				$comparisonStore.isComparing ? null : liveAnalysis
+			}
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="tooltip">
+		<MetricTooltip
+			visible={tooltipVisible}
+			x={tooltipX}
+			y={tooltipY}
+			value={tooltipValue}
+			position={tooltipPosition}
+			metricType={$viewerStore.metricType}
+		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="overlays">
+		{#if copiedPointStatus}
+			<div class="copy-status">{copiedPointStatus}</div>
+		{/if}
+		{#if $viewerStore.loading}
+			<div class="overlay-message">Loading analysis data...</div>
+		{/if}
+
+		{#if $viewerStore.error}
+			<div class="overlay-message error">
+				Error: {$viewerStore.error}
+			</div>
+		{/if}
+
+		{#if onDemandPrototypeEnabled}
+			<div
+				class={`overlay-message on-demand-prototype-status${onDemandPrototypeStatus === "error" ? " on-demand-prototype-error" : ""}`}
+				data-testid="on-demand-prototype-status"
+			>
+				On-demand prototype: {onDemandPrototypeStatus}
+				<span
+					class="prototype-render-detail"
+					data-testid="on-demand-render-selection"
+				>
+					utciRender {utciRenderMode} -> {resolvedUtciSurfaceBackend} ({rendererBackend})
+				</span>
+				{#if onDemandPrototypeError}
+					<span class="prototype-error-detail">{onDemandPrototypeError}</span>
 				{/if}
 			</div>
+		{/if}
 
-			<div class="sidebar-section layers-sidebar-section">
-				<div class="section-header">Layers</div>
-				<LayerControls placement="sidebar" />
-			</div>
-
-			{#if liveError}
-				<div class="sidebar-section">
-					<div class="section-header">Live UTCI</div>
-					<div class="section-subtitle error">
-						Failed to compute live UTCI: {liveError}
-					</div>
+		{#if showFullLoadOverlay}
+			<div class="model-loading-backdrop" aria-hidden="true"></div>
+			<div class="model-loading-overlay" aria-live="polite">
+				<div class="spinner"></div>
+				<div class="loading-text">
+					{modelLoading
+						? "Preparing model..."
+						: liveComputeProgress
+							? `Computing month ${liveComputeProgress.current}/${liveComputeProgress.total}...`
+							: "Computing UTCI..."}
 				</div>
-			{/if}
-		</aside>
-
-		<main class="app-main" bind:this={mainViewportElement}>
-			<!-- Color Legend: when not comparing, show live layer range -->
-			<div class="legend-container">
-				<ColorLegend
-					displayAnalysis={
-						$comparisonStore.isComparing ? null : liveAnalysis
-					}
-				/>
 			</div>
+		{/if}
 
-			<!-- Metric Tooltip -->
-			<MetricTooltip
-				visible={tooltipVisible}
-				x={tooltipX}
-				y={tooltipY}
-				value={tooltipValue}
-				position={tooltipPosition}
-				metricType={$viewerStore.metricType}
+		{#if $comparisonStore.isComparing}
+			<ComparisonCurtain
+				containerElement={mainViewportElement}
+				comparisonScenarioName="Live WebGPU UTCI"
 			/>
-			{#if copiedPointStatus}
-				<div class="copy-status">{copiedPointStatus}</div>
-			{/if}
-			{#if $viewerStore.loading}
-				<div class="overlay-message">Loading analysis data...</div>
-			{/if}
+		{/if}
+	</svelte:fragment>
 
-			{#if $viewerStore.error}
-				<div class="overlay-message error">
-					Error: {$viewerStore.error}
-				</div>
-			{/if}
-
-			{#if onDemandPrototypeEnabled}
-				<div
-					class={`overlay-message on-demand-prototype-status${onDemandPrototypeStatus === "error" ? " on-demand-prototype-error" : ""}`}
-					data-testid="on-demand-prototype-status"
-				>
-					On-demand prototype: {onDemandPrototypeStatus}
-					<span
-						class="prototype-render-detail"
-						data-testid="on-demand-render-selection"
-					>
-						utciRender {utciRenderMode} -> {resolvedUtciSurfaceBackend} ({rendererBackend})
-					</span>
-					{#if onDemandPrototypeError}
-						<span class="prototype-error-detail">{onDemandPrototypeError}</span>
-					{/if}
-				</div>
-			{/if}
-
-			{#if showFullLoadOverlay}
-				<div
-					class="model-loading-backdrop"
-					aria-hidden="true"
-				></div>
-				<div
-					class="model-loading-overlay"
-					aria-live="polite"
-				>
-					<div class="spinner"></div>
-					<div class="loading-text">
-						{modelLoading
-							? "Preparing model…"
-							: liveComputeProgress
-								? `Computing month ${liveComputeProgress.current}/${liveComputeProgress.total}…`
-								: "Computing UTCI…"}
-					</div>
-				</div>
-			{/if}
-
-			{#key requestLargeWebgpuLimits}
-				<Scene
-					backgroundColor={$viewerStore.theme === "light"
-						? 0x4b5563
-						: 0x111827}
-					bind:canvasElement
-					onRendererDiagnostics={handleRendererDiagnostics}
-					{requestLargeWebgpuLimits}
-				>
-					<Camera
-						bind:cameraRef
-						near={$sceneConfigStore.cameraNear}
-						far={$sceneConfigStore.cameraFar}
-					/>
-					<Lights />
+	<svelte:fragment slot="viewport">
+		{#key requestLargeWebgpuLimits}
+			<Scene
+				backgroundColor={$viewerStore.theme === "light"
+					? 0x4b5563
+					: 0x111827}
+				bind:canvasElement
+				onRendererDiagnostics={handleRendererDiagnostics}
+				{requestLargeWebgpuLimits}
+			>
+				<Camera
+					bind:cameraRef
+					near={$sceneConfigStore.cameraNear}
+					far={$sceneConfigStore.cameraFar}
+				/>
+				<Lights />
 
 				{#if $analysisStore}
 					{#key $analysisStore.metadata.model_file}
@@ -4290,7 +4209,6 @@
 								modelFileForLoadedModel = $analysisStore?.metadata?.model_file ?? null;
 								modelLoading = false;
 								if (model) {
-									// Defer bounds/camera off the sync path so computeLiveAnalysis can start without blocking (code-review C3).
 									requestAnimationFrame(() => {
 										if (!model) return;
 										const { bounds, center, size } = getBoundsCenterAndSize(model);
@@ -4334,7 +4252,6 @@
 								<T is={THREE.Group} oncreate={handleSyntheticBridgeMount} />
 							{/key}
 						{/if}
-						<!-- Left: .bin-backed UTCI (only when comparison curtain is active) -->
 						{#if $comparisonStore.isComparing}
 							<UTCIPointCloud
 								analysis={$analysisStore}
@@ -4344,7 +4261,6 @@
 							/>
 						{/if}
 
-						<!-- Right: live-computed UTCI (or accepted GPU-resident selected-hour output) -->
 						{#if liveAnalysis || acceptedGpuResidentUtciOutput}
 							<UTCIPointCloud
 								analysis={liveAnalysis ?? $analysisStore}
@@ -4366,230 +4282,13 @@
 						{/if}
 					{/if}
 				{/if}
-				</Scene>
-			{/key}
+			</Scene>
+		{/key}
+	</svelte:fragment>
+</ViewerShell>
 
-			{#if $comparisonStore.isComparing}
-				<ComparisonCurtain
-					containerElement={mainViewportElement}
-					comparisonScenarioName="Live WebGPU UTCI"
-				/>
-			{/if}
-		</main>
-	</div>
-</div>
 
 <style>
-	:global(html, body) {
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-		width: 100%;
-		height: 100%;
-		font-family: var(--font-family);
-		background: var(--color-bg-page);
-		color: var(--color-text-primary);
-	}
-
-	.viewer-shell {
-		width: 100vw;
-		height: 100vh;
-		display: flex;
-		flex-direction: column;
-		background: radial-gradient(
-				circle at top left,
-				rgba(56, 189, 248, 0.18),
-				transparent 55%
-			),
-			var(--color-bg-page);
-	}
-
-	.app-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 8px 18px;
-		background: var(--color-bg-header);
-		backdrop-filter: blur(16px);
-		z-index: 10;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-		gap: 20px;
-	}
-
-	.header-left {
-		display: flex;
-		align-items: center;
-		flex: 1 1 0;
-		min-width: 0;
-		justify-content: flex-start;
-		overflow: hidden;
-	}
-
-	.header-title {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 4px;
-	}
-
-	.logo-final {
-		position: relative;
-		font-family: "Space Grotesk", sans-serif;
-	}
-
-	.logo-final .text {
-		font-size: 34px;
-		font-weight: 700;
-		color: var(--color-text-primary);
-		letter-spacing: -0.03em;
-		padding-bottom: 2px;
-	}
-
-	.logo-final .underline-grad {
-		position: absolute;
-		bottom: -2px;
-		left: 0;
-		right: 0;
-		height: 4px;
-		background: linear-gradient(
-			90deg,
-			#313695,
-			#4575b4,
-			#74add1,
-			#abd9e9,
-			#e0f3f8,
-			#ffffbf,
-			#fee090,
-			#fdae61,
-			#f46d43,
-			#d73027,
-			#a50026
-		);
-		border-radius: 2px;
-		opacity: 0.9;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-	}
-
-	.debug-label {
-		font-size: 11px;
-		color: var(--color-text-secondary);
-		margin-top: 6px;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-	}
-
-	.header-center {
-		display: flex;
-		align-items: center;
-		flex: 0 0 auto;
-		justify-content: center;
-		min-width: 0;
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		flex: 1 1 0;
-		min-width: 0;
-		justify-content: flex-end;
-	}
-
-	.partner-logos {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		flex-wrap: nowrap;
-		max-width: 100%;
-	}
-
-	.logo {
-		height: 30px;
-		object-fit: contain;
-		filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.4));
-		display: block;
-	}
-
-	.logo-nur {
-		height: 50px;
-	}
-
-	.logo-bgu {
-		height: 35px;
-	}
-
-	.app-body {
-		flex: 1;
-		display: grid;
-		grid-template-columns: minmax(320px, 320px) 1fr;
-		grid-template-areas: "sidebar main";
-		height: 100%;
-		overflow: hidden;
-		position: relative;
-	}
-
-	.app-sidebar {
-		grid-area: sidebar;
-		background: var(--color-bg-sidebar);
-		padding: 12px 10px;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		overflow-y: auto;
-		overflow-x: hidden;
-		scrollbar-gutter: stable;
-		width: 320px;
-		min-width: 320px;
-		max-width: 320px;
-		box-sizing: border-box;
-		flex-shrink: 0;
-		position: relative;
-		box-shadow: 2px 0 12px rgba(0, 0, 0, 0.12);
-	}
-
-	.app-main {
-		grid-area: main;
-		position: relative;
-		background: var(--color-bg-page);
-		min-width: 0;
-		overflow: hidden;
-	}
-
-	.sidebar-section {
-		background: var(--color-bg-panel);
-		border-radius: var(--radius-panel);
-		box-shadow: var(--shadow-panel);
-		padding: 10px 12px;
-		min-width: 0;
-		max-width: 100%;
-		box-sizing: border-box;
-	}
-
-	.section-header {
-		font-size: var(--font-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		margin-bottom: 8px;
-		color: var(--color-text-secondary);
-	}
-
-	.section-subtitle {
-		font-size: var(--font-sm);
-		color: var(--color-text-muted);
-		margin-bottom: 8px;
-	}
-
-	.section-subtitle.error {
-		color: var(--color-danger);
-	}
-
-	.legend-container {
-		position: absolute;
-		bottom: 20px;
-		right: 20px;
-		z-index: var(--z-tooltip);
-	}
-
 	.copy-status {
 		position: absolute;
 		left: 50%;
@@ -4607,24 +4306,6 @@
 		pointer-events: none;
 	}
 
-	.overlay-message {
-		position: absolute;
-		top: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: var(--z-tooltip);
-		padding: 10px 16px;
-		border-radius: 999px;
-		background: var(--color-bg-panel);
-		color: var(--color-text-primary);
-		box-shadow: var(--shadow-panel);
-		font-size: 13px;
-	}
-
-	.overlay-message.error {
-		border: 1px solid var(--color-danger);
-	}
-
 	.on-demand-prototype-status {
 		top: 64px;
 		display: flex;
@@ -4640,62 +4321,5 @@
 	.prototype-error-detail {
 		color: var(--color-text-secondary);
 		font-size: 12px;
-	}
-
-	.model-loading-backdrop {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		z-index: calc(var(--z-tooltip) - 1);
-		background: rgba(17, 24, 39, 0.4);
-		backdrop-filter: blur(12px);
-		pointer-events: none;
-	}
-
-	.model-loading-overlay {
-		position: absolute;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		z-index: var(--z-tooltip);
-		min-width: 180px;
-		padding: 14px 18px;
-		border-radius: 14px;
-		background: rgba(17, 24, 39, 0.82);
-		backdrop-filter: blur(10px);
-		color: white;
-		box-shadow:
-			0 14px 30px rgba(0, 0, 0, 0.35),
-			0 0 0 1px rgba(255, 255, 255, 0.05);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 10px;
-		text-align: center;
-	}
-
-	.model-loading-overlay .loading-text {
-		font-size: 13px;
-		letter-spacing: 0.04em;
-	}
-
-	.spinner {
-		width: 36px;
-		height: 36px;
-		border-radius: 50%;
-		border: 3px solid rgba(255, 255, 255, 0.18);
-		border-top-color: var(--color-accent);
-		animation: spin 0.9s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 </style>
