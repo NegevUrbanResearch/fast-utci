@@ -210,6 +210,7 @@
 
 	function handleBaseAcceptedGpuResidentOutputRelease(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;
@@ -220,6 +221,7 @@
 
 	function handleComparisonAcceptedGpuResidentOutputRelease(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;

@@ -98,6 +98,7 @@ export type LiveSelectedHourGpuResidentReleaseReason =
 
 export interface LiveSelectedHourGpuResidentRelease {
 	controllerIdentity: string;
+	controllerInstanceId: number;
 	requestId: number;
 	monthIndex: number;
 	timeIndex: number;
@@ -184,6 +185,7 @@ function createSurfaceIdentity(params: {
 }): LiveSelectedHourSurfaceIdentity {
 	return {
 		controllerIdentity: 'controller',
+		controllerInstanceId: 0,
 		requestId: params.requestId,
 		monthIndex: params.monthIndex,
 		hourIndex: params.hourIndex,
@@ -469,6 +471,40 @@ export function createLiveSelectedHourController(
 		disposeSelectedHourGpuResidentOutput(entry?.value ?? null);
 	}
 
+	function getGpuResidentOwnershipHandle(
+		output: SelectedHourGpuResidentOutput | null
+	): unknown {
+		return (
+			output?.gpuOutputHandle ??
+			output?.output.gpuOutputHandle ??
+			output?.output.gpuBuffer ??
+			output?.output ??
+			null
+		);
+	}
+
+	function gpuResidentOutputsShareOwnership(
+		left: SelectedHourGpuResidentOutput | null,
+		right: SelectedHourGpuResidentOutput | null
+	): boolean {
+		const leftHandle = getGpuResidentOwnershipHandle(left);
+		const rightHandle = getGpuResidentOwnershipHandle(right);
+		return leftHandle != null && leftHandle === rightHandle;
+	}
+
+	function disposeStaleGpuResidentOutput(output: SelectedHourGpuResidentOutput | null): void {
+		if (!output) return;
+		if (gpuResidentOutputsShareOwnership(acceptedGpuResidentOutputEntry?.value ?? null, output)) {
+			return;
+		}
+		for (const retired of retiredGpuResidentOutputs.values()) {
+			if (gpuResidentOutputsShareOwnership(retired.value, output)) {
+				return;
+			}
+		}
+		disposeSelectedHourGpuResidentOutput(output);
+	}
+
 	function maybeDestroyManagedAcceptedGpuResidentOutput(
 		entry: ManagedAcceptedGpuResidentOutput
 	): boolean {
@@ -631,7 +667,7 @@ export function createLiveSelectedHourController(
 					selectedHourReadbackReason: request.selectedHourReadbackReason
 				});
 				if (!ownsRequest(requestToken)) {
-					disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
+					disposeStaleGpuResidentOutput(result.gpuResidentOutput);
 					return {
 						accepted: false,
 						reason: disposed ? 'disposed' : 'stale',

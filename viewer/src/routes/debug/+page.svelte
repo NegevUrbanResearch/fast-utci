@@ -930,6 +930,7 @@
 			!useDebugSharedSelectedHourHost && acceptedOutput
 				? {
 						controllerIdentity: LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID,
+						controllerInstanceId: 0,
 						requestId: acceptedOutput.requestId,
 						monthIndex: acceptedOutput.monthIndex,
 						hourIndex: acceptedOutput.hourIndex,
@@ -4262,6 +4263,7 @@
 
 	function handleAcceptedGpuResidentOutputRelease(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;
@@ -4279,6 +4281,7 @@
 
 	function handleDebugSharedAcceptedGpuResidentOutputRelease(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;
@@ -4289,6 +4292,7 @@
 
 	function handleSceneAcceptedGpuResidentOutputRelease(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;

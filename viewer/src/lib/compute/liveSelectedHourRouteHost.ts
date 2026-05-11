@@ -364,10 +364,12 @@ function syncRequestedRenderContextAnalysis(params: {
 function attachControllerIdentityToSurfaceIdentity(params: {
 	surfaceIdentity: LiveSelectedHourSurfaceIdentity;
 	controllerIdentity: string;
+	controllerInstanceId: number;
 }): LiveSelectedHourSurfaceIdentity {
 	return {
 		...params.surfaceIdentity,
-		controllerIdentity: params.controllerIdentity
+		controllerIdentity: params.controllerIdentity,
+		controllerInstanceId: params.controllerInstanceId
 	};
 }
 
@@ -405,6 +407,9 @@ export function createLiveSelectedHourRouteHost(
 	let comparisonRequestedRenderContext: LiveSelectedHourPublishedRenderContext | null = null;
 	let baseControllerGeneration = 0;
 	let comparisonControllerGeneration = 0;
+	let nextControllerInstanceId = 1;
+	let baseControllerInstanceId = nextControllerInstanceId++;
+	let comparisonControllerInstanceId = nextControllerInstanceId++;
 	let basePublishedSurface: PublishedSurfaceSnapshot | null = null;
 	let comparisonPublishedSurface: PublishedSurfaceSnapshot | null = null;
 	let unsubscribeBaseController: () => void = () => undefined;
@@ -421,6 +426,7 @@ export function createLiveSelectedHourRouteHost(
 
 	function createPublishedSurfaceSnapshot(params: {
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		selectionTriggerKey: string;
 		acceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
 		analysis: Analysis;
@@ -436,7 +442,8 @@ export function createLiveSelectedHourRouteHost(
 			analysis: params.analysis,
 			surfaceIdentity: attachControllerIdentityToSurfaceIdentity({
 				surfaceIdentity: params.surfaceIdentity,
-				controllerIdentity: params.controllerIdentity
+				controllerIdentity: params.controllerIdentity,
+				controllerInstanceId: params.controllerInstanceId
 			}),
 			renderContext: params.renderContext
 		};
@@ -454,6 +461,7 @@ export function createLiveSelectedHourRouteHost(
 		) {
 			basePublishedSurface = createPublishedSurfaceSnapshot({
 				controllerIdentity: baseControllerIdentity,
+				controllerInstanceId: baseControllerInstanceId,
 				selectionTriggerKey: baseSelectionTriggerKey,
 				acceptedVisibleSurface: baseControllerState.acceptedVisibleSurface,
 				analysis: baseControllerState.analysis ?? baseRequestedRenderContext.analysis,
@@ -473,6 +481,7 @@ export function createLiveSelectedHourRouteHost(
 		) {
 			comparisonPublishedSurface = createPublishedSurfaceSnapshot({
 				controllerIdentity: comparisonControllerIdentity,
+				controllerInstanceId: comparisonControllerInstanceId,
 				selectionTriggerKey: comparisonSelectionTriggerKey,
 				acceptedVisibleSurface: comparisonControllerState.acceptedVisibleSurface,
 				analysis:
@@ -609,7 +618,8 @@ export function createLiveSelectedHourRouteHost(
 					  baseControllerState.surfaceIdentity != null
 					? attachControllerIdentityToSurfaceIdentity({
 							surfaceIdentity: baseControllerState.surfaceIdentity,
-							controllerIdentity: baseControllerIdentity
+							controllerIdentity: baseControllerIdentity,
+							controllerInstanceId: baseControllerInstanceId
 					  })
 					: baseVisibleSurface
 						? baseVisibleSurface.surfaceIdentity
@@ -626,7 +636,8 @@ export function createLiveSelectedHourRouteHost(
 						  comparisonControllerState.surfaceIdentity != null
 						? attachControllerIdentityToSurfaceIdentity({
 								surfaceIdentity: comparisonControllerState.surfaceIdentity,
-								controllerIdentity: comparisonControllerIdentity
+								controllerIdentity: comparisonControllerIdentity,
+								controllerInstanceId: comparisonControllerInstanceId
 						  })
 						: comparisonVisibleSurface
 							? comparisonVisibleSurface.surfaceIdentity
@@ -785,6 +796,7 @@ export function createLiveSelectedHourRouteHost(
 			baseRequestedRenderContext = null;
 			basePublishedSurface = null;
 			baseControllerGeneration += 1;
+			baseControllerInstanceId = nextControllerInstanceId++;
 			unsubscribeBaseController = bindController('base', baseController);
 			return;
 		}
@@ -798,6 +810,7 @@ export function createLiveSelectedHourRouteHost(
 		comparisonRequestedRenderContext = null;
 		comparisonPublishedSurface = null;
 		comparisonControllerGeneration += 1;
+		comparisonControllerInstanceId = nextControllerInstanceId++;
 		unsubscribeComparisonController = bindController('comparison', comparisonController);
 	}
 
@@ -1093,7 +1106,10 @@ export function createLiveSelectedHourRouteHost(
 			if (disposed) {
 				return;
 			}
-			if (release.controllerIdentity !== baseControllerIdentity) {
+			if (
+				release.controllerIdentity !== baseControllerIdentity ||
+				release.controllerInstanceId !== baseControllerInstanceId
+			) {
 				return;
 			}
 			baseController.releaseAcceptedGpuResidentOutput(release);
@@ -1103,7 +1119,10 @@ export function createLiveSelectedHourRouteHost(
 			if (disposed) {
 				return;
 			}
-			if (release.controllerIdentity !== comparisonControllerIdentity) {
+			if (
+				release.controllerIdentity !== comparisonControllerIdentity ||
+				release.controllerInstanceId !== comparisonControllerInstanceId
+			) {
 				return;
 			}
 			comparisonController.releaseAcceptedGpuResidentOutput(release);

@@ -360,6 +360,7 @@ describe('liveSelectedHourController', () => {
 
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: firstAcceptedRequestId!,
 			monthIndex: 0,
 			timeIndex: 7,
@@ -403,6 +404,7 @@ describe('liveSelectedHourController', () => {
 		expect(firstAcceptedRequestId).toBeDefined();
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: firstAcceptedRequestId!,
 			monthIndex: 0,
 			timeIndex: 11,
@@ -467,6 +469,7 @@ describe('liveSelectedHourController', () => {
 		expect(firstAcceptedRequestId).toBeDefined();
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: firstAcceptedRequestId!,
 			monthIndex: 0,
 			timeIndex: 21,
@@ -486,6 +489,7 @@ describe('liveSelectedHourController', () => {
 
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: secondAcceptedRequestId!,
 			monthIndex: 0,
 			timeIndex: 22,
@@ -494,6 +498,224 @@ describe('liveSelectedHourController', () => {
 
 		expect(destroy).toHaveBeenCalledTimes(1);
 		expect(thirdGpu.destroy).not.toHaveBeenCalled();
+	});
+
+	it('does not destroy a stale rejected GPU output when it shares the current accepted output handle', async () => {
+		const destroy = vi.fn();
+		const sharedHandle = {
+			buffer: { destroy } as unknown as GPUBuffer,
+			byteLength: 4,
+			requestId: 31,
+			timeIndex: 31,
+			source: 'webgpu-on-demand-snapshot',
+			disposed: false,
+			dispose() {
+				if (sharedHandle.disposed) return;
+				sharedHandle.disposed = true;
+				destroy();
+			}
+		};
+		const currentOutput = {
+			gpuOutputHandle: sharedHandle,
+			gpuBuffer: sharedHandle.buffer
+		} as unknown as SelectedHourGpuResidentOutput['output'];
+		const staleOutput = {
+			gpuOutputHandle: sharedHandle,
+			gpuBuffer: sharedHandle.buffer
+		} as unknown as SelectedHourGpuResidentOutput['output'];
+		const first = deferred<SelectedHourLiveResult>();
+		const second = deferred<SelectedHourLiveResult>();
+		const third = deferred<SelectedHourLiveResult>();
+		const replacementGpu = createGpuResidentOutput(32, 32);
+		const sessionMock = createSessionMock([
+			async () => first.promise,
+			async () => second.promise,
+			async () => third.promise
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		const firstRequest = controller.requestSelection(createRequestParams(30));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(1);
+		});
+		const secondRequest = controller.requestSelection(createRequestParams(31));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(2);
+		});
+
+		second.resolve(
+			createLiveResult({
+				requestId: 31,
+				timeIndex: 31,
+				analysis: createSelectionAnalysis('current-shared-output', [21, 23]),
+				gpuResidentOutput: {
+					...createGpuResidentOutput(31, 31).accepted,
+					output: currentOutput,
+					gpuOutputHandle: sharedHandle
+				},
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(secondRequest).resolves.toMatchObject({ accepted: true });
+		const currentSurfaceIdentity = controller.getState().surfaceIdentity;
+		expect(currentSurfaceIdentity).not.toBeNull();
+
+		first.resolve(
+			createLiveResult({
+				requestId: 30,
+				timeIndex: 30,
+				analysis: createSelectionAnalysis('stale-shared-output', [17, 19]),
+				gpuResidentOutput: {
+					...createGpuResidentOutput(30, 30).accepted,
+					output: staleOutput,
+					gpuOutputHandle: sharedHandle
+				},
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(firstRequest).resolves.toMatchObject({ accepted: false, reason: 'stale' });
+
+		expect(destroy).not.toHaveBeenCalled();
+
+		controller.releaseAcceptedGpuResidentOutput({
+			controllerIdentity: currentSurfaceIdentity!.controllerIdentity,
+			controllerInstanceId: currentSurfaceIdentity!.controllerInstanceId,
+			requestId: currentSurfaceIdentity!.requestId,
+			monthIndex: currentSurfaceIdentity!.monthIndex,
+			timeIndex: currentSurfaceIdentity!.timeIndex,
+			reason: 'copy-complete'
+		});
+		const thirdRequest = controller.requestSelection(createRequestParams(32));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(3);
+		});
+		third.resolve(
+			createLiveResult({
+				requestId: 32,
+				timeIndex: 32,
+				analysis: createSelectionAnalysis('replacement-output', [25, 27]),
+				gpuResidentOutput: replacementGpu.accepted,
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(thirdRequest).resolves.toMatchObject({ accepted: true });
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not destroy a stale rejected GPU output when it shares a retired accepted output handle', async () => {
+		const destroy = vi.fn();
+		const sharedHandle = {
+			buffer: { destroy } as unknown as GPUBuffer,
+			byteLength: 4,
+			requestId: 41,
+			timeIndex: 41,
+			source: 'webgpu-on-demand-snapshot',
+			disposed: false,
+			dispose() {
+				if (sharedHandle.disposed) return;
+				sharedHandle.disposed = true;
+				destroy();
+			}
+		};
+		const retiredOutput = {
+			gpuOutputHandle: sharedHandle,
+			gpuBuffer: sharedHandle.buffer
+		} as unknown as SelectedHourGpuResidentOutput['output'];
+		const staleOutput = {
+			gpuOutputHandle: sharedHandle,
+			gpuBuffer: sharedHandle.buffer
+		} as unknown as SelectedHourGpuResidentOutput['output'];
+		const first = deferred<SelectedHourLiveResult>();
+		const second = deferred<SelectedHourLiveResult>();
+		const third = deferred<SelectedHourLiveResult>();
+		const replacementGpu = createGpuResidentOutput(42, 42);
+		const sessionMock = createSessionMock([
+			async () => first.promise,
+			async () => second.promise,
+			async () => third.promise
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		const firstRequest = controller.requestSelection(createRequestParams(40));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(1);
+		});
+		const secondRequest = controller.requestSelection(createRequestParams(41));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(2);
+		});
+
+		second.resolve(
+			createLiveResult({
+				requestId: 41,
+				timeIndex: 41,
+				analysis: createSelectionAnalysis('retired-shared-output', [21, 23]),
+				gpuResidentOutput: {
+					...createGpuResidentOutput(41, 41).accepted,
+					output: retiredOutput,
+					gpuOutputHandle: sharedHandle
+				},
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(secondRequest).resolves.toMatchObject({ accepted: true });
+		const retiredSurfaceIdentity = controller.getState().surfaceIdentity;
+		expect(retiredSurfaceIdentity).not.toBeNull();
+
+		const thirdRequest = controller.requestSelection(createRequestParams(42));
+		await vi.waitFor(() => {
+			expect(sessionMock.runSelectedHour).toHaveBeenCalledTimes(3);
+		});
+		third.resolve(
+			createLiveResult({
+				requestId: 42,
+				timeIndex: 42,
+				analysis: createSelectionAnalysis('replacement-output', [25, 27]),
+				gpuResidentOutput: replacementGpu.accepted,
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(thirdRequest).resolves.toMatchObject({ accepted: true });
+
+		first.resolve(
+			createLiveResult({
+				requestId: 40,
+				timeIndex: 40,
+				analysis: createSelectionAnalysis('stale-retired-shared-output', [17, 19]),
+				gpuResidentOutput: {
+					...createGpuResidentOutput(40, 40).accepted,
+					output: staleOutput,
+					gpuOutputHandle: sharedHandle
+				},
+				renderTransport: 'compute-buffer-selected-hour',
+				sameDeviceForComputeAndRender: true
+			})
+		);
+		await expect(firstRequest).resolves.toMatchObject({ accepted: false, reason: 'stale' });
+
+		expect(destroy).not.toHaveBeenCalled();
+
+		controller.releaseAcceptedGpuResidentOutput({
+			controllerIdentity: retiredSurfaceIdentity!.controllerIdentity,
+			controllerInstanceId: retiredSurfaceIdentity!.controllerInstanceId,
+			requestId: retiredSurfaceIdentity!.requestId,
+			monthIndex: retiredSurfaceIdentity!.monthIndex,
+			timeIndex: retiredSurfaceIdentity!.timeIndex,
+			reason: 'superseded'
+		});
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+		expect(replacementGpu.destroy).not.toHaveBeenCalled();
 	});
 
 	it('disposes retired GPU outputs on controller disposal even without scene release', async () => {
@@ -628,6 +850,7 @@ describe('liveSelectedHourController', () => {
 		expect(controller.getState().renderSurfaceDiagnostics.gpuResidentCopyError).toBe('copy failed');
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: failedRequestId,
 			monthIndex: 0,
 			timeIndex: 11,
@@ -757,6 +980,7 @@ describe('liveSelectedHourController', () => {
 		});
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: failedRequestId,
 			monthIndex: 0,
 			timeIndex: 13,
@@ -827,6 +1051,7 @@ describe('liveSelectedHourController', () => {
 		expect(staleGpu.destroy).not.toHaveBeenCalled();
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: staleRequestId,
 			monthIndex: 3,
 			timeIndex: 81,
@@ -900,6 +1125,7 @@ describe('liveSelectedHourController', () => {
 		expect(staleGpu.destroy).not.toHaveBeenCalled();
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: 1,
 			monthIndex: 3,
 			timeIndex: 83,
@@ -1467,6 +1693,7 @@ describe('liveSelectedHourController', () => {
 		expect(controller.getState().analysis?.metadata.model_file).toBe('gpu-atomic.glb');
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
+			controllerInstanceId: 0,
 			requestId: getCurrentSurfaceRequestId(controller),
 			monthIndex: 1,
 			timeIndex: 41,

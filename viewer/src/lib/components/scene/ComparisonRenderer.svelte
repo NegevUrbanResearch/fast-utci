@@ -61,6 +61,10 @@
 		type GpuResidentCopyStatus
 	} from '$lib/components/scene/utciSurfaceSync';
 	import {
+		createAcceptedGpuResidentOutputReleaseNotifier,
+		type AcceptedGpuResidentOutputReleaseCallback
+	} from '$lib/components/scene/acceptedGpuResidentOutputRelease';
+	import {
 		copyComputeBufferToRenderStorage,
 		waitForRenderStorageBuffer
 	} from '$lib/components/scene/utciComputeBufferRenderBridge';
@@ -90,13 +94,7 @@
 		  ) => void | Promise<void>)
 		| undefined = undefined;
 	export let onAcceptedGpuResidentOutputRelease:
-		| ((params: {
-				controllerIdentity: string;
-				requestId: number;
-				monthIndex: number;
-				timeIndex: number;
-				reason: 'copy-complete' | 'copy-failed' | 'superseded';
-		  }) => void | Promise<void>)
+		| AcceptedGpuResidentOutputReleaseCallback
 		| undefined = undefined;
 
 	const { renderer, scene, invalidate, autoRender, renderStage } = useThrelte();
@@ -143,20 +141,6 @@
 			onUtciSurfaceDiagnostics,
 			diagnostics,
 			'ComparisonRenderer onUtciSurfaceDiagnostics'
-		);
-	}
-
-	function invokeAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: 'copy-complete' | 'copy-failed' | 'superseded';
-	}): void {
-		invokeDiagnosticsCallbackSafely(
-			onAcceptedGpuResidentOutputRelease,
-			params,
-			'ComparisonRenderer onAcceptedGpuResidentOutputRelease'
 		);
 	}
 
@@ -359,20 +343,26 @@
 	async function copyComputeBufferIntoRenderOwnedStorage(params: {
 		mesh: Mesh;
 		acceptedOutput: SelectedHourGpuResidentOutput;
+		controllerIdentity: string;
+		controllerInstanceId: number;
+		copyRunToken: number;
+		syncKey: string;
 		syncStartedAt: number;
 		renderTimings: SelectedHourRenderTimingSubsteps;
 		notifyAcceptedOutputRelease: (
 			reason: 'copy-complete' | 'copy-failed' | 'superseded'
-		) => void;
-		isSuperseded: () => boolean;
+		) => boolean;
 	}): Promise<void> {
 		const {
 			mesh,
 			acceptedOutput,
+			controllerIdentity,
+			controllerInstanceId,
+			copyRunToken,
+			syncKey,
 			syncStartedAt,
 			renderTimings,
-			notifyAcceptedOutputRelease,
-			isSuperseded
+			notifyAcceptedOutputRelease
 		} = params;
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
 		if (!sourceBuffer) {
@@ -384,6 +374,12 @@
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
 		let lastDevice: GPUDevice | undefined;
+		const isSuperseded = () =>
+			copyRunToken !== gpuResidentCopyRunToken ||
+			activeGpuResidentSyncKey !== syncKey ||
+			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId ||
+			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity ||
+			liveSelectedHourSurfaceIdentity?.controllerInstanceId !== controllerInstanceId;
 		const { device, targetBuffer, waitMs } = await waitForRenderStorageBuffer({
 			deadlineMs: 1000,
 			now: performance.now.bind(performance),
@@ -440,7 +436,9 @@
 			Boolean(resolvedDisplayAnalysis && get(viewerStore).utciVisible)
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
-		notifyAcceptedOutputRelease('copy-complete');
+		if (!notifyAcceptedOutputRelease('copy-complete')) {
+			return;
+		}
 		setGpuResidentCopyDiagnostics('complete', {
 			requestId: acceptedOutput.requestId,
 			renderTimings
@@ -454,41 +452,37 @@
 	): Promise<void> {
 		const syncKey = getAcceptedGpuResidentKey(acceptedOutput);
 		if (!syncKey || !comparisonScene) return;
-		const controllerIdentity = liveSelectedHourSurfaceIdentity?.controllerIdentity ?? null;
-		if (!controllerIdentity) {
-			resetAcceptedGpuResidentCopySync();
+		const notifyAcceptedOutputRelease =
+			createAcceptedGpuResidentOutputReleaseNotifier({
+				callback: onAcceptedGpuResidentOutputRelease,
+				componentName: 'ComparisonRenderer',
+				controllerIdentity: liveSelectedHourSurfaceIdentity?.controllerIdentity,
+				controllerInstanceId: liveSelectedHourSurfaceIdentity?.controllerInstanceId,
+				requestId: acceptedOutput.requestId,
+				monthIndex: acceptedOutput.monthIndex,
+				timeIndex: acceptedOutput.timeIndex
+			});
+		if (
+			!liveSelectedHourSurfaceIdentity?.controllerIdentity ||
+			liveSelectedHourSurfaceIdentity.controllerInstanceId == null
+		) {
+			resetAcceptedGpuResidentCopySync({ invalidateActiveRun: true });
 			return;
 		}
+		const controllerIdentity = liveSelectedHourSurfaceIdentity.controllerIdentity;
+		const controllerInstanceId = liveSelectedHourSurfaceIdentity.controllerInstanceId;
 
 		const copyRunToken = ++gpuResidentCopyRunToken;
 		activeGpuResidentSyncKey = syncKey;
 		setGpuResidentCopyDiagnostics('pending', {
 			requestId: acceptedOutput.requestId
 		});
-		let releaseNotified = false;
-		const notifyAcceptedOutputRelease = (
-			reason: 'copy-complete' | 'copy-failed' | 'superseded'
-		): void => {
-			if (releaseNotified) {
-				return;
-			}
-			releaseNotified = true;
-			if (!controllerIdentity) {
-				return;
-			}
-			invokeAcceptedGpuResidentOutputRelease({
-				controllerIdentity,
-				requestId: acceptedOutput.requestId,
-				monthIndex: acceptedOutput.monthIndex,
-				timeIndex: acceptedOutput.timeIndex,
-				reason
-			});
-		};
 		const isSuperseded = () =>
 			copyRunToken !== gpuResidentCopyRunToken ||
 			activeGpuResidentSyncKey !== syncKey ||
 			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId ||
-			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity;
+			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity ||
+			liveSelectedHourSurfaceIdentity?.controllerInstanceId !== controllerInstanceId;
 
 		try {
 			const syncStartedAt = performance.now();
@@ -542,10 +536,13 @@
 			await copyComputeBufferIntoRenderOwnedStorage({
 				mesh: comparisonUtciMesh,
 				acceptedOutput,
+				controllerIdentity,
+				controllerInstanceId,
+				copyRunToken,
+				syncKey,
 				syncStartedAt,
 				renderTimings,
-				notifyAcceptedOutputRelease,
-				isSuperseded
+				notifyAcceptedOutputRelease
 			});
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

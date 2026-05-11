@@ -129,6 +129,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.baseHasVisibleLiveSurface = false;
 		liveRouteState.baseSurfaceIdentity = null;
 		liveRouteState.baseSceneSurfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 1,
 			requestId: 7,
 			monthIndex: 7,
 			hourIndex: 12,
@@ -183,6 +185,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.comparisonHasVisibleLiveSurface = false;
 		liveRouteState.comparisonSurfaceIdentity = null;
 		liveRouteState.comparisonSceneSurfaceIdentity = {
+			controllerIdentity: 'comparison-controller',
+			controllerInstanceId: 2,
 			requestId: 11,
 			monthIndex: 1,
 			hourIndex: 9,
@@ -224,6 +228,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.baseHasVisibleLiveSurface = false;
 		liveRouteState.baseSurfaceIdentity = null;
 		liveRouteState.baseSceneSurfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 3,
 			requestId: 13,
 			monthIndex: 7,
 			hourIndex: 15,
@@ -268,6 +274,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.comparisonHasVisibleLiveSurface = false;
 		liveRouteState.comparisonSurfaceIdentity = null;
 		liveRouteState.comparisonSceneSurfaceIdentity = {
+			controllerIdentity: 'comparison-controller',
+			controllerInstanceId: 4,
 			requestId: 17,
 			monthIndex: 1,
 			hourIndex: 9,
@@ -309,6 +317,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.baseDisplayAnalysis = liveAnalysis;
 		liveRouteState.baseHasVisibleLiveSurface = true;
 		liveRouteState.baseSurfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 5,
 			requestId: 2,
 			monthIndex: 7,
 			hourIndex: 14,
@@ -364,6 +374,8 @@ describe('projectMainRouteLiveSceneState', () => {
 		liveRouteState.baseDisplayAnalysis = liveAnalysis;
 		liveRouteState.baseHasVisibleLiveSurface = true;
 		liveRouteState.baseSurfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 6,
 			requestId: 2,
 			monthIndex: 7,
 			hourIndex: 0,
@@ -373,6 +385,8 @@ describe('projectMainRouteLiveSceneState', () => {
 			acceptedGpuResidentOutput: null
 		};
 		liveRouteState.baseSceneSurfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 7,
 			requestId: 3,
 			monthIndex: 7,
 			hourIndex: 1,

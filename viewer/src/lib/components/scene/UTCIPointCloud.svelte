@@ -37,6 +37,10 @@
 		type UtciSurfaceDiagnostics
 	} from '$lib/components/scene/utciSurfaceSync';
 	import {
+		createAcceptedGpuResidentOutputReleaseNotifier,
+		type AcceptedGpuResidentOutputReleaseCallback
+	} from '$lib/components/scene/acceptedGpuResidentOutputRelease';
+	import {
 		copyComputeBufferToRenderStorage,
 		waitForRenderStorageBuffer
 	} from './utciComputeBufferRenderBridge';
@@ -57,13 +61,7 @@
 		| ((diagnostics: UtciSurfaceDiagnostics) => void | Promise<void>)
 		| undefined = undefined;
 	export let onAcceptedGpuResidentOutputRelease:
-		| ((params: {
-				controllerIdentity: string;
-				requestId: number;
-				monthIndex: number;
-				timeIndex: number;
-				reason: 'copy-complete' | 'copy-failed' | 'superseded';
-		  }) => void | Promise<void>)
+		| AcceptedGpuResidentOutputReleaseCallback
 		| undefined = undefined;
 
 	export let utciSurface: Mesh | null = null;
@@ -114,20 +112,6 @@
 			onUtciSurfaceDiagnostics,
 			diagnostics,
 			'UTCIPointCloud onUtciSurfaceDiagnostics'
-		);
-	}
-
-	function invokeAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: 'copy-complete' | 'copy-failed' | 'superseded';
-	}): void {
-		invokeDiagnosticsCallbackSafely(
-			onAcceptedGpuResidentOutputRelease,
-			params,
-			'UTCIPointCloud onAcceptedGpuResidentOutputRelease'
 		);
 	}
 
@@ -235,19 +219,25 @@
 		mesh: Mesh;
 		acceptedOutput: SelectedHourGpuResidentOutput;
 		controllerIdentity: string;
+		controllerInstanceId: number;
 		copyRunToken: number;
 		syncKey: string;
 		syncStartedAt: number;
 		renderTimings: SelectedHourRenderTimingSubsteps;
+		notifyAcceptedOutputRelease: (
+			reason: 'copy-complete' | 'copy-failed' | 'superseded'
+		) => boolean;
 	}): Promise<void> {
 		const {
 			mesh,
 			acceptedOutput,
 			controllerIdentity,
+			controllerInstanceId,
 			copyRunToken,
 			syncKey,
 			syncStartedAt,
-			renderTimings
+			renderTimings,
+			notifyAcceptedOutputRelease
 		} = params;
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
 		if (!sourceBuffer) {
@@ -259,26 +249,12 @@
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
 		let lastDevice: GPUDevice | undefined;
-		let releaseNotified = false;
-		const notifyAcceptedOutputRelease = (
-			reason: 'copy-complete' | 'copy-failed' | 'superseded'
-		): boolean => {
-			if (releaseNotified) return false;
-			releaseNotified = true;
-			invokeAcceptedGpuResidentOutputRelease({
-				controllerIdentity,
-				requestId: acceptedOutput.requestId,
-				monthIndex: acceptedOutput.monthIndex,
-				timeIndex: acceptedOutput.timeIndex,
-				reason
-			});
-			return true;
-		};
 		const isSuperseded = () =>
 			copyRunToken !== gpuResidentCopyRunToken ||
 			activeGpuResidentSyncKey !== syncKey ||
 			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId ||
-			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity;
+			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity ||
+			liveSelectedHourSurfaceIdentity?.controllerInstanceId !== controllerInstanceId;
 		const { device, targetBuffer, waitMs } = await waitForRenderStorageBuffer({
 			deadlineMs: 1000,
 			now: performance.now.bind(performance),
@@ -352,11 +328,25 @@
 	): Promise<void> {
 		const syncKey = getAcceptedGpuResidentKey(acceptedOutput);
 		if (!syncKey) return;
-		const controllerIdentity = liveSelectedHourSurfaceIdentity?.controllerIdentity;
-		if (!controllerIdentity) {
-			resetAcceptedGpuResidentCopySync();
+		const notifyAcceptedOutputRelease =
+			createAcceptedGpuResidentOutputReleaseNotifier({
+				callback: onAcceptedGpuResidentOutputRelease,
+				componentName: 'UTCIPointCloud',
+				controllerIdentity: liveSelectedHourSurfaceIdentity?.controllerIdentity,
+				controllerInstanceId: liveSelectedHourSurfaceIdentity?.controllerInstanceId,
+				requestId: acceptedOutput.requestId,
+				monthIndex: acceptedOutput.monthIndex,
+				timeIndex: acceptedOutput.timeIndex
+			});
+		if (
+			!liveSelectedHourSurfaceIdentity?.controllerIdentity ||
+			liveSelectedHourSurfaceIdentity.controllerInstanceId == null
+		) {
+			resetAcceptedGpuResidentCopySync({ invalidateActiveRun: true });
 			return;
 		}
+		const controllerIdentity = liveSelectedHourSurfaceIdentity.controllerIdentity;
+		const controllerInstanceId = liveSelectedHourSurfaceIdentity.controllerInstanceId;
 
 		const copyRunToken = ++gpuResidentCopyRunToken;
 		activeGpuResidentSyncKey = syncKey;
@@ -367,7 +357,8 @@
 			copyRunToken !== gpuResidentCopyRunToken ||
 			activeGpuResidentSyncKey !== syncKey ||
 			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId ||
-			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity;
+			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity ||
+			liveSelectedHourSurfaceIdentity?.controllerInstanceId !== controllerInstanceId;
 
 		try {
 			const syncStartedAt = performance.now();
@@ -418,34 +409,24 @@
 				mesh: utciSurface,
 				acceptedOutput,
 				controllerIdentity,
+				controllerInstanceId,
 				copyRunToken,
 				syncKey,
 				syncStartedAt,
-				renderTimings
+				renderTimings,
+				notifyAcceptedOutputRelease
 			});
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			if (isSuperseded() || errorMessage.includes('superseded')) {
-				invokeAcceptedGpuResidentOutputRelease({
-					controllerIdentity,
-					requestId: acceptedOutput.requestId,
-					monthIndex: acceptedOutput.monthIndex,
-					timeIndex: acceptedOutput.timeIndex,
-					reason: 'superseded'
-				});
+				notifyAcceptedOutputRelease('superseded');
 				return;
 			}
 
 			if (utciSurface) {
 				setComputeBufferSurfacePublicationVisibility(utciSurface, false);
 			}
-			invokeAcceptedGpuResidentOutputRelease({
-				controllerIdentity,
-				requestId: acceptedOutput.requestId,
-				monthIndex: acceptedOutput.monthIndex,
-				timeIndex: acceptedOutput.timeIndex,
-				reason: 'copy-failed'
-			});
+			notifyAcceptedOutputRelease('copy-failed');
 			setGpuResidentCopyDiagnostics('failed', {
 				error: errorMessage,
 				requestId: acceptedOutput.requestId

@@ -134,6 +134,8 @@ function createControllerFactory() {
 			requestId: number
 		): LiveSelectedHourSurfaceIdentity {
 			return {
+				controllerIdentity: 'controller',
+				controllerInstanceId: 0,
 				requestId,
 				monthIndex: request.monthIndex,
 				hourIndex: request.hourIndex,
@@ -1315,6 +1317,15 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseSceneSurfaceIdentity?.controllerIdentity).not.toBe(
 			host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity
 		);
+		expect(host.getState().baseSceneSurfaceIdentity?.controllerInstanceId).toEqual(
+			expect.any(Number)
+		);
+		expect(host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId).toEqual(
+			expect.any(Number)
+		);
+		expect(host.getState().baseSceneSurfaceIdentity?.controllerInstanceId).not.toBe(
+			host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId
+		);
 	});
 
 	it('forwards base scene release only to the matching base controller', async () => {
@@ -1333,6 +1344,8 @@ describe('liveSelectedHourRouteHost', () => {
 
 		const release: LiveSelectedHourGpuResidentRelease = {
 			controllerIdentity: baseControllerIdentity ?? 'missing-base-controller-identity',
+			controllerInstanceId:
+				host.getState().baseSceneSurfaceIdentity?.controllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1363,6 +1376,8 @@ describe('liveSelectedHourRouteHost', () => {
 		const release: LiveSelectedHourGpuResidentRelease = {
 			controllerIdentity:
 				comparisonControllerIdentity ?? 'missing-comparison-controller-identity',
+			controllerInstanceId:
+				host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1388,8 +1403,12 @@ describe('liveSelectedHourRouteHost', () => {
 
 		const initialBaseControllerIdentity =
 			host.getState().baseSceneSurfaceIdentity?.controllerIdentity;
+		const initialBaseControllerInstanceId =
+			host.getState().baseSceneSurfaceIdentity?.controllerInstanceId;
 		const initialComparisonControllerIdentity =
 			host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity;
+		const initialComparisonControllerInstanceId =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId;
 		expect(initialBaseControllerIdentity).toBe(factory.records[0].requests[0]?.sessionKey);
 		expect(initialComparisonControllerIdentity).toBe(factory.records[1].requests[0]?.sessionKey);
 
@@ -1406,13 +1425,18 @@ describe('liveSelectedHourRouteHost', () => {
 
 		const currentBaseControllerIdentity =
 			host.getState().baseSceneSurfaceIdentity?.controllerIdentity;
+		const currentBaseControllerInstanceId =
+			host.getState().baseSceneSurfaceIdentity?.controllerInstanceId;
 		const currentComparisonControllerIdentity =
 			host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity;
+		const currentComparisonControllerInstanceId =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId;
 		expect(currentBaseControllerIdentity).not.toBe(initialBaseControllerIdentity);
 		expect(currentComparisonControllerIdentity).not.toBe(initialComparisonControllerIdentity);
 
 		host.releaseBaseAcceptedGpuResidentOutput({
 			controllerIdentity: initialBaseControllerIdentity ?? 'stale-base-controller',
+			controllerInstanceId: initialBaseControllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1421,6 +1445,7 @@ describe('liveSelectedHourRouteHost', () => {
 		host.releaseComparisonAcceptedGpuResidentOutput({
 			controllerIdentity:
 				initialComparisonControllerIdentity ?? 'stale-comparison-controller',
+			controllerInstanceId: initialComparisonControllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1428,6 +1453,7 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 		host.releaseBaseAcceptedGpuResidentOutput({
 			controllerIdentity: currentComparisonControllerIdentity ?? 'wrong-base-controller',
+			controllerInstanceId: currentComparisonControllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1435,6 +1461,7 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 		host.releaseComparisonAcceptedGpuResidentOutput({
 			controllerIdentity: currentBaseControllerIdentity ?? 'wrong-comparison-controller',
+			controllerInstanceId: currentBaseControllerInstanceId ?? -1,
 			requestId: 1,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1442,10 +1469,31 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 
 		expect(factory.records.flatMap((record) => record.releases)).toEqual([]);
+
+		host.releaseBaseAcceptedGpuResidentOutput({
+			controllerIdentity: initialBaseControllerIdentity ?? 'stale-base-controller',
+			controllerInstanceId: currentBaseControllerInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'superseded'
+		});
+		host.releaseComparisonAcceptedGpuResidentOutput({
+			controllerIdentity:
+				initialComparisonControllerIdentity ?? 'stale-comparison-controller',
+			controllerInstanceId: currentComparisonControllerInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'superseded'
+		});
+
+		expect(factory.records.flatMap((record) => record.releases)).toEqual([]);
 		host.dispose();
 
 		host.releaseBaseAcceptedGpuResidentOutput({
 			controllerIdentity: currentBaseControllerIdentity ?? 'disposed-base-controller',
+			controllerInstanceId: currentBaseControllerInstanceId ?? -1,
 			requestId: 2,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1454,6 +1502,7 @@ describe('liveSelectedHourRouteHost', () => {
 		host.releaseComparisonAcceptedGpuResidentOutput({
 			controllerIdentity:
 				currentComparisonControllerIdentity ?? 'disposed-comparison-controller',
+			controllerInstanceId: currentComparisonControllerInstanceId ?? -1,
 			requestId: 2,
 			monthIndex: 7,
 			timeIndex: 180,
@@ -1461,6 +1510,180 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 
 		expect(factory.records.flatMap((record) => record.releases)).toEqual([]);
+	});
+
+	it('ignores stale base releases from an old controller instance with the same content identity', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const sharedBaseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const sharedBaseModel = {} as Group;
+		const sharedRendererDevice = { label: 'base-renderer-same-identity' } as unknown as GPUDevice;
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				utciSurfaceBackend: 'gpuNative',
+				baseAnalysis: sharedBaseAnalysis,
+				baseModel: sharedBaseModel,
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		const staleBaseIdentity = host.getState().baseSceneSurfaceIdentity?.controllerIdentity;
+		const staleBaseInstanceId = host.getState().baseSceneSurfaceIdentity?.controllerInstanceId;
+		expect(staleBaseIdentity).toBe(factory.records[0].requests[0]?.sessionKey);
+		expect(staleBaseInstanceId).toEqual(expect.any(Number));
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				enabled: false,
+				utciSurfaceBackend: 'gpuNative',
+				baseAnalysis: sharedBaseAnalysis,
+				baseModel: sharedBaseModel,
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				utciSurfaceBackend: 'gpuNative',
+				baseAnalysis: sharedBaseAnalysis,
+				baseModel: sharedBaseModel,
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		const currentBaseIdentity = host.getState().baseSceneSurfaceIdentity?.controllerIdentity;
+		const currentBaseInstanceId =
+			host.getState().baseSceneSurfaceIdentity?.controllerInstanceId;
+		expect(currentBaseIdentity).toBe(staleBaseIdentity);
+		expect(currentBaseInstanceId).not.toBe(staleBaseInstanceId);
+
+		host.releaseBaseAcceptedGpuResidentOutput({
+			controllerIdentity: staleBaseIdentity ?? 'missing-stale-base-controller',
+			controllerInstanceId: staleBaseInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'superseded'
+		});
+
+		const currentBaseRecord = factory.records[factory.records.length - 2];
+		expect(currentBaseRecord?.releases).toEqual([]);
+
+		const currentRelease = {
+			controllerIdentity: currentBaseIdentity ?? 'missing-current-base-controller',
+			controllerInstanceId: currentBaseInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'copy-complete' as const
+		};
+		host.releaseBaseAcceptedGpuResidentOutput(currentRelease);
+
+		expect(currentBaseRecord?.releases).toEqual([currentRelease]);
+	});
+
+	it('ignores stale comparison releases from an old controller instance with the same content identity', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const sharedComparisonAnalysis = createFullDayAnalysis({
+			label: 'comparison-winter',
+			sourceAnalysisId: 'Ben-Gurion/comparison/winter',
+			baseMin: 5,
+			baseMax: 22
+		});
+		const sharedComparisonModel = {} as Group;
+		const sharedRendererDevice = {
+			label: 'comparison-renderer-same-identity'
+		} as unknown as GPUDevice;
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				utciSurfaceBackend: 'gpuNative',
+				comparison: {
+					sourceAnalysis: sharedComparisonAnalysis,
+					model: sharedComparisonModel,
+					rendererDevice: sharedRendererDevice
+				},
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		const staleComparisonIdentity =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity;
+		const staleComparisonInstanceId =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId;
+		expect(staleComparisonIdentity).toBe(factory.records[1].requests[0]?.sessionKey);
+		expect(staleComparisonInstanceId).toEqual(expect.any(Number));
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				enabled: false,
+				utciSurfaceBackend: 'gpuNative',
+				comparison: {
+					sourceAnalysis: sharedComparisonAnalysis,
+					model: sharedComparisonModel,
+					rendererDevice: sharedRendererDevice
+				},
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				utciSurfaceBackend: 'gpuNative',
+				comparison: {
+					sourceAnalysis: sharedComparisonAnalysis,
+					model: sharedComparisonModel,
+					rendererDevice: sharedRendererDevice
+				},
+				rendererDevice: sharedRendererDevice
+			})
+		);
+		await host.flush();
+
+		const currentComparisonIdentity =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity;
+		const currentComparisonInstanceId =
+			host.getState().comparisonSceneSurfaceIdentity?.controllerInstanceId;
+		expect(currentComparisonIdentity).toBe(staleComparisonIdentity);
+		expect(currentComparisonInstanceId).not.toBe(staleComparisonInstanceId);
+
+		host.releaseComparisonAcceptedGpuResidentOutput({
+			controllerIdentity:
+				staleComparisonIdentity ?? 'missing-stale-comparison-controller',
+			controllerInstanceId: staleComparisonInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'superseded'
+		});
+
+		const currentComparisonRecord = factory.records[factory.records.length - 1];
+		expect(currentComparisonRecord?.releases).toEqual([]);
+
+		const currentRelease = {
+			controllerIdentity:
+				currentComparisonIdentity ?? 'missing-current-comparison-controller',
+			controllerInstanceId: currentComparisonInstanceId ?? -1,
+			requestId: 1,
+			monthIndex: 7,
+			timeIndex: 180,
+			reason: 'copy-complete' as const
+		};
+		host.releaseComparisonAcceptedGpuResidentOutput(currentRelease);
+
+		expect(currentComparisonRecord?.releases).toEqual([currentRelease]);
 	});
 
 	it('replaces the base controller when the base model instance changes', async () => {

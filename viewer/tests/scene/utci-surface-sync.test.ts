@@ -38,6 +38,7 @@ describe('utciSurfaceSync', () => {
 			mesh,
 			liveSelectedHourSurfaceIdentity: {
 				controllerIdentity: 'test-controller',
+				controllerInstanceId: 0,
 				requestId: 9,
 				monthIndex: 1,
 				hourIndex: 8,
