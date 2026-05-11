@@ -106,8 +106,6 @@
 	} from "$lib/compute/webgpuDeviceLimits";
 	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
 	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
-	import { projectMainRouteLiveSceneState } from "$lib/compute/liveSelectedHourRouteProjection";
-	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
 	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/liveSelectedHourSurfaceIdentity";
 	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
 	import {
@@ -132,24 +130,37 @@
 		type UtciRenderMode,
 		type UtciRendererBackend,
 	} from "$lib/utciRenderMode";
-	import {
-		deriveDebugWebgpuUtciDiagnosticsState,
-		shouldExposeDebugWindowDiagnostics,
-	} from "$lib/debug/debugWebgpuUtciDiagnostics";
+	import { shouldExposeDebugWindowDiagnostics } from "$lib/debug/debugWebgpuUtciDiagnostics";
 	import {
 		buildDebugOnDemandPrototypeDiagnostics,
 		type DebugOnDemandPythonSampleComparison as OnDemandPythonSampleComparison,
 		type DebugOnDemandPythonSampleRecord as OnDemandPythonSampleRecord,
 		type DebugOnDemandPrototypeDiagnostics as OnDemandPrototypeDiagnostics,
 	} from "$lib/debug/debugOnDemandPrototypeDiagnostics";
-	import {
-		buildDebugSelectedHourDispatchCounters,
-		shouldUseDebugSharedSelectedHourHost,
-	} from "$lib/debug/debugSelectedHourMode";
+	import { buildDebugSelectedHourDispatchCounters } from "$lib/debug/debugSelectedHourMode";
 	import { createDebugSelectedHourLegacyHost } from "$lib/debug/debugSelectedHourLegacyHost";
-	import { parseDebugWebgpuUtciQuery } from "$lib/debug/debugWebgpuUtciQuery";
 	import { calculateScenarioOrigin } from "$lib/utils/coordinates";
 	import { getAnchorOffset, isNormalizationEnabled } from "$lib/config/viewerConfig";
+	import { parseDebugRouteQueryState } from "./queryState";
+	import {
+		deriveDebugRouteSelectedHourPolicy,
+		type DebugRouteSelectedHourPolicy,
+	} from "./selectedHourMode";
+	import {
+		buildLegacyDebugSurfaceIdentity,
+		handleLegacyAcceptedGpuResidentOutputRelease,
+		isLegacyDebugAcceptedGpuResidentOutputRelease,
+		type DebugRouteAcceptedGpuResidentOutputRelease,
+	} from "./legacySelectedHourWiring";
+	import {
+		buildDebugSharedDiagnosticsPatch,
+		buildDebugSharedRouteHostInputs,
+		createDebugSharedRouteHost,
+		forwardDebugRouteAcceptedGpuResidentOutputRelease,
+		forwardDebugSharedBaseSurfaceDiagnostics,
+		projectDebugSharedRouteSceneState,
+		releaseDebugSharedAcceptedGpuResidentOutput,
+	} from "./sharedHostWiring";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -214,11 +225,15 @@
 	let analysisId: string = DEFAULT_ANALYSIS_ID;
 	let mounted = false;
 	/** When true (?parity=1), keep Python comparison hour-local while f32 on-demand still computes month/hour selections. */
-	$: debugQueryState = parseDebugWebgpuUtciQuery($page.url.searchParams);
+	$: debugQueryState = parseDebugRouteQueryState($page.url.searchParams);
 	$: parityMode = debugQueryState.parityMode;
 	/** E2E-only normal-mode export; keeps parityMode false while exposing one app-visible month slice. */
-	$: normalCollectMode = debugQueryState.collectMode === "normal";
+	$: normalCollectMode = debugQueryState.normalCollectMode;
 	$: debugOnDemandMode = debugQueryState.debugOnDemandMode;
+	let debugDiagnosticsState: DebugRouteSelectedHourPolicy["debugDiagnosticsState"];
+	let onDemandPrototypeEnabled: DebugRouteSelectedHourPolicy["onDemandPrototypeEnabled"] = false;
+	let useDebugSharedSelectedHourHost: DebugRouteSelectedHourPolicy["useDebugSharedSelectedHourHost"] =
+		false;
 	// Default the debug route to auto so prototype coverage exercises the live
 	// renderer-backend resolution path.
 	$: utciRenderMode = parseUtciRenderMode(
@@ -234,9 +249,7 @@
 		utciRenderMode,
 		rendererBackend,
 	);
-	const debugSharedRouteHost = createLiveSelectedHourRouteHost({
-		dataBasePath: getDataBasePath(),
-	});
+	const debugSharedRouteHost = createDebugSharedRouteHost(getDataBasePath());
 	let debugSharedRouteState = debugSharedRouteHost.getState();
 	const unsubscribeDebugSharedRouteHost = debugSharedRouteHost.subscribe((state) => {
 		debugSharedRouteState = state;
@@ -249,13 +262,12 @@
 	let debugSharedBaseSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 	let debugSharedBasePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	let debugSharedBasePendingRenderUpdateStartedAt: number | undefined = undefined;
-	const LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID = "debug-legacy-selected-hour";
 	let legacyDebugSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 
 	function handleDebugSharedBaseSurfaceDiagnostics(
 		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics,
 	): void {
-		debugSharedRouteHost.handleBaseSurfaceDiagnostics(diagnostics);
+		forwardDebugSharedBaseSurfaceDiagnostics(debugSharedRouteHost, diagnostics);
 	}
 
 	// Tooltip state
@@ -815,14 +827,18 @@
 	let wasOnDemandPrototypeEnabled = false;
 	let wasCompareOneHourEnabled = false;
 	$: debugTooltipHoverDisabled = $page.url.searchParams.get("disableTooltip") === "1";
-	$: compareOneHourEnabled =
-		onDemandPrototypeEnabled &&
+	$: compareOneHourRequested =
 		browser &&
 		$page.url.searchParams.get("compareOneHour") === "1";
-	$: strictExposureOnlyEnabled =
-		onDemandPrototypeEnabled &&
+	$: strictExposureOnlyRequested =
 		browser &&
 		$page.url.searchParams.get("strictExposureOnly") === "1";
+	$: compareOneHourEnabled =
+		onDemandPrototypeEnabled &&
+		compareOneHourRequested;
+	$: strictExposureOnlyEnabled =
+		onDemandPrototypeEnabled &&
+		strictExposureOnlyRequested;
 	$: compareHours = strictExposureOnlyEnabled ? getCompareHoursFromQuery() : [];
 	$: compareHoursEnabled =
 		strictExposureOnlyEnabled &&
@@ -840,56 +856,42 @@
 			: $viewerStore.currentHour,
 		parityMode,
 	});
-	$: debugDiagnosticsState = deriveDebugWebgpuUtciDiagnosticsState({
+	$: ({
+		debugDiagnosticsState,
+		onDemandPrototypeEnabled,
+		useDebugSharedSelectedHourHost,
+		legacySelectedHourDispatchCounters,
+	} = deriveDebugRouteSelectedHourPolicy({
+		browserEnabled: browser,
 		parityMode,
-		collectMode: normalCollectMode ? "normal" : "off",
+		normalCollectMode,
 		debugOnDemandMode,
 		utciRenderMode,
 		selectedMonthIndex: debugOnDemandSelection.monthIndex,
 		selectedHourIndex: debugOnDemandSelection.hourIndex,
 		selectedTimeIndex: debugOnDemandSelection.timeIndex,
+		legacySelectedHourDispatchCounters,
+		strictExposureOnlyRequested,
+		compareOneHourRequested,
 		selectedHourEngine: "legacy-debug",
-		binComparisonValid: parityMode && debugOnDemandSelection.monthIndex === 7,
-		...legacySelectedHourDispatchCounters,
-	});
-	$: onDemandPrototypeEnabled = browser && debugDiagnosticsState.onDemandEnabled;
-	$: useDebugSharedSelectedHourHost = shouldUseDebugSharedSelectedHourHost({
-		onDemandPrototypeEnabled,
-		debugOnDemandMode,
-		parityMode,
-		normalCollectMode,
-		strictExposureOnlyEnabled,
-		compareOneHourEnabled,
-	});
-	$: debugSharedRouteHost.setRouteInputs({
-		enabled: useDebugSharedSelectedHourHost,
-		analysisId,
-		baseAnalysis: $analysisStore,
-		baseModel:
-			modelFileForLoadedModel === $analysisStore?.metadata.model_file ? model : null,
-		selection: {
+	}));
+	$: debugSharedRouteHost.setRouteInputs(
+		buildDebugSharedRouteHostInputs({
+			enabled: useDebugSharedSelectedHourHost,
+			analysisId,
+			baseAnalysis: $analysisStore,
+			baseModel:
+				modelFileForLoadedModel === $analysisStore?.metadata.model_file ? model : null,
 			monthIndex: debugOnDemandSelection.monthIndex,
 			hourIndex: debugOnDemandSelection.hourIndex,
 			timeIndex: debugOnDemandSelection.timeIndex,
-			selectionKey: [
-				analysisId,
-				debugOnDemandSelection.monthIndex,
-				debugOnDemandSelection.hourIndex,
-			].join("|"),
-		},
-		colorMode: $viewerStore.colorMode,
-		utciRenderMode,
-		rendererBackend,
-		rendererDevice: rendererDeviceForDebug,
-		utciSurfaceBackend: resolvedUtciSurfaceBackend,
-		comparison: {
-			active: false,
-			analysisId: null,
-			sourceAnalysis: null,
-			model: null,
+			colorMode: $viewerStore.colorMode,
+			utciRenderMode,
+			rendererBackend,
 			rendererDevice: rendererDeviceForDebug,
-		},
-	});
+			utciSurfaceBackend: resolvedUtciSurfaceBackend,
+		}),
+	);
 	$: ({
 		baseLiveReady: debugSharedBaseLiveReady,
 		baseHasVisibleLiveSurface: debugSharedBaseHasVisibleSurface,
@@ -898,11 +900,9 @@
 		baseSceneSurfaceIdentity: debugSharedBaseSurfaceIdentity,
 		basePendingGpuResidentOutput: debugSharedBasePendingGpuResidentOutput,
 		basePendingRenderUpdateStartedAt: debugSharedBasePendingRenderUpdateStartedAt,
-	} = projectMainRouteLiveSceneState({
-		useLiveUtciOnMainRoute: useDebugSharedSelectedHourHost,
-		isComparing: false,
+	} = projectDebugSharedRouteSceneState({
+		enabled: useDebugSharedSelectedHourHost,
 		baseAnalysis: $analysisStore,
-		comparisonAnalysis: null,
 		liveRouteState: debugSharedRouteState,
 	}));
 	$: debugOnDemandSelectionKey =
@@ -912,11 +912,6 @@
 	$: {
 		const acceptedOutput = acceptedGpuResidentUtciOutput;
 		const pendingRenderUpdate = onDemandDebugPrepared?.pendingRenderUpdate;
-		const selectionKey = [
-			analysisId,
-			acceptedOutput?.monthIndex ?? debugOnDemandSelection.monthIndex,
-			acceptedOutput?.hourIndex ?? debugOnDemandSelection.hourIndex,
-		].join("|");
 		const pendingRenderUpdateStartedAt =
 			pendingRenderUpdate &&
 			acceptedOutput &&
@@ -926,20 +921,14 @@
 				? pendingRenderUpdate.startedAt
 				: undefined;
 
-		legacyDebugSurfaceIdentity =
-			!useDebugSharedSelectedHourHost && acceptedOutput
-				? {
-						controllerIdentity: LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID,
-						controllerInstanceId: 0,
-						requestId: acceptedOutput.requestId,
-						monthIndex: acceptedOutput.monthIndex,
-						hourIndex: acceptedOutput.hourIndex,
-						timeIndex: acceptedOutput.timeIndex,
-						selectionKey,
-						pendingRenderUpdateStartedAt,
-						acceptedGpuResidentOutput: acceptedOutput,
-					}
-				: null;
+		legacyDebugSurfaceIdentity = buildLegacyDebugSurfaceIdentity({
+			useDebugSharedSelectedHourHost,
+			acceptedOutput,
+			analysisId,
+			selectedMonthIndex: debugOnDemandSelection.monthIndex,
+			selectedHourIndex: debugOnDemandSelection.hourIndex,
+			pendingRenderUpdateStartedAt,
+		});
 	}
 	$: if (
 		browser &&
@@ -1402,41 +1391,16 @@
 	}
 
 	$: if (useDebugSharedSelectedHourHost) {
-		const renderSurfaceDiagnostics = debugSharedRouteState.base.renderSurfaceDiagnostics;
-		updateOnDemandPrototypeDiagnostics({
-			selectedHourEngine: "shared-host",
-			legacySelectedHourDispatchCount,
-			legacyScrubScheduleCount,
-			surfaceRequestId: debugSharedRouteState.baseSurfaceIdentity?.requestId,
-			selectionKey: debugSharedRouteState.baseSurfaceIdentity?.selectionKey,
-			sceneSurfaceRequestId: debugSharedRouteState.baseSceneSurfaceIdentity?.requestId,
-			sceneSelectionKey: debugSharedRouteState.baseSceneSurfaceIdentity?.selectionKey,
-			selectedMonthIndex: debugOnDemandSelection.monthIndex,
-			selectedHourIndex: debugOnDemandSelection.hourIndex,
-			selectedTimeIndex: debugOnDemandSelection.timeIndex,
-			renderContextTimeIndex: debugSharedBaseRenderContext?.timeIndex,
-			acceptedUtciRange: debugSharedBasePendingGpuResidentOutput?.utciRange,
-			renderTransport:
-				debugSharedRouteState.base.renderTransport === "idle"
-					? "none"
-					: debugSharedRouteState.base.renderTransport,
-			sameDeviceForComputeAndRender:
-				debugSharedRouteState.base.sameDeviceForComputeAndRender,
-			utciSurfaceSource: renderSurfaceDiagnostics.utciSurfaceSource,
-			selectedHourReadbackCount: undefined,
-			visibleSelectedHourReadbackCount:
-				debugSharedRouteState.base.visibleSelectedHourReadbackCount,
-			selectedHourTransferCount:
-				renderSurfaceDiagnostics.selectedHourTransferCount,
-			dataTextureBuildCount: renderSurfaceDiagnostics.dataTextureBuildCount,
-			gpuResidentCopyStatus: renderSurfaceDiagnostics.gpuResidentCopyStatus,
-			gpuResidentCopyError: renderSurfaceDiagnostics.gpuResidentCopyError,
-			gpuResidentCopyRequestId: renderSurfaceDiagnostics.gpuResidentCopyRequestId,
-			selectedHourReadbackReasons:
-				debugSharedRouteState.base.selectedHourReadbackReasons,
-			selectedHourReadbackReasonCounts:
-				debugSharedRouteState.base.selectedHourReadbackReasonCounts,
-		});
+		updateOnDemandPrototypeDiagnostics(
+			buildDebugSharedDiagnosticsPatch({
+				debugSharedRouteState,
+				debugSharedBaseRenderContext,
+				debugSharedBasePendingGpuResidentOutput,
+				debugOnDemandSelection,
+				legacySelectedHourDispatchCount,
+				legacyScrubScheduleCount,
+			}),
+		);
 	}
 
 	function armCameraInteractionTelemetry(windowMs = CAMERA_INTERACTION_ARM_WINDOW_MS): void {
@@ -4261,48 +4225,30 @@
 		}
 	}
 
-	function handleAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		controllerInstanceId: number;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: "copy-complete" | "copy-failed" | "superseded";
-	}): void {
-		if (params.controllerIdentity !== LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID) {
-			return;
-		}
-		releaseAcceptedGpuResidentUtciOutput({
-			requestId: params.requestId,
-			monthIndex: params.monthIndex,
-			timeIndex: params.timeIndex,
+	function handleAcceptedGpuResidentOutputRelease(
+		params: DebugRouteAcceptedGpuResidentOutputRelease,
+	): void {
+		handleLegacyAcceptedGpuResidentOutputRelease(
+			params,
+			releaseAcceptedGpuResidentUtciOutput,
+		);
+	}
+
+	function handleDebugSharedAcceptedGpuResidentOutputRelease(
+		params: DebugRouteAcceptedGpuResidentOutputRelease,
+	): void {
+		releaseDebugSharedAcceptedGpuResidentOutput(debugSharedRouteHost, params);
+	}
+
+	function handleSceneAcceptedGpuResidentOutputRelease(
+		params: DebugRouteAcceptedGpuResidentOutputRelease,
+	): void {
+		forwardDebugRouteAcceptedGpuResidentOutputRelease({
+			release: params,
+			releaseLegacyAcceptedOutput: handleAcceptedGpuResidentOutputRelease,
+			releaseSharedAcceptedOutput: handleDebugSharedAcceptedGpuResidentOutputRelease,
+			isLegacyRelease: isLegacyDebugAcceptedGpuResidentOutputRelease,
 		});
-	}
-
-	function handleDebugSharedAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		controllerInstanceId: number;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: "copy-complete" | "copy-failed" | "superseded";
-	}): void {
-		debugSharedRouteHost.releaseBaseAcceptedGpuResidentOutput(params);
-	}
-
-	function handleSceneAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		controllerInstanceId: number;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: "copy-complete" | "copy-failed" | "superseded";
-	}): void {
-		if (params.controllerIdentity === LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID) {
-			handleAcceptedGpuResidentOutputRelease(params);
-			return;
-		}
-		handleDebugSharedAcceptedGpuResidentOutputRelease(params);
 	}
 
 	$: if (browser) {

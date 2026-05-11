@@ -10,12 +10,18 @@ function readSceneComponent(fileName: string): string {
 
 describe('accepted GPU resident output release call sites', () => {
 	it.each(['UTCIPointCloud.svelte', 'ComparisonRenderer.svelte'])(
-		'%s uses the shared exactly-once release notifier',
+		'%s uses the shared surface sync helper and exactly-once release notifier',
 		(fileName) => {
 			const source = readSceneComponent(fileName);
 
 			expect(source).toContain(
-				'createAcceptedGpuResidentOutputReleaseNotifier'
+				'createAcceptedGpuResidentSurfaceSync'
+			);
+			expect(source).toContain(
+				"from '$lib/components/scene/acceptedGpuResidentSurfaceSync'"
+			);
+			expect(source).toContain(
+				'type AcceptedGpuResidentOutputReleaseCallback'
 			);
 			expect(source).toContain(
 				"from '$lib/components/scene/acceptedGpuResidentOutputRelease'"
@@ -27,21 +33,21 @@ describe('accepted GPU resident output release call sites', () => {
 	);
 
 	it.each(['UTCIPointCloud.svelte', 'ComparisonRenderer.svelte'])(
-		'%s gates GPU-resident supersession with controller instance id',
+		'%s delegates GPU-resident supersession to the shared helper',
 		(fileName) => {
 			const source = readSceneComponent(fileName);
 
 			expect(source).toContain(
-				'const controllerInstanceId = liveSelectedHourSurfaceIdentity.controllerInstanceId;'
+				'acceptedGpuResidentSurfaceSync.isSuperseded'
 			);
 			expect(source).toContain(
-				'controllerInstanceId: number;'
+				'acceptedGpuResidentSurfaceSync.startSync'
 			);
 			expect(source).toContain(
-				'controllerInstanceId,'
+				'acceptedGpuResidentSurfaceSync.completeSync'
 			);
 			expect(source).toContain(
-				'liveSelectedHourSurfaceIdentity?.controllerInstanceId !== controllerInstanceId'
+				'acceptedGpuResidentSurfaceSync.failSync'
 			);
 		}
 	);

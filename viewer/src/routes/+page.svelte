@@ -54,7 +54,6 @@
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
-	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
 	import type { Analysis } from "$lib/types/analysis";
 	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
 	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
@@ -63,11 +62,6 @@
 	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
 	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/liveUtciSelectedHour";
 	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
-	import {
-		buildMainRouteUtciDiagnostics,
-		type MainRouteUtciDiagnosticsInputs,
-		type MainRouteUtciDiagnosticsPayload,
-	} from "$lib/diagnostics/mainRouteUtciDiagnostics";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import { getTooltipData } from "$lib/services/tooltipService";
@@ -76,7 +70,6 @@
 		createTooltipMotionSuppressionState,
 		releaseTooltipMotionPointer,
 		setTooltipMotionPointerDown,
-		shouldSuppressTooltipMotion,
 	} from "$lib/services/tooltipMotionSuppression";
 	import {
 		sceneConfigStore,
@@ -89,6 +82,24 @@
 		type UtciRendererBackend,
 	} from "$lib/utciRenderMode";
 	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
+	import {
+		publishMainRouteUtciDiagnostics,
+		releaseBaseAcceptedGpuResidentOutput,
+		releaseComparisonAcceptedGpuResidentOutput,
+		type MainRouteAcceptedGpuResidentOutputReleaseParams,
+		type MainRouteLiveSelectedHourDiagnosticsParams,
+		type MainRouteWindow,
+	} from "./main/liveSelectedHour";
+	import {
+		buildProjectSelectionHref,
+		getAnalysisSyncAfterMount,
+		getModelReloadState,
+		getMountedAnalysisId,
+	} from "./main/modelSelection";
+	import {
+		getMainRouteTooltipHoverPolicy,
+		resolveMainRouteTooltipTarget,
+	} from "./main/tooltip";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -124,10 +135,6 @@
 		$page.url.searchParams.get("utciRenderDiagnostics") === "1";
 
 	type MainRouteUtciSurfaceDiagnostics = LiveSelectedHourControllerSurfaceDiagnostics;
-
-	type MainRouteWindow = Window & {
-		__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
-	};
 
 	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
 	let rendererDeviceLimits: WebgpuLargeBufferDeviceLimits | undefined = undefined;
@@ -169,12 +176,12 @@
 	let cameraWheelEventCount = 0;
 
 	function updateUtciRenderDiagnostics(
-		diagnostics: MainRouteUtciDiagnosticsInputs,
+		params: MainRouteLiveSelectedHourDiagnosticsParams,
 	): void {
 		if (typeof window === "undefined") return;
 
 		const win = window as MainRouteWindow;
-		win.__utciRenderDiagnostics__ = buildMainRouteUtciDiagnostics(diagnostics);
+		publishMainRouteUtciDiagnostics(win, params);
 	}
 
 	function handleRendererDiagnostics(diagnostics: {
@@ -208,26 +215,16 @@
 		liveRouteHost.handleComparisonSurfaceDiagnostics(diagnostics);
 	}
 
-	function handleBaseAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		controllerInstanceId: number;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: "copy-complete" | "copy-failed" | "superseded";
-	}): void {
-		liveRouteHost.releaseBaseAcceptedGpuResidentOutput(params);
+	function handleBaseAcceptedGpuResidentOutputRelease(
+		params: MainRouteAcceptedGpuResidentOutputReleaseParams,
+	): void {
+		releaseBaseAcceptedGpuResidentOutput(liveRouteHost, params);
 	}
 
-	function handleComparisonAcceptedGpuResidentOutputRelease(params: {
-		controllerIdentity: string;
-		controllerInstanceId: number;
-		requestId: number;
-		monthIndex: number;
-		timeIndex: number;
-		reason: "copy-complete" | "copy-failed" | "superseded";
-	}): void {
-		liveRouteHost.releaseComparisonAcceptedGpuResidentOutput(params);
+	function handleComparisonAcceptedGpuResidentOutputRelease(
+		params: MainRouteAcceptedGpuResidentOutputReleaseParams,
+	): void {
+		releaseComparisonAcceptedGpuResidentOutput(liveRouteHost, params);
 	}
 
 	// Tooltip state
@@ -367,9 +364,7 @@
 		if (!newAnalysisId || newAnalysisId === analysisId) return;
 		analysisId = newAnalysisId;
 		if (typeof window !== "undefined") {
-			const url = new URL(window.location.href);
-			url.searchParams.set("analysis", newAnalysisId);
-			goto(`${url.pathname}?${url.searchParams.toString()}`, {
+			goto(buildProjectSelectionHref(window.location.href, newAnalysisId), {
 				replaceState: true,
 				noScroll: true,
 			});
@@ -379,7 +374,7 @@
 
 	onMount(() => {
 		if (typeof window !== "undefined") {
-			analysisId = getInitialAnalysisId(
+			analysisId = getMountedAnalysisId(
 				window.location.search,
 				DEFAULT_ANALYSIS_ID,
 			);
@@ -391,24 +386,29 @@
 	});
 
 	$: if (typeof window !== "undefined" && $page.url.searchParams && mounted) {
-		const newAnalysisId = getInitialAnalysisId(
-			`?${$page.url.searchParams.toString()}`,
-			DEFAULT_ANALYSIS_ID,
-		);
-		if (newAnalysisId !== analysisId) {
-			analysisId = newAnalysisId;
+		const syncResult = getAnalysisSyncAfterMount({
+			mounted,
+			currentAnalysisId: analysisId,
+			pageSearchParams: $page.url.searchParams,
+			defaultAnalysisId: DEFAULT_ANALYSIS_ID,
+		});
+		if (syncResult.shouldLoad) {
+			analysisId = syncResult.analysisId;
 			loadAnalysis(analysisId);
 		}
 	}
 
 	// Trigger model loading overlay when the model file changes
 	$: if ($analysisStore && $analysisStore.metadata?.model_file) {
-		const currentModelFile = $analysisStore.metadata.model_file;
-		if (currentModelFile !== lastModelFile) {
+		const modelReloadState = getModelReloadState({
+			currentModelFile: $analysisStore.metadata.model_file,
+			lastModelFile,
+		});
+		if (modelReloadState.shouldResetModel) {
 			modelLoading = true;
 			model = null;
-			lastModelFile = currentModelFile;
 		}
+		lastModelFile = modelReloadState.nextLastModelFile;
 	}
 
 	// Throttle tooltip updates for performance
@@ -453,14 +453,20 @@
 	function handleMouseMove(event: MouseEvent) {
 		tooltipHoverSampleCount += 1;
 		const now = performance.now();
-		if (shouldSuppressTooltipMotion(tooltipMotionSuppression, now)) {
+		const hoverPolicy = getMainRouteTooltipHoverPolicy({
+			tooltipMotionSuppression,
+			now,
+			lastTooltipUpdate,
+			throttleMs: TOOLTIP_THROTTLE_MS,
+		});
+		if (hoverPolicy.shouldSuppress) {
 			hideTooltip();
 			return;
 		}
-		if (now - lastTooltipUpdate < TOOLTIP_THROTTLE_MS) {
+		if (hoverPolicy.shouldThrottle) {
 			return; // Throttle updates
 		}
-		lastTooltipUpdate = now;
+		lastTooltipUpdate = hoverPolicy.nextTooltipUpdate;
 
 		if (
 			!utciMesh ||
@@ -477,42 +483,32 @@
 
 		// Determine which side of the comparison curtain the mouse is on
 		// If in comparison mode and mouse is on the right side, use comparison data
-		let meshToRaycast = utciMesh;
-		let analysisToUse = baseDisplayedAnalysis;
-		let tooltipHourIndex = useLiveUtciOnMainRoute
-			? (baseSceneRenderContext?.timeIndex ?? $viewerStore.currentHour)
-			: $viewerStore.currentHour;
-
-		if (isComparing && mainViewportElement) {
-			const viewportRect = mainViewportElement.getBoundingClientRect();
-			const mouseXRelative =
-				(event.clientX - viewportRect.left) / viewportRect.width;
-			const curtainPos = $comparisonStore.curtainPosition;
-
-			// If mouse is on the right side of the curtain, use comparison data
-			if (mouseXRelative > curtainPos) {
-				const comparisonMesh =
-					comparisonRenderer?.getComparisonUtciMesh();
-				const comparisonTooltipAnalysis = useLiveUtciOnMainRoute
-					? comparisonRendererDisplayAnalysis
-					: $comparisonAnalysis;
-				if (comparisonMesh && comparisonTooltipAnalysis) {
-					meshToRaycast = comparisonMesh;
-					analysisToUse = comparisonTooltipAnalysis;
-					tooltipHourIndex = useLiveUtciOnMainRoute
-						? (comparisonSceneRenderContext?.timeIndex ?? $viewerStore.currentHour)
-						: $viewerStore.currentHour;
-				}
-			}
-		}
+		const tooltipTarget = resolveMainRouteTooltipTarget({
+			baseMesh: utciMesh,
+			baseAnalysis: baseDisplayedAnalysis,
+			baseSceneTimeIndex: baseSceneRenderContext?.timeIndex,
+			comparisonMesh: comparisonRenderer?.getComparisonUtciMesh() ?? null,
+			comparisonAnalysis: useLiveUtciOnMainRoute
+				? comparisonRendererDisplayAnalysis
+				: $comparisonAnalysis,
+			comparisonSceneTimeIndex: comparisonSceneRenderContext?.timeIndex,
+			useLiveUtciOnMainRoute,
+			isComparing,
+			mouseClientX: event.clientX,
+			mainViewportRect: mainViewportElement
+				? mainViewportElement.getBoundingClientRect()
+				: null,
+			curtainPosition: $comparisonStore.curtainPosition,
+			viewerCurrentHour: $viewerStore.currentHour,
+		});
 
 		const tooltipData = getTooltipData(
 			event,
 			cameraRef,
-			meshToRaycast,
-			analysisToUse,
+			tooltipTarget.meshToRaycast,
+			tooltipTarget.analysisToUse,
 			$viewerStore.metricType,
-			tooltipHourIndex,
+			tooltipTarget.tooltipHourIndex,
 			canvasRect,
 		);
 
@@ -536,46 +532,17 @@
 			rendererBackend,
 			rendererRequiredLimits,
 			rendererDeviceLimits,
-			baseSurfaceDiagnostics: liveRouteState.base.renderSurfaceDiagnostics,
-			comparisonSurfaceDiagnostics:
-				liveRouteState.comparison.renderSurfaceDiagnostics,
+			liveRouteState,
 			lastBaseGpuResidentCopyFailure,
-			baseRenderTransport: liveRouteState.base.renderTransport,
-			comparisonRenderTransport: liveRouteState.comparison.renderTransport,
 			baseLiveReady,
 			comparisonLiveReady,
-			baseSurfaceRequestId: liveRouteState.baseSurfaceIdentity?.requestId,
-			baseSelectionKey: liveRouteState.baseSurfaceIdentity?.selectionKey,
-			baseSceneSurfaceRequestId:
-				liveRouteState.baseSceneSurfaceIdentity?.requestId,
-			baseSceneSelectionKey:
-				liveRouteState.baseSceneSurfaceIdentity?.selectionKey,
-			baseSameDeviceForComputeAndRender:
-				liveRouteState.base.sameDeviceForComputeAndRender,
-			baseSelectedMonthIndex: selectedMonthIndex,
-			baseSelectedHourIndex: selectedHourIndex,
-			baseSelectedTimeIndex: selectedTimeIndex,
-			baseRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
+			selectedMonthIndex,
+			selectedHourIndex,
+			selectedTimeIndex,
+			baseSceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
 			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
-			comparisonSurfaceRequestId:
-				liveRouteState.comparisonSurfaceIdentity?.requestId,
-			comparisonSelectionKey:
-				liveRouteState.comparisonSurfaceIdentity?.selectionKey,
-			comparisonSameDeviceForComputeAndRender:
-				liveRouteState.comparison.sameDeviceForComputeAndRender,
-			tooltipInteraction: { hoverSampleCount: tooltipHoverSampleCount },
-			cameraInteraction: { wheelEventCount: cameraWheelEventCount },
-			visibleSelectedHourReadbackCount:
-				liveRouteState.base.visibleSelectedHourReadbackCount,
-			readbackInstrumentation: liveRouteState.base.readbackInstrumentation,
-			selectedHourReadbackReasons:
-				liveRouteState.base.selectedHourReadbackReasons,
-			selectedHourReadbackReasonCounts:
-				liveRouteState.base.selectedHourReadbackReasonCounts,
-			comparisonSelectedHourReadbackReasons:
-				liveRouteState.comparison.selectedHourReadbackReasons,
-			comparisonSelectedHourReadbackReasonCounts:
-				liveRouteState.comparison.selectedHourReadbackReasonCounts,
+			tooltipHoverSampleCount,
+			cameraWheelEventCount,
 		});
 	}
 
