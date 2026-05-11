@@ -80,6 +80,8 @@ describe('debugWebgpuUtciDiagnostics', () => {
 		expect(state.onDemandEnabled).toBe(true);
 		expect(state.binComparisonEnabled).toBe(false);
 		expect(state.selectedHourEngine).toBe('legacy-debug');
+		expect(state.selectedHourRuntimeContract.selectedHourEngine).toBe('legacy-debug');
+		expect(state.selectedHourRuntimeContract.strongVisibleGpuPath).toBe(false);
 	});
 
 	it('keeps parity comparison explicitly debug-only', () => {
@@ -173,6 +175,8 @@ describe('debugWebgpuUtciDiagnostics', () => {
 		expect(state.selectedHourEngine).toBe('shared-host');
 		expect(state.legacySelectedHourDispatchCount).toBe(0);
 		expect(state.legacyScrubScheduleCount).toBe(0);
+		expect(state.selectedHourRuntimeContract.selectedHourEngine).toBe('shared-host');
+		expect(state.selectedHourRuntimeContract.hasLegacyDebugOverlap).toBe(false);
 	});
 
 	it('preserves shared-host counter evidence when legacy counters are nonzero', () => {

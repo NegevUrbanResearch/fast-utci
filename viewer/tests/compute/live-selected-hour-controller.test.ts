@@ -11,6 +11,8 @@ import {
 	type LiveSelectedHourController,
 	type LiveSelectedHourControllerSurfaceDiagnostics
 } from '$lib/compute/liveSelectedHourController';
+import { createEmptyOnDemandDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 
 function decomposeTimeIndex(timeIndex: number) {
 	return {
@@ -97,6 +99,7 @@ function createLiveResult(params: {
 	renderTransport?: 'cpu-uploaded-selected-hour' | 'compute-buffer-selected-hour';
 	sameDeviceForComputeAndRender?: boolean | null;
 	pendingRenderUpdateStartedAt?: number;
+	diagnostics?: SelectedHourLiveResult['diagnostics'];
 }): SelectedHourLiveResult {
 	const { monthIndex, hourIndex } = decomposeTimeIndex(params.timeIndex);
 	return {
@@ -110,7 +113,8 @@ function createLiveResult(params: {
 		loadCpuFallback: params.loadCpuFallback,
 		pendingRenderUpdateStartedAt: params.pendingRenderUpdateStartedAt ?? 123,
 		renderTransport: params.renderTransport ?? 'cpu-uploaded-selected-hour',
-		sameDeviceForComputeAndRender: params.sameDeviceForComputeAndRender ?? null
+		sameDeviceForComputeAndRender: params.sameDeviceForComputeAndRender ?? null,
+		diagnostics: params.diagnostics ?? createEmptyOnDemandDiagnostics()
 	};
 }
 
@@ -192,6 +196,7 @@ function createSessionMock(
 		colorMode: 'normalized' | 'discrete';
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
+		selectedHourReadbackReason?: SelectedHourReadbackReason;
 	}) => Promise<SelectedHourLiveResult>>
 ) {
 	const runSelectedHour = vi.fn();
@@ -278,6 +283,16 @@ describe('liveSelectedHourController', () => {
 			})
 		);
 		await expect(secondRequest).resolves.toMatchObject({ accepted: true });
+		expect(controller.getState().acceptedVisibleSurface).toBeNull();
+		expect(controller.getState().acceptedRequestId).toBeUndefined();
+		expect(controller.getState().acceptedSelectionKey).toBeUndefined();
+		expect(controller.getState().acceptedVisibleAtMs).toBeUndefined();
+		await controller.handleRenderSurfaceDiagnostics(
+			createCurrentCpuSurfaceDiagnostics(controller, {
+				selectedHourTransferCount: 1
+			})
+		);
+		const acceptedVisibleAtMs = controller.getState().acceptedVisibleAtMs;
 
 		first.resolve(
 			createLiveResult({
@@ -296,6 +311,14 @@ describe('liveSelectedHourController', () => {
 		expect(staleGpu.destroy).toHaveBeenCalledTimes(1);
 		expect(controller.getState().analysis).toBe(latestAnalysis);
 		expect(controller.getState().renderTransport).toBe('cpu-uploaded-selected-hour');
+		expect(controller.getState().acceptedRequestId).toBe(2);
+		expect(controller.getState().acceptedSelectionKey).toBe('2:0:1:1');
+		expect(controller.getState().acceptedVisibleAtMs).toBe(acceptedVisibleAtMs);
+		expect(controller.getState().acceptedVisibleSurface).toEqual({
+			requestId: 2,
+			selectionKey: '2:0:1:1',
+			visibleAtMs: acceptedVisibleAtMs
+		});
 	});
 
 	it('disposes the previously accepted GPU buffer when a new accepted result supersedes it', async () => {
@@ -331,6 +354,65 @@ describe('liveSelectedHourController', () => {
 		expect(controller.getState().acceptedGpuResidentOutput).toBeNull();
 		expect(controller.getState().analysis?.metadata.model_file).toBe('cpu-next.glb');
 		expect(controller.getState().renderTransport).toBe('cpu-uploaded-selected-hour');
+	});
+
+	it('forwards the selected-hour readback reason to the session', async () => {
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 9,
+					timeIndex: 9,
+					analysis: createSelectionAnalysis('comparison-readback', [21, 23]),
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection({
+			...createRequestParams(9),
+			selectedHourReadbackReason: 'comparison'
+		});
+
+		expect(sessionMock.runSelectedHour).toHaveBeenCalledWith(
+			expect.objectContaining({
+				timeIndex: 9,
+				selectedHourReadbackReason: 'comparison'
+			})
+		);
+	});
+
+	it('publishes selected-hour readback reasons from the accepted session result', async () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		diagnostics.selectedHourReadbackReasons = ['range', 'tooltip'];
+		diagnostics.selectedHourReadbackReasonCounts = { range: 1, tooltip: 1 };
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 10,
+					timeIndex: 10,
+					analysis: createSelectionAnalysis('readback-diagnostics', [21, 23]),
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(10));
+
+		expect(controller.getState().selectedHourReadbackReasons).toEqual([
+			'range',
+			'tooltip'
+		]);
+		expect(controller.getState().selectedHourReadbackReasonCounts).toEqual({
+			range: 1,
+			tooltip: 1
+		});
 	});
 
 	it('activates the deferred CPU fallback when render-surface diagnostics report a GPU copy failure', async () => {
@@ -1137,6 +1219,10 @@ describe('liveSelectedHourController', () => {
 		});
 
 		await controller.requestSelection(createRequestParams(41));
+		expect(controller.getState().acceptedVisibleSurface).toBeNull();
+		expect(controller.getState().acceptedRequestId).toBeUndefined();
+		expect(controller.getState().acceptedSelectionKey).toBeUndefined();
+		expect(controller.getState().acceptedVisibleAtMs).toBeUndefined();
 
 		expect(
 			seenStates.some(
@@ -1161,6 +1247,10 @@ describe('liveSelectedHourController', () => {
 		).toBe(false);
 		expect(controller.getState()).toMatchObject({
 			acceptedGpuResidentOutput: null,
+			acceptedVisibleSurface: null,
+			acceptedRequestId: undefined,
+			acceptedSelectionKey: undefined,
+			acceptedVisibleAtMs: undefined,
 			renderTransport: 'cpu-uploaded-selected-hour',
 			loading: false,
 			renderReady: false
@@ -1176,6 +1266,14 @@ describe('liveSelectedHourController', () => {
 
 		expect(controller.getState()).toMatchObject({
 			acceptedGpuResidentOutput: null,
+			acceptedVisibleSurface: {
+				requestId: 1,
+				selectionKey: '1:1:17:41',
+				visibleAtMs: expect.any(Number)
+			},
+			acceptedRequestId: 1,
+			acceptedSelectionKey: '1:1:17:41',
+			acceptedVisibleAtMs: expect.any(Number),
 			renderTransport: 'cpu-uploaded-selected-hour',
 			loading: false,
 			renderReady: true
@@ -1225,6 +1323,10 @@ describe('liveSelectedHourController', () => {
 		await requestPromise;
 		expect(controller.getState()).toMatchObject({
 			renderTransport: 'compute-buffer-selected-hour',
+			acceptedVisibleSurface: null,
+			acceptedRequestId: undefined,
+			acceptedSelectionKey: undefined,
+			acceptedVisibleAtMs: undefined,
 			loading: true,
 			ready: true,
 			renderReady: false,
@@ -1239,6 +1341,14 @@ describe('liveSelectedHourController', () => {
 		expect(controller.getState()).toMatchObject({
 			analysis: null,
 			renderTransport: 'compute-buffer-selected-hour',
+			acceptedVisibleSurface: {
+				requestId: 1,
+				selectionKey: '1:0:21:21',
+				visibleAtMs: expect.any(Number)
+			},
+			acceptedRequestId: 1,
+			acceptedSelectionKey: '1:0:21:21',
+			acceptedVisibleAtMs: expect.any(Number),
 			loading: false,
 			ready: true,
 			renderReady: true,

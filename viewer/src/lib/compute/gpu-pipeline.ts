@@ -1,5 +1,6 @@
 import type { OnDemandOutputFormat } from '$lib/compute/onDemandOutputFormat';
 import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type { SelectedHourOutputHandle } from '$lib/compute/selectedHourOutputHandle';
 
 export interface PipelineConfig {
 	numPoints: number;
@@ -118,6 +119,8 @@ export interface OnDemandUtciOutput {
 	numPoints: number;
 	timeIndex: number;
 	gpuBuffer?: unknown;
+	gpuOutputHandle?: SelectedHourOutputHandle;
+	outputBytes?: number;
 	debugLabel?: string;
 }
 

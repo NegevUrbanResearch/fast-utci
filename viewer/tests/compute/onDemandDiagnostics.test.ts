@@ -8,6 +8,7 @@ import {
 	prepareSelectedHourCycleTimings,
 	recordColdStartLifecycleTiming,
 	recordOnDemandTiming,
+	recordSelectedHourReadbackReason,
 	resetColdStartLifecycleTimings
 } from '$lib/compute/onDemandDiagnostics';
 
@@ -442,6 +443,20 @@ describe('on-demand diagnostics helpers', () => {
 		expect(second.trackedGpuAllocationBytes.allHoursOutputBytes).toBe(0);
 		expect(second.trackedGpuAllocationBytes.selectedHourOutputBytes).toBe(32);
 		expect(second.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark).toBe(64);
+	});
+
+	it('records selected-hour CPU readback reasons separately from visible readback count', () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const next = recordSelectedHourReadbackReason(
+			recordSelectedHourReadbackReason(diagnostics, 'range'),
+			'tooltip'
+		);
+
+		expect(next.selectedHourReadbackReasons).toEqual(['range', 'tooltip']);
+		expect(next.selectedHourReadbackReasonCounts).toEqual({
+			range: 1,
+			tooltip: 1
+		});
 	});
 
 	it('preserves persistent exposure bytes while switching between exposure-only and baseline output accounting', () => {

@@ -8,6 +8,7 @@ import {
 } from '$lib/compute/liveUtciSelectedHourSession';
 import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/onDemandDiagnostics';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 
 export type LiveSelectedHourRenderTransport =
 	| 'idle'
@@ -28,10 +29,23 @@ export type LiveSelectedHourControllerSurfaceDiagnostics = {
 	gpuResidentCopyRequestId?: number;
 } & SelectedHourRenderTimingSubsteps;
 
+export type LiveSelectedHourAcceptedVisibleSurface = {
+	requestId: number;
+	selectionKey: string;
+	visibleAtMs: number;
+};
+
 export type LiveSelectedHourControllerState = {
 	analysis: Analysis | null;
 	acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
 	surfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
+	// Last request that became visible, not the current pending request.
+	acceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
+	acceptedRequestId: number | undefined;
+	acceptedSelectionKey: string | undefined;
+	acceptedVisibleAtMs: number | undefined;
+	selectedHourReadbackReasons: SelectedHourReadbackReason[];
+	selectedHourReadbackReasonCounts: Partial<Record<SelectedHourReadbackReason, number>>;
 	loading: boolean;
 	error: string | null;
 	renderTransport: LiveSelectedHourRenderTransport;
@@ -63,6 +77,7 @@ export type LiveSelectedHourControllerRequest = {
 	colorMode: 'normalized' | 'discrete';
 	preferGpuResident: boolean;
 	rendererDevice?: GPUDevice;
+	selectedHourReadbackReason?: SelectedHourReadbackReason;
 };
 
 export type LiveSelectedHourControllerRequestResult = {
@@ -113,7 +128,12 @@ const EMPTY_SURFACE_DIAGNOSTICS: LiveSelectedHourControllerSurfaceDiagnostics = 
 function cloneState(state: LiveSelectedHourControllerState): LiveSelectedHourControllerState {
 	return {
 		...state,
+		acceptedVisibleSurface: state.acceptedVisibleSurface
+			? { ...state.acceptedVisibleSurface }
+			: null,
 		surfaceIdentity: state.surfaceIdentity ? { ...state.surfaceIdentity } : null,
+		selectedHourReadbackReasons: [...state.selectedHourReadbackReasons],
+		selectedHourReadbackReasonCounts: { ...state.selectedHourReadbackReasonCounts },
 		renderSurfaceDiagnostics: { ...state.renderSurfaceDiagnostics }
 	};
 }
@@ -210,6 +230,12 @@ function createInitialState(): LiveSelectedHourControllerState {
 		analysis: null,
 		acceptedGpuResidentOutput: null,
 		surfaceIdentity: null,
+		acceptedVisibleSurface: null,
+		acceptedRequestId: undefined,
+		acceptedSelectionKey: undefined,
+		acceptedVisibleAtMs: undefined,
+		selectedHourReadbackReasons: [],
+		selectedHourReadbackReasonCounts: {},
 		loading: false,
 		error: null,
 		renderTransport: 'idle',
@@ -350,6 +376,10 @@ export function createLiveSelectedHourController(
 			  ) => Partial<LiveSelectedHourControllerMutableState>)
 	): void {
 		const patch = typeof updater === 'function' ? updater(state) : updater;
+		const acceptedVisibleSurface =
+			'acceptedVisibleSurface' in patch
+				? patch.acceptedVisibleSurface ?? null
+				: state.acceptedVisibleSurface;
 		state = deriveState({
 			analysis: 'analysis' in patch ? patch.analysis ?? null : state.analysis,
 			acceptedGpuResidentOutput:
@@ -358,6 +388,18 @@ export function createLiveSelectedHourController(
 					: state.acceptedGpuResidentOutput,
 			surfaceIdentity:
 				'surfaceIdentity' in patch ? patch.surfaceIdentity ?? null : state.surfaceIdentity,
+			acceptedVisibleSurface,
+			acceptedRequestId: acceptedVisibleSurface?.requestId,
+			acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
+			acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+			selectedHourReadbackReasons:
+				'selectedHourReadbackReasons' in patch
+					? [...(patch.selectedHourReadbackReasons ?? [])]
+					: state.selectedHourReadbackReasons,
+			selectedHourReadbackReasonCounts:
+				'selectedHourReadbackReasonCounts' in patch
+					? { ...(patch.selectedHourReadbackReasonCounts ?? {}) }
+					: state.selectedHourReadbackReasonCounts,
 			loading: 'loading' in patch ? patch.loading ?? false : state.loading,
 			error: 'error' in patch ? patch.error ?? null : state.error,
 			renderTransport: patch.renderTransport ?? state.renderTransport,
@@ -493,7 +535,8 @@ export function createLiveSelectedHourController(
 					timeIndex: request.timeIndex,
 					colorMode: request.colorMode,
 					preferGpuResident: request.preferGpuResident,
-					rendererDevice: request.rendererDevice
+					rendererDevice: request.rendererDevice,
+					selectedHourReadbackReason: request.selectedHourReadbackReason
 				});
 				if (!ownsRequest(requestToken)) {
 					disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
@@ -556,6 +599,9 @@ export function createLiveSelectedHourController(
 					error: null,
 					renderTransport: result.renderTransport,
 					sameDeviceForComputeAndRender: result.sameDeviceForComputeAndRender,
+					selectedHourReadbackReasons: result.diagnostics.selectedHourReadbackReasons ?? [],
+					selectedHourReadbackReasonCounts:
+						result.diagnostics.selectedHourReadbackReasonCounts ?? {},
 					pendingRenderUpdateStartedAt:
 						result.renderTransport === 'compute-buffer-selected-hour'
 							? result.pendingRenderUpdateStartedAt
@@ -621,6 +667,13 @@ export function createLiveSelectedHourController(
 				deferredCpuFallback = null;
 				acceptedCpuPublication = null;
 				setState({
+					acceptedVisibleSurface: state.surfaceIdentity
+						? {
+								requestId,
+								selectionKey: state.surfaceIdentity.selectionKey,
+								visibleAtMs: performance.now()
+							}
+						: null,
 					surfaceIdentity: state.surfaceIdentity
 						? {
 								...state.surfaceIdentity,
@@ -640,14 +693,38 @@ export function createLiveSelectedHourController(
 				diagnostics.gpuResidentCopyStatus === 'failed' &&
 				requestId !== undefined &&
 				deferredCpuFallback?.requestId === requestId;
+			const acceptsCpuPublication =
+				hasAcceptedCpuRenderSurface({
+					renderTransport: state.renderTransport,
+					renderSurfaceDiagnostics: nextDiagnostics,
+					acceptedCpuPublication
+				}) && acceptedCpuPublication != null;
+			const cpuPublicationAlreadyVisible =
+				acceptsCpuPublication &&
+				acceptedCpuPublication != null &&
+				state.acceptedVisibleSurface?.requestId === acceptedCpuPublication.requestId &&
+				state.acceptedVisibleSurface.selectionKey === acceptedCpuPublication.selectionKey &&
+				state.acceptedVisibleSurface.visibleAtMs !== undefined;
 			if (
 				areDiagnosticsEqual(nextDiagnostics, state.renderSurfaceDiagnostics) &&
-				!shouldHandleGpuFallback
+				!shouldHandleGpuFallback &&
+				(!acceptsCpuPublication || cpuPublicationAlreadyVisible)
 			) {
 				return;
 			}
 
-			setState({ renderSurfaceDiagnostics: nextDiagnostics });
+			setState(
+				acceptsCpuPublication && acceptedCpuPublication && !cpuPublicationAlreadyVisible
+					? {
+							acceptedVisibleSurface: {
+								requestId: acceptedCpuPublication.requestId,
+								selectionKey: acceptedCpuPublication.selectionKey,
+								visibleAtMs: performance.now()
+							},
+							renderSurfaceDiagnostics: nextDiagnostics
+					  }
+					: { renderSurfaceDiagnostics: nextDiagnostics }
+			);
 
 			if (shouldHandleGpuFallback) {
 				const fallbackRequest = deferredCpuFallback;

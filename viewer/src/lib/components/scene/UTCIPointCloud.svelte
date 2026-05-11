@@ -36,6 +36,10 @@
 		type GpuResidentCopyStatus,
 		type UtciSurfaceDiagnostics
 	} from '$lib/components/scene/utciSurfaceSync';
+	import {
+		copyComputeBufferToRenderStorage,
+		waitForRenderStorageBuffer
+	} from './utciComputeBufferRenderBridge';
 	import type { Group, Mesh } from 'three';
 
 	export let analysis: Analysis | null = null;
@@ -168,50 +172,6 @@
 		return layout;
 	}
 
-	async function waitForRenderStorageBuffer(params: {
-		storageAttribute: unknown;
-		copyRunToken: number;
-		syncKey: string;
-		requestId: number;
-	}): Promise<{ device: GPUDevice; targetBuffer: GPUBuffer }> {
-		const { storageAttribute, copyRunToken, syncKey, requestId } = params;
-		const deadline = performance.now() + 1000;
-		let lastDevice: GPUDevice | undefined;
-
-		while (performance.now() < deadline) {
-			invalidate();
-			await waitForNextFrame();
-			if (
-				copyRunToken !== gpuResidentCopyRunToken ||
-				activeGpuResidentSyncKey !== syncKey ||
-				acceptedGpuResidentOutput?.requestId !== requestId
-			) {
-				throw new Error('GPU-resident render copy was superseded before storage initialization.');
-			}
-
-			const rendererBackend = (
-				renderer as unknown as {
-					backend?: {
-						device?: GPUDevice;
-						get?: (resource: unknown) => { buffer?: GPUBuffer } | undefined;
-					};
-				}
-			).backend;
-			const device = rendererBackend?.device;
-			const targetBuffer = rendererBackend?.get?.(storageAttribute)?.buffer;
-			lastDevice = device;
-			if (device && targetBuffer) {
-				return { device, targetBuffer };
-			}
-		}
-
-		throw new Error(
-			lastDevice
-				? 'Three storage buffer was not initialized within the GPU-resident render timeout.'
-				: 'Renderer WebGPU device was not available within the GPU-resident render timeout.'
-		);
-	}
-
 	function recreateComputeBufferSurface(
 		activeAnalysis: Analysis,
 		acceptedOutput: SelectedHourGpuResidentOutput,
@@ -257,38 +217,55 @@
 		if (!storageAttribute) {
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
-		const storageInitWaitStartedAt = performance.now();
-		const { device, targetBuffer } = await waitForRenderStorageBuffer({
-			storageAttribute,
-			copyRunToken,
-			syncKey,
-			requestId: acceptedOutput.requestId
-		});
-		renderTimings.renderStorageInitWaitMs = performance.now() - storageInitWaitStartedAt;
-		if (
+		let lastDevice: GPUDevice | undefined;
+		const isSuperseded = () =>
 			copyRunToken !== gpuResidentCopyRunToken ||
 			activeGpuResidentSyncKey !== syncKey ||
-			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
-		) {
+			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId;
+		const { device, targetBuffer, waitMs } = await waitForRenderStorageBuffer({
+			deadlineMs: 1000,
+			now: performance.now.bind(performance),
+			waitForNextFrame: async () => {
+				invalidate();
+				await waitForNextFrame();
+			},
+			isSuperseded,
+			readStorageBuffer: () => {
+				const rendererBackend = (
+					renderer as unknown as {
+						backend?: {
+							device?: GPUDevice;
+							get?: (resource: unknown) => { buffer?: GPUBuffer } | undefined;
+						};
+					}
+				).backend;
+				const device = rendererBackend?.device;
+				const targetBuffer = rendererBackend?.get?.(storageAttribute)?.buffer;
+				lastDevice = device;
+				return device && targetBuffer ? { device, targetBuffer } : null;
+			},
+			getTimeoutErrorMessage: () =>
+				lastDevice
+					? 'Three storage buffer was not initialized within the GPU-resident render timeout.'
+					: 'Renderer WebGPU device was not available within the GPU-resident render timeout.'
+		});
+		renderTimings.renderStorageInitWaitMs = waitMs;
+		if (isSuperseded()) {
 			return;
 		}
-		if (targetBuffer.size < sourceBuffer.size) {
-			throw new Error('Three storage buffer is smaller than the accepted compute output buffer.');
-		}
 
-		const bufferCopyStartedAt = performance.now();
-		const encoder = device.createCommandEncoder();
-		encoder.copyBufferToBuffer(sourceBuffer, 0, targetBuffer, 0, sourceBuffer.size);
-		device.queue.submit([encoder.finish()]);
-		renderTimings.renderBufferCopyMs = performance.now() - bufferCopyStartedAt;
-		const queueDrainStartedAt = performance.now();
-		await device.queue.onSubmittedWorkDone();
-		renderTimings.renderQueueDrainMs = performance.now() - queueDrainStartedAt;
-		if (
-			copyRunToken !== gpuResidentCopyRunToken ||
-			activeGpuResidentSyncKey !== syncKey ||
-			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
-		) {
+		const copyTimings = await copyComputeBufferToRenderStorage({
+			device,
+			queue: device.queue,
+			sourceBuffer,
+			targetBuffer,
+			byteLength: sourceBuffer.size,
+			now: performance.now.bind(performance),
+			isSuperseded
+		});
+		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
+		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
+		if (isSuperseded()) {
 			return;
 		}
 

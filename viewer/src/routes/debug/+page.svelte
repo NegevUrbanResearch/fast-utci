@@ -37,6 +37,10 @@
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
+	import {
+		createCanvasInteractionController,
+		type CanvasInteractionController,
+	} from "$lib/components/viewer/canvasInteractionController";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import {
@@ -135,6 +139,10 @@
 		shouldExposeDebugWindowDiagnostics,
 		type DebugSelectedHourEngine,
 	} from "$lib/debug/debugWebgpuUtciDiagnostics";
+	import {
+		buildSelectedHourRuntimeContract,
+		type SelectedHourRuntimeContract,
+	} from "$lib/diagnostics/selectedHourRuntimeContract";
 	import {
 		buildDebugSelectedHourDispatchCounters,
 		shouldUseDebugSharedSelectedHourHost,
@@ -280,6 +288,7 @@
 	let cameraInteractionPointerDown = false;
 	let cameraInteractionSequenceActive = false;
 	let cameraInteractionArmedUntilMs = 0;
+	let cameraWheelEventCount = 0;
 	let hasCameraInteractionSnapshot = false;
 	const lastCameraInteractionPosition = new THREE.Vector3();
 	const lastCameraInteractionQuaternion = new THREE.Quaternion();
@@ -359,6 +368,7 @@
 		selectedHourEngine?: DebugSelectedHourEngine;
 		legacySelectedHourDispatchCount?: number;
 		legacyScrubScheduleCount?: number;
+		selectedHourRuntimeContract?: SelectedHourRuntimeContract;
 	};
 
 	type OnDemandPythonSampleRecord = {
@@ -1116,6 +1126,7 @@
 		cameraInteractionPointerDown = false;
 		cameraInteractionSequenceActive = false;
 		cameraInteractionArmedUntilMs = 0;
+		cameraWheelEventCount = 0;
 		cameraInteractionLastFrameTimeMs = null;
 		hasCameraInteractionSnapshot = false;
 		tooltipMotionSuppression = createTooltipMotionSuppressionState();
@@ -1326,6 +1337,37 @@
 				existing?.cameraInteraction ??
 				cameraInteractionTelemetry.diagnostics,
 		};
+		nextDiagnostics.selectedHourRuntimeContract =
+			diagnostics.selectedHourRuntimeContract ??
+			buildSelectedHourRuntimeContract({
+				route: "debug",
+				selectedHourEngine:
+					nextDiagnostics.selectedHourEngine ?? debugDiagnosticsState.selectedHourEngine,
+				renderTransport:
+					nextDiagnostics.renderTransport === "compute-buffer-selected-hour" ||
+					nextDiagnostics.renderTransport === "cpu-uploaded-selected-hour"
+						? nextDiagnostics.renderTransport
+						: "none",
+				utciSurfaceSource:
+					nextDiagnostics.utciSurfaceSource === "compute-buffer-selected-hour" ||
+					nextDiagnostics.utciSurfaceSource === "cpu-uploaded-selected-hour"
+						? nextDiagnostics.utciSurfaceSource
+						: "none",
+				sameDeviceForComputeAndRender:
+					nextDiagnostics.sameDeviceForComputeAndRender === true,
+				dataTextureBuildCount: nextDiagnostics.dataTextureBuildCount,
+				visibleSelectedHourReadbackCount: nextDiagnostics.selectedHourReadbackCount,
+				readbackInstrumentation: "not-instrumented",
+				legacySelectedHourDispatchCount:
+					nextDiagnostics.legacySelectedHourDispatchCount,
+				legacyScrubScheduleCount: nextDiagnostics.legacyScrubScheduleCount,
+				requestId: nextDiagnostics.surfaceRequestId,
+				sceneRequestId: nextDiagnostics.sceneSurfaceRequestId,
+				selectionKey: nextDiagnostics.selectionKey,
+				sceneSelectionKey: nextDiagnostics.sceneSelectionKey,
+				readbackReasons: nextDiagnostics.selectedHourReadbackReasons,
+				readbackReasonCounts: nextDiagnostics.selectedHourReadbackReasonCounts,
+			});
 		win.__onDemandPrototypeDiagnostics__ = nextDiagnostics;
 		onDemandPrototypeError = nextDiagnostics.error ?? null;
 		onDemandPrototypeStatus = deriveOnDemandPrototypeStatus({
@@ -1381,6 +1423,10 @@
 			gpuResidentCopyStatus: renderSurfaceDiagnostics.gpuResidentCopyStatus,
 			gpuResidentCopyError: renderSurfaceDiagnostics.gpuResidentCopyError,
 			gpuResidentCopyRequestId: renderSurfaceDiagnostics.gpuResidentCopyRequestId,
+			selectedHourReadbackReasons:
+				debugSharedRouteState.base.selectedHourReadbackReasons,
+			selectedHourReadbackReasonCounts:
+				debugSharedRouteState.base.selectedHourReadbackReasonCounts,
 		});
 	}
 
@@ -4090,21 +4136,23 @@
 		hideTooltip();
 	}
 
-	let hoverListenersCanvas: HTMLCanvasElement | null = null;
-	let pointerListenerCanvas: HTMLCanvasElement | null = null;
-	let cameraInteractionListenerCanvas: HTMLCanvasElement | null = null;
+	let hoverInteractionController: CanvasInteractionController | null = null;
+	let hoverInteractionCanvas: HTMLCanvasElement | null = null;
+	let pointerInteractionController: CanvasInteractionController | null = null;
+	let pointerInteractionCanvas: HTMLCanvasElement | null = null;
+	let cameraInteractionController: CanvasInteractionController | null = null;
+	let cameraInteractionCanvas: HTMLCanvasElement | null = null;
 
 	function detachHoverListeners(): void {
-		if (!hoverListenersCanvas) return;
-		hoverListenersCanvas.removeEventListener("mousemove", handleMouseMove);
-		hoverListenersCanvas.removeEventListener("mouseleave", handleMouseLeave);
-		hoverListenersCanvas = null;
+		hoverInteractionController?.dispose();
+		hoverInteractionController = null;
+		hoverInteractionCanvas = null;
 	}
 
 	function detachPointerListener(): void {
-		if (!pointerListenerCanvas) return;
-		pointerListenerCanvas.removeEventListener("pointerdown", copyClickedPointData);
-		pointerListenerCanvas = null;
+		pointerInteractionController?.dispose();
+		pointerInteractionController = null;
+		pointerInteractionCanvas = null;
 	}
 
 	function handleCameraInteractionPointerDown(): void {
@@ -4132,6 +4180,17 @@
 	}
 
 	function handleCameraInteractionWheel(): void {
+		cameraWheelEventCount += 1;
+		cameraInteractionTelemetry = {
+			...cameraInteractionTelemetry,
+			diagnostics: {
+				...cameraInteractionTelemetry.diagnostics,
+				wheelEventCount: cameraWheelEventCount,
+			},
+		};
+		updateOnDemandPrototypeDiagnostics({
+			cameraInteraction: cameraInteractionTelemetry.diagnostics,
+		});
 		tooltipMotionSuppression = armTooltipMotionSuppression(
 			tooltipMotionSuppression,
 			performance.now(),
@@ -4141,81 +4200,57 @@
 	}
 
 	function detachCameraInteractionListeners(): void {
-		if (cameraInteractionListenerCanvas) {
-			cameraInteractionListenerCanvas.removeEventListener(
-				"pointerdown",
-				handleCameraInteractionPointerDown,
-			);
-			cameraInteractionListenerCanvas.removeEventListener(
-				"wheel",
-				handleCameraInteractionWheel,
-			);
-			cameraInteractionListenerCanvas = null;
-		}
-		if (browser) {
-			window.removeEventListener(
-				"pointerup",
-				handleCameraInteractionPointerRelease,
-			);
-			window.removeEventListener(
-				"pointercancel",
-				handleCameraInteractionPointerRelease,
-			);
-		}
+		cameraInteractionController?.dispose();
+		cameraInteractionController = null;
+		cameraInteractionCanvas = null;
 	}
 
 	$: if (mounted) {
-		if (hoverListenersCanvas && hoverListenersCanvas !== canvasElement) {
+		if (hoverInteractionCanvas && hoverInteractionCanvas !== canvasElement) {
 			detachHoverListeners();
 		}
 		if (
 			canvasElement &&
 			!debugTooltipHoverDisabled &&
-			hoverListenersCanvas !== canvasElement
+			hoverInteractionCanvas !== canvasElement
 		) {
-			canvasElement.addEventListener("mousemove", handleMouseMove, {
-				passive: true,
+			hoverInteractionController = createCanvasInteractionController({
+				canvas: canvasElement,
+				onPointerMove: handleMouseMove,
+				onPointerLeave: handleMouseLeave,
 			});
-			canvasElement.addEventListener("mouseleave", handleMouseLeave, {
-				passive: true,
-			});
-			hoverListenersCanvas = canvasElement;
+			hoverInteractionCanvas = canvasElement;
 		} else if (debugTooltipHoverDisabled) {
 			detachHoverListeners();
 		}
 
-		if (pointerListenerCanvas && pointerListenerCanvas !== canvasElement) {
+		if (pointerInteractionCanvas && pointerInteractionCanvas !== canvasElement) {
 			detachPointerListener();
 		}
-		if (canvasElement && pointerListenerCanvas !== canvasElement) {
-			canvasElement.addEventListener("pointerdown", copyClickedPointData);
-			pointerListenerCanvas = canvasElement;
+		if (canvasElement && pointerInteractionCanvas !== canvasElement) {
+			pointerInteractionController = createCanvasInteractionController({
+				canvas: canvasElement,
+				onPointerDown: copyClickedPointData,
+			});
+			pointerInteractionCanvas = canvasElement;
 		}
 
 		if (
-			cameraInteractionListenerCanvas &&
-			cameraInteractionListenerCanvas !== canvasElement
+			cameraInteractionCanvas &&
+			cameraInteractionCanvas !== canvasElement
 		) {
 			detachCameraInteractionListeners();
 		}
-		if (canvasElement && cameraInteractionListenerCanvas !== canvasElement) {
-			canvasElement.addEventListener(
-				"pointerdown",
-				handleCameraInteractionPointerDown,
-				{ passive: true },
-			);
-			canvasElement.addEventListener("wheel", handleCameraInteractionWheel, {
-				passive: true,
+		if (canvasElement && cameraInteractionCanvas !== canvasElement) {
+			cameraInteractionController = createCanvasInteractionController({
+				canvas: canvasElement,
+				windowTarget: window,
+				onPointerDown: handleCameraInteractionPointerDown,
+				onWheel: handleCameraInteractionWheel,
+				onWindowPointerUp: handleCameraInteractionPointerRelease,
+				onWindowPointerCancel: handleCameraInteractionPointerRelease,
 			});
-			window.addEventListener("pointerup", handleCameraInteractionPointerRelease, {
-				passive: true,
-			});
-			window.addEventListener(
-				"pointercancel",
-				handleCameraInteractionPointerRelease,
-				{ passive: true },
-			);
-			cameraInteractionListenerCanvas = canvasElement;
+			cameraInteractionCanvas = canvasElement;
 		}
 	}
 

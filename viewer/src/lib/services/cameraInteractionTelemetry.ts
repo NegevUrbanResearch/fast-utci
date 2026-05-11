@@ -1,6 +1,7 @@
 export interface CameraInteractionDiagnostics {
 	slowThresholdMs: number;
 	sampleCount: number;
+	wheelEventCount: number;
 	overBudgetCount: number;
 	lastFrameMs: number | null;
 	maxFrameMs: number;
@@ -25,6 +26,7 @@ export function createEmptyCameraInteractionTelemetry(options?: {
 		diagnostics: {
 			slowThresholdMs,
 			sampleCount: 0,
+			wheelEventCount: 0,
 			overBudgetCount: 0,
 			lastFrameMs: null,
 			maxFrameMs: 0,

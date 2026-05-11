@@ -2,6 +2,7 @@ import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
 import {
 	createLiveSelectedHourController,
+	type LiveSelectedHourAcceptedVisibleSurface,
 	type LiveSelectedHourController,
 	type LiveSelectedHourControllerRequest,
 	type LiveSelectedHourControllerState,
@@ -49,6 +50,13 @@ export type LiveSelectedHourRouteState = {
 	comparison: LiveSelectedHourControllerState;
 	baseDisplayAnalysis: Analysis | null;
 	comparisonDisplayAnalysis: Analysis | null | undefined;
+	// Primary is base-first when both slots have visible selected-hour surfaces.
+	primaryAcceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
+	baseAcceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
+	comparisonAcceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
+	acceptedRequestId: number | undefined;
+	acceptedSelectionKey: string | undefined;
+	acceptedVisibleAtMs: number | undefined;
 	baseHasVisibleLiveSurface: boolean;
 	comparisonHasVisibleLiveSurface: boolean;
 	baseSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
@@ -106,6 +114,7 @@ type SelectionPlan = {
 type PublishedSurfaceSnapshot = {
 	controllerIdentity: string;
 	selectionTriggerKey: string;
+	acceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
 	analysis: Analysis;
 	surfaceIdentity: LiveSelectedHourSurfaceIdentity;
 	renderContext: LiveSelectedHourPublishedRenderContext;
@@ -118,6 +127,12 @@ const IDLE_CONTROLLER_STATE: LiveSelectedHourControllerState = {
 	analysis: null,
 	acceptedGpuResidentOutput: null,
 	surfaceIdentity: null,
+	acceptedVisibleSurface: null,
+	acceptedRequestId: undefined,
+	acceptedSelectionKey: undefined,
+	acceptedVisibleAtMs: undefined,
+	selectedHourReadbackReasons: [],
+	selectedHourReadbackReasonCounts: {},
 	loading: false,
 	error: null,
 	renderTransport: 'idle',
@@ -134,16 +149,37 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 		...state,
 		base: {
 			...state.base,
+			acceptedVisibleSurface: state.base.acceptedVisibleSurface
+				? { ...state.base.acceptedVisibleSurface }
+				: null,
+			selectedHourReadbackReasons: [...state.base.selectedHourReadbackReasons],
+			selectedHourReadbackReasonCounts: { ...state.base.selectedHourReadbackReasonCounts },
 			surfaceIdentity: state.base.surfaceIdentity ? { ...state.base.surfaceIdentity } : null,
 			renderSurfaceDiagnostics: { ...state.base.renderSurfaceDiagnostics }
 		},
 		comparison: {
 			...state.comparison,
+			acceptedVisibleSurface: state.comparison.acceptedVisibleSurface
+				? { ...state.comparison.acceptedVisibleSurface }
+				: null,
+			selectedHourReadbackReasons: [...state.comparison.selectedHourReadbackReasons],
+			selectedHourReadbackReasonCounts: {
+				...state.comparison.selectedHourReadbackReasonCounts
+			},
 			surfaceIdentity: state.comparison.surfaceIdentity
 				? { ...state.comparison.surfaceIdentity }
 				: null,
 			renderSurfaceDiagnostics: { ...state.comparison.renderSurfaceDiagnostics }
 		},
+		primaryAcceptedVisibleSurface: state.primaryAcceptedVisibleSurface
+			? { ...state.primaryAcceptedVisibleSurface }
+			: null,
+		baseAcceptedVisibleSurface: state.baseAcceptedVisibleSurface
+			? { ...state.baseAcceptedVisibleSurface }
+			: null,
+		comparisonAcceptedVisibleSurface: state.comparisonAcceptedVisibleSurface
+			? { ...state.comparisonAcceptedVisibleSurface }
+			: null,
 		baseSurfaceIdentity: state.baseSurfaceIdentity ? { ...state.baseSurfaceIdentity } : null,
 		baseSceneSurfaceIdentity: state.baseSceneSurfaceIdentity
 			? { ...state.baseSceneSurfaceIdentity }
@@ -366,6 +402,26 @@ export function createLiveSelectedHourRouteHost(
 		}
 	}
 
+	function createPublishedSurfaceSnapshot(params: {
+		controllerIdentity: string;
+		selectionTriggerKey: string;
+		acceptedVisibleSurface: LiveSelectedHourAcceptedVisibleSurface | null;
+		analysis: Analysis;
+		surfaceIdentity: LiveSelectedHourSurfaceIdentity;
+		renderContext: LiveSelectedHourPublishedRenderContext;
+	}): PublishedSurfaceSnapshot {
+		return {
+			controllerIdentity: params.controllerIdentity,
+			selectionTriggerKey: params.selectionTriggerKey,
+			acceptedVisibleSurface: params.acceptedVisibleSurface
+				? { ...params.acceptedVisibleSurface }
+				: null,
+			analysis: params.analysis,
+			surfaceIdentity: { ...params.surfaceIdentity },
+			renderContext: params.renderContext
+		};
+	}
+
 	function publishState(): void {
 		if (
 			baseControllerIdentity &&
@@ -376,13 +432,14 @@ export function createLiveSelectedHourRouteHost(
 			baseControllerState.error == null &&
 			baseControllerState.surfaceIdentity != null
 		) {
-			basePublishedSurface = {
+			basePublishedSurface = createPublishedSurfaceSnapshot({
 				controllerIdentity: baseControllerIdentity,
 				selectionTriggerKey: baseSelectionTriggerKey,
+				acceptedVisibleSurface: baseControllerState.acceptedVisibleSurface,
 				analysis: baseControllerState.analysis ?? baseRequestedRenderContext.analysis,
-				surfaceIdentity: { ...baseControllerState.surfaceIdentity },
+				surfaceIdentity: baseControllerState.surfaceIdentity,
 				renderContext: baseRequestedRenderContext
-			};
+			});
 		}
 
 		if (
@@ -394,14 +451,15 @@ export function createLiveSelectedHourRouteHost(
 			comparisonControllerState.error == null &&
 			comparisonControllerState.surfaceIdentity != null
 		) {
-			comparisonPublishedSurface = {
+			comparisonPublishedSurface = createPublishedSurfaceSnapshot({
 				controllerIdentity: comparisonControllerIdentity,
 				selectionTriggerKey: comparisonSelectionTriggerKey,
+				acceptedVisibleSurface: comparisonControllerState.acceptedVisibleSurface,
 				analysis:
 					comparisonControllerState.analysis ?? comparisonRequestedRenderContext.analysis,
-				surfaceIdentity: { ...comparisonControllerState.surfaceIdentity },
+				surfaceIdentity: comparisonControllerState.surfaceIdentity,
 				renderContext: comparisonRequestedRenderContext
-			};
+			});
 		}
 
 		const startupDeferred = shouldDeferLiveStartup(currentInputs);
@@ -610,12 +668,29 @@ export function createLiveSelectedHourRouteHost(
 							rangeOverride: liveUnifiedRange
 					  })
 					: null;
+		const baseAcceptedVisibleSurface = baseVisibleSurface?.acceptedVisibleSurface ?? null;
+		const comparisonAcceptedVisibleSurface =
+			comparisonVisibleSurface?.acceptedVisibleSurface ?? null;
+		const primaryAcceptedVisibleSurface =
+			baseAcceptedVisibleSurface ?? comparisonAcceptedVisibleSurface;
 
 		state = {
 			base: exposedBaseState,
 			comparison: exposedComparisonState,
 			baseDisplayAnalysis,
 			comparisonDisplayAnalysis,
+			primaryAcceptedVisibleSurface: liveEnabled ? primaryAcceptedVisibleSurface : null,
+			baseAcceptedVisibleSurface: liveEnabled ? baseAcceptedVisibleSurface : null,
+			comparisonAcceptedVisibleSurface: liveEnabled
+				? comparisonAcceptedVisibleSurface
+				: null,
+			acceptedRequestId: liveEnabled ? primaryAcceptedVisibleSurface?.requestId : undefined,
+			acceptedSelectionKey: liveEnabled
+				? primaryAcceptedVisibleSurface?.selectionKey
+				: undefined,
+			acceptedVisibleAtMs: liveEnabled
+				? primaryAcceptedVisibleSurface?.visibleAtMs
+				: undefined,
 			baseHasVisibleLiveSurface: liveEnabled && baseVisibleSurface != null,
 			comparisonHasVisibleLiveSurface:
 				liveEnabled && comparisonEligible && comparisonVisibleSurface != null,
@@ -908,7 +983,8 @@ export function createLiveSelectedHourRouteHost(
 			selectionKey: inputs.selection.selectionKey,
 			colorMode: inputs.colorMode,
 			preferGpuResident: selectionPlan.preferGpuResident,
-			rendererDevice: selectionPlan.preferredDevice
+			rendererDevice: selectionPlan.preferredDevice,
+			selectedHourReadbackReason: 'comparison'
 		});
 		if (
 			requestResult.accepted &&
@@ -950,6 +1026,12 @@ export function createLiveSelectedHourRouteHost(
 		comparison: comparisonControllerState,
 		baseDisplayAnalysis: null,
 		comparisonDisplayAnalysis: undefined,
+		primaryAcceptedVisibleSurface: null,
+		baseAcceptedVisibleSurface: null,
+		comparisonAcceptedVisibleSurface: null,
+		acceptedRequestId: undefined,
+		acceptedSelectionKey: undefined,
+		acceptedVisibleAtMs: undefined,
 		baseHasVisibleLiveSurface: false,
 		comparisonHasVisibleLiveSurface: false,
 		baseSceneSurfaceIdentity: null,

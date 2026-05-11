@@ -4,6 +4,8 @@
 >
 > **Hard workflow constraints:** No commits. No git worktrees. Do not rewrite history. Preserve unrelated dirty files. Do not run long or hanging E2E suites. Stop and report findings if `/` regresses, if debug parity behavior becomes unclear, if tests hang, or if any task depends on `.bin` behavior in the main route.
 
+> **Superseded for new execution as of 2026-05-11:** This plan uses the old `/debug-webgpu-utci` route name. For current quality/refactor execution, use `docs/superpowers/plans/2026-05-11-selected-hour-runtime-quality-baseline.md` and treat this file as historical context only.
+
 **Goal:** Make `/` the high-quality canonical WebGPU selected-hour viewer composition, then rebuild `/debug-webgpu-utci` as the same viewer plus debug-only visual parity/proof tools.
 
 **Architecture:** First protect and lightly thin the main route into a clean Svelte composition root: route/query decisions, live selected-hour host wiring, route-to-scene projection, diagnostics shaping, and loading overlay decisions should have explicit reusable seams. Then rebuild the debug route on that shared spine, layering Python `.bin` comparison, parity collection, timing/proof diagnostics, and strict-exposure tools on top as debug-only instruments. Do not move Threlte/WebGPU scene lifecycle orchestration out of scene components in this slice.

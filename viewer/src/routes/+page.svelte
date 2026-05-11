@@ -47,6 +47,10 @@
 	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
+	import {
+		createCanvasInteractionController,
+		type CanvasInteractionController,
+	} from "$lib/components/viewer/canvasInteractionController";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
@@ -161,6 +165,8 @@
 	let comparisonPendingRenderUpdateStartedAt: number | undefined = undefined;
 	let showMainRouteOverlay = false;
 	let showMainRouteComparisonOverlay = false;
+	let tooltipHoverSampleCount = 0;
+	let cameraWheelEventCount = 0;
 
 	function updateUtciRenderDiagnostics(
 		diagnostics: MainRouteUtciDiagnosticsInputs,
@@ -413,6 +419,7 @@
 	}
 
 	function handleTooltipMotionWheel() {
+		cameraWheelEventCount += 1;
 		tooltipMotionSuppression = armTooltipMotionSuppression(
 			tooltipMotionSuppression,
 			performance.now(),
@@ -422,6 +429,7 @@
 
 	// Handle mouse move for tooltip
 	function handleMouseMove(event: MouseEvent) {
+		tooltipHoverSampleCount += 1;
 		const now = performance.now();
 		if (shouldSuppressTooltipMotion(tooltipMotionSuppression, now)) {
 			hideTooltip();
@@ -533,6 +541,16 @@
 				liveRouteState.comparisonSurfaceIdentity?.selectionKey,
 			comparisonSameDeviceForComputeAndRender:
 				liveRouteState.comparison.sameDeviceForComputeAndRender,
+			tooltipInteraction: { hoverSampleCount: tooltipHoverSampleCount },
+			cameraInteraction: { wheelEventCount: cameraWheelEventCount },
+			selectedHourReadbackReasons:
+				liveRouteState.base.selectedHourReadbackReasons,
+			selectedHourReadbackReasonCounts:
+				liveRouteState.base.selectedHourReadbackReasonCounts,
+			comparisonSelectedHourReadbackReasons:
+				liveRouteState.comparison.selectedHourReadbackReasons,
+			comparisonSelectedHourReadbackReasonCounts:
+				liveRouteState.comparison.selectedHourReadbackReasonCounts,
 		});
 	}
 
@@ -540,71 +558,52 @@
 		hideTooltip();
 	}
 
-	// Attach event listeners to canvas element when available
-	let hoverListenersCanvas: HTMLCanvasElement | null = null;
-	let tooltipMotionListenersCanvas: HTMLCanvasElement | null = null;
+	let hoverInteractionController: CanvasInteractionController | null = null;
+	let hoverInteractionCanvas: HTMLCanvasElement | null = null;
+	let tooltipMotionInteractionController: CanvasInteractionController | null = null;
+	let tooltipMotionInteractionCanvas: HTMLCanvasElement | null = null;
 
 	function detachHoverListeners() {
-		if (!hoverListenersCanvas) return;
-		hoverListenersCanvas.removeEventListener("mousemove", handleMouseMove);
-		hoverListenersCanvas.removeEventListener("mouseleave", handleMouseLeave);
-		hoverListenersCanvas = null;
+		hoverInteractionController?.dispose();
+		hoverInteractionController = null;
+		hoverInteractionCanvas = null;
 	}
 
 	function detachTooltipMotionListeners() {
-		if (tooltipMotionListenersCanvas) {
-			tooltipMotionListenersCanvas.removeEventListener(
-				"pointerdown",
-				handleTooltipMotionPointerDown,
-			);
-			tooltipMotionListenersCanvas.removeEventListener(
-				"wheel",
-				handleTooltipMotionWheel,
-			);
-			tooltipMotionListenersCanvas = null;
-		}
-		if (typeof window !== "undefined") {
-			window.removeEventListener("pointerup", handleTooltipMotionPointerRelease);
-			window.removeEventListener("pointercancel", handleTooltipMotionPointerRelease);
-		}
+		tooltipMotionInteractionController?.dispose();
+		tooltipMotionInteractionController = null;
+		tooltipMotionInteractionCanvas = null;
 	}
 
 	$: if (mounted) {
-		if (hoverListenersCanvas && hoverListenersCanvas !== canvasElement) {
+		if (hoverInteractionCanvas && hoverInteractionCanvas !== canvasElement) {
 			detachHoverListeners();
 		}
-		if (canvasElement && hoverListenersCanvas !== canvasElement) {
-			canvasElement.addEventListener("mousemove", handleMouseMove, {
-				passive: true,
+		if (canvasElement && hoverInteractionCanvas !== canvasElement) {
+			hoverInteractionController = createCanvasInteractionController({
+				canvas: canvasElement,
+				onPointerMove: handleMouseMove,
+				onPointerLeave: handleMouseLeave,
 			});
-			canvasElement.addEventListener("mouseleave", handleMouseLeave, {
-				passive: true,
-			});
-			hoverListenersCanvas = canvasElement;
+			hoverInteractionCanvas = canvasElement;
 		}
 
 		if (
-			tooltipMotionListenersCanvas &&
-			tooltipMotionListenersCanvas !== canvasElement
+			tooltipMotionInteractionCanvas &&
+			tooltipMotionInteractionCanvas !== canvasElement
 		) {
 			detachTooltipMotionListeners();
 		}
-		if (canvasElement && tooltipMotionListenersCanvas !== canvasElement) {
-			canvasElement.addEventListener(
-				"pointerdown",
-				handleTooltipMotionPointerDown,
-				{ passive: true },
-			);
-			canvasElement.addEventListener("wheel", handleTooltipMotionWheel, {
-				passive: true,
+		if (canvasElement && tooltipMotionInteractionCanvas !== canvasElement) {
+			tooltipMotionInteractionController = createCanvasInteractionController({
+				canvas: canvasElement,
+				windowTarget: window,
+				onPointerDown: handleTooltipMotionPointerDown,
+				onWheel: handleTooltipMotionWheel,
+				onWindowPointerUp: handleTooltipMotionPointerRelease,
+				onWindowPointerCancel: handleTooltipMotionPointerRelease,
 			});
-			window.addEventListener("pointerup", handleTooltipMotionPointerRelease, {
-				passive: true,
-			});
-			window.addEventListener("pointercancel", handleTooltipMotionPointerRelease, {
-				passive: true,
-			});
-			tooltipMotionListenersCanvas = canvasElement;
+			tooltipMotionInteractionCanvas = canvasElement;
 		}
 	}
 

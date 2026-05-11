@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
@@ -20,6 +20,14 @@ import { createFullDayAnalysis } from './live-selected-hour-route-host.test-supp
 
 type TestLiveSelectedHourRouteInputs = LiveSelectedHourRouteInputs & {
 	utciRenderMode: UtciRenderMode;
+};
+
+type TestLiveSelectedHourRouteInputOverrides = Omit<
+	Partial<TestLiveSelectedHourRouteInputs>,
+	'selection' | 'comparison'
+> & {
+	selection?: Partial<LiveSelectedHourRouteInputs['selection']>;
+	comparison?: Partial<LiveSelectedHourRouteInputs['comparison']>;
 };
 
 function createSingleHourAnalysis(label: string): Analysis {
@@ -48,6 +56,12 @@ function createInitialControllerState(): LiveSelectedHourControllerState {
 		analysis: null,
 		acceptedGpuResidentOutput: null,
 		surfaceIdentity: null,
+		acceptedVisibleSurface: null,
+		acceptedRequestId: undefined,
+		acceptedSelectionKey: undefined,
+		acceptedVisibleAtMs: undefined,
+		selectedHourReadbackReasons: [],
+		selectedHourReadbackReasonCounts: {},
 		loading: false,
 		error: null,
 		renderTransport: 'idle',
@@ -74,6 +88,11 @@ function createFakeGpuResidentOutput(requestId: number): SelectedHourGpuResident
 function cloneControllerState(state: LiveSelectedHourControllerState): LiveSelectedHourControllerState {
 	return {
 		...state,
+		acceptedVisibleSurface: state.acceptedVisibleSurface
+			? { ...state.acceptedVisibleSurface }
+			: null,
+		selectedHourReadbackReasons: [...state.selectedHourReadbackReasons],
+		selectedHourReadbackReasonCounts: { ...state.selectedHourReadbackReasonCounts },
 		surfaceIdentity: state.surfaceIdentity ? { ...state.surfaceIdentity } : null,
 		renderSurfaceDiagnostics: { ...state.renderSurfaceDiagnostics }
 	};
@@ -82,7 +101,7 @@ function cloneControllerState(state: LiveSelectedHourControllerState): LiveSelec
 type ControllerRecord = {
 	requests: LiveSelectedHourControllerRequest[];
 	diagnostics: LiveSelectedHourControllerSurfaceDiagnostics[];
-	dispose: ReturnType<typeof vi.fn>;
+	dispose: Mock<() => void>;
 };
 
 function createControllerFactory() {
@@ -147,10 +166,28 @@ function createControllerFactory() {
 				const requestId = record.requests.length;
 				const renderTransport = resolveRenderTransport(request);
 				const gpuPending = renderTransport === 'compute-buffer-selected-hour';
+				const surfaceIdentity = createSurfaceIdentity(request, requestId);
+				const acceptedVisibleSurface = gpuPending
+					? null
+					: {
+							requestId,
+							selectionKey: surfaceIdentity.selectionKey,
+							visibleAtMs: requestId * 1000
+						};
 				state = {
 					...state,
 					analysis: request.sessionConfig.base,
-					surfaceIdentity: createSurfaceIdentity(request, requestId),
+					surfaceIdentity,
+					acceptedVisibleSurface,
+					acceptedRequestId: acceptedVisibleSurface?.requestId,
+					acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
+					acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+					selectedHourReadbackReasons: request.selectedHourReadbackReason
+						? [request.selectedHourReadbackReason]
+						: [],
+					selectedHourReadbackReasonCounts: request.selectedHourReadbackReason
+						? { [request.selectedHourReadbackReason]: 1 }
+						: {},
 					loading: gpuPending,
 					error: null,
 					renderTransport,
@@ -183,9 +220,22 @@ function createControllerFactory() {
 					state.renderTransport === 'compute-buffer-selected-hour' &&
 					renderSurfaceDiagnostics.gpuResidentCopyStatus === 'complete' &&
 					renderSurfaceDiagnostics.utciSurfaceSource === 'compute-buffer-selected-hour';
+				const acceptedVisibleSurface = gpuRenderReady
+					? {
+							requestId: state.surfaceIdentity?.requestId ?? 0,
+							selectionKey: state.surfaceIdentity?.selectionKey ?? 'selection',
+							visibleAtMs: (state.surfaceIdentity?.requestId ?? 0) * 1000
+						}
+					: state.acceptedVisibleSurface;
 				state = {
 					...state,
 					renderSurfaceDiagnostics,
+					acceptedVisibleSurface,
+					acceptedRequestId: acceptedVisibleSurface?.requestId,
+					acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
+					acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+					selectedHourReadbackReasons: state.selectedHourReadbackReasons,
+					selectedHourReadbackReasonCounts: state.selectedHourReadbackReasonCounts,
 					loading: gpuRenderReady ? false : state.loading,
 					renderReady: gpuRenderReady ? true : state.renderReady,
 					awaitingGpuSurface: gpuRenderReady ? false : state.awaitingGpuSurface,
@@ -225,10 +275,7 @@ function makeHostDeps(factory = createControllerFactory()) {
 }
 
 function makeBaseInputs(
-	overrides: Partial<TestLiveSelectedHourRouteInputs> & {
-		selection?: Partial<LiveSelectedHourRouteInputs['selection']>;
-		comparison?: Partial<LiveSelectedHourRouteInputs['comparison']>;
-	} = {}
+	overrides: TestLiveSelectedHourRouteInputOverrides = {}
 ): TestLiveSelectedHourRouteInputs {
 	const { selection: selectionOverrides, comparison: comparisonOverrides, ...rootOverrides } =
 		overrides;
@@ -271,10 +318,7 @@ function makeBaseInputs(
 }
 
 function makeComparisonInputs(
-	overrides: Partial<TestLiveSelectedHourRouteInputs> & {
-		selection?: Partial<LiveSelectedHourRouteInputs['selection']>;
-		comparison?: Partial<LiveSelectedHourRouteInputs['comparison']>;
-	} = {}
+	overrides: TestLiveSelectedHourRouteInputOverrides = {}
 ): TestLiveSelectedHourRouteInputs {
 	const comparisonAnalysisId =
 		overrides.comparison?.analysisId ?? 'Ben-Gurion/comparison/winter';
@@ -929,6 +973,7 @@ describe('liveSelectedHourRouteHost', () => {
 
 		expect(factory.records[1].requests[0]?.preferGpuResident).toBe(true);
 		expect(factory.records[1].requests[0]?.rendererDevice).toBe(comparisonRendererDevice);
+		expect(factory.records[1].requests[0]?.selectedHourReadbackReason).toBe('comparison');
 		expect(factory.records[1].requests[0]?.sessionConfig.preferredDevice).toBe(
 			comparisonRendererDevice
 		);
@@ -949,6 +994,11 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 		expect(host.getState().comparisonReady).toBe(true);
 		expect(host.getState().comparison.awaitingGpuSurface).toBe(false);
+		expect(host.getState().comparisonAcceptedVisibleSurface).toEqual({
+			requestId: 1,
+			selectionKey: 'Ben-Gurion/base|7|12|180',
+			visibleAtMs: 1000
+		});
 	});
 
 	it('seeds the comparison scene contract from the current gpu-native request before the first comparison publish completes', async () => {
@@ -1396,6 +1446,7 @@ describe('liveSelectedHourRouteHost', () => {
 		});
 		const baseModel = {} as Group;
 		const rendererDevice = { label: 'base-renderer-ready' } as unknown as GPUDevice;
+		const controllerAcceptedVisibleAtMs = 12345;
 
 		function createGpuOnlyController(requestId: number): LiveSelectedHourController {
 			let state = createInitialControllerState();
@@ -1457,6 +1508,16 @@ describe('liveSelectedHourRouteHost', () => {
 							gpuResidentCopyStatus: 'complete',
 							gpuResidentCopyRequestId: requestId
 						},
+						acceptedVisibleSurface: {
+							requestId,
+							selectionKey:
+								state.surfaceIdentity?.selectionKey ?? `selection-${requestId}`,
+							visibleAtMs: controllerAcceptedVisibleAtMs
+						},
+						acceptedRequestId: requestId,
+						acceptedSelectionKey:
+							state.surfaceIdentity?.selectionKey ?? `selection-${requestId}`,
+						acceptedVisibleAtMs: controllerAcceptedVisibleAtMs,
 						loading: false,
 						renderReady: true,
 						awaitingGpuSurface: false,
@@ -1505,6 +1566,18 @@ describe('liveSelectedHourRouteHost', () => {
 			requestId: 1,
 			selectionKey: 'Ben-Gurion/base|7|12|180'
 		});
+		expect(host.getState().acceptedRequestId).toBe(1);
+		expect(host.getState().acceptedSelectionKey).toBe('Ben-Gurion/base|7|12|180');
+		expect(host.getState().acceptedVisibleAtMs).toBe(controllerAcceptedVisibleAtMs);
+		expect(host.getState().primaryAcceptedVisibleSurface).toEqual({
+			requestId: 1,
+			selectionKey: 'Ben-Gurion/base|7|12|180',
+			visibleAtMs: controllerAcceptedVisibleAtMs
+		});
+		expect(host.getState().baseAcceptedVisibleSurface).toEqual(
+			host.getState().primaryAcceptedVisibleSurface
+		);
+		expect(host.getState().comparisonAcceptedVisibleSurface).toBeNull();
 		expect(host.getState().baseDisplayAnalysis).toBe(baseAnalysis);
 		expect(host.getState().baseRenderContext?.analysis).toBe(baseAnalysis);
 	});
@@ -1789,6 +1862,7 @@ describe('liveSelectedHourRouteHost', () => {
 		const baseModel = {} as Group;
 		const baseRendererDevice = { label: 'base-renderer-stable' } as unknown as GPUDevice;
 		let baseRequestCount = 0;
+		const acceptedVisibleAtMsByRequest = new Map<number, number>();
 
 		function createBaseController(): LiveSelectedHourController {
 			let state = createInitialControllerState();
@@ -1853,9 +1927,29 @@ describe('liveSelectedHourRouteHost', () => {
 						state.renderTransport === 'compute-buffer-selected-hour' &&
 						renderSurfaceDiagnostics.gpuResidentCopyStatus === 'complete' &&
 						renderSurfaceDiagnostics.utciSurfaceSource === 'compute-buffer-selected-hour';
+					const acceptedVisibleAtMs = gpuRenderReady
+						? 6000 + baseRequestCount
+						: state.acceptedVisibleAtMs;
+					if (gpuRenderReady) {
+						acceptedVisibleAtMsByRequest.set(baseRequestCount, acceptedVisibleAtMs);
+					}
 					state = {
 						...state,
 						renderSurfaceDiagnostics,
+						acceptedVisibleSurface: gpuRenderReady
+							? {
+									requestId: baseRequestCount,
+									selectionKey: state.surfaceIdentity?.selectionKey ?? 'selection',
+									visibleAtMs: acceptedVisibleAtMs
+								}
+							: state.acceptedVisibleSurface,
+						acceptedRequestId: gpuRenderReady
+							? baseRequestCount
+							: state.acceptedRequestId,
+						acceptedSelectionKey: gpuRenderReady
+							? state.surfaceIdentity?.selectionKey
+							: state.acceptedSelectionKey,
+						acceptedVisibleAtMs,
 						loading: gpuRenderReady ? false : state.loading,
 						renderReady: gpuRenderReady ? true : state.renderReady,
 						awaitingGpuSurface: gpuRenderReady ? false : state.awaitingGpuSurface,
@@ -1938,6 +2032,17 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseSurfaceIdentity?.selectionKey).toBe(
 			'Ben-Gurion/base|7|12|180'
 		);
+		expect(host.getState().acceptedRequestId).toBe(1);
+		expect(host.getState().acceptedSelectionKey).toBe('Ben-Gurion/base|7|12|180');
+		expect(host.getState().acceptedVisibleAtMs).toBe(acceptedVisibleAtMsByRequest.get(1));
+		expect(host.getState().primaryAcceptedVisibleSurface).toEqual({
+			requestId: 1,
+			selectionKey: 'Ben-Gurion/base|7|12|180',
+			visibleAtMs: acceptedVisibleAtMsByRequest.get(1)
+		});
+		expect(host.getState().baseAcceptedVisibleSurface).toEqual(
+			host.getState().primaryAcceptedVisibleSurface
+		);
 
 		host.setRouteInputs(
 			makeBaseInputs({
@@ -1964,6 +2069,14 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseSurfaceIdentity?.selectionKey).toBe(
 			'Ben-Gurion/base|7|12|180'
 		);
+		expect(host.getState().acceptedRequestId).toBe(1);
+		expect(host.getState().acceptedSelectionKey).toBe('Ben-Gurion/base|7|12|180');
+		expect(host.getState().acceptedVisibleAtMs).toBe(acceptedVisibleAtMsByRequest.get(1));
+		expect(host.getState().baseAcceptedVisibleSurface).toEqual({
+			requestId: 1,
+			selectionKey: 'Ben-Gurion/base|7|12|180',
+			visibleAtMs: acceptedVisibleAtMsByRequest.get(1)
+		});
 		expect(host.getState().baseDisplayAnalysis).toBe(baseAnalysis);
 
 		host.handleBaseSurfaceDiagnostics({
@@ -1976,6 +2089,17 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseReady).toBe(true);
 		expect(host.getState().baseSurfaceIdentity?.selectionKey).toBe(
 			'Ben-Gurion/base|1|12|36'
+		);
+		expect(host.getState().acceptedRequestId).toBe(2);
+		expect(host.getState().acceptedSelectionKey).toBe('Ben-Gurion/base|1|12|36');
+		expect(host.getState().acceptedVisibleAtMs).toBe(acceptedVisibleAtMsByRequest.get(2));
+		expect(host.getState().primaryAcceptedVisibleSurface).toEqual({
+			requestId: 2,
+			selectionKey: 'Ben-Gurion/base|1|12|36',
+			visibleAtMs: acceptedVisibleAtMsByRequest.get(2)
+		});
+		expect(host.getState().baseAcceptedVisibleSurface).toEqual(
+			host.getState().primaryAcceptedVisibleSurface
 		);
 	});
 

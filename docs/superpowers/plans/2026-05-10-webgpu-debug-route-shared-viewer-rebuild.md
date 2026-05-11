@@ -4,6 +4,8 @@
 >
 > **Workflow override:** The generic writing-plans template suggests commits. Do **not** commit in this repo slice. Do **not** create git worktrees. Preserve unrelated dirty files and report blockers before broad rewrites.
 
+> **Superseded for new execution as of 2026-05-11:** This plan uses the old `/debug-webgpu-utci` route name. For current quality/refactor execution, use `docs/superpowers/plans/2026-05-11-selected-hour-runtime-quality-baseline.md` and treat this file as historical context only.
+
 **Goal:** Rebuild `/debug-webgpu-utci` so normal non-parity f32 rendering uses the same selected-hour host/projection/render spine as `/`, while Python `.bin`, parity, collect, strict exposure, and visual proof tools remain debug-only.
 
 **Architecture:** Add an explicit debug shared-host mode for normal f32 only, then make all legacy debug selected-hour dispatch paths opt out when that mode is active. Route scene props and diagnostics through the shared main-route host/projection family, and only report `selectedHourEngine: "shared-host"` after legacy normal f32 dispatch is disabled and shared host owns compute/render. Keep Threlte/WebGPU scene lifecycle orchestration inside scene components.

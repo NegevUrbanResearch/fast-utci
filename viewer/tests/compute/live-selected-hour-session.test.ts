@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
-import { prepareSelectedHourLiveSession } from '$lib/compute/liveUtciSelectedHourSession';
+import {
+	disposeSelectedHourGpuResidentOutput,
+	prepareSelectedHourLiveSession
+} from '$lib/compute/liveUtciSelectedHourSession';
+import { createSelectedHourOutputHandle } from '$lib/compute/selectedHourOutputHandle';
 
 const mockState = vi.hoisted(() => ({
 	pipeline: null as any,
 	rendererDevice: {} as GPUDevice,
 	gpuBuffer: null as any,
+	outputOverride: null as any,
 	constructors: [] as any[]
 }));
 
@@ -49,7 +54,7 @@ vi.mock('$lib/compute/compute-manager', () => ({
 
 		initFromModelAndWeather = vi.fn(async () => ({ numPoints: 2 }));
 		runExposurePrecompute = vi.fn(async () => undefined);
-		runUtciForTimeIndex = vi.fn(async () => ({ gpuBuffer: mockState.gpuBuffer }));
+		runUtciForTimeIndex = vi.fn(async () => mockState.outputOverride ?? { gpuBuffer: mockState.gpuBuffer });
 		getDeviceForDebug = vi.fn(() => mockState.rendererDevice);
 	}
 }));
@@ -102,6 +107,7 @@ describe('selected-hour live session', () => {
 		vi.restoreAllMocks();
 		mockState.rendererDevice = {} as GPUDevice;
 		mockState.gpuBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
+		mockState.outputOverride = null;
 		mockState.constructors.length = 0;
 		mockState.pipeline = {
 			uploadStaticData: vi.fn(async () => undefined),
@@ -158,6 +164,179 @@ describe('selected-hour live session', () => {
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
 	});
 
+	it('keeps an accepted GPU output handle alive until explicit selected-hour disposal', async () => {
+		const destroy = vi.fn();
+		mockState.gpuBuffer = { destroy } as unknown as GPUBuffer;
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		const acceptedOutput = result.gpuResidentOutput;
+
+		expect(acceptedOutput?.gpuOutputHandle).toMatchObject({
+			buffer: mockState.gpuBuffer,
+			byteLength: 8,
+			requestId: 1,
+			timeIndex: 12,
+			source: 'webgpu-on-demand-snapshot',
+			disposed: false
+		});
+		expect(acceptedOutput?.output.gpuOutputHandle).toBe(acceptedOutput?.gpuOutputHandle);
+		expect(destroy).not.toHaveBeenCalled();
+
+		disposeSelectedHourGpuResidentOutput(acceptedOutput);
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+		expect(acceptedOutput?.gpuOutputHandle?.disposed).toBe(true);
+	});
+
+	it('attaches session request identity to an existing GPU output handle and disposes through it', async () => {
+		const destroy = vi.fn();
+		const handle = createSelectedHourOutputHandle({
+			buffer: { destroy } as unknown as GPUBuffer,
+			byteLength: 8,
+			source: 'webgpu-on-demand-snapshot'
+		});
+		mockState.outputOverride = {
+			format: 'f32-utci',
+			numPoints: 2,
+			timeIndex: 12,
+			gpuOutputHandle: handle,
+			outputBytes: 8
+		};
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.gpuResidentOutput?.gpuOutputHandle).toBe(handle);
+		expect(handle.requestId).toBe(1);
+		expect(handle.timeIndex).toBe(12);
+		expect(result.gpuResidentOutput?.output.gpuBuffer).toBe(handle.buffer);
+		expect(destroy).not.toHaveBeenCalled();
+
+		disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+		expect(handle.disposed).toBe(true);
+	});
+
+	it('normalizes mismatched gpuBuffer compatibility output to the canonical handle buffer', async () => {
+		const canonicalDestroy = vi.fn();
+		const legacyDestroy = vi.fn();
+		const legacyBuffer = { destroy: legacyDestroy } as unknown as GPUBuffer;
+		const handle = createSelectedHourOutputHandle({
+			buffer: { destroy: canonicalDestroy } as unknown as GPUBuffer,
+			byteLength: 8,
+			source: 'webgpu-on-demand-snapshot'
+		});
+		mockState.outputOverride = {
+			format: 'f32-utci',
+			numPoints: 2,
+			timeIndex: 12,
+			gpuBuffer: legacyBuffer,
+			gpuOutputHandle: handle,
+			outputBytes: 8
+		};
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(legacyDestroy).toHaveBeenCalledTimes(1);
+		expect(result.gpuResidentOutput?.output.gpuBuffer).toBe(handle.buffer);
+		expect(result.gpuResidentOutput?.gpuOutputHandle).toBe(handle);
+		expect(canonicalDestroy).not.toHaveBeenCalled();
+
+		disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
+
+		expect(canonicalDestroy).toHaveBeenCalledTimes(1);
+		expect(legacyDestroy).toHaveBeenCalledTimes(1);
+		expect(handle.disposed).toBe(true);
+	});
+
+	it('disposes a superseded GPU output handle only after the next output is recorded', async () => {
+		const firstDestroy = vi.fn();
+		const secondDestroy = vi.fn();
+		mockState.gpuBuffer = { destroy: firstDestroy } as unknown as GPUBuffer;
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const first = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		mockState.gpuBuffer = { destroy: secondDestroy } as unknown as GPUBuffer;
+		const second = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 13,
+			timeIndex: 13,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(first.gpuResidentOutput?.gpuOutputHandle?.disposed).toBe(false);
+		expect(second.gpuResidentOutput?.gpuOutputHandle?.disposed).toBe(false);
+		expect(firstDestroy).not.toHaveBeenCalled();
+
+		disposeSelectedHourGpuResidentOutput(first.gpuResidentOutput);
+
+		expect(firstDestroy).toHaveBeenCalledTimes(1);
+		expect(first.gpuResidentOutput?.gpuOutputHandle?.disposed).toBe(true);
+		expect(secondDestroy).not.toHaveBeenCalled();
+	});
+
 	it('uses the selected month WebGPU day range for normalized GPU-resident coloring', async () => {
 		const readbacks = [
 			new Float32Array([100, 120]),
@@ -188,6 +367,8 @@ describe('selected-hour live session', () => {
 		});
 
 		expect(first.gpuResidentOutput?.utciRange).toEqual({ min: 0, max: 120 });
+		expect(first.diagnostics.selectedHourReadbackReasons).toContain('range');
+		expect(first.diagnostics.selectedHourReadbackReasonCounts?.range).toBeGreaterThan(0);
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(24);
 
 		await session.runSelectedHour({
@@ -200,5 +381,88 @@ describe('selected-hour live session', () => {
 		});
 
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(25);
+	});
+
+	it('records comparison selected-hour CPU readbacks separately from visible render transport', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice,
+			selectedHourReadbackReason: 'comparison'
+		});
+
+		expect(result.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(result.diagnostics.selectedHourReadbackReasons).toContain('comparison');
+		expect(result.diagnostics.selectedHourReadbackReasonCounts?.comparison).toBeGreaterThan(0);
+	});
+
+	it('records visible fallback CPU readbacks when GPU-resident rendering is unavailable', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: false,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.renderTransport).toBe('cpu-uploaded-selected-hour');
+		expect(result.diagnostics.selectedHourReadbackReasons).toContain('visible-fallback');
+		expect(result.diagnostics.selectedHourReadbackReasonCounts?.['visible-fallback']).toBeGreaterThan(0);
+	});
+
+	it('keeps deferred visible fallback readback reasons observable on returned diagnostics', async () => {
+		const deferredFallbackValues = new Float32Array([13, 27]);
+		mockState.pipeline.readOnDemandUtciForDebug = vi
+			.fn()
+			.mockResolvedValueOnce(undefined)
+			.mockResolvedValueOnce(deferredFallbackValues);
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(result.diagnostics.selectedHourReadbackReasons ?? []).not.toContain('visible-fallback');
+
+		const fallback = await result.loadCpuFallback?.();
+
+		expect(fallback?.cpuFallbackValues).toBe(deferredFallbackValues);
+		expect(result.diagnostics.selectedHourReadbackReasons).toContain('visible-fallback');
+		expect(result.diagnostics.selectedHourReadbackReasonCounts?.['visible-fallback']).toBeGreaterThan(0);
 	});
 });

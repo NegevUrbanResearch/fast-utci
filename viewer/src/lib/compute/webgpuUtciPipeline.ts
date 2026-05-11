@@ -10,6 +10,7 @@ import {
 	recordOnDemandTiming,
 	type OnDemandRuntimeDiagnostics
 } from '$lib/compute/onDemandDiagnostics';
+import { createSelectedHourOutputHandle } from '$lib/compute/selectedHourOutputHandle';
 import { serializeBvhForGpu } from '$lib/compute/bvhGpuUpload';
 import * as THREE from 'three';
 import mrtUtciShaderRaw from '$lib/compute/shaders/mrt_utci.wgsl?raw';
@@ -915,6 +916,12 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			numPoints,
 			timeIndex,
 			gpuBuffer: snapshotBuffer,
+			gpuOutputHandle: createSelectedHourOutputHandle({
+				buffer: snapshotBuffer,
+				byteLength: outputBytes,
+				source: 'webgpu-on-demand-snapshot'
+			}),
+			outputBytes,
 			debugLabel: 'webgpu-on-demand-f32-utci'
 		};
 	}

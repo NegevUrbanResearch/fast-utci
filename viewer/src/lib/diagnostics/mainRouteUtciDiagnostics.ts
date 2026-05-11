@@ -2,6 +2,12 @@ import type {
 	LiveSelectedHourControllerSurfaceDiagnostics,
 	LiveSelectedHourRenderTransport
 } from '$lib/compute/liveSelectedHourController';
+import {
+	buildSelectedHourRuntimeContract,
+	type SelectedHourReadbackReason,
+	type SelectedHourRenderTransport,
+	type SelectedHourRuntimeContract
+} from '$lib/diagnostics/selectedHourRuntimeContract';
 import type {
 	WebgpuLargeBufferDeviceLimits,
 	WebgpuLargeBufferRequiredLimits
@@ -46,6 +52,19 @@ export type MainRouteUtciDiagnosticsPayload = {
 	comparisonGpuResidentCopyStatus?: 'idle' | 'pending' | 'complete' | 'failed';
 	comparisonGpuResidentCopyError?: string;
 	comparisonGpuResidentCopyRequestId?: number;
+	tooltipInteraction?: {
+		hoverSampleCount: number;
+	};
+	cameraInteraction?: {
+		wheelEventCount: number;
+	};
+	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
+	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
+	comparisonSelectedHourReadbackReasons?: SelectedHourReadbackReason[];
+	comparisonSelectedHourReadbackReasonCounts?: Partial<
+		Record<SelectedHourReadbackReason, number>
+	>;
+	selectedHourRuntimeContract: SelectedHourRuntimeContract;
 };
 
 export type MainRouteUtciDiagnosticsInputs = {
@@ -76,12 +95,70 @@ export type MainRouteUtciDiagnosticsInputs = {
 	comparisonSurfaceRequestId?: number;
 	comparisonSelectionKey?: string;
 	comparisonSameDeviceForComputeAndRender: boolean | null;
+	tooltipInteraction?: {
+		hoverSampleCount: number;
+	};
+	cameraInteraction?: {
+		wheelEventCount: number;
+	};
+	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
+	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
+	comparisonSelectedHourReadbackReasons?: SelectedHourReadbackReason[];
+	comparisonSelectedHourReadbackReasonCounts?: Partial<
+		Record<SelectedHourReadbackReason, number>
+	>;
 };
+
+function toSelectedHourRenderTransport(
+	transport: LiveSelectedHourRenderTransport | string | undefined
+): SelectedHourRenderTransport {
+	if (
+		transport === 'cpu-uploaded-selected-hour' ||
+		transport === 'compute-buffer-selected-hour'
+	) {
+		return transport;
+	}
+	return 'none';
+}
+
+function mergeSelectedHourReadbackReasons(
+	baseReasons: SelectedHourReadbackReason[] | undefined,
+	comparisonReasons: SelectedHourReadbackReason[] | undefined
+): SelectedHourReadbackReason[] | undefined {
+	const merged = [...(baseReasons ?? []), ...(comparisonReasons ?? [])];
+	return merged.length > 0 ? merged : undefined;
+}
+
+function mergeSelectedHourReadbackReasonCounts(
+	baseCounts: Partial<Record<SelectedHourReadbackReason, number>> | undefined,
+	comparisonCounts: Partial<Record<SelectedHourReadbackReason, number>> | undefined
+): Partial<Record<SelectedHourReadbackReason, number>> | undefined {
+	const merged: Partial<Record<SelectedHourReadbackReason, number>> = {};
+	for (const counts of [baseCounts, comparisonCounts]) {
+		for (const [reason, count] of Object.entries(counts ?? {}) as [
+			SelectedHourReadbackReason,
+			number | undefined
+		][]) {
+			if (typeof count !== 'number') continue;
+			merged[reason] = (merged[reason] ?? 0) + count;
+		}
+	}
+	return Object.keys(merged).length > 0 ? merged : undefined;
+}
 
 export function buildMainRouteUtciDiagnostics(
 	inputs: MainRouteUtciDiagnosticsInputs
 ): MainRouteUtciDiagnosticsPayload | undefined {
 	if (!inputs.enabled) return undefined;
+
+	const selectedHourReadbackReasons = mergeSelectedHourReadbackReasons(
+		inputs.selectedHourReadbackReasons,
+		inputs.comparisonSelectedHourReadbackReasons
+	);
+	const selectedHourReadbackReasonCounts = mergeSelectedHourReadbackReasonCounts(
+		inputs.selectedHourReadbackReasonCounts,
+		inputs.comparisonSelectedHourReadbackReasonCounts
+	);
 
 	return {
 		utciOnDemand: inputs.utciOnDemand,
@@ -126,6 +203,30 @@ export function buildMainRouteUtciDiagnostics(
 		comparisonGpuResidentCopyError:
 			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyError,
 		comparisonGpuResidentCopyRequestId:
-			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId
+			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId,
+		tooltipInteraction: inputs.tooltipInteraction,
+		cameraInteraction: inputs.cameraInteraction,
+		selectedHourReadbackReasons,
+		selectedHourReadbackReasonCounts,
+		comparisonSelectedHourReadbackReasons: inputs.comparisonSelectedHourReadbackReasons,
+		comparisonSelectedHourReadbackReasonCounts:
+			inputs.comparisonSelectedHourReadbackReasonCounts,
+		selectedHourRuntimeContract: buildSelectedHourRuntimeContract({
+			route: 'main',
+			selectedHourEngine: 'shared-host',
+			renderTransport: toSelectedHourRenderTransport(inputs.baseRenderTransport),
+			utciSurfaceSource: toSelectedHourRenderTransport(
+				inputs.baseSurfaceDiagnostics.utciSurfaceSource
+			),
+			sameDeviceForComputeAndRender: inputs.baseSameDeviceForComputeAndRender === true,
+			dataTextureBuildCount: inputs.baseSurfaceDiagnostics.dataTextureBuildCount,
+			readbackInstrumentation: 'not-instrumented',
+			requestId: inputs.baseSurfaceRequestId,
+			sceneRequestId: inputs.baseSceneSurfaceRequestId,
+			selectionKey: inputs.baseSelectionKey,
+			sceneSelectionKey: inputs.baseSceneSelectionKey,
+			readbackReasons: selectedHourReadbackReasons,
+			readbackReasonCounts: selectedHourReadbackReasonCounts
+		})
 	};
 }

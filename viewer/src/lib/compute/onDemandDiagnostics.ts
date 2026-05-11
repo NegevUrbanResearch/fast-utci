@@ -1,3 +1,5 @@
+import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
+
 export type OnDemandRendererBackend = 'webgpu' | 'unknown';
 
 export type OnDemandPath = 'idle' | 'run-all-baseline' | 'exposure-only-f32' | 'error';
@@ -99,6 +101,7 @@ export interface OnDemandRuntimeDiagnostics {
 	sameDeviceForComputeAndRender: boolean | null;
 	gpuResidentCopyStatus: 'idle' | 'pending' | 'complete' | 'failed';
 	gpuResidentCopyError?: string;
+	gpuResidentCopyRequestId?: number;
 	adapterInfo?: string | null;
 	maxStorageBufferBindingSize?: number | null;
 	maxBufferSize?: number | null;
@@ -132,6 +135,8 @@ export interface OnDemandRuntimeDiagnostics {
 		| 'none'
 		| 'compute-buffer-selected-hour'
 		| 'cpu-uploaded-selected-hour';
+	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
+	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
 	debugReadbackCount: number;
 	dataTextureBuildCount: number;
 	timings: OnDemandTimings;
@@ -186,6 +191,22 @@ export function recordOnDemandTiming<K extends keyof OnDemandTimings>(
 		timings: {
 			...diagnostics.timings,
 			[key]: value
+		}
+	};
+}
+
+export function recordSelectedHourReadbackReason(
+	diagnostics: OnDemandRuntimeDiagnostics,
+	reason: SelectedHourReadbackReason
+): OnDemandRuntimeDiagnostics {
+	const existingReasons = diagnostics.selectedHourReadbackReasons ?? [];
+	const existingCounts = diagnostics.selectedHourReadbackReasonCounts ?? {};
+	return {
+		...diagnostics,
+		selectedHourReadbackReasons: [...existingReasons, reason],
+		selectedHourReadbackReasonCounts: {
+			...existingCounts,
+			[reason]: (existingCounts[reason] ?? 0) + 1
 		}
 	};
 }

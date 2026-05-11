@@ -6,6 +6,78 @@ async function readDebugDiagnostics(page: Page) {
 	});
 }
 
+function getTooltipHoverSampleCount(diagnostics: any): number {
+	return (
+		diagnostics?.tooltipInteraction?.hoverSampleCount ??
+		diagnostics?.tooltipInteraction?.sampleCount ??
+		0
+	);
+}
+
+function getCameraWheelEventCount(diagnostics: any): number {
+	return diagnostics?.cameraInteraction?.wheelEventCount ?? 0;
+}
+
+async function exerciseDebugCanvasInteractions(page: Page) {
+	const canvas = page.locator('canvas').first();
+	await expect(canvas).toBeVisible();
+	const canvasBox = await canvas.boundingBox();
+	expect(canvasBox).toBeTruthy();
+	if (!canvasBox) {
+		throw new Error('Expected the debug route canvas to expose a bounding box.');
+	}
+
+	const clientX = canvasBox.x + canvasBox.width * 0.5;
+	const clientY = canvasBox.y + canvasBox.height * 0.5;
+	await page.mouse.move(clientX, clientY);
+	await canvas.dispatchEvent('wheel', {
+		deltaX: 0,
+		deltaY: 500,
+		deltaMode: 0,
+		clientX,
+		clientY
+	});
+}
+
+async function waitForDebugInteractionDiagnostics(
+	page: Page,
+	before: { hoverSampleCount: number; wheelEventCount: number }
+) {
+	const handle = await page
+		.waitForFunction(
+			(args) => {
+				const value = (window as any).__onDemandPrototypeDiagnostics__;
+				const hoverSampleCount =
+					value?.tooltipInteraction?.hoverSampleCount ??
+					value?.tooltipInteraction?.sampleCount ??
+					0;
+				const wheelEventCount =
+					value?.cameraInteraction?.wheelEventCount ?? 0;
+				if (
+					hoverSampleCount > args.hoverSampleCount &&
+					wheelEventCount > args.wheelEventCount
+				) {
+					return value;
+				}
+				return null;
+			},
+			before,
+			{ timeout: 10_000 }
+		)
+		.catch(async (error) => {
+			const lastDiagnostics = await readDebugDiagnostics(page);
+			throw new Error(
+				[
+					'Timed out waiting for debug canvas interaction diagnostics.',
+					error instanceof Error ? error.message : String(error),
+					'Last window.__onDemandPrototypeDiagnostics__:',
+					JSON.stringify(lastDiagnostics, null, 2)
+				].join('\n')
+			);
+		});
+	return handle.jsonValue() as Promise<any>;
+}
+
 async function waitForSharedHostPublication(
 	page: Page,
 	options?: { previousRequestId?: number; expectedSelectionKey?: string }
@@ -22,6 +94,9 @@ async function waitForSharedHostPublication(
 					value.sameDeviceForComputeAndRender === true &&
 					value.selectedHourReadbackCount === 0 &&
 					value.dataTextureBuildCount === 0 &&
+					value.selectedHourRuntimeContract?.route === 'debug' &&
+					value.selectedHourRuntimeContract?.selectedHourEngine === 'shared-host' &&
+					value.selectedHourRuntimeContract?.readbackInstrumentation === 'not-instrumented' &&
 					value.legacySelectedHourDispatchCount === 0 &&
 					value.legacyScrubScheduleCount === 0 &&
 					(typeof args.previousRequestId !== 'number' ||
@@ -113,12 +188,31 @@ test.describe('debug route shared-host selected-hour diagnostics', () => {
 
 		expect(initial.surfaceRequestId).toBeGreaterThan(0);
 		expect(initial.sceneSurfaceRequestId).toBe(initial.surfaceRequestId);
+		expect(initial.selectedHourRuntimeContract.acceptedRequestId).toBe(initial.surfaceRequestId);
+		expect(initial.selectedHourRuntimeContract.sceneRequestId).toBe(initial.sceneSurfaceRequestId);
+		expect(initial.selectedHourRuntimeContract.strongVisibleGpuPath).toBe(false);
+		expect(initial.selectedHourRuntimeContract.readbackReasons).toEqual(
+			expect.any(Array)
+		);
 		expect(initial.selectedTimeIndex).toBe(initial.renderContextTimeIndex);
 		expect(initial.acceptedUtciRange).toEqual({
 			min: expect.any(Number),
 			max: expect.any(Number)
 		});
 		await expect(page.locator('.model-loading-overlay')).toBeHidden();
+
+		const beforeInteraction = {
+			hoverSampleCount: getTooltipHoverSampleCount(initial),
+			wheelEventCount: getCameraWheelEventCount(initial)
+		};
+		await exerciseDebugCanvasInteractions(page);
+		const afterInteraction = await waitForDebugInteractionDiagnostics(page, beforeInteraction);
+		expect(getTooltipHoverSampleCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.hoverSampleCount
+		);
+		expect(getCameraWheelEventCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.wheelEventCount
+		);
 	});
 
 	test('converges shared-host diagnostics after rapid month and hour changes', async ({ page }) => {
@@ -145,6 +239,13 @@ test.describe('debug route shared-host selected-hour diagnostics', () => {
 		expect(finalValue.renderContextTimeIndex).toBe(8 * 24 + 3);
 		expect(finalValue.selectionKey).toBe(finalValue.sceneSelectionKey);
 		expect(finalValue.surfaceRequestId).toBe(finalValue.sceneSurfaceRequestId);
+		expect(finalValue.selectedHourRuntimeContract).toMatchObject({
+			route: 'debug',
+			selectedHourEngine: 'shared-host',
+			acceptedRequestId: finalValue.surfaceRequestId,
+			sceneRequestId: finalValue.sceneSurfaceRequestId,
+			strongVisibleGpuPath: false
+		});
 		expect(finalValue.acceptedUtciRange).toEqual({
 			min: expect.any(Number),
 			max: expect.any(Number)

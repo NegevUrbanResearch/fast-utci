@@ -19,6 +19,8 @@ async function waitForSelectedHourPublication(page: Page, options?: {
 				value.utciSurfaceSource === 'compute-buffer-selected-hour' &&
 				value.baseRenderTransport === 'compute-buffer-selected-hour' &&
 				value.baseSameDeviceForComputeAndRender === true &&
+				value.selectedHourRuntimeContract?.route === 'main' &&
+				value.selectedHourRuntimeContract?.readbackInstrumentation === 'not-instrumented' &&
 				(typeof args.previousRequestId !== 'number' ||
 					value.baseSurfaceRequestId !== args.previousRequestId) &&
 				(!args.expectedSelectionKey ||
@@ -102,6 +104,71 @@ async function setMonthSelection(page: Page, monthIndex: number) {
 		await slider.press('ArrowRight');
 	}
 	await expect(slider).toHaveAttribute('aria-valuenow', String(monthIndex));
+}
+
+function getTooltipHoverSampleCount(diagnostics: any): number {
+	return diagnostics?.tooltipInteraction?.hoverSampleCount ?? 0;
+}
+
+function getCameraWheelEventCount(diagnostics: any): number {
+	return diagnostics?.cameraInteraction?.wheelEventCount ?? 0;
+}
+
+async function exerciseMainRouteCanvasInteractions(page: Page) {
+	const canvas = page.locator('canvas').first();
+	await expect(canvas).toBeVisible();
+	const canvasBox = await canvas.boundingBox();
+	expect(canvasBox).toBeTruthy();
+	if (!canvasBox) {
+		throw new Error('Expected the main route canvas to expose a bounding box.');
+	}
+
+	const clientX = canvasBox.x + canvasBox.width * 0.5;
+	const clientY = canvasBox.y + canvasBox.height * 0.5;
+	await page.mouse.move(clientX, clientY);
+	await canvas.dispatchEvent('wheel', {
+		deltaX: 0,
+		deltaY: 500,
+		deltaMode: 0,
+		clientX,
+		clientY
+	});
+}
+
+async function waitForMainRouteInteractionDiagnostics(
+	page: Page,
+	before: { hoverSampleCount: number; wheelEventCount: number }
+) {
+	const handle = await page.waitForFunction(
+		(args) => {
+			const value = (window as any).__utciRenderDiagnostics__;
+			const hoverSampleCount = value?.tooltipInteraction?.hoverSampleCount ?? 0;
+			const wheelEventCount = value?.cameraInteraction?.wheelEventCount ?? 0;
+			if (
+				hoverSampleCount > args.hoverSampleCount &&
+				wheelEventCount > args.wheelEventCount
+			) {
+				return value;
+			}
+			return null;
+		},
+		before,
+		{ timeout: 10_000 }
+	).catch(async (error) => {
+		const lastDiagnostics = await readUtciRenderDiagnostics(page).catch((readError) => ({
+			readError: readError instanceof Error ? readError.message : String(readError)
+		}));
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			[
+				'Timed out waiting for main route canvas interaction diagnostics.',
+				message,
+				'Last window.__utciRenderDiagnostics__:',
+				JSON.stringify(lastDiagnostics, null, 2)
+			].join('\n')
+		);
+	});
+	return handle.jsonValue() as Promise<any>;
 }
 
 function expectFiniteUtciRange(range: unknown) {
@@ -210,8 +277,34 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(value.baseLiveReady).toBe(true);
 		expect(value.baseSameDeviceForComputeAndRender).toBe(true);
 		expect(value.baseSelectionKey).toBe(value.baseSceneSelectionKey);
+		expect(value.selectedHourRuntimeContract).toMatchObject({
+			route: 'main',
+			selectedHourEngine: 'shared-host',
+			acceptedRequestId: value.baseSurfaceRequestId,
+			sceneRequestId: value.baseSceneSurfaceRequestId,
+			strongVisibleGpuPath: false
+		});
 		expect(value.baseSelectedTimeIndex).toBe(value.baseRenderContextTimeIndex);
 		expect(value.baseAcceptedUtciRange).toBeDefined();
+
+		const beforeInteraction = {
+			hoverSampleCount: getTooltipHoverSampleCount(value),
+			wheelEventCount: getCameraWheelEventCount(value)
+		};
+		await exerciseMainRouteCanvasInteractions(page);
+		const afterInteraction = await waitForMainRouteInteractionDiagnostics(
+			page,
+			beforeInteraction
+		);
+		expect(getTooltipHoverSampleCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.hoverSampleCount
+		);
+		expect(getCameraWheelEventCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.wheelEventCount
+		);
+		expect(afterInteraction?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(afterInteraction?.baseRenderTransport).toBe('compute-buffer-selected-hour');
+		expect(afterInteraction?.baseSameDeviceForComputeAndRender).toBe(true);
 	});
 
 	test('ignores debug parity query params on the main route without bin requests', async ({

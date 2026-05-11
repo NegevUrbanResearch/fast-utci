@@ -16,6 +16,17 @@ import {
 	buildSelectedHourLiveAnalysis,
 	resolveLiveGpuResidentUtciRange
 } from '$lib/compute/liveUtciSelectedHour';
+import {
+	createSelectedHourOutputHandle,
+	disposeSelectedHourOutputHandle,
+	type SelectedHourOutputHandle
+} from '$lib/compute/selectedHourOutputHandle';
+import {
+	createEmptyOnDemandDiagnostics,
+	recordSelectedHourReadbackReason,
+	type OnDemandRuntimeDiagnostics
+} from '$lib/compute/onDemandDiagnostics';
+import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 
 const GRID_FALLBACKS = [2, 4, 6, 8];
 const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
@@ -26,6 +37,7 @@ export type SelectedHourGpuResidentOutput = {
 	hourIndex: number;
 	timeIndex: number;
 	output: OnDemandUtciOutput;
+	gpuOutputHandle?: SelectedHourOutputHandle;
 	utciRange: { min: number; max: number };
 	tooltipUtciValues?: Float32Array;
 };
@@ -47,6 +59,7 @@ export type SelectedHourLiveResult = {
 	pendingRenderUpdateStartedAt: number;
 	renderTransport: 'cpu-uploaded-selected-hour' | 'compute-buffer-selected-hour';
 	sameDeviceForComputeAndRender: boolean | null;
+	diagnostics: OnDemandRuntimeDiagnostics;
 };
 
 export type SelectedHourLiveSession = {
@@ -62,6 +75,7 @@ export type SelectedHourLiveSession = {
 		colorMode: 'normalized' | 'discrete';
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
+		selectedHourReadbackReason?: SelectedHourReadbackReason;
 	}): Promise<SelectedHourLiveResult>;
 	dispose(): void;
 };
@@ -112,8 +126,11 @@ function ensureNotAborted(signal: AbortSignal): void {
 }
 
 function disposeGpuBuffer(output: OnDemandUtciOutput | undefined): void {
-	const buffer = output?.gpuBuffer as GPUBuffer | undefined;
-	buffer?.destroy?.();
+	disposeSelectedHourOutputHandle(output?.gpuOutputHandle);
+	if (!output?.gpuOutputHandle && output?.gpuBuffer) {
+		const buffer = output.gpuBuffer as GPUBuffer;
+		buffer.destroy?.();
+	}
 	if (output && 'gpuBuffer' in output) {
 		output.gpuBuffer = undefined;
 	}
@@ -161,6 +178,8 @@ async function readSelectedHourCpuFallback(params: {
 	numPoints: number;
 	monthIndex: number;
 	timeIndex: number;
+	readbackReason: SelectedHourReadbackReason;
+	recordReadback: (reason: SelectedHourReadbackReason) => void;
 }): Promise<SelectedHourCpuFallbackOutput> {
 	const selectedHourUtci = await params.pipeline.readOnDemandUtciForDebug?.({
 		numPoints: params.numPoints
@@ -170,6 +189,7 @@ async function readSelectedHourCpuFallback(params: {
 			'Selected-hour live session requires pipeline.readOnDemandUtciForDebug() for CPU fallback output.'
 		);
 	}
+	params.recordReadback(params.readbackReason);
 
 	return {
 		analysis: buildSelectedHourLiveAnalysis({
@@ -206,11 +226,44 @@ function accumulateUtciRange(
 	};
 }
 
+function ensureSelectedHourOutputHandle(params: {
+	output: OnDemandUtciOutput;
+	requestId: number;
+	timeIndex: number;
+	byteLength: number;
+}): SelectedHourOutputHandle | null {
+	const existingHandle = params.output.gpuOutputHandle;
+	if (existingHandle) {
+		existingHandle.requestId = params.requestId;
+		existingHandle.timeIndex = params.timeIndex;
+		const legacyBuffer = params.output.gpuBuffer as GPUBuffer | undefined;
+		if (legacyBuffer && legacyBuffer !== existingHandle.buffer) {
+			legacyBuffer.destroy?.();
+		}
+		params.output.gpuBuffer = existingHandle.buffer;
+		return existingHandle;
+	}
+
+	const buffer = params.output.gpuBuffer as GPUBuffer | undefined;
+	if (!buffer) return null;
+
+	const handle = createSelectedHourOutputHandle({
+		buffer,
+		byteLength: params.output.outputBytes ?? params.byteLength,
+		source: 'webgpu-on-demand-snapshot',
+		requestId: params.requestId,
+		timeIndex: params.timeIndex
+	});
+	params.output.gpuOutputHandle = handle;
+	return handle;
+}
+
 async function resolveSelectedDayUtciRange(params: {
 	state: PreparedSessionState;
 	monthIndex: number;
 	selectedTimeIndex: number;
 	selectedHourUtci?: Float32Array;
+	recordReadback: (reason: SelectedHourReadbackReason) => void;
 }): Promise<{ min: number; max: number } | null> {
 	const cacheKey = `${params.monthIndex}:${params.state.numHours}`;
 	const cached = params.state.selectedDayRangeCache.get(cacheKey);
@@ -240,6 +293,7 @@ async function resolveSelectedDayUtciRange(params: {
 		const values = await params.state.pipeline.readOnDemandUtciForDebug({
 			numPoints: params.state.numPoints
 		});
+		params.recordReadback('range');
 		dayRange = accumulateUtciRange(dayRange, values);
 	}
 
@@ -255,6 +309,10 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 		numMonths: state.numMonths,
 		deviceSource: state.deviceSource,
 		async runSelectedHour(params) {
+			const diagnostics = createEmptyOnDemandDiagnostics();
+			const recordReadback = (reason: SelectedHourReadbackReason) => {
+				Object.assign(diagnostics, recordSelectedHourReadbackReason(diagnostics, reason));
+			};
 			ensureNotAborted(state.signal);
 			await ensureExposurePrecompute(state);
 			ensureNotAborted(state.signal);
@@ -267,6 +325,12 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				numMonths: state.numMonths,
 				format: 'f32-utci'
 			});
+			const gpuOutputHandle = ensureSelectedHourOutputHandle({
+				output,
+				requestId,
+				timeIndex: params.timeIndex,
+				byteLength: state.numPoints * 4
+			});
 			ensureNotAborted(state.signal);
 
 			const sameDeviceForComputeAndRender = resolveSameDevice({
@@ -276,7 +340,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			const preferGpuResident =
 				params.preferGpuResident &&
 				sameDeviceForComputeAndRender === true &&
-				Boolean(output.gpuBuffer);
+				Boolean(gpuOutputHandle);
 			const pendingRenderUpdateStartedAt = performance.now();
 
 			if (!preferGpuResident) {
@@ -285,7 +349,9 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					base: state.base,
 					numPoints: state.numPoints,
 					monthIndex: params.monthIndex,
-					timeIndex: params.timeIndex
+					timeIndex: params.timeIndex,
+					readbackReason: 'visible-fallback',
+					recordReadback
 				}).catch((error) => {
 					disposeGpuBuffer(output);
 					throw error;
@@ -301,13 +367,17 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					cpuFallbackValues: fallback.cpuFallbackValues,
 					pendingRenderUpdateStartedAt,
 					renderTransport: 'cpu-uploaded-selected-hour',
-					sameDeviceForComputeAndRender
+					sameDeviceForComputeAndRender,
+					diagnostics
 				};
 			}
 
 			const selectedHourUtci = await state.pipeline.readOnDemandUtciForDebug?.({
 				numPoints: state.numPoints
 			});
+			if (selectedHourUtci) {
+				recordReadback(params.selectedHourReadbackReason ?? 'tooltip');
+			}
 			const selectedHourAnalysis = selectedHourUtci
 				? buildSelectedHourLiveAnalysis({
 						base: state.base,
@@ -322,7 +392,8 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 							state,
 							monthIndex: params.monthIndex,
 							selectedTimeIndex: params.timeIndex,
-							selectedHourUtci
+							selectedHourUtci,
+							recordReadback
 					  })
 					: null;
 			const loadCpuFallback = selectedHourUtci
@@ -336,7 +407,9 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 							base: state.base,
 							numPoints: state.numPoints,
 							monthIndex: params.monthIndex,
-							timeIndex: params.timeIndex
+							timeIndex: params.timeIndex,
+							readbackReason: 'visible-fallback',
+							recordReadback
 						});
 
 			return {
@@ -351,6 +424,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					hourIndex: params.hourIndex,
 					timeIndex: params.timeIndex,
 					output,
+					gpuOutputHandle: gpuOutputHandle ?? undefined,
 					utciRange: resolveLiveGpuResidentUtciRange({
 						colorMode: params.colorMode,
 						selectedHourUtci,
@@ -361,7 +435,8 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				loadCpuFallback,
 				pendingRenderUpdateStartedAt,
 				renderTransport: 'compute-buffer-selected-hour',
-				sameDeviceForComputeAndRender
+				sameDeviceForComputeAndRender,
+				diagnostics
 			};
 		},
 		dispose() {

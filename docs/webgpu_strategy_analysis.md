@@ -2,11 +2,13 @@
 
 Updated: 2026-05-09
 
+> **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
+
 ## Decision Snapshot
 
 We should keep the selected-hour **WebGPU compute-on-demand path** as the main direction and make the next decisions from measured cold-start/render-path evidence.
 
-This claim is scoped to the selected-hour `debug-webgpu-utci` route, where the current diagnostics now prove the `compute-buffer-selected-hour` transport. It is not yet a blanket statement about every route or fallback path in the repo.
+This claim is scoped to the selected-hour active `/debug` route, where the current diagnostics now prove the `compute-buffer-selected-hour` transport. Older `debug-webgpu-utci` route references below are historical captures from before the route rename. It is not yet a blanket statement about every route or fallback path in the repo.
 
 The reason is simple: the viewer already renders with Three.js `WebGPURenderer`, and the current scaling wall is no longer "can we compute UTCI on the GPU?" It is "can the renderer consume GPU-computed UTCI without CPU readback, CPU quantization, and CPU texture/color regeneration?"
 
@@ -31,10 +33,10 @@ Implemented as of 2026-05-09:
 | Three.js WebGPU rendering | `WebGPURenderer` is already used. | `viewer/src/lib/components/scene/Scene.svelte` |
 | WebGPU compute pipeline | Solar exposure, sky exposure, and MRT/UTCI compute already run on WebGPU. | `viewer/src/lib/compute/webgpuUtciPipeline.ts` |
 | Solar exposure storage | Already bit-packed as one bit per point-hour in a `u32` buffer. | `webgpuUtciPipeline.ts`, `shaders/exposure_solar.wgsl`, `shaders/mrt_utci.wgsl` |
-| UTCI readback | The selected-hour on-demand debug path no longer reads back UTCI values on the hot render path; bulk readback still exists for legacy/fallback/export flows. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug-webgpu-utci/+page.svelte`, `viewer/src/lib/compute/webgpuUtciPipeline.ts` |
-| CPU UTCI storage | Legacy live analysis still creates a full time-major `Int16Array` copy, but the selected-hour on-demand debug route avoids all-hours CPU UTCI storage as the main path. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug-webgpu-utci/+page.svelte` |
+| UTCI readback | The selected-hour on-demand debug path no longer reads back UTCI values on the hot render path; bulk readback still exists for legacy/fallback/export flows. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte`, `viewer/src/lib/compute/webgpuUtciPipeline.ts` |
+| CPU UTCI storage | Legacy live analysis still creates a full time-major `Int16Array` copy, but the selected-hour on-demand debug route avoids all-hours CPU UTCI storage as the main path. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte` |
 | Rendering UTCI values | The current selected-hour debug route can render from a GPU-native compute buffer surface (`compute-buffer-selected-hour`), while `dataTexture` remains as fallback/legacy path. | `viewer/src/lib/components/scene/UTCIPointCloud.svelte`, `viewer/src/lib/services/gpuUtciRenderBridge.ts`, `viewer/src/lib/services/pointCloudService.ts` |
-| Debug route default | Plain `/debug-webgpu-utci` now defaults to on-demand `f32`; `?utciOnDemand=off` opts out, and `?collect=normal` preserves the old full-day collection harness. | `viewer/src/routes/debug-webgpu-utci/+page.svelte` |
+| Debug route default | Plain `/debug` now defaults to on-demand `f32`; `?utciOnDemand=off` opts out, and `?collect=normal` preserves the old full-day collection harness. | `viewer/src/routes/debug/+page.svelte` |
 | MRT diagnostics | Disabled by default; opt-in only when hardware supports enough storage buffers. | `webgpuUtciPipeline.ts` |
 
 ## 2026-05-09 App-Visible Cold-Start Snapshot
@@ -46,7 +48,7 @@ The older batch reports are still useful supporting evidence:
 - Legacy run-all parity/performance: [data/batch-parity-results/parity_performance_report.md](../data/batch-parity-results/parity_performance_report.md)
 - Run-all vs strict exposure-only on-demand: [data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md](../data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md)
 
-But those reports do not capture the current app-visible `debug-webgpu-utci` cold-start/render-path breakdown. The newer focused timings below are the ones we should use for the next design discussion.
+But those reports do not capture the app-visible debug-route cold-start/render-path breakdown that was captured before the route was renamed from `/debug-webgpu-utci` to `/debug`. The newer focused timings below are historical route-name captures that we should still use for the next design discussion.
 
 ### Route Shape Used
 
@@ -200,6 +202,8 @@ Important caveat: we have **not** recollected the current selected-hour route at
 
 The next step should be an intentional **cold-start/render-path design pass** based on the measured bottlenecks, not another opportunistic optimization without a clear target.
 
+Current planning artifact: [2026-05-11 selected-hour runtime quality baseline](superpowers/plans/2026-05-11-selected-hour-runtime-quality-baseline.md).
+
 Current objective:
 
 1. Keep the plain debug route on the on-demand path by default.
@@ -235,7 +239,7 @@ This section is no longer a target-only sketch. It should describe the current r
 | Main storage shape | All-hours UTCI/MRT buffers plus CPU compatibility storage | Persistent geometry/exposure inputs plus selected-hour output |
 | Render transport | CPU-driven decode/color/`DataTexture` upload | `compute-buffer-selected-hour` when the `gpuNative` route is active |
 | Selected-hour readback | Common architectural dependency | Zero on the proven hot path |
-| Route status | Legacy/fallback/collection context still exists | Plain `/debug-webgpu-utci` now defaults here |
+| Route status | Legacy/fallback/collection context still exists | Plain `/debug` now defaults here |
 
 ### Current Route Shape
 

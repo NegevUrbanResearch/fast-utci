@@ -1,4 +1,8 @@
 import type { UtciRenderMode } from '$lib/utciRenderMode';
+import {
+	buildSelectedHourRuntimeContract,
+	type SelectedHourRuntimeContract
+} from '$lib/diagnostics/selectedHourRuntimeContract';
 
 export type DebugSelectedHourEngine = 'legacy-debug' | 'shared-host';
 
@@ -26,6 +30,7 @@ export type DebugWebgpuUtciDiagnosticsState = {
 	selectedHourEngine: DebugSelectedHourEngine;
 	legacySelectedHourDispatchCount: number;
 	legacyScrubScheduleCount: number;
+	selectedHourRuntimeContract: SelectedHourRuntimeContract;
 	selection: {
 		monthIndex: number;
 		hourIndex: number;
@@ -36,6 +41,10 @@ export type DebugWebgpuUtciDiagnosticsState = {
 export function deriveDebugWebgpuUtciDiagnosticsState(
 	inputs: DebugWebgpuUtciDiagnosticsInputs
 ): DebugWebgpuUtciDiagnosticsState {
+	const selectedHourEngine = inputs.selectedHourEngine ?? 'legacy-debug';
+	const legacySelectedHourDispatchCount = inputs.legacySelectedHourDispatchCount ?? 0;
+	const legacyScrubScheduleCount = inputs.legacyScrubScheduleCount ?? 0;
+
 	return {
 		onDemandEnabled: inputs.debugOnDemandMode === 'f32',
 		binComparisonEnabled: inputs.parityMode,
@@ -43,9 +52,16 @@ export function deriveDebugWebgpuUtciDiagnosticsState(
 		collectNormalMode: inputs.collectMode === 'normal',
 		windowDiagnosticsEnabled: true,
 		renderMode: inputs.utciRenderMode,
-		selectedHourEngine: inputs.selectedHourEngine ?? 'legacy-debug',
-		legacySelectedHourDispatchCount: inputs.legacySelectedHourDispatchCount ?? 0,
-		legacyScrubScheduleCount: inputs.legacyScrubScheduleCount ?? 0,
+		selectedHourEngine,
+		legacySelectedHourDispatchCount,
+		legacyScrubScheduleCount,
+		selectedHourRuntimeContract: buildSelectedHourRuntimeContract({
+			route: 'debug',
+			selectedHourEngine,
+			readbackInstrumentation: 'not-instrumented',
+			legacySelectedHourDispatchCount,
+			legacyScrubScheduleCount
+		}),
 		selection: {
 			monthIndex: inputs.selectedMonthIndex,
 			hourIndex: inputs.selectedHourIndex,
