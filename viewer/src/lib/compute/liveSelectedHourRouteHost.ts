@@ -4,6 +4,7 @@ import {
 	createLiveSelectedHourController,
 	type LiveSelectedHourAcceptedVisibleSurface,
 	type LiveSelectedHourController,
+	type LiveSelectedHourGpuResidentRelease,
 	type LiveSelectedHourControllerRequest,
 	type LiveSelectedHourControllerState,
 	type LiveSelectedHourControllerSurfaceDiagnostics,
@@ -73,6 +74,10 @@ export type LiveSelectedHourRouteState = {
 
 export type LiveSelectedHourRouteHost = {
 	setRouteInputs(inputs: LiveSelectedHourRouteInputs): void;
+	releaseBaseAcceptedGpuResidentOutput(release: LiveSelectedHourGpuResidentRelease): void;
+	releaseComparisonAcceptedGpuResidentOutput(
+		release: LiveSelectedHourGpuResidentRelease
+	): void;
 	handleBaseSurfaceDiagnostics(diagnostics: LiveSelectedHourControllerSurfaceDiagnostics): void;
 	handleComparisonSurfaceDiagnostics(
 		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
@@ -356,6 +361,16 @@ function syncRequestedRenderContextAnalysis(params: {
 	});
 }
 
+function attachControllerIdentityToSurfaceIdentity(params: {
+	surfaceIdentity: LiveSelectedHourSurfaceIdentity;
+	controllerIdentity: string;
+}): LiveSelectedHourSurfaceIdentity {
+	return {
+		...params.surfaceIdentity,
+		controllerIdentity: params.controllerIdentity
+	};
+}
+
 export function createLiveSelectedHourRouteHost(
 	deps: LiveSelectedHourRouteHostDeps = {}
 ): LiveSelectedHourRouteHost {
@@ -419,7 +434,10 @@ export function createLiveSelectedHourRouteHost(
 				? { ...params.acceptedVisibleSurface }
 				: null,
 			analysis: params.analysis,
-			surfaceIdentity: { ...params.surfaceIdentity },
+			surfaceIdentity: attachControllerIdentityToSurfaceIdentity({
+				surfaceIdentity: params.surfaceIdentity,
+				controllerIdentity: params.controllerIdentity
+			}),
 			renderContext: params.renderContext
 		};
 	}
@@ -585,8 +603,14 @@ export function createLiveSelectedHourRouteHost(
 		const baseSceneSurfaceIdentity =
 			!liveEnabled
 				? null
-				: baseControllerIsCurrent && baseControllerState.error == null
-					? baseControllerState.surfaceIdentity
+				: baseControllerIsCurrent &&
+					  baseControllerState.error == null &&
+					  baseControllerIdentity &&
+					  baseControllerState.surfaceIdentity != null
+					? attachControllerIdentityToSurfaceIdentity({
+							surfaceIdentity: baseControllerState.surfaceIdentity,
+							controllerIdentity: baseControllerIdentity
+					  })
 					: baseVisibleSurface
 						? baseVisibleSurface.surfaceIdentity
 						: null;
@@ -596,8 +620,14 @@ export function createLiveSelectedHourRouteHost(
 				? null
 				: !liveEnabled
 					? null
-					: comparisonControllerIsCurrent && comparisonControllerState.error == null
-						? comparisonControllerState.surfaceIdentity
+					: comparisonControllerIsCurrent &&
+						  comparisonControllerState.error == null &&
+						  comparisonControllerIdentity &&
+						  comparisonControllerState.surfaceIdentity != null
+						? attachControllerIdentityToSurfaceIdentity({
+								surfaceIdentity: comparisonControllerState.surfaceIdentity,
+								controllerIdentity: comparisonControllerIdentity
+						  })
 						: comparisonVisibleSurface
 							? comparisonVisibleSurface.surfaceIdentity
 							: null;
@@ -1057,6 +1087,26 @@ export function createLiveSelectedHourRouteHost(
 			currentInputs = inputs;
 			publishState();
 			queueReconcile();
+		},
+
+		releaseBaseAcceptedGpuResidentOutput(release) {
+			if (disposed) {
+				return;
+			}
+			if (release.controllerIdentity !== baseControllerIdentity) {
+				return;
+			}
+			baseController.releaseAcceptedGpuResidentOutput(release);
+		},
+
+		releaseComparisonAcceptedGpuResidentOutput(release) {
+			if (disposed) {
+				return;
+			}
+			if (release.controllerIdentity !== comparisonControllerIdentity) {
+				return;
+			}
+			comparisonController.releaseAcceptedGpuResidentOutput(release);
 		},
 
 		handleBaseSurfaceDiagnostics(diagnostics) {

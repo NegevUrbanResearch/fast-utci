@@ -57,6 +57,39 @@ async function waitForSelectedHourPublication(page: Page, options?: {
 	return diagnostics.jsonValue() as Promise<any>;
 }
 
+async function waitForComparisonReadbackAccounting(page: Page) {
+	const diagnostics = await page.waitForFunction(
+		() => {
+			const value = (window as any).__utciRenderDiagnostics__;
+			const comparisonCount =
+				value?.selectedHourRuntimeContract?.readbackReasonCounts?.comparison ?? 0;
+			if (
+				value?.selectedHourRuntimeContract?.strongVisibleGpuPath === true &&
+				comparisonCount >= 1
+			) {
+				return value;
+			}
+			return null;
+		},
+		undefined,
+		{ timeout: 15_000 }
+	).catch(async (error) => {
+		const lastDiagnostics = await readUtciRenderDiagnostics(page).catch((readError) => ({
+			readError: readError instanceof Error ? readError.message : String(readError)
+		}));
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			[
+				'Timed out waiting for comparison readback accounting diagnostics.',
+				message,
+				'Last window.__utciRenderDiagnostics__:',
+				JSON.stringify(lastDiagnostics, null, 2)
+			].join('\n')
+		);
+	});
+	return diagnostics.jsonValue() as Promise<any>;
+}
+
 async function setHourSelection(page: Page, hourIndex: number) {
 	const modeButton = page.getByRole('button', { name: /^day$/i });
 	await expect(modeButton).toBeVisible();
@@ -205,14 +238,22 @@ function isForbiddenDebugBoundaryRequest(url: string) {
 
 test.describe('main route manual diagnostics probe', () => {
 	let requestedUrls: string[] = [];
+	let allowedForbiddenRequestPatterns: RegExp[] = [];
 
 	test.beforeEach(({ page }) => {
 		requestedUrls = [];
+		allowedForbiddenRequestPatterns = [];
 		page.on('request', (request) => requestedUrls.push(request.url()));
 	});
 
 	test.afterEach(async ({ page }) => {
-		expect(requestedUrls.filter(isForbiddenDebugBoundaryRequest)).toEqual([]);
+		expect(
+			requestedUrls.filter(
+				(url) =>
+					isForbiddenDebugBoundaryRequest(url) &&
+					!allowedForbiddenRequestPatterns.some((pattern) => pattern.test(url))
+			)
+		).toEqual([]);
 		await page.goto('about:blank').catch(() => undefined);
 	});
 
@@ -405,6 +446,36 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expect(updated.baseSelectedTimeIndex).toBe(8 * 24);
 		expect(updated.baseRenderContextTimeIndex).toBe(8 * 24);
+	});
+
+	test('keeps visible GPU path strong while comparison readbacks are accounted separately', async ({
+		page
+	}) => {
+		await page.goto(
+			'/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&utciRender=auto&utciRenderDiagnostics=1'
+		);
+
+		await waitForSelectedHourPublication(page, {
+			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0'
+		});
+
+		allowedForbiddenRequestPatterns = [/\/Ben-Gurion\/existing_trees\/existing_trees_01\.bin(?:\?|$)/i];
+		await page.getByRole('button', { name: /browse variants/i }).click();
+		await page.getByRole('button', { name: /Existing Tree Cover/i }).click();
+
+		const value = await waitForComparisonReadbackAccounting(page);
+		expect(value.selectedHourRuntimeContract).toMatchObject({
+			route: 'main',
+			selectedHourEngine: 'shared-host',
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			strongVisibleGpuPath: true,
+			visibleRenderPathAvoidsCpuReadback: true
+		});
+		expect(value.selectedHourRuntimeContract.readbackReasons).toContain('comparison');
+		expect(value.selectedHourRuntimeContract.readbackReasonCounts?.comparison ?? 0).toBeGreaterThan(0);
+		expect(value.selectedHourReadbackReasons).toContain('comparison');
+		expect(value.selectedHourReadbackReasonCounts?.comparison ?? 0).toBeGreaterThan(0);
 	});
 
 	test('uses live WebGPU UTCI range independent of .bin metadata for Ness Tziona', async ({

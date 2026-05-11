@@ -249,6 +249,8 @@
 	let debugSharedBaseSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 	let debugSharedBasePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	let debugSharedBasePendingRenderUpdateStartedAt: number | undefined = undefined;
+	const LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID = "debug-legacy-selected-hour";
+	let legacyDebugSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 
 	function handleDebugSharedBaseSurfaceDiagnostics(
 		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics,
@@ -907,6 +909,37 @@
 		debugDiagnosticsState.onDemandEnabled
 			? `${debugDiagnosticsState.selection.monthIndex}:${debugDiagnosticsState.selection.timeIndex}`
 			: "off";
+	$: {
+		const acceptedOutput = acceptedGpuResidentUtciOutput;
+		const pendingRenderUpdate = onDemandDebugPrepared?.pendingRenderUpdate;
+		const selectionKey = [
+			analysisId,
+			acceptedOutput?.monthIndex ?? debugOnDemandSelection.monthIndex,
+			acceptedOutput?.hourIndex ?? debugOnDemandSelection.hourIndex,
+		].join("|");
+		const pendingRenderUpdateStartedAt =
+			pendingRenderUpdate &&
+			acceptedOutput &&
+			pendingRenderUpdate.requestId === acceptedOutput.requestId &&
+			pendingRenderUpdate.monthIndex === acceptedOutput.monthIndex &&
+			pendingRenderUpdate.timeIndex === acceptedOutput.timeIndex
+				? pendingRenderUpdate.startedAt
+				: undefined;
+
+		legacyDebugSurfaceIdentity =
+			!useDebugSharedSelectedHourHost && acceptedOutput
+				? {
+						controllerIdentity: LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID,
+						requestId: acceptedOutput.requestId,
+						monthIndex: acceptedOutput.monthIndex,
+						hourIndex: acceptedOutput.hourIndex,
+						timeIndex: acceptedOutput.timeIndex,
+						selectionKey,
+						pendingRenderUpdateStartedAt,
+						acceptedGpuResidentOutput: acceptedOutput,
+					}
+				: null;
+	}
 	$: if (
 		browser &&
 		debugDiagnosticsState.onDemandEnabled &&
@@ -4228,16 +4261,44 @@
 	}
 
 	function handleAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
 		requestId: number;
 		monthIndex: number;
 		timeIndex: number;
 		reason: "copy-complete" | "copy-failed" | "superseded";
 	}): void {
+		if (params.controllerIdentity !== LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID) {
+			return;
+		}
 		releaseAcceptedGpuResidentUtciOutput({
 			requestId: params.requestId,
 			monthIndex: params.monthIndex,
 			timeIndex: params.timeIndex,
 		});
+	}
+
+	function handleDebugSharedAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: "copy-complete" | "copy-failed" | "superseded";
+	}): void {
+		debugSharedRouteHost.releaseBaseAcceptedGpuResidentOutput(params);
+	}
+
+	function handleSceneAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: "copy-complete" | "copy-failed" | "superseded";
+	}): void {
+		if (params.controllerIdentity === LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID) {
+			handleAcceptedGpuResidentOutputRelease(params);
+			return;
+		}
+		handleDebugSharedAcceptedGpuResidentOutputRelease(params);
 	}
 
 	$: if (browser) {
@@ -4481,16 +4542,14 @@
 									: null}
 								liveSelectedHourSurfaceIdentity={useDebugSharedSelectedHourHost
 									? debugSharedBaseSurfaceIdentity
-									: null}
+									: legacyDebugSurfaceIdentity}
 								pendingRenderUpdateStartedAt={useDebugSharedSelectedHourHost
 									? debugSharedBasePendingRenderUpdateStartedAt
 									: onDemandDebugPrepared?.pendingRenderUpdate?.startedAt}
 								onUtciSurfaceDiagnostics={useDebugSharedSelectedHourHost
 									? handleDebugSharedBaseSurfaceDiagnostics
 									: handleLiveUtciSurfaceDiagnostics}
-								onAcceptedGpuResidentOutputRelease={useDebugSharedSelectedHourHost
-									? undefined
-									: handleAcceptedGpuResidentOutputRelease}
+								onAcceptedGpuResidentOutputRelease={handleSceneAcceptedGpuResidentOutputRelease}
 							/>
 						{/if}
 

@@ -208,6 +208,26 @@
 		liveRouteHost.handleComparisonSurfaceDiagnostics(diagnostics);
 	}
 
+	function handleBaseAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: "copy-complete" | "copy-failed" | "superseded";
+	}): void {
+		liveRouteHost.releaseBaseAcceptedGpuResidentOutput(params);
+	}
+
+	function handleComparisonAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: "copy-complete" | "copy-failed" | "superseded";
+	}): void {
+		liveRouteHost.releaseComparisonAcceptedGpuResidentOutput(params);
+	}
+
 	// Tooltip state
 	let tooltipVisible = false;
 	let tooltipX = 0;
@@ -837,6 +857,7 @@
 							selectedHourRenderContext={baseSceneRenderContext}
 							liveSelectedHourSurfaceIdentity={baseSceneSurfaceIdentity}
 							onUtciSurfaceDiagnostics={handleUtciSurfaceDiagnostics}
+							onAcceptedGpuResidentOutputRelease={handleBaseAcceptedGpuResidentOutputRelease}
 							pendingRenderUpdateStartedAt={basePendingRenderUpdateStartedAt}
 							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>
@@ -851,6 +872,7 @@
 							selectedHourRenderContext={comparisonSceneRenderContext}
 							liveSelectedHourSurfaceIdentity={comparisonSceneSurfaceIdentity}
 							onUtciSurfaceDiagnostics={handleComparisonUtciSurfaceDiagnostics}
+							onAcceptedGpuResidentOutputRelease={handleComparisonAcceptedGpuResidentOutputRelease}
 							pendingRenderUpdateStartedAt={comparisonPendingRenderUpdateStartedAt}
 							utciSurfaceBackend={resolvedUtciSurfaceBackend}
 						/>

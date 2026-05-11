@@ -89,6 +89,15 @@
 				diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
 		  ) => void | Promise<void>)
 		| undefined = undefined;
+	export let onAcceptedGpuResidentOutputRelease:
+		| ((params: {
+				controllerIdentity: string;
+				requestId: number;
+				monthIndex: number;
+				timeIndex: number;
+				reason: 'copy-complete' | 'copy-failed' | 'superseded';
+		  }) => void | Promise<void>)
+		| undefined = undefined;
 
 	const { renderer, scene, invalidate, autoRender, renderStage } = useThrelte();
 
@@ -137,6 +146,20 @@
 		);
 	}
 
+	function invokeAcceptedGpuResidentOutputRelease(params: {
+		controllerIdentity: string;
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: 'copy-complete' | 'copy-failed' | 'superseded';
+	}): void {
+		invokeDiagnosticsCallbackSafely(
+			onAcceptedGpuResidentOutputRelease,
+			params,
+			'ComparisonRenderer onAcceptedGpuResidentOutputRelease'
+		);
+	}
+
 	function setComputeBufferSurfacePendingStorageInit(mesh: Mesh): void {
 		mesh.visible = true;
 		mesh.scale.setScalar(0);
@@ -178,6 +201,14 @@
 		gpuResidentCopyRequestId = options?.requestId;
 		gpuResidentRenderTimings = status === 'complete' ? options?.renderTimings : undefined;
 		syncComparisonSurfaceDiagnostics();
+	}
+
+	function resetAcceptedGpuResidentCopySync(options: { invalidateActiveRun?: boolean } = {}): void {
+		if (options.invalidateActiveRun) {
+			gpuResidentCopyRunToken += 1;
+		}
+		activeGpuResidentSyncKey = null;
+		setGpuResidentCopyDiagnostics('idle');
 	}
 
 	function waitForNextFrame(): Promise<void> {
@@ -328,12 +359,21 @@
 	async function copyComputeBufferIntoRenderOwnedStorage(params: {
 		mesh: Mesh;
 		acceptedOutput: SelectedHourGpuResidentOutput;
-		copyRunToken: number;
-		syncKey: string;
 		syncStartedAt: number;
 		renderTimings: SelectedHourRenderTimingSubsteps;
+		notifyAcceptedOutputRelease: (
+			reason: 'copy-complete' | 'copy-failed' | 'superseded'
+		) => void;
+		isSuperseded: () => boolean;
 	}): Promise<void> {
-		const { mesh, acceptedOutput, copyRunToken, syncKey, syncStartedAt, renderTimings } = params;
+		const {
+			mesh,
+			acceptedOutput,
+			syncStartedAt,
+			renderTimings,
+			notifyAcceptedOutputRelease,
+			isSuperseded
+		} = params;
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
 		if (!sourceBuffer) {
 			throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
@@ -343,6 +383,7 @@
 		if (!storageAttribute) {
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
+		let lastDevice: GPUDevice | undefined;
 		const { device, targetBuffer, waitMs } = await waitForRenderStorageBuffer({
 			deadlineMs: 1000,
 			now: performance.now.bind(performance),
@@ -350,10 +391,7 @@
 				invalidate();
 				await waitForNextFrame();
 			},
-			isSuperseded: () =>
-				copyRunToken !== gpuResidentCopyRunToken ||
-				activeGpuResidentSyncKey !== syncKey ||
-				acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId,
+			isSuperseded,
 			readStorageBuffer: () => {
 				const rendererBackend = (
 					renderer as unknown as {
@@ -365,27 +403,17 @@
 				).backend;
 				const device = rendererBackend?.device;
 				const targetBuffer = rendererBackend?.get?.(storageAttribute)?.buffer;
+				lastDevice = device;
 				return device && targetBuffer ? { device, targetBuffer } : null;
 			},
-			getTimeoutErrorMessage: () => {
-				const rendererBackend = (
-					renderer as unknown as {
-						backend?: {
-							device?: GPUDevice;
-						};
-					}
-				).backend;
-				return rendererBackend?.device
+			getTimeoutErrorMessage: () =>
+				lastDevice
 					? 'Three storage buffer was not initialized within the GPU-resident comparison render timeout.'
-					: 'Renderer WebGPU device was not available within the GPU-resident comparison render timeout.';
-			}
+					: 'Renderer WebGPU device was not available within the GPU-resident comparison render timeout.'
 		});
 		renderTimings.renderStorageInitWaitMs = waitMs;
-		if (
-			copyRunToken !== gpuResidentCopyRunToken ||
-			activeGpuResidentSyncKey !== syncKey ||
-			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
-		) {
+		if (isSuperseded()) {
+			notifyAcceptedOutputRelease('superseded');
 			return;
 		}
 		const copyTimings = await copyComputeBufferToRenderStorage({
@@ -395,13 +423,14 @@
 			targetBuffer,
 			byteLength: sourceBuffer.size,
 			now: performance.now.bind(performance),
-			isSuperseded: () =>
-				copyRunToken !== gpuResidentCopyRunToken ||
-				activeGpuResidentSyncKey !== syncKey ||
-				acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
+			isSuperseded
 		});
 		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
 		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
+		if (isSuperseded()) {
+			notifyAcceptedOutputRelease('superseded');
+			return;
+		}
 
 		mesh.userData.utciSurfaceSource = 'compute-buffer-selected-hour';
 		mesh.userData.selectedHourTransferCount = 0;
@@ -411,6 +440,7 @@
 			Boolean(resolvedDisplayAnalysis && get(viewerStore).utciVisible)
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
+		notifyAcceptedOutputRelease('copy-complete');
 		setGpuResidentCopyDiagnostics('complete', {
 			requestId: acceptedOutput.requestId,
 			renderTimings
@@ -424,12 +454,41 @@
 	): Promise<void> {
 		const syncKey = getAcceptedGpuResidentKey(acceptedOutput);
 		if (!syncKey || !comparisonScene) return;
+		const controllerIdentity = liveSelectedHourSurfaceIdentity?.controllerIdentity ?? null;
+		if (!controllerIdentity) {
+			resetAcceptedGpuResidentCopySync();
+			return;
+		}
 
 		const copyRunToken = ++gpuResidentCopyRunToken;
 		activeGpuResidentSyncKey = syncKey;
 		setGpuResidentCopyDiagnostics('pending', {
 			requestId: acceptedOutput.requestId
 		});
+		let releaseNotified = false;
+		const notifyAcceptedOutputRelease = (
+			reason: 'copy-complete' | 'copy-failed' | 'superseded'
+		): void => {
+			if (releaseNotified) {
+				return;
+			}
+			releaseNotified = true;
+			if (!controllerIdentity) {
+				return;
+			}
+			invokeAcceptedGpuResidentOutputRelease({
+				controllerIdentity,
+				requestId: acceptedOutput.requestId,
+				monthIndex: acceptedOutput.monthIndex,
+				timeIndex: acceptedOutput.timeIndex,
+				reason
+			});
+		};
+		const isSuperseded = () =>
+			copyRunToken !== gpuResidentCopyRunToken ||
+			activeGpuResidentSyncKey !== syncKey ||
+			acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId ||
+			liveSelectedHourSurfaceIdentity?.controllerIdentity !== controllerIdentity;
 
 		try {
 			const syncStartedAt = performance.now();
@@ -483,25 +542,24 @@
 			await copyComputeBufferIntoRenderOwnedStorage({
 				mesh: comparisonUtciMesh,
 				acceptedOutput,
-				copyRunToken,
-				syncKey,
 				syncStartedAt,
-				renderTimings
+				renderTimings,
+				notifyAcceptedOutputRelease,
+				isSuperseded
 			});
 		} catch (error) {
-			if (
-				copyRunToken !== gpuResidentCopyRunToken ||
-				activeGpuResidentSyncKey !== syncKey ||
-				acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
-			) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			if (isSuperseded() || errorMessage.includes('superseded')) {
+				notifyAcceptedOutputRelease('superseded');
 				return;
 			}
 
 			if (comparisonUtciMesh) {
 				setComputeBufferSurfacePublicationVisibility(comparisonUtciMesh, false);
 			}
+			notifyAcceptedOutputRelease('copy-failed');
 			setGpuResidentCopyDiagnostics('failed', {
-				error: error instanceof Error ? error.message : String(error),
+				error: errorMessage,
 				requestId: acceptedOutput.requestId
 			});
 		}
@@ -1090,7 +1148,9 @@
 			activeRenderAnalysis
 		) {
 			lastUtciUpdateState = null;
-			if (
+			if (!liveSelectedHourSurfaceIdentity?.controllerIdentity) {
+				resetAcceptedGpuResidentCopySync({ invalidateActiveRun: true });
+			} else if (
 				activeGpuResidentSyncKey !== acceptedKey ||
 				activeRenderAnalysis !== lastComparisonAnalysis ||
 				!isComputeBufferUtciSurface(comparisonUtciMesh)

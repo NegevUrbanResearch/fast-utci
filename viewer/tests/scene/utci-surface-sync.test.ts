@@ -37,6 +37,7 @@ describe('utciSurfaceSync', () => {
 		const diagnostics = buildCpuPublicationDiagnostics({
 			mesh,
 			liveSelectedHourSurfaceIdentity: {
+				controllerIdentity: 'test-controller',
 				requestId: 9,
 				monthIndex: 1,
 				hourIndex: 8,

@@ -91,6 +91,19 @@ export type LiveSelectedHourControllerRequestResult = {
 	state: LiveSelectedHourControllerState;
 };
 
+export type LiveSelectedHourGpuResidentReleaseReason =
+	| 'copy-complete'
+	| 'copy-failed'
+	| 'superseded';
+
+export interface LiveSelectedHourGpuResidentRelease {
+	controllerIdentity: string;
+	requestId: number;
+	monthIndex: number;
+	timeIndex: number;
+	reason: LiveSelectedHourGpuResidentReleaseReason;
+}
+
 export type LiveSelectedHourController = {
 	getState(): LiveSelectedHourControllerState;
 	subscribe(
@@ -99,6 +112,9 @@ export type LiveSelectedHourController = {
 	requestSelection(
 		request: LiveSelectedHourControllerRequest
 	): Promise<LiveSelectedHourControllerRequestResult>;
+	releaseAcceptedGpuResidentOutput(
+		release: LiveSelectedHourGpuResidentRelease
+	): void;
 	handleRenderSurfaceDiagnostics(
 		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
 	): Promise<void>;
@@ -120,6 +136,11 @@ type AcceptedCpuPublication = {
 	hourIndex: number;
 	timeIndex: number;
 	selectionKey: string;
+};
+
+type ManagedAcceptedGpuResidentOutput = {
+	value: SelectedHourGpuResidentOutput;
+	releasable: boolean;
 };
 
 type CreateLiveSelectedHourControllerOptions = {
@@ -162,6 +183,7 @@ function createSurfaceIdentity(params: {
 	acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
 }): LiveSelectedHourSurfaceIdentity {
 	return {
+		controllerIdentity: 'controller',
 		requestId: params.requestId,
 		monthIndex: params.monthIndex,
 		hourIndex: params.hourIndex,
@@ -195,7 +217,8 @@ function hasAcceptedCpuRenderSurface(params: {
 function hasAcceptedGpuRenderSurface(
 	state: LiveSelectedHourControllerMutableState
 ): boolean {
-	const acceptedRequestId = state.acceptedGpuResidentOutput?.requestId;
+	const acceptedRequestId =
+		state.acceptedGpuResidentOutput != null ? state.surfaceIdentity?.requestId : undefined;
 	return (
 		acceptedRequestId !== undefined &&
 		state.sameDeviceForComputeAndRender === true &&
@@ -261,6 +284,14 @@ function withControllerRequestId(
 	requestId: number
 ): SelectedHourGpuResidentOutput | null {
 	return gpuResidentOutput ? { ...gpuResidentOutput, requestId } : null;
+}
+
+function getGpuResidentOutputKey(params: {
+	requestId: number;
+	monthIndex: number;
+	timeIndex: number;
+}): string {
+	return `${params.requestId}:${params.monthIndex}:${params.timeIndex}`;
 }
 
 function mergeRenderSurfaceDiagnostics(
@@ -367,6 +398,8 @@ export function createLiveSelectedHourController(
 	let currentSessionAbortController: AbortController | null = null;
 	let deferredCpuFallback: DeferredCpuFallbackState | null = null;
 	let acceptedCpuPublication: AcceptedCpuPublication | null = null;
+	let acceptedGpuResidentOutputEntry: ManagedAcceptedGpuResidentOutput | null = null;
+	const retiredGpuResidentOutputs = new Map<string, ManagedAcceptedGpuResidentOutput>();
 
 	function emit(): void {
 		const snapshot = cloneState(state);
@@ -430,27 +463,73 @@ export function createLiveSelectedHourController(
 		emit();
 	}
 
+	function destroyManagedAcceptedGpuResidentOutput(
+		entry: ManagedAcceptedGpuResidentOutput | null
+	): void {
+		disposeSelectedHourGpuResidentOutput(entry?.value ?? null);
+	}
+
+	function maybeDestroyManagedAcceptedGpuResidentOutput(
+		entry: ManagedAcceptedGpuResidentOutput
+	): boolean {
+		if (!entry.releasable) return false;
+		destroyManagedAcceptedGpuResidentOutput(entry);
+		return true;
+	}
+
+	function retireAcceptedGpuResidentOutput(
+		entry: ManagedAcceptedGpuResidentOutput | null
+	): void {
+		if (!entry) return;
+		if (maybeDestroyManagedAcceptedGpuResidentOutput(entry)) {
+			return;
+		}
+		retiredGpuResidentOutputs.set(
+			getGpuResidentOutputKey(entry.value),
+			entry
+		);
+	}
+
 	function replaceAcceptedGpuResidentOutput(
 		next: SelectedHourGpuResidentOutput | null,
 		patch: Partial<LiveSelectedHourControllerMutableState>
 	): void {
-		const previous = state.acceptedGpuResidentOutput;
+		const previous = acceptedGpuResidentOutputEntry;
+		const previousKey = previous ? getGpuResidentOutputKey(previous.value) : null;
+		const nextKey = next ? getGpuResidentOutputKey(next) : null;
+		const sameManagedIdentity = previousKey != null && previousKey === nextKey;
+		if (previous && !sameManagedIdentity && previous.value.output !== next?.output) {
+			retireAcceptedGpuResidentOutput(previous);
+			acceptedGpuResidentOutputEntry = null;
+		}
+		if (next == null) {
+			acceptedGpuResidentOutputEntry = null;
+		} else if (sameManagedIdentity && previous) {
+			acceptedGpuResidentOutputEntry = {
+				value: next,
+				releasable: previous.releasable
+			};
+		} else {
+			acceptedGpuResidentOutputEntry = {
+				value: next,
+				releasable: false
+			};
+		}
 		setState({
 			...patch,
-			acceptedGpuResidentOutput: next
+			acceptedGpuResidentOutput: acceptedGpuResidentOutputEntry?.value ?? null
 		});
-		if (previous && previous.output !== next?.output) {
-			disposeSelectedHourGpuResidentOutput(previous);
-		}
 	}
 
 	function resetControllerState(): void {
 		deferredCpuFallback = null;
 		acceptedCpuPublication = null;
-		const previous = state.acceptedGpuResidentOutput;
-		if (previous) {
-			disposeSelectedHourGpuResidentOutput(previous);
+		for (const retired of retiredGpuResidentOutputs.values()) {
+			destroyManagedAcceptedGpuResidentOutput(retired);
 		}
+		retiredGpuResidentOutputs.clear();
+		destroyManagedAcceptedGpuResidentOutput(acceptedGpuResidentOutputEntry);
+		acceptedGpuResidentOutputEntry = null;
 		state = createInitialState();
 		emit();
 	}
@@ -654,10 +733,32 @@ export function createLiveSelectedHourController(
 			}
 		},
 
+		releaseAcceptedGpuResidentOutput(release) {
+			if (disposed) return;
+
+			const releasedKey = getGpuResidentOutputKey(release);
+			const currentKey = acceptedGpuResidentOutputEntry
+				? getGpuResidentOutputKey(acceptedGpuResidentOutputEntry.value)
+				: null;
+			if (currentKey === releasedKey && acceptedGpuResidentOutputEntry) {
+				acceptedGpuResidentOutputEntry = {
+					...acceptedGpuResidentOutputEntry,
+					releasable: true
+				};
+				return;
+			}
+
+			const retired = retiredGpuResidentOutputs.get(releasedKey);
+			if (!retired) return;
+			retiredGpuResidentOutputs.delete(releasedKey);
+			destroyManagedAcceptedGpuResidentOutput(retired);
+		},
+
 		async handleRenderSurfaceDiagnostics(diagnostics) {
 			if (disposed) return;
 
-			const acceptedRequestId = state.acceptedGpuResidentOutput?.requestId;
+			const acceptedRequestId =
+				state.acceptedGpuResidentOutput != null ? state.surfaceIdentity?.requestId : undefined;
 			const requestId = diagnostics.gpuResidentCopyRequestId;
 			const nextDiagnostics = mergeRenderSurfaceDiagnostics(
 				state.renderSurfaceDiagnostics,
@@ -752,7 +853,9 @@ export function createLiveSelectedHourController(
 				}
 				const ownsDeferredFallback = () =>
 					!disposed &&
-					state.acceptedGpuResidentOutput?.requestId === requestId &&
+					(state.acceptedGpuResidentOutput != null
+						? state.surfaceIdentity?.requestId === requestId
+						: false) &&
 					deferredCpuFallback?.requestId === requestId;
 				let fallbackAnalysis = fallbackRequest.analysis;
 				if (!fallbackAnalysis && fallbackRequest.loadCpuFallback) {
