@@ -135,6 +135,7 @@ export interface OnDemandRuntimeDiagnostics {
 		| 'none'
 		| 'compute-buffer-selected-hour'
 		| 'cpu-uploaded-selected-hour';
+	visibleSelectedHourReadbackCount?: number;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
 	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
 	debugReadbackCount: number;

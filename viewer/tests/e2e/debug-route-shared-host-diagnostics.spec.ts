@@ -92,11 +92,12 @@ async function waitForSharedHostPublication(
 					value.utciSurfaceSource === 'compute-buffer-selected-hour' &&
 					value.renderTransport === 'compute-buffer-selected-hour' &&
 					value.sameDeviceForComputeAndRender === true &&
-					value.selectedHourReadbackCount === 0 &&
 					value.dataTextureBuildCount === 0 &&
 					value.selectedHourRuntimeContract?.route === 'debug' &&
 					value.selectedHourRuntimeContract?.selectedHourEngine === 'shared-host' &&
-					value.selectedHourRuntimeContract?.readbackInstrumentation === 'not-instrumented' &&
+					value.selectedHourRuntimeContract?.readbackInstrumentation === 'instrumented' &&
+					value.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount === 0 &&
+					value.selectedHourRuntimeContract?.strongVisibleGpuPath === true &&
 					value.legacySelectedHourDispatchCount === 0 &&
 					value.legacyScrubScheduleCount === 0 &&
 					(typeof args.previousRequestId !== 'number' ||
@@ -190,7 +191,16 @@ test.describe('debug route shared-host selected-hour diagnostics', () => {
 		expect(initial.sceneSurfaceRequestId).toBe(initial.surfaceRequestId);
 		expect(initial.selectedHourRuntimeContract.acceptedRequestId).toBe(initial.surfaceRequestId);
 		expect(initial.selectedHourRuntimeContract.sceneRequestId).toBe(initial.sceneSurfaceRequestId);
-		expect(initial.selectedHourRuntimeContract.strongVisibleGpuPath).toBe(false);
+		expect(initial.selectedHourRuntimeContract).toMatchObject({
+			route: 'debug',
+			selectedHourEngine: 'shared-host',
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			visibleSelectedHourReadbackCountInstrumented: true,
+			strongVisibleGpuPath: true,
+			legacySelectedHourDispatchCount: 0,
+			legacyScrubScheduleCount: 0
+		});
 		expect(initial.selectedHourRuntimeContract.readbackReasons).toEqual(
 			expect.any(Array)
 		);
@@ -242,9 +252,12 @@ test.describe('debug route shared-host selected-hour diagnostics', () => {
 		expect(finalValue.selectedHourRuntimeContract).toMatchObject({
 			route: 'debug',
 			selectedHourEngine: 'shared-host',
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			visibleSelectedHourReadbackCountInstrumented: true,
 			acceptedRequestId: finalValue.surfaceRequestId,
 			sceneRequestId: finalValue.sceneSurfaceRequestId,
-			strongVisibleGpuPath: false
+			strongVisibleGpuPath: true
 		});
 		expect(finalValue.acceptedUtciRange).toEqual({
 			min: expect.any(Number),

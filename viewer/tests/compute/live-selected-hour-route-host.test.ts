@@ -60,6 +60,8 @@ function createInitialControllerState(): LiveSelectedHourControllerState {
 		acceptedRequestId: undefined,
 		acceptedSelectionKey: undefined,
 		acceptedVisibleAtMs: undefined,
+		visibleSelectedHourReadbackCount: undefined,
+		readbackInstrumentation: 'not-instrumented',
 		selectedHourReadbackReasons: [],
 		selectedHourReadbackReasonCounts: {},
 		loading: false,
@@ -182,6 +184,8 @@ function createControllerFactory() {
 					acceptedRequestId: acceptedVisibleSurface?.requestId,
 					acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
 					acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+					visibleSelectedHourReadbackCount: undefined,
+					readbackInstrumentation: 'not-instrumented',
 					selectedHourReadbackReasons: request.selectedHourReadbackReason
 						? [request.selectedHourReadbackReason]
 						: [],
@@ -220,13 +224,37 @@ function createControllerFactory() {
 					state.renderTransport === 'compute-buffer-selected-hour' &&
 					renderSurfaceDiagnostics.gpuResidentCopyStatus === 'complete' &&
 					renderSurfaceDiagnostics.utciSurfaceSource === 'compute-buffer-selected-hour';
+				const cpuPublicationAccepted =
+					state.renderTransport === 'cpu-uploaded-selected-hour' &&
+					renderSurfaceDiagnostics.utciSurfaceSource === 'cpu-uploaded-selected-hour' &&
+					renderSurfaceDiagnostics.cpuPublishRequestId === state.surfaceIdentity?.requestId &&
+					renderSurfaceDiagnostics.cpuPublishMonthIndex === state.surfaceIdentity?.monthIndex &&
+					renderSurfaceDiagnostics.cpuPublishHourIndex === state.surfaceIdentity?.hourIndex &&
+					renderSurfaceDiagnostics.cpuPublishTimeIndex === state.surfaceIdentity?.timeIndex &&
+					renderSurfaceDiagnostics.cpuPublishSelectionKey === state.surfaceIdentity?.selectionKey;
 				const acceptedVisibleSurface = gpuRenderReady
 					? {
 							requestId: state.surfaceIdentity?.requestId ?? 0,
 							selectionKey: state.surfaceIdentity?.selectionKey ?? 'selection',
 							visibleAtMs: (state.surfaceIdentity?.requestId ?? 0) * 1000
 						}
-					: state.acceptedVisibleSurface;
+					: cpuPublicationAccepted
+						? (state.acceptedVisibleSurface ?? {
+								requestId: state.surfaceIdentity?.requestId ?? 0,
+								selectionKey: state.surfaceIdentity?.selectionKey ?? 'selection',
+								visibleAtMs: (state.surfaceIdentity?.requestId ?? 0) * 1000
+							})
+						: state.acceptedVisibleSurface;
+				const visibleSelectedHourReadbackCount = gpuRenderReady
+					? 0
+					: cpuPublicationAccepted
+						? 1
+					: state.visibleSelectedHourReadbackCount;
+				const readbackInstrumentation = gpuRenderReady
+					? 'instrumented'
+					: cpuPublicationAccepted
+						? 'instrumented'
+					: state.readbackInstrumentation;
 				state = {
 					...state,
 					renderSurfaceDiagnostics,
@@ -234,6 +262,8 @@ function createControllerFactory() {
 					acceptedRequestId: acceptedVisibleSurface?.requestId,
 					acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
 					acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+					visibleSelectedHourReadbackCount,
+					readbackInstrumentation,
 					selectedHourReadbackReasons: state.selectedHourReadbackReasons,
 					selectedHourReadbackReasonCounts: state.selectedHourReadbackReasonCounts,
 					loading: gpuRenderReady ? false : state.loading,
@@ -533,6 +563,102 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseSurfaceIdentity?.selectionKey).toBe(
 			'Ben-Gurion/base|7|12|180'
 		);
+	});
+
+	it('forwards visible-readback instrumentation to route state', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				utciRenderMode: 'gpu',
+				utciSurfaceBackend: 'gpuNative'
+			})
+		);
+		await host.flush();
+
+		expect(host.getState().base).toMatchObject({
+			visibleSelectedHourReadbackCount: undefined,
+			readbackInstrumentation: 'not-instrumented'
+		});
+
+		host.handleBaseSurfaceDiagnostics({
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			gpuResidentCopyStatus: 'complete',
+			gpuResidentCopyRequestId: 1,
+			dataTextureBuildCount: 0
+		});
+		await host.flush();
+
+		expect(host.getState().base).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
+	});
+
+	it('resets forwarded visible-readback proof while a replacement base GPU surface is pending', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				utciRenderMode: 'gpu',
+				utciSurfaceBackend: 'gpuNative',
+				selection: {
+					monthIndex: 7,
+					hourIndex: 12,
+					timeIndex: 180,
+					selectionKey: 'Ben-Gurion/base|7|12|180'
+				}
+			})
+		);
+		await host.flush();
+
+		host.handleBaseSurfaceDiagnostics({
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			gpuResidentCopyStatus: 'complete',
+			gpuResidentCopyRequestId: 1,
+			dataTextureBuildCount: 0
+		});
+		await host.flush();
+
+		expect(host.getState().base).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				utciRenderMode: 'gpu',
+				utciSurfaceBackend: 'gpuNative',
+				selection: {
+					monthIndex: 7,
+					hourIndex: 13,
+					timeIndex: 181,
+					selectionKey: 'Ben-Gurion/base|7|13|181'
+				}
+			})
+		);
+		await host.flush();
+
+		expect(host.getState().base).toMatchObject({
+			renderTransport: 'compute-buffer-selected-hour',
+			visibleSelectedHourReadbackCount: undefined,
+			readbackInstrumentation: 'not-instrumented'
+		});
+
+		host.handleBaseSurfaceDiagnostics({
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			gpuResidentCopyStatus: 'complete',
+			gpuResidentCopyRequestId: 2,
+			dataTextureBuildCount: 0
+		});
+		await host.flush();
+
+		expect(host.getState().base).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
 	});
 
 	it('clears comparison source ownership immediately when the selected comparison analysis becomes stale or ineligible', async () => {
@@ -1927,11 +2053,12 @@ describe('liveSelectedHourRouteHost', () => {
 						state.renderTransport === 'compute-buffer-selected-hour' &&
 						renderSurfaceDiagnostics.gpuResidentCopyStatus === 'complete' &&
 						renderSurfaceDiagnostics.utciSurfaceSource === 'compute-buffer-selected-hour';
+					const gpuAcceptedVisibleAtMs = 6000 + baseRequestCount;
 					const acceptedVisibleAtMs = gpuRenderReady
-						? 6000 + baseRequestCount
+						? gpuAcceptedVisibleAtMs
 						: state.acceptedVisibleAtMs;
 					if (gpuRenderReady) {
-						acceptedVisibleAtMsByRequest.set(baseRequestCount, acceptedVisibleAtMs);
+						acceptedVisibleAtMsByRequest.set(baseRequestCount, gpuAcceptedVisibleAtMs);
 					}
 					state = {
 						...state,
@@ -1940,7 +2067,7 @@ describe('liveSelectedHourRouteHost', () => {
 							? {
 									requestId: baseRequestCount,
 									selectionKey: state.surfaceIdentity?.selectionKey ?? 'selection',
-									visibleAtMs: acceptedVisibleAtMs
+									visibleAtMs: gpuAcceptedVisibleAtMs
 								}
 							: state.acceptedVisibleSurface,
 						acceptedRequestId: gpuRenderReady

@@ -26,6 +26,7 @@ describe('selectedHourRuntimeContract', () => {
 
 		expect(contract.strongVisibleGpuPath).toBe(true);
 		expect(contract.visibleRenderPathAvoidsCpuReadback).toBe(true);
+		expect(contract.visibleSelectedHourReadbackCountInstrumented).toBe(true);
 		expect(contract.hasLegacyDebugOverlap).toBe(false);
 		expect(contract.acceptedRequestId).toBe(42);
 	});
@@ -56,6 +57,7 @@ describe('selectedHourRuntimeContract', () => {
 
 		expect(contract.strongVisibleGpuPath).toBe(true);
 		expect(contract.visibleRenderPathAvoidsCpuReadback).toBe(true);
+		expect(contract.visibleSelectedHourReadbackCountInstrumented).toBe(true);
 		expect(contract.readbackReasons).toEqual(['range', 'tooltip']);
 		expect(contract.readbackReasonCounts).toEqual({ range: 1, tooltip: 1 });
 		expect(contract.totalSelectedHourReadbackReasonCount).toBe(2);
@@ -80,6 +82,7 @@ describe('selectedHourRuntimeContract', () => {
 		});
 
 		expect(contract.visibleRenderPathAvoidsCpuReadback).toBe(false);
+		expect(contract.visibleSelectedHourReadbackCountInstrumented).toBe(true);
 		expect(contract.strongVisibleGpuPath).toBe(false);
 	});
 
@@ -100,6 +103,8 @@ describe('selectedHourRuntimeContract', () => {
 			readbackReasons: []
 		});
 
+		expect(contract.visibleSelectedHourReadbackCount).toBeUndefined();
+		expect(contract.visibleSelectedHourReadbackCountInstrumented).toBe(false);
 		expect(contract.visibleRenderPathAvoidsCpuReadback).toBe(false);
 		expect(contract.strongVisibleGpuPath).toBe(false);
 	});

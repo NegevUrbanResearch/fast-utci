@@ -166,4 +166,44 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		expect(diagnostics?.selectedHourRuntimeContract.totalSelectedHourReadbackReasonCount).toBe(4);
 		expect(JSON.stringify(diagnostics)).not.toMatch(/\.bin|parity|Python|loadReferenceFromFs/i);
 	});
+
+	it('publishes a strong visible GPU path when visible readbacks are explicitly instrumented', () => {
+		const diagnostics = buildMainRouteUtciDiagnostics({
+			enabled: true,
+			utciOnDemand: 'f32',
+			utciRenderRequested: 'auto',
+			utciRenderResolved: 'gpuNative',
+			rendererBackend: 'webgpu',
+			baseSurfaceDiagnostics: {
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				selectedHourTransferCount: 0,
+				dataTextureBuildCount: 0,
+				gpuResidentCopyStatus: 'complete',
+				gpuResidentCopyRequestId: 3
+			},
+			comparisonSurfaceDiagnostics: {},
+			baseRenderTransport: 'compute-buffer-selected-hour',
+			comparisonRenderTransport: 'idle',
+			baseLiveReady: true,
+			comparisonLiveReady: true,
+			baseSurfaceRequestId: 3,
+			baseSelectionKey: 'analysis|7|12',
+			baseSceneSurfaceRequestId: 3,
+			baseSceneSelectionKey: 'analysis|7|12',
+			baseSameDeviceForComputeAndRender: true,
+			baseSelectedMonthIndex: 7,
+			baseSelectedHourIndex: 12,
+			baseSelectedTimeIndex: 180,
+			comparisonSameDeviceForComputeAndRender: null,
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
+
+		expect(diagnostics?.selectedHourRuntimeContract).toMatchObject({
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			visibleSelectedHourReadbackCountInstrumented: true,
+			strongVisibleGpuPath: true
+		});
+	});
 });

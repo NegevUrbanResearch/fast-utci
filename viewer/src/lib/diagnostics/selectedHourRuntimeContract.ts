@@ -33,7 +33,8 @@ export interface SelectedHourRuntimeContract {
 	utciSurfaceSource: SelectedHourRenderTransport;
 	sameDeviceForComputeAndRender: boolean;
 	dataTextureBuildCount: number;
-	visibleSelectedHourReadbackCount: number;
+	visibleSelectedHourReadbackCount?: number;
+	visibleSelectedHourReadbackCountInstrumented: boolean;
 	readbackInstrumentation: SelectedHourReadbackInstrumentation;
 	legacySelectedHourDispatchCount: number;
 	legacyScrubScheduleCount: number;
@@ -57,7 +58,7 @@ export function buildSelectedHourRuntimeContract(
 	const renderTransport = inputs.renderTransport ?? 'none';
 	const utciSurfaceSource = inputs.utciSurfaceSource ?? 'none';
 	const dataTextureBuildCount = inputs.dataTextureBuildCount ?? 0;
-	const visibleSelectedHourReadbackCount = inputs.visibleSelectedHourReadbackCount ?? 0;
+	const visibleSelectedHourReadbackCount = inputs.visibleSelectedHourReadbackCount;
 	const legacySelectedHourDispatchCount = inputs.legacySelectedHourDispatchCount ?? 0;
 	const legacyScrubScheduleCount = inputs.legacyScrubScheduleCount ?? 0;
 	const hasLegacyDebugOverlap =
@@ -102,6 +103,7 @@ export function buildSelectedHourRuntimeContract(
 		sameDeviceForComputeAndRender: inputs.sameDeviceForComputeAndRender === true,
 		dataTextureBuildCount,
 		visibleSelectedHourReadbackCount,
+		visibleSelectedHourReadbackCountInstrumented: hasExplicitVisibleReadbackCount,
 		readbackInstrumentation: inputs.readbackInstrumentation,
 		legacySelectedHourDispatchCount,
 		legacyScrubScheduleCount,

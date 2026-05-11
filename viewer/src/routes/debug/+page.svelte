@@ -59,7 +59,6 @@
 		createEmptyTooltipInteractionDiagnostics,
 		getTooltipData,
 		recordTooltipInteractionMeasurement,
-		type TooltipInteractionDiagnostics,
 	} from "$lib/services/tooltipService";
 	import {
 		TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS,
@@ -72,7 +71,6 @@
 	import {
 		createEmptyCameraInteractionTelemetry,
 		recordCameraInteractionFrame,
-		type CameraInteractionDiagnostics,
 		type CameraInteractionTelemetry,
 	} from "$lib/services/cameraInteractionTelemetry";
 	import { getUTCIForHour, getUtciByHourForExport } from "$lib/services/dataLoader";
@@ -137,16 +135,18 @@
 	import {
 		deriveDebugWebgpuUtciDiagnosticsState,
 		shouldExposeDebugWindowDiagnostics,
-		type DebugSelectedHourEngine,
 	} from "$lib/debug/debugWebgpuUtciDiagnostics";
 	import {
-		buildSelectedHourRuntimeContract,
-		type SelectedHourRuntimeContract,
-	} from "$lib/diagnostics/selectedHourRuntimeContract";
+		buildDebugOnDemandPrototypeDiagnostics,
+		type DebugOnDemandPythonSampleComparison as OnDemandPythonSampleComparison,
+		type DebugOnDemandPythonSampleRecord as OnDemandPythonSampleRecord,
+		type DebugOnDemandPrototypeDiagnostics as OnDemandPrototypeDiagnostics,
+	} from "$lib/debug/debugOnDemandPrototypeDiagnostics";
 	import {
 		buildDebugSelectedHourDispatchCounters,
 		shouldUseDebugSharedSelectedHourHost,
 	} from "$lib/debug/debugSelectedHourMode";
+	import { createDebugSelectedHourLegacyHost } from "$lib/debug/debugSelectedHourLegacyHost";
 	import { parseDebugWebgpuUtciQuery } from "$lib/debug/debugWebgpuUtciQuery";
 	import { calculateScenarioOrigin } from "$lib/utils/coordinates";
 	import { getAnchorOffset, isNormalizationEnabled } from "$lib/config/viewerConfig";
@@ -330,58 +330,6 @@
 		phase: ParityCollectionPhase;
 		timestamp: number;
 		message?: string;
-	};
-
-	type OnDemandPrototypeDiagnostics = Partial<OnDemandRuntimeDiagnostics> & {
-		navigatorGpu: boolean;
-		rendererBackend: "webgpu" | "unknown";
-		utciRenderRequested?: UtciRenderMode;
-		utciRenderResolved?: "dataTexture" | "gpuNative";
-		utciSurfaceSource?: string;
-		bridgeAttached?: boolean;
-		visibleColorVariance?: number;
-		debugComparisonReference?: "python-bin";
-		pythonBinComparisonActive?: boolean;
-		binComparisonEnabled?: boolean;
-		binComparisonValid?: boolean;
-		pythonBaselineStatus?: "available-august" | "unavailable-non-august";
-		debugComparisonMonthIndex?: number;
-		pythonComparisonHourIndex?: number;
-		webgpuComparisonHourIndex?: number;
-		pythonBinSampleComparison?: OnDemandPythonSampleComparison;
-		appVisibleSelectedHour?: boolean;
-		selectedHourReadbackCount?: number;
-		liveAnalysisConstructedForSelectedHour?: boolean;
-		pendingReadbackRequestId?: number;
-		pendingReadbackTimeIndex?: number;
-		acceptedGpuResidentUtciRange?: { min: number; max: number };
-		surfaceRequestId?: number;
-		selectionKey?: string;
-		sceneSurfaceRequestId?: number;
-		sceneSelectionKey?: string;
-		selectedHourIndex?: number;
-		renderContextTimeIndex?: number;
-		acceptedUtciRange?: { min: number; max: number };
-		tooltipInteraction?: TooltipInteractionDiagnostics;
-		cameraInteraction?: CameraInteractionDiagnostics;
-		tooltipProbeClientPoint?: { clientX: number; clientY: number } | null;
-		selectedHourEngine?: DebugSelectedHourEngine;
-		legacySelectedHourDispatchCount?: number;
-		legacyScrubScheduleCount?: number;
-		selectedHourRuntimeContract?: SelectedHourRuntimeContract;
-	};
-
-	type OnDemandPythonSampleRecord = {
-		pointIndex: number;
-		debugValue: number;
-		referenceValue: number;
-		absDiff: number;
-	};
-
-	type OnDemandPythonSampleComparison = {
-		numCompared: number;
-		maxAbsDiff: number;
-		samples: OnDemandPythonSampleRecord[];
 	};
 
 	type AcceptedGpuResidentUtciOutput = {
@@ -726,9 +674,17 @@
 	let syntheticBridgeValidationStartedForKey: string | null = null;
 	let syntheticBridgeValidationTimer: ReturnType<typeof setTimeout> | null = null;
 	let lastDebugOnDemandScrubTriggerKey: string | null = null;
+	const debugSelectedHourLegacyHost = createDebugSelectedHourLegacyHost<
+		AcceptedGpuResidentUtciOutput,
+		DeferredCpuFallbackSelectedHour
+	>();
 	let debugOnDemandScrubScheduleRunId = 0;
 	let legacySelectedHourDispatchCount = 0;
 	let legacyScrubScheduleCount = 0;
+	let legacySelectedHourDispatchCounters = buildDebugSelectedHourDispatchCounters(
+		debugSelectedHourLegacyHost.getCounters(),
+	);
+	const debugVisibleReadbackInstrumentation = "not-instrumented" as const;
 	let acceptedGpuResidentUtciOutput: AcceptedGpuResidentUtciOutput | null = null;
 	let deferredCpuFallbackSelectedHour: DeferredCpuFallbackSelectedHour | null = null;
 	let onDemandDebugPrepared:
@@ -758,7 +714,15 @@
 		| undefined;
 	let onDemandScrubState = createOnDemandScrubState();
 
-	function destroyOnDemandGpuBuffer(
+	function syncDebugSelectedHourLegacyCounters(): void {
+		const counters = debugSelectedHourLegacyHost.getCounters();
+		legacySelectedHourDispatchCount = counters.legacySelectedHourDispatchCount;
+		legacyScrubScheduleCount = counters.legacyScrubScheduleCount;
+		debugOnDemandScrubScheduleRunId = debugSelectedHourLegacyHost.getScrubScheduleRunId();
+		legacySelectedHourDispatchCounters = buildDebugSelectedHourDispatchCounters(counters);
+	}
+
+	function destroyPendingOnDemandGpuBuffer(
 		output: Awaited<ReturnType<ComputeManager["runUtciForTimeIndex"]>> | undefined,
 	): void {
 		const buffer = output?.gpuBuffer as GPUBuffer | undefined;
@@ -768,12 +732,83 @@
 		}
 	}
 
+	function getAcceptedGpuResidentUtciOutput(): AcceptedGpuResidentUtciOutput | null {
+		return debugSelectedHourLegacyHost.getAcceptedOutput()?.payload ?? null;
+	}
+
 	function setAcceptedGpuResidentUtciOutput(next: AcceptedGpuResidentUtciOutput | null): void {
-		const previous = acceptedGpuResidentUtciOutput;
-		if (previous && previous.output !== next?.output) {
-			destroyOnDemandGpuBuffer(previous.output);
+		debugSelectedHourLegacyHost.setAcceptedOutput(
+			next
+				? {
+						requestId: next.requestId,
+						monthIndex: next.monthIndex,
+						timeIndex: next.timeIndex,
+						output: next.output as typeof next.output & {
+							gpuBuffer?: { destroy?: () => void };
+						},
+						payload: next,
+					}
+				: null,
+		);
+		acceptedGpuResidentUtciOutput = getAcceptedGpuResidentUtciOutput();
+	}
+
+	function releaseAcceptedGpuResidentUtciOutput(params: {
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+	}): void {
+		debugSelectedHourLegacyHost.releaseAcceptedOutput(params);
+		acceptedGpuResidentUtciOutput = getAcceptedGpuResidentUtciOutput();
+	}
+
+	function setDeferredCpuFallbackSelectedHour(
+		next: DeferredCpuFallbackSelectedHour | null,
+	): void {
+		debugSelectedHourLegacyHost.setDeferredCpuFallback(
+			next
+				? {
+						requestId: next.requestId,
+						monthIndex: next.monthIndex,
+						timeIndex: next.timeIndex,
+						payload: next,
+					}
+				: null,
+		);
+		deferredCpuFallbackSelectedHour = next;
+	}
+
+	function clearDeferredCpuFallbackSelectedHour(): void {
+		setDeferredCpuFallbackSelectedHour(null);
+	}
+
+	function takeDeferredCpuFallbackSelectedHour(params: {
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+	}): DeferredCpuFallbackSelectedHour | null {
+		const fallback = debugSelectedHourLegacyHost.takeDeferredCpuFallback(params)?.payload ?? null;
+		if (fallback) {
+			deferredCpuFallbackSelectedHour = null;
 		}
-		acceptedGpuResidentUtciOutput = next;
+		return fallback;
+	}
+
+	function recordLegacySelectedHourDispatch(): void {
+		debugSelectedHourLegacyHost.recordDispatch();
+		syncDebugSelectedHourLegacyCounters();
+	}
+
+	function recordDebugOnDemandScrubSchedule(): number {
+		const runId = debugSelectedHourLegacyHost.recordScrubSchedule();
+		syncDebugSelectedHourLegacyCounters();
+		return runId;
+	}
+
+	function invalidateDebugOnDemandScrubSchedule(): number {
+		const runId = debugSelectedHourLegacyHost.invalidateScrubSchedule();
+		syncDebugSelectedHourLegacyCounters();
+		return runId;
 	}
 	let wasOnDemandPrototypeEnabled = false;
 	let wasCompareOneHourEnabled = false;
@@ -802,10 +837,6 @@
 			? getStrictExposureOnlyTimeIndex()
 			: $viewerStore.currentHour,
 		parityMode,
-	});
-	$: legacySelectedHourDispatchCounters = buildDebugSelectedHourDispatchCounters({
-		legacySelectedHourDispatchCount,
-		legacyScrubScheduleCount,
 	});
 	$: debugDiagnosticsState = deriveDebugWebgpuUtciDiagnosticsState({
 		parityMode,
@@ -913,7 +944,7 @@
 		strictExposureOnlyEnabled
 	) {
 		lastDebugOnDemandScrubTriggerKey = null;
-		debugOnDemandScrubScheduleRunId += 1;
+		invalidateDebugOnDemandScrubSchedule();
 	}
 	$: syntheticBridgeEnabled =
 		onDemandPrototypeEnabled &&
@@ -940,7 +971,7 @@
 		lastLiveKey = null;
 		onDemandDebugPrepared = undefined;
 		lastDebugOnDemandScrubTriggerKey = null;
-		debugOnDemandScrubScheduleRunId += 1;
+		invalidateDebugOnDemandScrubSchedule();
 		onDemandScrubState = createOnDemandScrubState();
 		invalidateOnDemandPrototypeComparison();
 	}
@@ -1292,82 +1323,31 @@
 		const feasibilityDiagnostics = buildGpuResidentRenderDiagnosticsPatch(
 			options?.computeManager ?? onDemandDebugPrepared?.computeManager,
 		);
-		const nextDiagnostics: OnDemandPrototypeDiagnostics = {
-			...createEmptyOnDemandDiagnostics(),
-			...existing,
-			...feasibilityDiagnostics,
-			...diagnostics,
-			navigatorGpu: diagnostics.navigatorGpu ?? existing?.navigatorGpu ?? Boolean(navigator.gpu),
-			rendererBackend: diagnostics.rendererBackend ?? existing?.rendererBackend ?? "unknown",
-			utciRenderRequested:
-				diagnostics.utciRenderRequested ?? existing?.utciRenderRequested ?? utciRenderMode,
-			utciRenderResolved:
-				diagnostics.utciRenderResolved ??
-				existing?.utciRenderResolved ??
-				resolvedUtciSurfaceBackend,
-			utciSurfaceSource:
-				"utciSurfaceSource" in diagnostics
-					? diagnostics.utciSurfaceSource
-					: existing?.utciSurfaceSource,
-			selectedHourEngine:
-				diagnostics.selectedHourEngine ??
-				(useDebugSharedSelectedHourHost ? existing?.selectedHourEngine : undefined) ??
-				debugDiagnosticsState.selectedHourEngine,
-			binComparisonEnabled:
-				diagnostics.binComparisonEnabled ??
-				existing?.binComparisonEnabled ??
-				debugDiagnosticsState.binComparisonEnabled,
-			binComparisonValid:
-				diagnostics.binComparisonValid ??
-				existing?.binComparisonValid ??
-				debugDiagnosticsState.binComparisonValid,
-			...buildDebugSelectedHourDispatchCounters({
-				legacySelectedHourDispatchCount:
-					diagnostics.legacySelectedHourDispatchCount ??
-					legacySelectedHourDispatchCount,
-				legacyScrubScheduleCount:
-					diagnostics.legacyScrubScheduleCount ?? legacyScrubScheduleCount,
-			}),
-			tooltipInteraction:
-				diagnostics.tooltipInteraction ??
-				existing?.tooltipInteraction ??
-				createEmptyTooltipInteractionDiagnostics(debugTooltipHoverDisabled),
-			cameraInteraction:
-				diagnostics.cameraInteraction ??
-				existing?.cameraInteraction ??
-				cameraInteractionTelemetry.diagnostics,
-		};
-		nextDiagnostics.selectedHourRuntimeContract =
-			diagnostics.selectedHourRuntimeContract ??
-			buildSelectedHourRuntimeContract({
-				route: "debug",
-				selectedHourEngine:
-					nextDiagnostics.selectedHourEngine ?? debugDiagnosticsState.selectedHourEngine,
-				renderTransport:
-					nextDiagnostics.renderTransport === "compute-buffer-selected-hour" ||
-					nextDiagnostics.renderTransport === "cpu-uploaded-selected-hour"
-						? nextDiagnostics.renderTransport
-						: "none",
-				utciSurfaceSource:
-					nextDiagnostics.utciSurfaceSource === "compute-buffer-selected-hour" ||
-					nextDiagnostics.utciSurfaceSource === "cpu-uploaded-selected-hour"
-						? nextDiagnostics.utciSurfaceSource
-						: "none",
-				sameDeviceForComputeAndRender:
-					nextDiagnostics.sameDeviceForComputeAndRender === true,
-				dataTextureBuildCount: nextDiagnostics.dataTextureBuildCount,
-				visibleSelectedHourReadbackCount: nextDiagnostics.selectedHourReadbackCount,
-				readbackInstrumentation: "not-instrumented",
-				legacySelectedHourDispatchCount:
-					nextDiagnostics.legacySelectedHourDispatchCount,
-				legacyScrubScheduleCount: nextDiagnostics.legacyScrubScheduleCount,
-				requestId: nextDiagnostics.surfaceRequestId,
-				sceneRequestId: nextDiagnostics.sceneSurfaceRequestId,
-				selectionKey: nextDiagnostics.selectionKey,
-				sceneSelectionKey: nextDiagnostics.sceneSelectionKey,
-				readbackReasons: nextDiagnostics.selectedHourReadbackReasons,
-				readbackReasonCounts: nextDiagnostics.selectedHourReadbackReasonCounts,
-			});
+		const nextDiagnostics = buildDebugOnDemandPrototypeDiagnostics({
+			existing,
+			replace: options?.replace,
+			patch: {
+				...feasibilityDiagnostics,
+				...diagnostics,
+			},
+			defaults: {
+				navigatorGpu: Boolean(navigator.gpu),
+				rendererBackend: "unknown",
+				utciRenderRequested: utciRenderMode,
+				utciRenderResolved: resolvedUtciSurfaceBackend,
+				selectedHourEngine: useDebugSharedSelectedHourHost
+					? existing?.selectedHourEngine ?? debugDiagnosticsState.selectedHourEngine
+					: debugDiagnosticsState.selectedHourEngine,
+				binComparisonEnabled: debugDiagnosticsState.binComparisonEnabled,
+				binComparisonValid: debugDiagnosticsState.binComparisonValid,
+				...debugSelectedHourLegacyHost.getCounters(),
+				tooltipInteraction: createEmptyTooltipInteractionDiagnostics(debugTooltipHoverDisabled),
+				cameraInteraction: cameraInteractionTelemetry.diagnostics,
+				readbackInstrumentation: useDebugSharedSelectedHourHost
+					? debugSharedRouteState.base.readbackInstrumentation
+					: debugVisibleReadbackInstrumentation,
+			},
+		});
 		win.__onDemandPrototypeDiagnostics__ = nextDiagnostics;
 		onDemandPrototypeError = nextDiagnostics.error ?? null;
 		onDemandPrototypeStatus = deriveOnDemandPrototypeStatus({
@@ -1387,17 +1367,8 @@
 		}
 	}
 
-	$: if (
-		useDebugSharedSelectedHourHost &&
-		debugSharedRouteState.base.renderTransport === "compute-buffer-selected-hour" &&
-		debugSharedRouteState.base.sameDeviceForComputeAndRender === true &&
-		debugSharedRouteState.base.renderSurfaceDiagnostics.utciSurfaceSource ===
-			"compute-buffer-selected-hour"
-	) {
-		const renderSurfaceDiagnostics =
-			debugSharedRouteState.base.renderSurfaceDiagnostics as typeof debugSharedRouteState.base.renderSurfaceDiagnostics & {
-				selectedHourReadbackCount?: number;
-			};
+	$: if (useDebugSharedSelectedHourHost) {
+		const renderSurfaceDiagnostics = debugSharedRouteState.base.renderSurfaceDiagnostics;
 		updateOnDemandPrototypeDiagnostics({
 			selectedHourEngine: "shared-host",
 			legacySelectedHourDispatchCount,
@@ -1411,12 +1382,16 @@
 			selectedTimeIndex: debugOnDemandSelection.timeIndex,
 			renderContextTimeIndex: debugSharedBaseRenderContext?.timeIndex,
 			acceptedUtciRange: debugSharedBasePendingGpuResidentOutput?.utciRange,
-			renderTransport: debugSharedRouteState.base.renderTransport,
+			renderTransport:
+				debugSharedRouteState.base.renderTransport === "idle"
+					? "none"
+					: debugSharedRouteState.base.renderTransport,
 			sameDeviceForComputeAndRender:
 				debugSharedRouteState.base.sameDeviceForComputeAndRender,
 			utciSurfaceSource: renderSurfaceDiagnostics.utciSurfaceSource,
-			selectedHourReadbackCount:
-				renderSurfaceDiagnostics.selectedHourReadbackCount ?? 0,
+			selectedHourReadbackCount: undefined,
+			visibleSelectedHourReadbackCount:
+				debugSharedRouteState.base.visibleSelectedHourReadbackCount,
 			selectedHourTransferCount:
 				renderSurfaceDiagnostics.selectedHourTransferCount,
 			dataTextureBuildCount: renderSurfaceDiagnostics.dataTextureBuildCount,
@@ -1664,24 +1639,27 @@
 		};
 	}
 
-	$: if (acceptedGpuResidentUtciOutput && $analysisStore) {
-		const colorMode = $viewerStore.colorMode;
-		const nextRange = resolveAcceptedGpuResidentUtciRange({
-			base: $analysisStore,
-			monthIndex: acceptedGpuResidentUtciOutput.monthIndex,
-			hourIndex: acceptedGpuResidentUtciOutput.hourIndex,
-			colorMode,
-			selectedHourUtci: acceptedGpuResidentUtciOutput.tooltipUtciValues,
-		});
-		const currentRange = acceptedGpuResidentUtciOutput.utciRange;
-		if (nextRange.min !== currentRange.min || nextRange.max !== currentRange.max) {
-			setAcceptedGpuResidentUtciOutput({
-				...acceptedGpuResidentUtciOutput,
-				utciRange: nextRange,
+	$: {
+		const acceptedGpuResidentUtciOutput = getAcceptedGpuResidentUtciOutput();
+		if (acceptedGpuResidentUtciOutput && $analysisStore) {
+			const colorMode = $viewerStore.colorMode;
+			const nextRange = resolveAcceptedGpuResidentUtciRange({
+				base: $analysisStore,
+				monthIndex: acceptedGpuResidentUtciOutput.monthIndex,
+				hourIndex: acceptedGpuResidentUtciOutput.hourIndex,
+				colorMode,
+				selectedHourUtci: acceptedGpuResidentUtciOutput.tooltipUtciValues,
 			});
-			updateOnDemandPrototypeDiagnostics({
-				acceptedGpuResidentUtciRange: nextRange,
-			});
+			const currentRange = acceptedGpuResidentUtciOutput.utciRange;
+			if (nextRange.min !== currentRange.min || nextRange.max !== currentRange.max) {
+				setAcceptedGpuResidentUtciOutput({
+					...acceptedGpuResidentUtciOutput,
+					utciRange: nextRange,
+				});
+				updateOnDemandPrototypeDiagnostics({
+					acceptedGpuResidentUtciRange: nextRange,
+				});
+			}
 		}
 	}
 
@@ -1699,13 +1677,8 @@
 		monthIndex: number;
 		timeIndex: number;
 	}): Promise<boolean> {
-		const fallback = deferredCpuFallbackSelectedHour;
-		if (
-			fallback &&
-			fallback.requestId === params.requestId &&
-			fallback.monthIndex === params.monthIndex &&
-			fallback.timeIndex === params.timeIndex
-		) {
+		const fallback = takeDeferredCpuFallbackSelectedHour(params);
+		if (fallback) {
 			const fallbackAnalysis = buildSelectedHourLiveAnalysis({
 				base: fallback.base,
 				utciValues: fallback.utciValues,
@@ -1713,7 +1686,6 @@
 				timeIndex: fallback.timeIndex,
 			});
 			setAcceptedGpuResidentUtciOutput(null);
-			deferredCpuFallbackSelectedHour = null;
 			liveAnalysis = fallbackAnalysis;
 			comparisonStore.update((state) => ({
 				...state,
@@ -1748,7 +1720,7 @@
 			timeIndex: params.timeIndex,
 		});
 		setAcceptedGpuResidentUtciOutput(null);
-		deferredCpuFallbackSelectedHour = null;
+		clearDeferredCpuFallbackSelectedHour();
 		liveAnalysis = fallbackAnalysis;
 		comparisonStore.update((state) => ({
 			...state,
@@ -1829,7 +1801,7 @@
 		if (prepared.signal.aborted) {
 			return undefined;
 		}
-		legacySelectedHourDispatchCount += 1;
+		recordLegacySelectedHourDispatch();
 
 		const started = startOnDemandRequest(onDemandScrubState, {
 			monthIndex: params.monthIndex,
@@ -1853,7 +1825,7 @@
 		const completed = markOnDemandRequestCompleted(onDemandScrubState, started.request);
 		onDemandScrubState = completed.state;
 		if (!completed.accepted) {
-			destroyOnDemandGpuBuffer(output);
+			destroyPendingOnDemandGpuBuffer(output);
 			return undefined;
 		}
 
@@ -1911,7 +1883,7 @@
 					}),
 				);
 				pendingReadbackPublished = false;
-				destroyOnDemandGpuBuffer(output);
+				destroyPendingOnDemandGpuBuffer(output);
 				return output;
 			}
 
@@ -1956,16 +1928,18 @@
 				updateOnDemandPrototypeDiagnostics({
 					acceptedGpuResidentUtciRange: acceptedUtciRange,
 				});
-				deferredCpuFallbackSelectedHour = selectedHourUtci
-					? {
-						requestId: started.request.requestId,
-						monthIndex: params.monthIndex,
-						hourIndex: params.hourIndex,
-						timeIndex: params.timeIndex,
-						base: prepared.base,
-						utciValues: selectedHourUtci,
-					}
-					: null;
+				setDeferredCpuFallbackSelectedHour(
+					selectedHourUtci
+						? {
+								requestId: started.request.requestId,
+								monthIndex: params.monthIndex,
+								hourIndex: params.hourIndex,
+								timeIndex: params.timeIndex,
+								base: prepared.base,
+								utciValues: selectedHourUtci,
+							}
+						: null,
+				);
 				comparisonStore.update((state) => ({
 					...state,
 					isComparing: true,
@@ -1973,7 +1947,7 @@
 				}));
 			} else {
 				setAcceptedGpuResidentUtciOutput(null);
-				deferredCpuFallbackSelectedHour = null;
+				clearDeferredCpuFallbackSelectedHour();
 				if (selectedHourAnalysis) {
 					liveAnalysis = selectedHourAnalysis;
 					comparisonStore.update((state) => ({
@@ -2508,11 +2482,11 @@
 		liveComputeProgress = null;
 		liveUtciSurfaceDiagnostics = {};
 		setAcceptedGpuResidentUtciOutput(null);
-		deferredCpuFallbackSelectedHour = null;
+		clearDeferredCpuFallbackSelectedHour();
 		lastLiveKey = null;
 		onDemandDebugPrepared = undefined;
 		lastDebugOnDemandScrubTriggerKey = null;
-		debugOnDemandScrubScheduleRunId += 1;
+		invalidateDebugOnDemandScrubSchedule();
 		onDemandScrubState = createOnDemandScrubState();
 		invalidateOnDemandPrototypeComparison();
 		disposeSyntheticBridge();
@@ -2553,7 +2527,7 @@
 		rendererRequiredLimits?: WebgpuLargeBufferRequiredLimits;
 		rendererDeviceLimits?: WebgpuLargeBufferDeviceLimits;
 		error?: string;
-	}): Promise<void> {
+	}): void {
 		const previousRendererDevice = rendererDeviceForDebug;
 		const previousOnDemandDiagnostics = onDemandPrototypeEnabled
 			? getParityWindow().__onDemandPrototypeDiagnostics__
@@ -2594,9 +2568,9 @@
 			}
 			onDemandDebugPrepared = undefined;
 			setAcceptedGpuResidentUtciOutput(null);
-			deferredCpuFallbackSelectedHour = null;
+			clearDeferredCpuFallbackSelectedHour();
 			lastDebugOnDemandScrubTriggerKey = null;
-			debugOnDemandScrubScheduleRunId += 1;
+			invalidateDebugOnDemandScrubSchedule();
 			updateOnDemandPrototypeDiagnostics({
 				renderTransport: "none",
 				appVisibleSelectedHour: false,
@@ -2702,7 +2676,7 @@
 					diagnostics.gpuResidentCopyRequestId !== undefined &&
 					deferredCpuFallbackSelectedHour?.requestId === diagnostics.gpuResidentCopyRequestId
 				) {
-					deferredCpuFallbackSelectedHour = null;
+					clearDeferredCpuFallbackSelectedHour();
 				}
 				nextDiagnostics.renderTransport = "compute-buffer-selected-hour";
 				nextDiagnostics.selectedHourReadbackCount = 0;
@@ -2796,11 +2770,11 @@
 			onDemandPrototypeStatus = "idle";
 			onDemandPrototypeError = null;
 			onDemandDebugPrepared = undefined;
-			debugOnDemandScrubScheduleRunId += 1;
+			invalidateDebugOnDemandScrubSchedule();
 			onDemandScrubState = createOnDemandScrubState();
 			liveUtciSurfaceDiagnostics = {};
 			setAcceptedGpuResidentUtciOutput(null);
-			deferredCpuFallbackSelectedHour = null;
+			clearDeferredCpuFallbackSelectedHour();
 			getParityWindow().__onDemandPrototypeDiagnostics__ = undefined;
 			invalidateOnDemandPrototypeComparison();
 		}
@@ -3017,8 +2991,7 @@
 		if (useDebugSharedSelectedHourHost) {
 			return;
 		}
-		legacyScrubScheduleCount += 1;
-		const scheduledRunId = ++debugOnDemandScrubScheduleRunId;
+		const scheduledRunId = recordDebugOnDemandScrubSchedule();
 		const scheduledAnalysisId = analysisId;
 		const scheduledLiveComputeModeKey = liveComputeModeKey;
 		const scheduledDebugOnDemandSelectionKey = debugOnDemandSelectionKey;
@@ -4254,6 +4227,19 @@
 		}
 	}
 
+	function handleAcceptedGpuResidentOutputRelease(params: {
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: "copy-complete" | "copy-failed" | "superseded";
+	}): void {
+		releaseAcceptedGpuResidentUtciOutput({
+			requestId: params.requestId,
+			monthIndex: params.monthIndex,
+			timeIndex: params.timeIndex,
+		});
+	}
+
 	$: if (browser) {
 		if (onDemandPrototypeEnabled) {
 			startCameraInteractionTelemetryLoop();
@@ -4267,6 +4253,7 @@
 		liveAbortController = null;
 		unsubscribeDebugSharedRouteHost();
 		debugSharedRouteHost.dispose();
+		debugSelectedHourLegacyHost.dispose();
 		disposeSyntheticBridge();
 		detachHoverListeners();
 		detachPointerListener();
@@ -4501,6 +4488,9 @@
 								onUtciSurfaceDiagnostics={useDebugSharedSelectedHourHost
 									? handleDebugSharedBaseSurfaceDiagnostics
 									: handleLiveUtciSurfaceDiagnostics}
+								onAcceptedGpuResidentOutputRelease={useDebugSharedSelectedHourHost
+									? undefined
+									: handleAcceptedGpuResidentOutputRelease}
 							/>
 						{/if}
 

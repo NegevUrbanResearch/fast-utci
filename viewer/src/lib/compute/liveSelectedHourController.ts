@@ -8,7 +8,10 @@ import {
 } from '$lib/compute/liveUtciSelectedHourSession';
 import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/onDemandDiagnostics';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
+import type {
+	SelectedHourReadbackInstrumentation,
+	SelectedHourReadbackReason
+} from '$lib/diagnostics/selectedHourRuntimeContract';
 
 export type LiveSelectedHourRenderTransport =
 	| 'idle'
@@ -44,6 +47,8 @@ export type LiveSelectedHourControllerState = {
 	acceptedRequestId: number | undefined;
 	acceptedSelectionKey: string | undefined;
 	acceptedVisibleAtMs: number | undefined;
+	visibleSelectedHourReadbackCount: number | undefined;
+	readbackInstrumentation: SelectedHourReadbackInstrumentation;
 	selectedHourReadbackReasons: SelectedHourReadbackReason[];
 	selectedHourReadbackReasonCounts: Partial<Record<SelectedHourReadbackReason, number>>;
 	loading: boolean;
@@ -234,6 +239,8 @@ function createInitialState(): LiveSelectedHourControllerState {
 		acceptedRequestId: undefined,
 		acceptedSelectionKey: undefined,
 		acceptedVisibleAtMs: undefined,
+		visibleSelectedHourReadbackCount: undefined,
+		readbackInstrumentation: 'not-instrumented',
 		selectedHourReadbackReasons: [],
 		selectedHourReadbackReasonCounts: {},
 		loading: false,
@@ -392,6 +399,12 @@ export function createLiveSelectedHourController(
 			acceptedRequestId: acceptedVisibleSurface?.requestId,
 			acceptedSelectionKey: acceptedVisibleSurface?.selectionKey,
 			acceptedVisibleAtMs: acceptedVisibleSurface?.visibleAtMs,
+			visibleSelectedHourReadbackCount:
+				'visibleSelectedHourReadbackCount' in patch
+					? patch.visibleSelectedHourReadbackCount
+					: state.visibleSelectedHourReadbackCount,
+			readbackInstrumentation:
+				patch.readbackInstrumentation ?? state.readbackInstrumentation,
 			selectedHourReadbackReasons:
 				'selectedHourReadbackReasons' in patch
 					? [...(patch.selectedHourReadbackReasons ?? [])]
@@ -599,6 +612,8 @@ export function createLiveSelectedHourController(
 					error: null,
 					renderTransport: result.renderTransport,
 					sameDeviceForComputeAndRender: result.sameDeviceForComputeAndRender,
+					visibleSelectedHourReadbackCount: undefined,
+					readbackInstrumentation: 'not-instrumented',
 					selectedHourReadbackReasons: result.diagnostics.selectedHourReadbackReasons ?? [],
 					selectedHourReadbackReasonCounts:
 						result.diagnostics.selectedHourReadbackReasonCounts ?? {},
@@ -684,6 +699,8 @@ export function createLiveSelectedHourController(
 					renderSurfaceDiagnostics: nextDiagnostics,
 					loading: false,
 					renderTransport: 'compute-buffer-selected-hour',
+					visibleSelectedHourReadbackCount: 0,
+					readbackInstrumentation: 'instrumented',
 					pendingRenderUpdateStartedAt: undefined
 				});
 				return;
@@ -721,7 +738,9 @@ export function createLiveSelectedHourController(
 								selectionKey: acceptedCpuPublication.selectionKey,
 								visibleAtMs: performance.now()
 							},
-							renderSurfaceDiagnostics: nextDiagnostics
+							renderSurfaceDiagnostics: nextDiagnostics,
+							visibleSelectedHourReadbackCount: 1,
+							readbackInstrumentation: 'instrumented'
 					  }
 					: { renderSurfaceDiagnostics: nextDiagnostics }
 			);

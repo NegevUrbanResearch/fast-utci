@@ -4,6 +4,7 @@ import type {
 } from '$lib/compute/liveSelectedHourController';
 import {
 	buildSelectedHourRuntimeContract,
+	type SelectedHourReadbackInstrumentation,
 	type SelectedHourReadbackReason,
 	type SelectedHourRenderTransport,
 	type SelectedHourRuntimeContract
@@ -58,6 +59,8 @@ export type MainRouteUtciDiagnosticsPayload = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
+	visibleSelectedHourReadbackCount?: number;
+	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
 	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
 	comparisonSelectedHourReadbackReasons?: SelectedHourReadbackReason[];
@@ -101,6 +104,8 @@ export type MainRouteUtciDiagnosticsInputs = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
+	visibleSelectedHourReadbackCount?: number;
+	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
 	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
 	comparisonSelectedHourReadbackReasons?: SelectedHourReadbackReason[];
@@ -220,7 +225,8 @@ export function buildMainRouteUtciDiagnostics(
 			),
 			sameDeviceForComputeAndRender: inputs.baseSameDeviceForComputeAndRender === true,
 			dataTextureBuildCount: inputs.baseSurfaceDiagnostics.dataTextureBuildCount,
-			readbackInstrumentation: 'not-instrumented',
+			visibleSelectedHourReadbackCount: inputs.visibleSelectedHourReadbackCount,
+			readbackInstrumentation: inputs.readbackInstrumentation ?? 'not-instrumented',
 			requestId: inputs.baseSurfaceRequestId,
 			sceneRequestId: inputs.baseSceneSurfaceRequestId,
 			selectionKey: inputs.baseSelectionKey,

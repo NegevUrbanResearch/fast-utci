@@ -1327,6 +1327,8 @@ describe('liveSelectedHourController', () => {
 			acceptedRequestId: undefined,
 			acceptedSelectionKey: undefined,
 			acceptedVisibleAtMs: undefined,
+			visibleSelectedHourReadbackCount: undefined,
+			readbackInstrumentation: 'not-instrumented',
 			loading: true,
 			ready: true,
 			renderReady: false,
@@ -1349,6 +1351,8 @@ describe('liveSelectedHourController', () => {
 			acceptedRequestId: 1,
 			acceptedSelectionKey: '1:0:21:21',
 			acceptedVisibleAtMs: expect.any(Number),
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented',
 			loading: false,
 			ready: true,
 			renderReady: true,
@@ -1436,6 +1440,98 @@ describe('liveSelectedHourController', () => {
 			renderReady: true,
 			awaitingGpuSurface: false,
 			pendingRenderUpdateStartedAt: undefined
+		});
+	});
+
+	it('tracks explicit zero visible readbacks for compute-buffer visible surfaces', async () => {
+		const gpu = createGpuResidentOutput(91, 91);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 91,
+					timeIndex: 91,
+					analysis: createSelectionAnalysis('gpu-visible-readback-proof', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9100
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(91));
+
+		expect(controller.getState()).toMatchObject({
+			visibleSelectedHourReadbackCount: undefined,
+			readbackInstrumentation: 'not-instrumented'
+		});
+
+		await controller.handleRenderSurfaceDiagnostics(
+			createCurrentGpuCopyDiagnostics(controller, 'complete')
+		);
+
+		expect(controller.getState()).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
+	});
+
+	it('resets visible-readback proof for a replacement GPU request until the new visible surface completes', async () => {
+		const firstGpu = createGpuResidentOutput(92, 92);
+		const secondGpu = createGpuResidentOutput(93, 93);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 92,
+					timeIndex: 92,
+					analysis: createSelectionAnalysis('gpu-proof-first', [18, 22]),
+					gpuResidentOutput: firstGpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9200
+				}),
+			async () =>
+				createLiveResult({
+					requestId: 93,
+					timeIndex: 93,
+					analysis: createSelectionAnalysis('gpu-proof-second', [19, 23]),
+					gpuResidentOutput: secondGpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9300
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(92));
+		await controller.handleRenderSurfaceDiagnostics(
+			createCurrentGpuCopyDiagnostics(controller, 'complete')
+		);
+
+		expect(controller.getState()).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
+		});
+
+		await controller.requestSelection(createRequestParams(93));
+
+		expect(controller.getState()).toMatchObject({
+			renderTransport: 'compute-buffer-selected-hour',
+			visibleSelectedHourReadbackCount: undefined,
+			readbackInstrumentation: 'not-instrumented'
+		});
+
+		await controller.handleRenderSurfaceDiagnostics(
+			createCurrentGpuCopyDiagnostics(controller, 'complete')
+		);
+
+		expect(controller.getState()).toMatchObject({
+			visibleSelectedHourReadbackCount: 0,
+			readbackInstrumentation: 'instrumented'
 		});
 	});
 });

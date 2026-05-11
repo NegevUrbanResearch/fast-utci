@@ -131,6 +131,8 @@ const IDLE_CONTROLLER_STATE: LiveSelectedHourControllerState = {
 	acceptedRequestId: undefined,
 	acceptedSelectionKey: undefined,
 	acceptedVisibleAtMs: undefined,
+	visibleSelectedHourReadbackCount: undefined,
+	readbackInstrumentation: 'not-instrumented',
 	selectedHourReadbackReasons: [],
 	selectedHourReadbackReasonCounts: {},
 	loading: false,

@@ -56,6 +56,14 @@
 	export let onUtciSurfaceDiagnostics:
 		| ((diagnostics: UtciSurfaceDiagnostics) => void | Promise<void>)
 		| undefined = undefined;
+	export let onAcceptedGpuResidentOutputRelease:
+		| ((params: {
+				requestId: number;
+				monthIndex: number;
+				timeIndex: number;
+				reason: 'copy-complete' | 'copy-failed' | 'superseded';
+		  }) => void | Promise<void>)
+		| undefined = undefined;
 
 	export let utciSurface: Mesh | null = null;
 	let lastAnalysis: Analysis | null = null;
@@ -104,6 +112,19 @@
 			onUtciSurfaceDiagnostics,
 			diagnostics,
 			'UTCIPointCloud onUtciSurfaceDiagnostics'
+		);
+	}
+
+	function invokeAcceptedGpuResidentOutputRelease(params: {
+		requestId: number;
+		monthIndex: number;
+		timeIndex: number;
+		reason: 'copy-complete' | 'copy-failed' | 'superseded';
+	}): void {
+		invokeDiagnosticsCallbackSafely(
+			onAcceptedGpuResidentOutputRelease,
+			params,
+			'UTCIPointCloud onAcceptedGpuResidentOutputRelease'
 		);
 	}
 
@@ -218,6 +239,19 @@
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
 		let lastDevice: GPUDevice | undefined;
+		let releaseNotified = false;
+		const notifyAcceptedOutputRelease = (
+			reason: 'copy-complete' | 'copy-failed' | 'superseded'
+		): void => {
+			if (releaseNotified) return;
+			releaseNotified = true;
+			invokeAcceptedGpuResidentOutputRelease({
+				requestId: acceptedOutput.requestId,
+				monthIndex: acceptedOutput.monthIndex,
+				timeIndex: acceptedOutput.timeIndex,
+				reason
+			});
+		};
 		const isSuperseded = () =>
 			copyRunToken !== gpuResidentCopyRunToken ||
 			activeGpuResidentSyncKey !== syncKey ||
@@ -251,6 +285,7 @@
 		});
 		renderTimings.renderStorageInitWaitMs = waitMs;
 		if (isSuperseded()) {
+			notifyAcceptedOutputRelease('superseded');
 			return;
 		}
 
@@ -266,6 +301,7 @@
 		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
 		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
 		if (isSuperseded()) {
+			notifyAcceptedOutputRelease('superseded');
 			return;
 		}
 
@@ -277,6 +313,7 @@
 			Boolean(analysis && $viewerStore?.utciVisible)
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
+		notifyAcceptedOutputRelease('copy-complete');
 		setGpuResidentCopyDiagnostics('complete', {
 			requestId: acceptedOutput.requestId,
 			renderTimings
@@ -356,12 +393,24 @@
 				activeGpuResidentSyncKey !== syncKey ||
 				acceptedGpuResidentOutput?.requestId !== acceptedOutput.requestId
 			) {
+				invokeAcceptedGpuResidentOutputRelease({
+					requestId: acceptedOutput.requestId,
+					monthIndex: acceptedOutput.monthIndex,
+					timeIndex: acceptedOutput.timeIndex,
+					reason: 'superseded'
+				});
 				return;
 			}
 
 			if (utciSurface) {
 				setComputeBufferSurfacePublicationVisibility(utciSurface, false);
 			}
+			invokeAcceptedGpuResidentOutputRelease({
+				requestId: acceptedOutput.requestId,
+				monthIndex: acceptedOutput.monthIndex,
+				timeIndex: acceptedOutput.timeIndex,
+				reason: 'copy-failed'
+			});
 			setGpuResidentCopyDiagnostics('failed', {
 				error: error instanceof Error ? error.message : String(error),
 				requestId: acceptedOutput.requestId

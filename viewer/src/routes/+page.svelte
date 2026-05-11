@@ -543,6 +543,9 @@
 				liveRouteState.comparison.sameDeviceForComputeAndRender,
 			tooltipInteraction: { hoverSampleCount: tooltipHoverSampleCount },
 			cameraInteraction: { wheelEventCount: cameraWheelEventCount },
+			visibleSelectedHourReadbackCount:
+				liveRouteState.base.visibleSelectedHourReadbackCount,
+			readbackInstrumentation: liveRouteState.base.readbackInstrumentation,
 			selectedHourReadbackReasons:
 				liveRouteState.base.selectedHourReadbackReasons,
 			selectedHourReadbackReasonCounts:

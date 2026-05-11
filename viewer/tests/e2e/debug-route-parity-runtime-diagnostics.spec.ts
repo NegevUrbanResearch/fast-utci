@@ -80,6 +80,12 @@ test.describe('debug route parity runtime diagnostics', () => {
 		);
 
 		expect(diagnostics.selectedHourEngine).toBe('legacy-debug');
+		expect(diagnostics.selectedHourRuntimeContract).toMatchObject({
+			route: 'debug',
+			selectedHourEngine: 'legacy-debug',
+			readbackInstrumentation: 'not-instrumented',
+			strongVisibleGpuPath: false
+		});
 		expect(diagnostics.pythonBaselineStatus).toBe('available-august');
 		expect(diagnostics.selectedMonthIndex).toBe(7);
 		expect(diagnostics.selectedTimeIndex).toBe(168);
@@ -143,6 +149,12 @@ test.describe('debug route parity runtime diagnostics', () => {
 		);
 
 		expect(diagnostics.selectedHourEngine).toBe('legacy-debug');
+		expect(diagnostics.selectedHourRuntimeContract).toMatchObject({
+			route: 'debug',
+			selectedHourEngine: 'legacy-debug',
+			readbackInstrumentation: 'not-instrumented',
+			strongVisibleGpuPath: false
+		});
 		expect(diagnostics.pythonBaselineStatus).toBe('available-august');
 		expect(diagnostics.selectedMonthIndex).toBe(7);
 		expect(diagnostics.selectedTimeIndex).toBe(168);
@@ -168,6 +180,12 @@ test.describe('debug route parity runtime diagnostics', () => {
 		);
 
 		expect(diagnostics.selectedHourEngine).toBe('legacy-debug');
+		expect(diagnostics.selectedHourRuntimeContract).toMatchObject({
+			route: 'debug',
+			selectedHourEngine: 'legacy-debug',
+			readbackInstrumentation: 'not-instrumented',
+			strongVisibleGpuPath: false
+		});
 		expect(diagnostics.selectedMonthIndex).toBe(3);
 		expect(diagnostics.selectedTimeIndex).toBe(81);
 		expect(diagnostics.pythonBinComparisonActive).not.toBe(true);

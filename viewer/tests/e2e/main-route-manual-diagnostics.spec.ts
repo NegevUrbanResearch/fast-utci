@@ -20,7 +20,9 @@ async function waitForSelectedHourPublication(page: Page, options?: {
 				value.baseRenderTransport === 'compute-buffer-selected-hour' &&
 				value.baseSameDeviceForComputeAndRender === true &&
 				value.selectedHourRuntimeContract?.route === 'main' &&
-				value.selectedHourRuntimeContract?.readbackInstrumentation === 'not-instrumented' &&
+				value.selectedHourRuntimeContract?.readbackInstrumentation === 'instrumented' &&
+				value.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount === 0 &&
+				value.selectedHourRuntimeContract?.strongVisibleGpuPath === true &&
 				(typeof args.previousRequestId !== 'number' ||
 					value.baseSurfaceRequestId !== args.previousRequestId) &&
 				(!args.expectedSelectionKey ||
@@ -246,7 +248,11 @@ test.describe('main route manual diagnostics probe', () => {
 					value.baseLiveReady === true &&
 					value.utciSurfaceSource === 'compute-buffer-selected-hour' &&
 					value.baseRenderTransport === 'compute-buffer-selected-hour' &&
-					value.baseSameDeviceForComputeAndRender === true
+					value.baseSameDeviceForComputeAndRender === true &&
+					value.selectedHourRuntimeContract?.route === 'main' &&
+					value.selectedHourRuntimeContract?.readbackInstrumentation === 'instrumented' &&
+					value.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount === 0 &&
+					value.selectedHourRuntimeContract?.strongVisibleGpuPath === true
 				) {
 					return value;
 				}
@@ -280,9 +286,12 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(value.selectedHourRuntimeContract).toMatchObject({
 			route: 'main',
 			selectedHourEngine: 'shared-host',
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			visibleSelectedHourReadbackCountInstrumented: true,
 			acceptedRequestId: value.baseSurfaceRequestId,
 			sceneRequestId: value.baseSceneSurfaceRequestId,
-			strongVisibleGpuPath: false
+			strongVisibleGpuPath: true
 		});
 		expect(value.baseSelectedTimeIndex).toBe(value.baseRenderContextTimeIndex);
 		expect(value.baseAcceptedUtciRange).toBeDefined();
