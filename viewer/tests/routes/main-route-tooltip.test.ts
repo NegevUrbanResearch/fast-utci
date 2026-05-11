@@ -76,4 +76,30 @@ describe('main route tooltip helpers', () => {
 			tooltipHourIndex: 123
 		});
 	});
+
+	it('uses event-time comparison mesh when the cursor is past the curtain', () => {
+		const baseMesh = { id: 'base' };
+		const comparisonMesh = { id: 'comparison' };
+		const baseAnalysis = { id: 'base-analysis' };
+		const comparisonAnalysis = { id: 'comparison-analysis' };
+
+		const target = resolveMainRouteTooltipTarget({
+			baseMesh,
+			baseAnalysis,
+			baseSceneTimeIndex: 180,
+			comparisonMesh,
+			comparisonAnalysis,
+			comparisonSceneTimeIndex: 181,
+			useLiveUtciOnMainRoute: true,
+			isComparing: true,
+			mouseClientX: 75,
+			mainViewportRect: { left: 0, width: 100 },
+			curtainPosition: 0.5,
+			viewerCurrentHour: 12
+		});
+
+		expect(target.meshToRaycast).toBe(comparisonMesh);
+		expect(target.analysisToUse).toBe(comparisonAnalysis);
+		expect(target.tooltipHourIndex).toBe(181);
+	});
 });

@@ -27,33 +27,21 @@
 		calculateModelCenter,
 		calculateModelSize,
 	} from "$lib/utils/bounds";
-	import Scene from "$lib/components/scene/Scene.svelte";
 	import type {
 		WebgpuLargeBufferDeviceLimits,
 		WebgpuLargeBufferRequiredLimits,
 	} from "$lib/compute/webgpuDeviceLimits";
-	import Camera from "$lib/components/scene/Camera.svelte";
-	import Lights from "$lib/components/scene/Lights.svelte";
-	import GridHelper from "$lib/components/scene/GridHelper.svelte";
-	import Model from "$lib/components/scene/Model.svelte";
-	import UTCIPointCloud from "$lib/components/scene/UTCIPointCloud.svelte";
-	import ComparisonRenderer from "$lib/components/scene/ComparisonRenderer.svelte";
-	import ComparisonCurtain from "$lib/components/ui/ComparisonCurtain.svelte";
+	import type ComparisonRenderer from "$lib/components/scene/ComparisonRenderer.svelte";
 	import RadialTimePicker from "$lib/components/ui/RadialTimePicker.svelte";
 	import LayerControls from "$lib/components/ui/LayerControls.svelte";
 	import ColorLegend from "$lib/components/ui/ColorLegend.svelte";
 	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
-	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
-	import {
-		createCanvasInteractionController,
-		type CanvasInteractionController,
-	} from "$lib/components/viewer/canvasInteractionController";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
-	import { resolveAnalysisModelPath, resolveProjectId } from "$lib/utils/analysisPaths";
+	import { resolveProjectId } from "$lib/utils/analysisPaths";
 	import type { Analysis } from "$lib/types/analysis";
 	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
 	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
@@ -62,15 +50,7 @@
 	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
 	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/liveUtciSelectedHour";
 	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
-	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
-	import { getTooltipData } from "$lib/services/tooltipService";
-	import {
-		armTooltipMotionSuppression,
-		createTooltipMotionSuppressionState,
-		releaseTooltipMotionPointer,
-		setTooltipMotionPointerDown,
-	} from "$lib/services/tooltipMotionSuppression";
 	import {
 		sceneConfigStore,
 		updateSceneConfigFromBounds,
@@ -96,10 +76,10 @@
 		getModelReloadState,
 		getMountedAnalysisId,
 	} from "./main/modelSelection";
-	import {
-		getMainRouteTooltipHoverPolicy,
-		resolveMainRouteTooltipTarget,
-	} from "./main/tooltip";
+	import { getMainRouteModelLoadedEffects } from "./main/modelLifecycle";
+	import MainRouteOverlays from "./main/MainRouteOverlays.svelte";
+	import MainRouteTooltipLayer from "./main/MainRouteTooltipLayer.svelte";
+	import MainRouteViewport from "./main/MainRouteViewport.svelte";
 
 	const getDataBasePath = () => {
 		const basePath = base || "";
@@ -227,18 +207,37 @@
 		releaseComparisonAcceptedGpuResidentOutput(liveRouteHost, params);
 	}
 
-	// Tooltip state
-	let tooltipVisible = false;
-	let tooltipX = 0;
-	let tooltipY = 0;
-	let tooltipValue: number | null = null;
-	let tooltipPosition: { x: number; y: number; z: number } | null = null;
+	function handleMainRouteModelLoaded(event: CustomEvent<Group>): void {
+		model = event.detail;
+		modelLoading = false;
+		if (!model) return;
+
+		const bounds = calculateModelBounds(model);
+		const center = calculateModelCenter(model);
+		const size = calculateModelSize(model);
+		const effects = getMainRouteModelLoadedEffects({
+			bounds,
+			center,
+			size,
+			hasFitOnce,
+		});
+
+		updateSceneConfigFromBounds(effects.sceneBounds);
+		if (effects.cameraFit) {
+			cameraStore.update((state) => ({
+				...state,
+				position: effects.cameraFit!.position,
+				target: effects.cameraFit!.target,
+			}));
+		}
+		hasFitOnce = effects.nextHasFitOnce;
+	}
+
 	let utciMesh: Mesh | null = null;
 	let canvasElement: HTMLCanvasElement | null = null;
 
 	// Camera reference - will be set from Camera component
 	let cameraRef: PerspectiveCamera | undefined = undefined;
-	let tooltipMotionSuppression = createTooltipMotionSuppressionState();
 
 	// Main viewport element reference for comparison curtain positioning
 	let mainViewportElement: HTMLElement | null = null;
@@ -411,118 +410,6 @@
 		lastModelFile = modelReloadState.nextLastModelFile;
 	}
 
-	// Throttle tooltip updates for performance
-	let lastTooltipUpdate = 0;
-	const TOOLTIP_THROTTLE_MS = 16; // ~60fps
-
-	function hideTooltip() {
-		tooltipVisible = false;
-		tooltipPosition = null;
-	}
-
-	function handleTooltipMotionPointerDown() {
-		tooltipMotionSuppression = setTooltipMotionPointerDown(
-			tooltipMotionSuppression,
-			true,
-			performance.now(),
-		);
-		hideTooltip();
-	}
-
-	function handleTooltipMotionPointerRelease() {
-		const hadCanvasPointerInteraction = tooltipMotionSuppression.pointerDown;
-		tooltipMotionSuppression = releaseTooltipMotionPointer(
-			tooltipMotionSuppression,
-			performance.now(),
-		);
-		if (hadCanvasPointerInteraction) {
-			hideTooltip();
-		}
-	}
-
-	function handleTooltipMotionWheel() {
-		cameraWheelEventCount += 1;
-		tooltipMotionSuppression = armTooltipMotionSuppression(
-			tooltipMotionSuppression,
-			performance.now(),
-		);
-		hideTooltip();
-	}
-
-	// Handle mouse move for tooltip
-	function handleMouseMove(event: MouseEvent) {
-		tooltipHoverSampleCount += 1;
-		const now = performance.now();
-		const hoverPolicy = getMainRouteTooltipHoverPolicy({
-			tooltipMotionSuppression,
-			now,
-			lastTooltipUpdate,
-			throttleMs: TOOLTIP_THROTTLE_MS,
-		});
-		if (hoverPolicy.shouldSuppress) {
-			hideTooltip();
-			return;
-		}
-		if (hoverPolicy.shouldThrottle) {
-			return; // Throttle updates
-		}
-		lastTooltipUpdate = hoverPolicy.nextTooltipUpdate;
-
-		if (
-			!utciMesh ||
-			!baseDisplayedAnalysis ||
-			!$viewerStore.utciVisible ||
-			!canvasElement ||
-			!cameraRef
-		) {
-			hideTooltip();
-			return;
-		}
-
-		const canvasRect = canvasElement.getBoundingClientRect();
-
-		// Determine which side of the comparison curtain the mouse is on
-		// If in comparison mode and mouse is on the right side, use comparison data
-		const tooltipTarget = resolveMainRouteTooltipTarget({
-			baseMesh: utciMesh,
-			baseAnalysis: baseDisplayedAnalysis,
-			baseSceneTimeIndex: baseSceneRenderContext?.timeIndex,
-			comparisonMesh: comparisonRenderer?.getComparisonUtciMesh() ?? null,
-			comparisonAnalysis: useLiveUtciOnMainRoute
-				? comparisonRendererDisplayAnalysis
-				: $comparisonAnalysis,
-			comparisonSceneTimeIndex: comparisonSceneRenderContext?.timeIndex,
-			useLiveUtciOnMainRoute,
-			isComparing,
-			mouseClientX: event.clientX,
-			mainViewportRect: mainViewportElement
-				? mainViewportElement.getBoundingClientRect()
-				: null,
-			curtainPosition: $comparisonStore.curtainPosition,
-			viewerCurrentHour: $viewerStore.currentHour,
-		});
-
-		const tooltipData = getTooltipData(
-			event,
-			cameraRef,
-			tooltipTarget.meshToRaycast,
-			tooltipTarget.analysisToUse,
-			$viewerStore.metricType,
-			tooltipTarget.tooltipHourIndex,
-			canvasRect,
-		);
-
-		if (tooltipData) {
-			tooltipVisible = true;
-			tooltipX = event.clientX;
-			tooltipY = event.clientY;
-			tooltipValue = tooltipData.value;
-			tooltipPosition = tooltipData.position;
-		} else {
-			hideTooltip();
-		}
-	}
-
 	$: if (typeof window !== "undefined") {
 		updateUtciRenderDiagnostics({
 			enabled: utciRenderDiagnosticsEnabled,
@@ -546,59 +433,6 @@
 		});
 	}
 
-	function handleMouseLeave() {
-		hideTooltip();
-	}
-
-	let hoverInteractionController: CanvasInteractionController | null = null;
-	let hoverInteractionCanvas: HTMLCanvasElement | null = null;
-	let tooltipMotionInteractionController: CanvasInteractionController | null = null;
-	let tooltipMotionInteractionCanvas: HTMLCanvasElement | null = null;
-
-	function detachHoverListeners() {
-		hoverInteractionController?.dispose();
-		hoverInteractionController = null;
-		hoverInteractionCanvas = null;
-	}
-
-	function detachTooltipMotionListeners() {
-		tooltipMotionInteractionController?.dispose();
-		tooltipMotionInteractionController = null;
-		tooltipMotionInteractionCanvas = null;
-	}
-
-	$: if (mounted) {
-		if (hoverInteractionCanvas && hoverInteractionCanvas !== canvasElement) {
-			detachHoverListeners();
-		}
-		if (canvasElement && hoverInteractionCanvas !== canvasElement) {
-			hoverInteractionController = createCanvasInteractionController({
-				canvas: canvasElement,
-				onPointerMove: handleMouseMove,
-				onPointerLeave: handleMouseLeave,
-			});
-			hoverInteractionCanvas = canvasElement;
-		}
-
-		if (
-			tooltipMotionInteractionCanvas &&
-			tooltipMotionInteractionCanvas !== canvasElement
-		) {
-			detachTooltipMotionListeners();
-		}
-		if (canvasElement && tooltipMotionInteractionCanvas !== canvasElement) {
-			tooltipMotionInteractionController = createCanvasInteractionController({
-				canvas: canvasElement,
-				windowTarget: window,
-				onPointerDown: handleTooltipMotionPointerDown,
-				onWheel: handleTooltipMotionWheel,
-				onWindowPointerUp: handleTooltipMotionPointerRelease,
-				onWindowPointerCancel: handleTooltipMotionPointerRelease,
-			});
-			tooltipMotionInteractionCanvas = canvasElement;
-		}
-	}
-
 	onDestroy(() => {
 		if (typeof window !== "undefined") {
 			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
@@ -606,9 +440,6 @@
 
 		unsubscribeLiveRouteHost();
 		liveRouteHost.dispose();
-
-		detachHoverListeners();
-		detachTooltipMotionListeners();
 	});
 </script>
 
@@ -677,190 +508,81 @@
 	</svelte:fragment>
 
 	<svelte:fragment slot="tooltip">
-		<MetricTooltip
-			visible={tooltipVisible}
-			x={tooltipX}
-			y={tooltipY}
-			value={tooltipValue}
-			position={tooltipPosition}
+		<MainRouteTooltipLayer
+			bind:tooltipHoverSampleCount
+			bind:cameraWheelEventCount
+			{canvasElement}
+			{cameraRef}
+			baseMesh={utciMesh}
+			{baseDisplayedAnalysis}
+			baseSceneTimeIndex={baseSceneRenderContext?.timeIndex}
+			comparisonDisplayedAnalysis={useLiveUtciOnMainRoute
+				? comparisonRendererDisplayAnalysis
+				: $comparisonAnalysis}
+			comparisonSceneTimeIndex={comparisonSceneRenderContext?.timeIndex}
+			getComparisonUtciMesh={() => comparisonRenderer?.getComparisonUtciMesh() ?? null}
+			{useLiveUtciOnMainRoute}
+			{isComparing}
+			{mainViewportElement}
+			curtainPosition={$comparisonStore.curtainPosition}
+			viewerCurrentHour={$viewerStore.currentHour}
 			metricType={$viewerStore.metricType}
+			utciVisible={$viewerStore.utciVisible}
 		/>
 	</svelte:fragment>
 
 	<svelte:fragment slot="overlays">
-		{#if $viewerStore.loading}
-			<div class="overlay-message">Loading analysis data...</div>
-		{/if}
-
-		{#if $viewerStore.error}
-			<div class="overlay-message error">
-				Error: {$viewerStore.error}
-			</div>
-		{/if}
-
-		{#if liveRouteState.base.error}
-			<div class="overlay-message error">
-				Live UTCI error: {liveRouteState.base.error}
-			</div>
-		{/if}
-
-		{#if liveRouteState.comparison.error}
-			<div class="overlay-message error comparison-note">
-				Scenario live UTCI error: {liveRouteState.comparison.error}
-			</div>
-		{/if}
-
-		{#if showMainRouteOverlay}
-			<div
-				class="model-loading-backdrop"
-				class:comparison-mode={showMainRouteComparisonOverlay}
-				style={showMainRouteComparisonOverlay
-					? `--curtain-position: ${$comparisonStore.curtainPosition}`
-					: ""}
-				aria-hidden="true"
-			></div>
-			<div
-				class="model-loading-overlay"
-				class:comparison-mode={showMainRouteComparisonOverlay}
-				style={showMainRouteComparisonOverlay
-					? `--curtain-position: ${$comparisonStore.curtainPosition}`
-					: ""}
-				aria-live="polite"
-			>
-				<div class="spinner"></div>
-				<div class="loading-text">
-					{#if modelLoading || $comparisonStore.modelLoading}
-						Preparing model...
-					{:else if useLiveUtciOnMainRoute}
-						Computing live UTCI...
-					{:else}
-						Loading analysis...
-					{/if}
-				</div>
-			</div>
-		{/if}
-
-		{#if isComparing}
-			<ComparisonCurtain
-				containerElement={mainViewportElement}
-				{comparisonScenarioName}
-			/>
-		{/if}
+		<MainRouteOverlays
+			loading={$viewerStore.loading}
+			error={$viewerStore.error}
+			baseLiveError={liveRouteState.base.error}
+			comparisonLiveError={liveRouteState.comparison.error}
+			{showMainRouteOverlay}
+			{showMainRouteComparisonOverlay}
+			curtainPosition={$comparisonStore.curtainPosition}
+			{modelLoading}
+			comparisonModelLoading={$comparisonStore.modelLoading}
+			{useLiveUtciOnMainRoute}
+			{isComparing}
+			{mainViewportElement}
+			{comparisonScenarioName}
+		/>
 	</svelte:fragment>
 
 	<svelte:fragment slot="viewport">
-		{#key requestLargeWebgpuLimits}
-			<Scene
-				backgroundColor={$viewerStore.theme === "light"
-					? 0x4b5563
-					: 0x111827}
-				bind:canvasElement
-				onRendererDiagnostics={handleRendererDiagnostics}
-				{requestLargeWebgpuLimits}
-			>
-				<Camera
-					bind:cameraRef
-					near={$sceneConfigStore.cameraNear}
-					far={$sceneConfigStore.cameraFar}
-				/>
-				<Lights />
-
-				{#if $analysisStore}
-					{#key $analysisStore.metadata.model_file}
-						<Model
-							modelPath={resolveAnalysisModelPath(
-								$analysisStore.metadata,
-								analysisId,
-							).replace("data/", `${getDataBasePath()}/data/`)}
-							coordinateSystem={$analysisStore.metadata
-								.coordinate_system || "xy_ground"}
-							metadata={$analysisStore.metadata}
-							on:modelLoaded={(e) => {
-								model = e.detail;
-								modelLoading = false;
-								if (model) {
-									const bounds = calculateModelBounds(model);
-									const center = calculateModelCenter(model);
-									const size = calculateModelSize(model);
-
-									updateSceneConfigFromBounds(bounds);
-
-									if (!hasFitOnce) {
-										const maxDim = Math.max(
-											size.x,
-											size.y,
-											size.z,
-										);
-										const distance = maxDim * 1.05;
-										const position = center
-											.clone()
-											.add(
-												new THREE.Vector3(
-													0,
-													distance,
-													0.01,
-												),
-											);
-										cameraStore.update((state) => ({
-											...state,
-											position,
-											target: center.clone(),
-										}));
-										hasFitOnce = true;
-									}
-								}
-							}}
-							on:layersDiscovered={(e) => {
-								setDiscoveredLayers(e.detail);
-							}}
-						/>
-					{/key}
-
-					{#if model}
-						<GridHelper {model} visible={gridVisible} />
-						<UTCIPointCloud
-							analysis={baseSceneAnalysis}
-							{model}
-							bind:utciSurface={utciMesh}
-							acceptedGpuResidentOutput={basePendingGpuResidentOutput}
-							selectedHourRenderContext={baseSceneRenderContext}
-							liveSelectedHourSurfaceIdentity={baseSceneSurfaceIdentity}
-							onUtciSurfaceDiagnostics={handleUtciSurfaceDiagnostics}
-							onAcceptedGpuResidentOutputRelease={handleBaseAcceptedGpuResidentOutputRelease}
-							pendingRenderUpdateStartedAt={basePendingRenderUpdateStartedAt}
-							utciSurfaceBackend={resolvedUtciSurfaceBackend}
-						/>
-					{/if}
-
-					{#if isComparing}
-						<ComparisonRenderer
-							bind:this={comparisonRenderer}
-							acceptedGpuResidentOutput={comparisonPendingGpuResidentOutput}
-							baseCamera={cameraRef}
-							displayAnalysis={comparisonSceneAnalysis}
-							selectedHourRenderContext={comparisonSceneRenderContext}
-							liveSelectedHourSurfaceIdentity={comparisonSceneSurfaceIdentity}
-							onUtciSurfaceDiagnostics={handleComparisonUtciSurfaceDiagnostics}
-							onAcceptedGpuResidentOutputRelease={handleComparisonAcceptedGpuResidentOutputRelease}
-							pendingRenderUpdateStartedAt={comparisonPendingRenderUpdateStartedAt}
-							utciSurfaceBackend={resolvedUtciSurfaceBackend}
-						/>
-					{/if}
-				{/if}
-			</Scene>
-		{/key}
+		<MainRouteViewport
+			bind:canvasElement
+			bind:cameraRef
+			bind:utciMesh
+			bind:comparisonRenderer
+			analysis={$analysisStore}
+			{analysisId}
+			dataBasePath={getDataBasePath()}
+			theme={$viewerStore.theme}
+			{requestLargeWebgpuLimits}
+			cameraNear={$sceneConfigStore.cameraNear}
+			cameraFar={$sceneConfigStore.cameraFar}
+			{gridVisible}
+			{model}
+			{isComparing}
+			{baseSceneAnalysis}
+			{comparisonSceneAnalysis}
+			{basePendingGpuResidentOutput}
+			{comparisonPendingGpuResidentOutput}
+			{baseSceneRenderContext}
+			{comparisonSceneRenderContext}
+			{baseSceneSurfaceIdentity}
+			{comparisonSceneSurfaceIdentity}
+			{basePendingRenderUpdateStartedAt}
+			{comparisonPendingRenderUpdateStartedAt}
+			{resolvedUtciSurfaceBackend}
+			onRendererDiagnostics={handleRendererDiagnostics}
+			onBaseUtciSurfaceDiagnostics={handleUtciSurfaceDiagnostics}
+			onComparisonUtciSurfaceDiagnostics={handleComparisonUtciSurfaceDiagnostics}
+			onBaseAcceptedGpuResidentOutputRelease={handleBaseAcceptedGpuResidentOutputRelease}
+			onComparisonAcceptedGpuResidentOutputRelease={handleComparisonAcceptedGpuResidentOutputRelease}
+			on:modelLoaded={handleMainRouteModelLoaded}
+			on:layersDiscovered={(event) => setDiscoveredLayers(event.detail)}
+		/>
 	</svelte:fragment>
 </ViewerShell>
-
-
-<style>
-	.model-loading-backdrop.comparison-mode {
-		left: calc(var(--curtain-position) * 100%);
-		right: 0;
-	}
-
-	.model-loading-overlay.comparison-mode {
-		left: calc(50% + var(--curtain-position) * 50%);
-		transform: translate(-50%, -50%);
-	}
-</style>
