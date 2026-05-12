@@ -54,7 +54,7 @@
 		prepareMeshPayloadForWorkerAsync,
 		runMergeAndBvhInWorker,
 		MAX_GRID_POINTS_GUARD,
-	} from "$lib/compute/mergeAndBvhWorkerClient";
+	} from "$lib/compute/gpu/mergeAndBvhWorkerClient";
 	import {
 		createEmptyTooltipInteractionDiagnostics,
 		getTooltipData,
@@ -80,11 +80,11 @@
 		updateSceneConfigFromBounds,
 	} from "$lib/stores/sceneConfigStore";
 	import type { Analysis, AnalysisMetadata } from "$lib/types/analysis";
-	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/liveUtciAnalysis";
+	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/selected-hour/liveUtciAnalysis";
 	import {
 		buildSelectedHourLiveAnalysis,
 		resolveAcceptedGpuResidentUtciRange,
-	} from "$lib/compute/liveUtciSelectedHour";
+	} from "$lib/compute/selected-hour/liveUtciSelectedHour";
 	import { ComputeManager } from "$lib/compute/compute-manager";
 	import {
 		buildGpuResidentSurfaceResetPatch,
@@ -95,27 +95,27 @@
 		prepareSelectedHourCycleTimings,
 		type SelectedHourRenderTimingSubsteps,
 		type OnDemandRuntimeDiagnostics,
-	} from "$lib/compute/onDemandDiagnostics";
+	} from "$lib/compute/on-demand/onDemandDiagnostics";
 	import {
 		deriveOnDemandPrototypeStatus,
 		type OnDemandPrototypeStatus,
-	} from "$lib/compute/onDemandPrototypeStatus";
+	} from "$lib/compute/on-demand/onDemandPrototypeStatus";
 	import type {
 		WebgpuLargeBufferDeviceLimits,
 		WebgpuLargeBufferRequiredLimits,
-	} from "$lib/compute/webgpuDeviceLimits";
-	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
-	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
-	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/liveSelectedHourSurfaceIdentity";
-	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
+	} from "$lib/compute/gpu/webgpuDeviceLimits";
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/selected-hour/liveSelectedHourController";
+	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/selected-hour/liveSelectedHourRenderContext";
+	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity";
+	import type { SelectedHourGpuResidentOutput } from "$lib/compute/selected-hour/liveUtciSelectedHourSession";
 	import {
 		createOnDemandScrubState,
 		markOnDemandRequestCompleted,
 		startOnDemandRequest,
-	} from "$lib/compute/onDemandScrubState";
-	import { createWebgpuUtciPipeline } from "$lib/compute/webgpuUtciPipeline";
+	} from "$lib/compute/on-demand/onDemandScrubState";
+	import { createWebgpuUtciPipeline } from "$lib/compute/gpu/webgpuUtciPipeline";
 	import { normalizeSkyExposureToViewFactor } from "$lib/parity/skyScale";
-	import type { SerializedBvhForGpu, UTCIComputePipeline } from "$lib/compute/gpu-pipeline";
+	import type { SerializedBvhForGpu, UTCIComputePipeline } from "$lib/compute/gpu/gpu-pipeline";
 	import { comparisonStore, curtainPosition } from "$lib/stores/comparisonStore";
 	import { get } from "svelte/store";
 	import { emitComputeTelemetry } from "$lib/compute/telemetry";

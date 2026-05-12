@@ -7,7 +7,7 @@
 		readLargeBufferDeviceLimits,
 		type WebgpuLargeBufferDeviceLimits,
 		type WebgpuLargeBufferRequiredLimits
-	} from '$lib/compute/webgpuDeviceLimits';
+	} from '$lib/compute/gpu/webgpuDeviceLimits';
 	import SceneBackground from './SceneBackground.svelte';
 	import SceneInvalidateSetup from './SceneInvalidateSetup.svelte';
 

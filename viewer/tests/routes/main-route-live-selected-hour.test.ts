@@ -7,7 +7,7 @@ import {
 	type MainRouteAcceptedGpuResidentOutputReleaseParams,
 	type MainRouteLiveSelectedHourDiagnosticsParams
 } from '../../src/routes/main/liveSelectedHour';
-import type { LiveSelectedHourRouteHost } from '$lib/compute/liveSelectedHourRouteHost';
+import type { LiveSelectedHourRouteHost } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 
 function createReleaseParams(): MainRouteAcceptedGpuResidentOutputReleaseParams {
 	return {

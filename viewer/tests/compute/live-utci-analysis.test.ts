@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
-import { createLiveUtciAnalysisFromCompute } from '$lib/compute/liveUtciAnalysis';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { createLiveUtciAnalysisFromCompute } from '$lib/compute/selected-hour/liveUtciAnalysis';
 import {
 	buildSelectedHourLiveAnalysis,
 	resolveAcceptedGpuResidentUtciRange
-} from '$lib/compute/liveUtciSelectedHour';
+} from '$lib/compute/selected-hour/liveUtciSelectedHour';
 import type { AnalysisMetadata } from '$lib/types/analysis';
 import {
 	clearComputeTelemetryHistory,

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { serializeBvhForGpu } from '$lib/compute/bvhGpuUpload';
-import { createWebgpuUtciPipeline } from '$lib/compute/webgpuUtciPipeline';
-import { getTregenzaDome } from '$lib/compute/tregenza';
+import { serializeBvhForGpu } from '$lib/compute/gpu/bvhGpuUpload';
+import { createWebgpuUtciPipeline } from '$lib/compute/gpu/webgpuUtciPipeline';
+import { getTregenzaDome } from '$lib/compute/core/tregenza';
 import { MeshBVH } from 'three-mesh-bvh';
 
 const HAS_WEBGPU = typeof navigator !== 'undefined' && (navigator as any).gpu;
@@ -89,9 +89,9 @@ describe('BVH GPU raycast (WebGPU)', () => {
 	(HAS_WEBGPU ? it : it.skip)(
 		'should produce different UTCI for point in sun vs in shade via GPU BVH raycast',
 		async () => {
-			// Box 2×2×2 centered at origin (Y-up). Grid: point 0 above (0,2,0), point 1 below (0,-2,0).
-			// Sun direction (0,1,0) = up. Ray from above goes up → no hit → exposed → higher UTCI.
-			// Ray from below goes up → hits box → shaded → lower UTCI.
+			// Box 2Ã—2Ã—2 centered at origin (Y-up). Grid: point 0 above (0,2,0), point 1 below (0,-2,0).
+			// Sun direction (0,1,0) = up. Ray from above goes up â†’ no hit â†’ exposed â†’ higher UTCI.
+			// Ray from below goes up â†’ hits box â†’ shaded â†’ lower UTCI.
 			const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
 			box.position.set(0, 0, 0);
 			box.updateMatrixWorld(true);
@@ -117,7 +117,7 @@ describe('BVH GPU raycast (WebGPU)', () => {
 			const domeVectors = new Float32Array(dome.vectors.length * 3);
 			for (let i = 0; i < dome.vectors.length; i++) {
 				domeVectors[i * 3] = dome.vectors[i][0];
-				domeVectors[i * 3 + 1] = dome.vectors[i][2]; // Z-up → Y-up
+				domeVectors[i * 3 + 1] = dome.vectors[i][2]; // Z-up â†’ Y-up
 				domeVectors[i * 3 + 2] = dome.vectors[i][1];
 			}
 			const domeWeights = new Float32Array(dome.weights);

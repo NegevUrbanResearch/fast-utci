@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getTregenzaDome } from '$lib/compute/tregenza';
+import { getTregenzaDome } from '$lib/compute/core/tregenza';
 
 describe('Tregenza Dome', () => {
   it('should return exactly 145 direction vectors', () => {

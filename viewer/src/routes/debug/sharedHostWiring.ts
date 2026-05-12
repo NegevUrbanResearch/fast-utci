@@ -3,17 +3,17 @@ import {
 	type LiveSelectedHourRouteHost,
 	type LiveSelectedHourRouteInputs,
 	type LiveSelectedHourRouteState
-} from '$lib/compute/liveSelectedHourRouteHost';
+} from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import {
 	projectMainRouteLiveSceneState,
 	type MainRouteLiveSceneProjection
-} from '$lib/compute/liveSelectedHourRouteProjection';
-import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/liveSelectedHourController';
+} from '$lib/compute/selected-hour/liveSelectedHourRouteProjection';
+import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/selected-hour/liveSelectedHourController';
 import type { Analysis } from '$lib/types/analysis';
 import type { Group } from 'three';
-import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/liveSelectedHourRenderContext';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 import type { UtciRenderMode, UtciRendererBackend } from '$lib/utciRenderMode';
 import type { DebugRouteAcceptedGpuResidentOutputRelease } from './legacySelectedHourWiring';

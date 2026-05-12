@@ -4,8 +4,8 @@ import type { Analysis } from '$lib/types/analysis';
 import {
 	disposeSelectedHourGpuResidentOutput,
 	prepareSelectedHourLiveSession
-} from '$lib/compute/liveUtciSelectedHourSession';
-import { createSelectedHourOutputHandle } from '$lib/compute/selectedHourOutputHandle';
+} from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import { createSelectedHourOutputHandle } from '$lib/compute/selected-hour/selectedHourOutputHandle';
 
 const mockState = vi.hoisted(() => ({
 	pipeline: null as any,
@@ -15,7 +15,7 @@ const mockState = vi.hoisted(() => ({
 	constructors: [] as any[]
 }));
 
-vi.mock('$lib/compute/mergeAndBvhWorkerClient', () => ({
+vi.mock('$lib/compute/gpu/mergeAndBvhWorkerClient', () => ({
 	MAX_GRID_POINTS_GUARD: 100000,
 	prepareMeshPayloadForWorkerAsync: vi.fn(async () => ({
 		meshes: [],
@@ -35,7 +35,7 @@ vi.mock('$lib/compute/mergeAndBvhWorkerClient', () => ({
 	}))
 }));
 
-vi.mock('$lib/compute/webgpuUtciPipeline', () => ({
+vi.mock('$lib/compute/gpu/webgpuUtciPipeline', () => ({
 	createWebgpuUtciPipeline: vi.fn(async () => mockState.pipeline)
 }));
 

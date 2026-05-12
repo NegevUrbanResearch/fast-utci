@@ -1,7 +1,7 @@
 import type {
 	LiveSelectedHourControllerSurfaceDiagnostics,
 	LiveSelectedHourRenderTransport
-} from '$lib/compute/liveSelectedHourController';
+} from '$lib/compute/selected-hour/liveSelectedHourController';
 import {
 	buildSelectedHourRuntimeContract,
 	type SelectedHourReadbackInstrumentation,
@@ -12,7 +12,7 @@ import {
 import type {
 	WebgpuLargeBufferDeviceLimits,
 	WebgpuLargeBufferRequiredLimits
-} from '$lib/compute/webgpuDeviceLimits';
+} from '$lib/compute/gpu/webgpuDeviceLimits';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 
 export type MainRouteUtciDiagnosticsPayload = {

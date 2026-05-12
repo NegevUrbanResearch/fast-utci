@@ -5,13 +5,13 @@ import type {
 	SelectedHourGpuResidentOutput,
 	SelectedHourLiveResult,
 	SelectedHourLiveSession
-} from '$lib/compute/liveUtciSelectedHourSession';
+} from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import {
 	createLiveSelectedHourController,
 	type LiveSelectedHourController,
 	type LiveSelectedHourControllerSurfaceDiagnostics
-} from '$lib/compute/liveSelectedHourController';
-import { createEmptyOnDemandDiagnostics } from '$lib/compute/onDemandDiagnostics';
+} from '$lib/compute/selected-hour/liveSelectedHourController';
+import { createEmptyOnDemandDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 
 function decomposeTimeIndex(timeIndex: number) {

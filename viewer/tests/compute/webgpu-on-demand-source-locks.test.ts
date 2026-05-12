@@ -5,13 +5,16 @@ import { fileURLToPath } from 'node:url';
 
 describe('WebGPU on-demand source guards', () => {
 	const testDir = dirname(fileURLToPath(import.meta.url));
-	const source = readFileSync(resolve(testDir, '../../src/lib/compute/webgpuUtciPipeline.ts'), 'utf8');
+	const source = readFileSync(
+		resolve(testDir, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+		'utf8'
+	).replace(/\r\n/g, '\n');
 	const renderBridgeSource = readFileSync(
 		resolve(testDir, '../../src/lib/services/gpuUtciRenderBridge.ts'),
 		'utf8'
 	);
 	const onDemandShaderSource = readFileSync(
-		resolve(testDir, '../../src/lib/compute/shaders/mrt_utci_on_demand.wgsl'),
+		resolve(testDir, '../../src/lib/compute/gpu/shaders/mrt_utci_on_demand.wgsl'),
 		'utf8'
 	);
 

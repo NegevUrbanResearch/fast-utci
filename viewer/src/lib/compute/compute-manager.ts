@@ -1,16 +1,16 @@
 import type { Analysis } from '$lib/types/analysis';
-import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type {
 	ExposurePrecomputeParams,
 	OnDemandUtciOutput,
 	RunUtciForTimeIndexParams,
 	SerializedBvhForGpu,
 	UTCIComputePipeline
-} from '$lib/compute/gpu-pipeline';
-import { parseEPW } from '$lib/compute/epw-parser';
-import { getSunVectors } from '$lib/compute/sunpath';
-import { getTregenzaDome } from '$lib/compute/tregenza';
-import { canonicalGridPoints } from '$lib/compute/canonicalGrid';
+} from '$lib/compute/gpu/gpu-pipeline';
+import { parseEPW } from '$lib/compute/weather/epw-parser';
+import { getSunVectors } from '$lib/compute/core/sunpath';
+import { getTregenzaDome } from '$lib/compute/core/tregenza';
+import { canonicalGridPoints } from '$lib/compute/core/canonicalGrid';
 
 /**
  * Rotate a direction vector from the Python/ladybug Z-up convention
@@ -26,7 +26,7 @@ export interface ComputeManagerConfig {
 	numMonths: number;
 	numHoursPerDay: number;
 	/**
-	 * Starting month index (1–12) for representative-day sampling.
+	 * Starting month index (1â€“12) for representative-day sampling.
 	 * When numMonths > 1, subsequent months are sampled as startMonth + i.
 	 */
 	startMonth: number;
@@ -194,13 +194,13 @@ export class ComputeManager {
 		// 3. Pack per-hour weather samples.
 		//
 		// Layout (must stay in sync with WeatherSample in mrt_utci.wgsl):
-		//   0: air_temp (°C)
-		//   1: mrt_longwave (°C) – currently approximated as air temp
+		//   0: air_temp (Â°C)
+		//   1: mrt_longwave (Â°C) â€“ currently approximated as air temp
 		//   2: wind_speed (m/s)
 		//   3: rel_humidity (%)
-		//   4: direct_normal (W/m²)
-		//   5: diffuse_horizontal (W/m²)
-		//   6: horiz_infrared (W/m²)
+		//   4: direct_normal (W/mÂ²)
+		//   5: diffuse_horizontal (W/mÂ²)
+		//   6: horiz_infrared (W/mÂ²)
 		const weatherStride = 7;
 		const weather = new Float32Array(numMonths * numHours * weatherStride);
 		for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {

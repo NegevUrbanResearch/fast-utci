@@ -3,7 +3,7 @@ import { createFullDayAnalysis } from './live-selected-hour-route-host.test-supp
 import {
 	resolveLiveSelectedHourSurfaceRenderState,
 	type LiveSelectedHourPublishedRenderContext
-} from '$lib/compute/liveSelectedHourRenderContext';
+} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
 
 describe('liveSelectedHourRenderContext', () => {
 	it('prefers the published visible render context over pending viewer-state changes', () => {

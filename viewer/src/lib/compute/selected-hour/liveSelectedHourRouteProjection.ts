@@ -1,8 +1,8 @@
 import type { Analysis } from '$lib/types/analysis';
-import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/liveSelectedHourRenderContext';
-import type { LiveSelectedHourRouteState } from '$lib/compute/liveSelectedHourRouteHost';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
+import type { LiveSelectedHourRouteState } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 
 export type MainRouteLiveSceneProjection = {
 	baseDisplayedAnalysis: Analysis | null;

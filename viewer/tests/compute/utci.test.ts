@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateUTCI } from '$lib/compute/utci';
+import { calculateUTCI } from '$lib/compute/core/utci';
 
 describe('UTCI Polynomial', () => {
   it('should return comfortable UTCI for mild conditions', () => {

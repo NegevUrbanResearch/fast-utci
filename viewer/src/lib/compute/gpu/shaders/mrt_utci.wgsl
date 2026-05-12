@@ -103,7 +103,7 @@ fn compute_outdoor_mrt(
 	w: WeatherSample,
 	num_time_steps: u32,
 ) -> MrtComponents {
-	// Constants kept in sync with src/lib/compute/mrtReference.ts.
+	// Constants kept in sync with src/lib/compute/core/mrtReference.ts.
 	let f_eff: f32 = 0.725;
 	let a_sw: f32 = 0.7;
 	let a_lw: f32 = 0.95;

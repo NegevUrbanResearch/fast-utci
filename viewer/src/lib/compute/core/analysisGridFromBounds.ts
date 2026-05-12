@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createRectangularGridFromBounds } from '$lib/compute/grid-generator';
+import { createRectangularGridFromBounds } from '$lib/compute/core/grid-generator';
 
 export interface AnalysisBounds {
 	x_min: number;

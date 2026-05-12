@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEPW } from '$lib/compute/epw-parser';
+import { parseEPW } from '$lib/compute/weather/epw-parser';
 
 // Minimal EPW content for testing (8 header lines + a few data lines)
 const MINIMAL_EPW = `LOCATION,Beer Sheva,ISR,source,wmo,31.25,34.79,2,300

@@ -15,7 +15,7 @@ import type {
 	HourStatistics,
 	UtciStorage
 } from '$lib/types/analysis';
-import { canonicalGridPoints } from '$lib/compute/canonicalGrid';
+import { canonicalGridPoints } from '$lib/compute/core/canonicalGrid';
 
 // Data base path: strip /viewer/build from base path to get project root
 // e.g., /fast-utci/viewer/build -> /fast-utci

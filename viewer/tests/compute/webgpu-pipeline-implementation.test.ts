@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 describe('webgpuUtciPipeline implementation locks', () => {
 	const source = readFileSync(
-		resolve(process.cwd(), 'src/lib/compute/webgpuUtciPipeline.ts'),
+		resolve(process.cwd(), 'src/lib/compute/gpu/webgpuUtciPipeline.ts'),
 		'utf8'
 	);
 

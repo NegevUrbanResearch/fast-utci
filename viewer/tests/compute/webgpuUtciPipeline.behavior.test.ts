@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
 	__TEST_ONLY_WebgpuUtciComputePipeline,
 	createWebgpuUtciPipeline
-} from '$lib/compute/webgpuUtciPipeline';
+} from '$lib/compute/gpu/webgpuUtciPipeline';
 
 function createFakeBuffer(size: number) {
 	return {

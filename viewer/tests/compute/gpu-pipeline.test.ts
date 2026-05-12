@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createPipelineConfig, calculateDispatch, getUtciFlatIndex } from '$lib/compute/gpu-pipeline';
+import { createPipelineConfig, calculateDispatch, getUtciFlatIndex } from '$lib/compute/gpu/gpu-pipeline';
 
 describe('GPU Compute Pipeline', () => {
 	it('should create pipeline config with correct buffer sizes', () => {

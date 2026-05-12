@@ -1,4 +1,4 @@
-import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 
 export type OnDemandPrototypeStatus =
 	| 'idle'

@@ -1,4 +1,4 @@
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 
 export type LiveSelectedHourSurfaceIdentity = {
 	controllerIdentity: string;

@@ -3,7 +3,7 @@ import {
 	createOnDemandScrubState,
 	markOnDemandRequestCompleted,
 	startOnDemandRequest
-} from '$lib/compute/onDemandScrubState';
+} from '$lib/compute/on-demand/onDemandScrubState';
 
 describe('on-demand scrub state', () => {
 	it('accepts the newest request and discards stale completions', () => {

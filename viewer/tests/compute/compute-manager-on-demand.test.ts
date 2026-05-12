@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { OnDemandRuntimeDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type {
 	ExposurePrecomputeParams,
 	OnDemandUtciOutput,
 	RunUtciForTimeIndexParams,
 	UTCIComputePipeline
-} from '$lib/compute/gpu-pipeline';
+} from '$lib/compute/gpu/gpu-pipeline';
 
 function basePipeline(): UTCIComputePipeline {
 	return {

@@ -1,7 +1,7 @@
 import {
 	createEmptyOnDemandDiagnostics,
 	type OnDemandRuntimeDiagnostics
-} from '$lib/compute/onDemandDiagnostics';
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import {
 	buildSelectedHourRuntimeContract,
 	type SelectedHourReadbackInstrumentation,

@@ -4,7 +4,7 @@ import {
 	resolveAcceptedGpuResidentUtciRange,
 	resolveLiveGpuResidentUtciRange,
 	resolveLiveSelectedHourTimeIndex
-} from '$lib/compute/liveUtciSelectedHour';
+} from '$lib/compute/selected-hour/liveUtciSelectedHour';
 
 function createAugustAnalysis(): Analysis {
 	return {

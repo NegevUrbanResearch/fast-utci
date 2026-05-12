@@ -16,17 +16,17 @@
 	import { viewerStore } from '$lib/stores/viewerStore';
 	import { get } from 'svelte/store';
 	import { base } from '$app/paths';
-	import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/liveSelectedHourController';
-	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-	import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/selected-hour/liveSelectedHourController';
+	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 	import {
 		resolveLiveSelectedHourSurfaceRenderState,
 		type LiveSelectedHourPublishedRenderContext
-	} from '$lib/compute/liveSelectedHourRenderContext';
+	} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
 	import {
 		invokeDiagnosticsCallbackSafely,
 		type SelectedHourRenderTimingSubsteps
-	} from '$lib/compute/onDemandDiagnostics';
+	} from '$lib/compute/on-demand/onDemandDiagnostics';
 	import {
 		applyLayerMaterials,
 		mapLayerNameToType

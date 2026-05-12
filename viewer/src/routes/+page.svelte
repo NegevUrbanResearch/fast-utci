@@ -30,7 +30,7 @@
 	import type {
 		WebgpuLargeBufferDeviceLimits,
 		WebgpuLargeBufferRequiredLimits,
-	} from "$lib/compute/webgpuDeviceLimits";
+	} from "$lib/compute/gpu/webgpuDeviceLimits";
 	import type ComparisonRenderer from "$lib/components/scene/ComparisonRenderer.svelte";
 	import RadialTimePicker from "$lib/components/ui/RadialTimePicker.svelte";
 	import LayerControls from "$lib/components/ui/LayerControls.svelte";
@@ -43,13 +43,13 @@
 	import { getDefaultAnalysisId } from "$lib/config/projects";
 	import { resolveProjectId } from "$lib/utils/analysisPaths";
 	import type { Analysis } from "$lib/types/analysis";
-	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/liveSelectedHourController";
-	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/liveSelectedHourRenderContext";
-	import { projectMainRouteLiveSceneState } from "$lib/compute/liveSelectedHourRouteProjection";
-	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/liveSelectedHourSurfaceIdentity";
-	import { createLiveSelectedHourRouteHost } from "$lib/compute/liveSelectedHourRouteHost";
-	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/liveUtciSelectedHour";
-	import type { SelectedHourGpuResidentOutput } from "$lib/compute/liveUtciSelectedHourSession";
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/selected-hour/liveSelectedHourController";
+	import type { LiveSelectedHourPublishedRenderContext } from "$lib/compute/selected-hour/liveSelectedHourRenderContext";
+	import { projectMainRouteLiveSceneState } from "$lib/compute/selected-hour/liveSelectedHourRouteProjection";
+	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity";
+	import { createLiveSelectedHourRouteHost } from "$lib/compute/selected-hour/liveSelectedHourRouteHost";
+	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/selected-hour/liveUtciSelectedHour";
+	import type { SelectedHourGpuResidentOutput } from "$lib/compute/selected-hour/liveUtciSelectedHourSession";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import {
 		sceneConfigStore,

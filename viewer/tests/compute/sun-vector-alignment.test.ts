@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
-import * as sunpath from '$lib/compute/sunpath';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import * as sunpath from '$lib/compute/core/sunpath';
 
 function buildMinimalEpw(): string {
 	const header = [

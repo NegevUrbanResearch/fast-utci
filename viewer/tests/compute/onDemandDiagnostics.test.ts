@@ -10,7 +10,7 @@ import {
 	recordOnDemandTiming,
 	recordSelectedHourReadbackReason,
 	resetColdStartLifecycleTimings
-} from '$lib/compute/onDemandDiagnostics';
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 
 describe('on-demand diagnostics helpers', () => {
 	it('createEmptyOnDemandDiagnostics starts with conservative defaults', () => {

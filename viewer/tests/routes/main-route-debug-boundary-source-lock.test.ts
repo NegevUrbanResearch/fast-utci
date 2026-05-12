@@ -10,8 +10,8 @@ const strictProtectedFiles = [
 ];
 
 const sharedProtectedFiles = [
-	'src/lib/compute/liveSelectedHourRouteHost.ts',
-	'src/lib/compute/liveSelectedHourRouteProjection.ts',
+	'src/lib/compute/selected-hour/liveSelectedHourRouteHost.ts',
+	'src/lib/compute/selected-hour/liveSelectedHourRouteProjection.ts',
 	'src/lib/components/scene/utciSurfaceSync.ts'
 ];
 

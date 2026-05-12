@@ -2,12 +2,12 @@
 	import { useThrelte } from '@threlte/core';
 	import { onDestroy } from 'svelte';
 	import type { Analysis } from '$lib/types/analysis';
-	import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
-	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 	import {
 		resolveLiveSelectedHourSurfaceRenderState,
 		type LiveSelectedHourPublishedRenderContext
-	} from '$lib/compute/liveSelectedHourRenderContext';
+	} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
 	import {
 		applySurfaceMeshState,
 		buildUtciGridLayout,
@@ -27,7 +27,7 @@
 	import {
 		invokeDiagnosticsCallbackSafely,
 		type SelectedHourRenderTimingSubsteps
-	} from '$lib/compute/onDemandDiagnostics';
+	} from '$lib/compute/on-demand/onDemandDiagnostics';
 	import {
 		buildCpuPublicationDiagnostics,
 		buildUtciSurfaceDiagnostics,

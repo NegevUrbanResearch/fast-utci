@@ -1,7 +1,7 @@
 import type { Mesh } from 'three';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/onDemandDiagnostics';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
 import { getGpuNativeUtciSurfaceSource } from '$lib/services/gpuUtciRenderBridge';
 
 export type GpuResidentCopyStatus = 'idle' | 'pending' | 'complete' | 'failed';

@@ -4,7 +4,7 @@ import {
 	prepareMeshPayloadForWorkerAsync,
 	runMergeAndBvhInWorker,
 	MAX_GRID_POINTS_GUARD
-} from '$lib/compute/mergeAndBvhWorkerClient';
+} from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 
 function createPlane(size = 10): THREE.Group {
 	const group = new THREE.Group();

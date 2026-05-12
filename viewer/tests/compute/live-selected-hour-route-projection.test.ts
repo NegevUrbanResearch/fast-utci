@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Analysis } from '$lib/types/analysis';
-import type { LiveSelectedHourRouteState } from '$lib/compute/liveSelectedHourRouteHost';
-import { projectMainRouteLiveSceneState } from '$lib/compute/liveSelectedHourRouteProjection';
+import type { LiveSelectedHourRouteState } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
+import { projectMainRouteLiveSceneState } from '$lib/compute/selected-hour/liveSelectedHourRouteProjection';
 
 function createFullDayAnalysis(label: string): Analysis {
 	return {

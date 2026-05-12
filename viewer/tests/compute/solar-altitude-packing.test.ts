@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateSunPosition, getSunVectors } from '$lib/compute/sunpath';
+import { calculateSunPosition, getSunVectors } from '$lib/compute/core/sunpath';
 
 describe('Sun altitude packing', () => {
 	const BEER_SHEVA = { lat: 31.25, lon: 34.79, timezone: 2 };

@@ -1,16 +1,16 @@
 import * as THREE from 'three';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { Analysis, AnalysisMetadata, FullDayData, HourStatistics } from '$lib/types/analysis';
-import type { SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
+import type { SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
 
 /**
- * Read all UTCI slices in a single GPU→CPU transfer instead of 288 serial mapAsync calls.
+ * Read all UTCI slices in a single GPUâ†’CPU transfer instead of 288 serial mapAsync calls.
  * 
  * Uses the pipeline's readUtciBulk method (single mapAsync instead of 288).
- * This reduces PCIe round-trip overhead from 288 × ~1-2ms to 1 × ~1-2ms.
+ * This reduces PCIe round-trip overhead from 288 Ã— ~1-2ms to 1 Ã— ~1-2ms.
  * 
  * Falls back to per-slice reading if the pipeline doesn't support bulk access.
  */
@@ -28,7 +28,12 @@ async function readAllUtciSlices(
 	// Try bulk readback first (single mapAsync instead of 288).
 	const pipeline = computeManager.getPipeline();
 	if (pipeline.readUtciBulk) {
-		return pipeline.readUtciBulk({ numPoints, numHours, numMonths });
+		const bulk = await pipeline.readUtciBulk({ numPoints, numHours, numMonths });
+		const expectedLength = numPoints * numHours * numMonths;
+		if (bulk.length !== expectedLength) {
+			throw new Error(`UTCI bulk length mismatch: expected ${expectedLength}, got ${bulk.length}`);
+		}
+		return bulk;
 	}
 
 	// Fallback: per-slice reading
@@ -46,7 +51,12 @@ async function readAllUtciSlices(
 				numHours
 			});
 			const sliceIdx = monthOffset * numHours + hourIndex;
-			allUtci.set(slice, sliceIdx * numPoints);
+			if (slice.length !== numPoints) {
+				throw new Error(`UTCI slice length mismatch: expected ${numPoints}, got ${slice.length}`);
+			}
+			for (let pointIndex = 0; pointIndex < numPoints; pointIndex++) {
+				allUtci[pointIndex * totalSlices + sliceIdx] = slice[pointIndex];
+			}
 		}
 		await yieldToMain();
 	}
@@ -142,7 +152,7 @@ export interface LiveUtciAnalysisParams {
 	 */
 	numHours?: number;
 	/**
-	 * Optional override for the representative month index (1–12).
+	 * Optional override for the representative month index (1â€“12).
 	 * Defaults to 8 (August) to match existing .bin analyses.
 	 */
 	startMonth?: number;
@@ -319,6 +329,9 @@ export async function createLiveUtciAnalysisFromCompute(
 		numHours,
 		numMonths,
 		signal
+	});
+	emitComputeTelemetry('utci.readback.done', {
+		data: { numPoints: effectiveNumPoints, numHours, numMonths }
 	});
 
 	for (let sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {

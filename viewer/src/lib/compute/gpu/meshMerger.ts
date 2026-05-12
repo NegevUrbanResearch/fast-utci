@@ -3,7 +3,7 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import {
 	countTrianglesInGroup,
 	MAX_TRIANGLES_FOR_MAIN_THREAD
-} from '$lib/compute/mergeAndBvhWorkerClient';
+} from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 
 /**
  * Traverse a Three.js scene group and merge all Mesh children into a

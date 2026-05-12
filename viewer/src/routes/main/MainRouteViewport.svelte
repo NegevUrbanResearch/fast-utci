@@ -3,14 +3,14 @@
 	import type { Group, Mesh, PerspectiveCamera } from 'three';
 
 	import type { Analysis } from '$lib/types/analysis';
-	import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/liveSelectedHourController';
-	import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/liveSelectedHourRenderContext';
-	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-	import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/selected-hour/liveSelectedHourController';
+	import type { LiveSelectedHourPublishedRenderContext } from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
+	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 	import type {
 		WebgpuLargeBufferDeviceLimits,
 		WebgpuLargeBufferRequiredLimits
-	} from '$lib/compute/webgpuDeviceLimits';
+	} from '$lib/compute/gpu/webgpuDeviceLimits';
 	import type { UtciSurfaceBackendType } from '$lib/services/pointCloudService';
 	import type { UtciRendererBackend } from '$lib/utciRenderMode';
 	import { resolveAnalysisModelPath } from '$lib/utils/analysisPaths';

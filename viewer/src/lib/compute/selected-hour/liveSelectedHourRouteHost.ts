@@ -9,14 +9,14 @@ import {
 	type LiveSelectedHourControllerState,
 	type LiveSelectedHourControllerSurfaceDiagnostics,
 	type LiveSelectedHourSessionConfig
-} from '$lib/compute/liveSelectedHourController';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import { getEpwUrlForAnalysis } from '$lib/compute/projectWeather';
+} from '$lib/compute/selected-hour/liveSelectedHourController';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import { getEpwUrlForAnalysis } from '$lib/compute/weather/projectWeather';
 import {
 	createLiveSelectedHourPublishedRenderContext,
 	type LiveSelectedHourPublishedRenderContext,
 	type LiveSelectedHourRangeOverride
-} from '$lib/compute/liveSelectedHourRenderContext';
+} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
 import type { UtciRenderMode } from '$lib/utciRenderMode';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
 import { resolveProjectId } from '$lib/utils/analysisPaths';

@@ -5,9 +5,9 @@ import {
 	type SelectedHourCpuFallbackOutput,
 	type SelectedHourGpuResidentOutput,
 	type SelectedHourLiveSession
-} from '$lib/compute/liveUtciSelectedHourSession';
-import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/onDemandDiagnostics';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
+} from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 import type {
 	SelectedHourReadbackInstrumentation,
 	SelectedHourReadbackReason

@@ -9,8 +9,8 @@ const mainRouteProtectedFiles = [
 	'src/routes/main/liveSelectedHour.ts',
 	'src/routes/main/modelSelection.ts',
 	'src/routes/main/tooltip.ts',
-	'src/lib/compute/liveSelectedHourRouteHost.ts',
-	'src/lib/compute/liveSelectedHourRouteProjection.ts'
+	'src/lib/compute/selected-hour/liveSelectedHourRouteHost.ts',
+	'src/lib/compute/selected-hour/liveSelectedHourRouteProjection.ts'
 ];
 
 const debugRouteHelperFiles = [

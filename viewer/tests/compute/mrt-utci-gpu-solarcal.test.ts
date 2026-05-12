@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { computeSolarCal } from '$lib/compute/solarcal';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
-import { createWebgpuUtciPipeline } from '$lib/compute/webgpuUtciPipeline';
+import { computeSolarCal } from '$lib/compute/core/solarcal';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { createWebgpuUtciPipeline } from '$lib/compute/gpu/webgpuUtciPipeline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -24,18 +24,18 @@ const buildSinglePointInputs = () => {
 	// buffer must be non-empty to satisfy uploadStaticData.
 	const sunVectors = new Float32Array([0, 1, 0]);
 
-	// Solar altitude in radians for MRT (e.g. ~60° for summer midday)
+	// Solar altitude in radians for MRT (e.g. ~60Â° for summer midday)
 	const sunAltitudes = new Float32Array([(60 * Math.PI) / 180]);
 
 	// Weather layout must match WeatherSample in mrt_utci.wgsl and packing in
 	// compute-manager.ts:
-	//   0: air_temp (°C)
-	//   1: mrt_longwave (°C) – approx air temp for now
+	//   0: air_temp (Â°C)
+	//   1: mrt_longwave (Â°C) â€“ approx air temp for now
 	//   2: wind_speed (m/s)
 	//   3: rel_humidity (%)
-	//   4: direct_normal (W/m²)
-	//   5: diffuse_horizontal (W/m²)
-	//   6: horiz_infrared (W/m²)
+	//   4: direct_normal (W/mÂ²)
+	//   5: diffuse_horizontal (W/mÂ²)
+	//   6: horiz_infrared (W/mÂ²)
 	const weather = new Float32Array(7);
 	weather[0] = 30; // air_temp
 	weather[1] = 30; // mrt_longwave approx
@@ -50,7 +50,7 @@ const buildSinglePointInputs = () => {
 
 describe('MRT+UTCI WGSL SolarCal parity', () => {
 	it('uses ground_reflectance 0.25 in WGSL for Python parity', () => {
-		const shaderPath = resolve(process.cwd(), 'src/lib/compute/shaders/mrt_utci.wgsl');
+		const shaderPath = resolve(process.cwd(), 'src/lib/compute/gpu/shaders/mrt_utci.wgsl');
 		const shaderSource = readFileSync(shaderPath, 'utf8');
 		expect(shaderSource).toContain('ground_reflectance: f32 = 0.25');
 	});

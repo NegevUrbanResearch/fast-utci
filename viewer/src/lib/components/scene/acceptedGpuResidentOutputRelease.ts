@@ -1,4 +1,4 @@
-import { invokeDiagnosticsCallbackSafely } from '$lib/compute/onDemandDiagnostics';
+import { invokeDiagnosticsCallbackSafely } from '$lib/compute/on-demand/onDemandDiagnostics';
 
 export type AcceptedGpuResidentOutputReleaseReason =
 	| 'copy-complete'

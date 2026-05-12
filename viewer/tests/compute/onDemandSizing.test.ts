@@ -3,7 +3,7 @@ import {
 	calculateAllHoursBufferSizes,
 	calculateOneHourOutputSizes,
 	calculateSolarBitmaskBytes
-} from '$lib/compute/onDemandSizing';
+} from '$lib/compute/on-demand/onDemandSizing';
 
 describe('onDemandSizing', () => {
 	it('calculates bit-packed solar exposure bytes', () => {

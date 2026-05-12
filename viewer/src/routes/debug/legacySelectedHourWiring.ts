@@ -1,5 +1,5 @@
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 
 export const LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID = 'debug-legacy-selected-hour';
 

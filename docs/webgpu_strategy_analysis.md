@@ -31,9 +31,9 @@ Implemented as of 2026-05-09:
 | Capability | Current state | Key files |
 | --- | --- | --- |
 | Three.js WebGPU rendering | `WebGPURenderer` is already used. | `viewer/src/lib/components/scene/Scene.svelte` |
-| WebGPU compute pipeline | Solar exposure, sky exposure, and MRT/UTCI compute already run on WebGPU. | `viewer/src/lib/compute/webgpuUtciPipeline.ts` |
-| Solar exposure storage | Already bit-packed as one bit per point-hour in a `u32` buffer. | `webgpuUtciPipeline.ts`, `shaders/exposure_solar.wgsl`, `shaders/mrt_utci.wgsl` |
-| UTCI readback | The selected-hour on-demand debug path no longer reads back UTCI values on the hot render path; bulk readback still exists for legacy/fallback/export flows. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte`, `viewer/src/lib/compute/webgpuUtciPipeline.ts` |
+| WebGPU compute pipeline | Solar exposure, sky exposure, and MRT/UTCI compute already run on WebGPU. | `viewer/src/lib/compute/gpu/webgpuUtciPipeline.ts` |
+| Solar exposure storage | Already bit-packed as one bit per point-hour in a `u32` buffer. | `gpu/webgpuUtciPipeline.ts`, `gpu/shaders/exposure_solar.wgsl`, `gpu/shaders/mrt_utci.wgsl` |
+| UTCI readback | The selected-hour on-demand debug path no longer reads back UTCI values on the hot render path; bulk readback still exists for legacy/fallback/export flows. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte`, `viewer/src/lib/compute/gpu/webgpuUtciPipeline.ts` |
 | CPU UTCI storage | Legacy live analysis still creates a full time-major `Int16Array` copy, but the selected-hour on-demand debug route avoids all-hours CPU UTCI storage as the main path. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte` |
 | Rendering UTCI values | The current selected-hour debug route can render from a GPU-native compute buffer surface (`compute-buffer-selected-hour`), while `dataTexture` remains as fallback/legacy path. | `viewer/src/lib/components/scene/UTCIPointCloud.svelte`, `viewer/src/lib/services/gpuUtciRenderBridge.ts`, `viewer/src/lib/services/pointCloudService.ts` |
 | Debug route default | Plain `/debug` now defaults to on-demand `f32`; `?utciOnDemand=off` opts out, and `?collect=normal` preserves the old full-day collection harness. | `viewer/src/routes/debug/+page.svelte` |

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	calculateUTCI,
 	calculateBoundaryAveragedUtciSeries
-} from '$lib/compute/utci';
+} from '$lib/compute/core/utci';
 
 describe('UTCI boundary-averaged series helper', () => {
 	it('should return empty array for empty inputs', () => {

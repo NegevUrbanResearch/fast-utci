@@ -6,12 +6,12 @@ import {
 import type {
 	WebgpuLargeBufferDeviceLimits,
 	WebgpuLargeBufferRequiredLimits,
-} from '$lib/compute/webgpuDeviceLimits';
-import type { LiveSelectedHourGpuResidentRelease } from '$lib/compute/liveSelectedHourController';
+} from '$lib/compute/gpu/webgpuDeviceLimits';
+import type { LiveSelectedHourGpuResidentRelease } from '$lib/compute/selected-hour/liveSelectedHourController';
 import type {
 	LiveSelectedHourRouteHost,
 	LiveSelectedHourRouteState,
-} from '$lib/compute/liveSelectedHourRouteHost';
+} from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 
 export type MainRouteWindow = Window & {

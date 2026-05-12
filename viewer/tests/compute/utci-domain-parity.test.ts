@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateUTCI, calculateBoundaryAveragedUtciSeries } from '$lib/compute/utci';
+import { calculateUTCI, calculateBoundaryAveragedUtciSeries } from '$lib/compute/core/utci';
 
 describe('UTCI domain policy parity', () => {
 	it('returns NaN outside validity domain in strict-domain mode', () => {

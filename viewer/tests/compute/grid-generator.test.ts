@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import * as grid from '$lib/compute/grid-generator';
-import { createRectangularGridFromBounds } from '$lib/compute/grid-generator';
+import * as grid from '$lib/compute/core/grid-generator';
+import { createRectangularGridFromBounds } from '$lib/compute/core/grid-generator';
 
 describe('Grid Generator', () => {
   it('does not export generateGridFromMesh', () => {

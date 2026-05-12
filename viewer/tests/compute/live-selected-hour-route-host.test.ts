@@ -1,13 +1,13 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import {
 	createLiveSelectedHourRouteHost,
 	type LiveSelectedHourRouteHostDeps,
 	type LiveSelectedHourRouteInputs
-} from '$lib/compute/liveSelectedHourRouteHost';
+} from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import type { UtciRenderMode } from '$lib/utciRenderMode';
 import type {
 	LiveSelectedHourController,
@@ -16,7 +16,7 @@ import type {
 	LiveSelectedHourControllerState,
 	LiveSelectedHourControllerSurfaceDiagnostics,
 	LiveSelectedHourRenderTransport
-} from '$lib/compute/liveSelectedHourController';
+} from '$lib/compute/selected-hour/liveSelectedHourController';
 import { createFullDayAnalysis } from './live-selected-hour-route-host.test-support';
 
 type TestLiveSelectedHourRouteInputs = LiveSelectedHourRouteInputs & {

@@ -5,27 +5,27 @@ import {
 	prepareMeshPayloadForWorkerAsync,
 	runMergeAndBvhInWorker,
 	MAX_GRID_POINTS_GUARD
-} from '$lib/compute/mergeAndBvhWorkerClient';
+} from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { OnDemandUtciOutput, SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
-import { createWebgpuUtciPipeline } from '$lib/compute/webgpuUtciPipeline';
+import type { OnDemandUtciOutput, SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { createWebgpuUtciPipeline } from '$lib/compute/gpu/webgpuUtciPipeline';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import {
 	buildSelectedHourLiveAnalysis,
 	resolveLiveGpuResidentUtciRange
-} from '$lib/compute/liveUtciSelectedHour';
+} from '$lib/compute/selected-hour/liveUtciSelectedHour';
 import {
 	createSelectedHourOutputHandle,
 	disposeSelectedHourOutputHandle,
 	type SelectedHourOutputHandle
-} from '$lib/compute/selectedHourOutputHandle';
+} from '$lib/compute/selected-hour/selectedHourOutputHandle';
 import {
 	createEmptyOnDemandDiagnostics,
 	recordSelectedHourReadbackReason,
 	type OnDemandRuntimeDiagnostics
-} from '$lib/compute/onDemandDiagnostics';
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 
 const GRID_FALLBACKS = [2, 4, 6, 8];

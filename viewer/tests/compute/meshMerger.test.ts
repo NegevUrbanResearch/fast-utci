@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { mergeSceneMeshes } from '$lib/compute/meshMerger';
-import { MAX_TRIANGLES_FOR_MAIN_THREAD } from '$lib/compute/mergeAndBvhWorkerClient';
+import { mergeSceneMeshes } from '$lib/compute/gpu/meshMerger';
+import { MAX_TRIANGLES_FOR_MAIN_THREAD } from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 
 describe('mergeSceneMeshes', () => {
 	it('should merge multiple mesh children into a single mesh', () => {

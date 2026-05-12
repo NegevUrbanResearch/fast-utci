@@ -3,4 +3,4 @@ export {
 	canonicalGridPoints,
 	type CanonicalGridParams,
 	type CanonicalGridResult
-} from '$lib/compute/canonicalGrid';
+} from '$lib/compute/core/canonicalGrid';

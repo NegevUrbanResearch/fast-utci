@@ -4,9 +4,9 @@ import {
 	createAcceptedGpuResidentSurfaceSync,
 	type AcceptedGpuResidentSurfaceSyncRun
 } from '$lib/components/scene/acceptedGpuResidentSurfaceSync';
-import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/liveSelectedHourSurfaceIdentity';
-import type { SelectedHourGpuResidentOutput } from '$lib/compute/liveUtciSelectedHourSession';
-import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/onDemandDiagnostics';
+import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { AcceptedGpuResidentOutputReleaseCallback } from '$lib/components/scene/acceptedGpuResidentOutputRelease';
 import type { GpuResidentCopyStatus } from '$lib/components/scene/utciSurfaceSync';
 

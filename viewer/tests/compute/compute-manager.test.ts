@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
-import * as sunpath from '$lib/compute/sunpath';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import * as sunpath from '$lib/compute/core/sunpath';
 
 // Minimal EPW content: 8 header lines + 24 data lines for month=1, day=15
 const buildMinimalEpw = () => {
@@ -37,7 +37,7 @@ const createSerializedBvhFixture = () => {
 	};
 };
 
-/** Bounds for the 4x4 test plane (analysis xy_ground: x/z span ±2, z = sensor height). */
+/** Bounds for the 4x4 test plane (analysis xy_ground: x/z span Â±2, z = sensor height). */
 const TEST_BOUNDS = { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 };
 
 const createFakePipeline = () => {

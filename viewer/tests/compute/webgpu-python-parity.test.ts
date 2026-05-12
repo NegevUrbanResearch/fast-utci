@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { calculateUTCI } from '$lib/compute/utci';
+import { calculateUTCI } from '$lib/compute/core/utci';
 
 interface ParityFixture {
 	name: string;
@@ -45,4 +45,3 @@ describe('WebGPU vs Python parity fixture', () => {
 		).toBeLessThanOrEqual(fixture.expected.toleranceC);
 	});
 });
-

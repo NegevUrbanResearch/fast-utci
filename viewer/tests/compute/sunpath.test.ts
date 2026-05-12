@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateSunPosition, getSunVectors } from '$lib/compute/sunpath';
+import { calculateSunPosition, getSunVectors } from '$lib/compute/core/sunpath';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 

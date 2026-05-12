@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	deriveOnDemandPrototypeStatus,
 	type OnDemandPrototypeStatusInputs
-} from '$lib/compute/onDemandPrototypeStatus';
+} from '$lib/compute/on-demand/onDemandPrototypeStatus';
 
 function createInputs(
 	overrides: Partial<OnDemandPrototypeStatusInputs> = {}

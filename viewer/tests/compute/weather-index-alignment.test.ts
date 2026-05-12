@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { UTCIComputePipeline } from '$lib/compute/gpu-pipeline';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
 
 function buildDeterministicEpwForJan1ToJan15(): string {
 	const header = [

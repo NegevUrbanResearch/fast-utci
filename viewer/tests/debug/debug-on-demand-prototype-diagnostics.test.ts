@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyOnDemandDiagnostics } from '$lib/compute/onDemandDiagnostics';
+import { createEmptyOnDemandDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import {
 	buildDebugOnDemandPrototypeDiagnostics,
 	type DebugOnDemandPrototypeDiagnosticsDefaults

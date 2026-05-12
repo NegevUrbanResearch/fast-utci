@@ -5,7 +5,7 @@ import {
 	computeMrtReference,
 	computeMrtReferenceComponents,
 	type MrtReferenceInputs
-} from '$lib/compute/mrtReference';
+} from '$lib/compute/core/mrtReference';
 
 interface FixtureFile {
 	cases: Array<MrtReferenceInputs & { name: string }>;
@@ -78,7 +78,7 @@ function computeMrtShaderEquivalent(inputs: MrtReferenceInputs) {
 
 describe('mrt reference vs shader', () => {
 	it('keeps shader constants synchronized with TS reference contract', () => {
-		const shaderPath = resolve(process.cwd(), 'src/lib/compute/shaders/mrt_utci.wgsl');
+		const shaderPath = resolve(process.cwd(), 'src/lib/compute/gpu/shaders/mrt_utci.wgsl');
 		const shaderSource = readFileSync(shaderPath, 'utf8');
 		expect(shaderSource).toContain('let total_tregenza_weight: f32 = 145.2488');
 		expect(shaderSource).toContain('let ground_reflectance: f32 = 0.25');
@@ -89,7 +89,7 @@ describe('mrt reference vs shader', () => {
 	});
 
 	it('clamps UTCI averaging to the representative-day boundary', () => {
-		const shaderPath = resolve(process.cwd(), 'src/lib/compute/shaders/mrt_utci.wgsl');
+		const shaderPath = resolve(process.cwd(), 'src/lib/compute/gpu/shaders/mrt_utci.wgsl');
 		const shaderSource = readFileSync(shaderPath, 'utf8');
 		expect(shaderSource).toContain('num_hours_per_day: u32,');
 		expect(shaderSource).toContain('let hours_per_day = max(params.num_hours_per_day, 1u);');

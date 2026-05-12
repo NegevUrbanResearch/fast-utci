@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { createPipelineConfig } from '$lib/compute/gpu-pipeline';
-import exposureSolarWgsl from '$lib/compute/shaders/exposure_solar.wgsl?raw';
+import { createPipelineConfig } from '$lib/compute/gpu/gpu-pipeline';
+import exposureSolarWgsl from '$lib/compute/gpu/shaders/exposure_solar.wgsl?raw';
 
 describe('Exposure pipeline', () => {
-	it('should require solar buffer size numPoints * numMonths * numHours * 4', () => {
+	it('should require bit-packed solar buffer size', () => {
 		const config = createPipelineConfig({
 			numPoints: 200,
 			numHours: 24,
 			numMonths: 12
 		});
-		expect(config.solarExposureBufferSize).toBe(200 * 12 * 24 * 4);
+		expect(config.solarExposureBufferSize).toBe(Math.ceil((200 * 12 * 24) / 32) * 4);
 	});
 
 	it('should require sky buffer size numPoints * 4', () => {

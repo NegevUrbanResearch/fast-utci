@@ -3,21 +3,21 @@ import {
 	type OnDemandUtciOutput,
 	type RunUtciForTimeIndexParams,
 	type UTCIComputePipeline
-} from '$lib/compute/gpu-pipeline';
+} from '$lib/compute/gpu/gpu-pipeline';
 import {
 	createEmptyOnDemandDiagnostics,
 	mergeTrackedGpuAllocationBytes,
 	recordOnDemandTiming,
 	type OnDemandRuntimeDiagnostics
-} from '$lib/compute/onDemandDiagnostics';
-import { createSelectedHourOutputHandle } from '$lib/compute/selectedHourOutputHandle';
-import { serializeBvhForGpu } from '$lib/compute/bvhGpuUpload';
+} from '$lib/compute/on-demand/onDemandDiagnostics';
+import { createSelectedHourOutputHandle } from '$lib/compute/selected-hour/selectedHourOutputHandle';
+import { serializeBvhForGpu } from '$lib/compute/gpu/bvhGpuUpload';
 import * as THREE from 'three';
-import mrtUtciShaderRaw from '$lib/compute/shaders/mrt_utci.wgsl?raw';
-import mrtUtciOnDemandShaderRaw from '$lib/compute/shaders/mrt_utci_on_demand.wgsl?raw';
-import bvhRaycastWgsl from '$lib/compute/shaders/bvh_raycast.wgsl?raw';
-import exposureSolarWgsl from '$lib/compute/shaders/exposure_solar.wgsl?raw';
-import exposureSkyWgsl from '$lib/compute/shaders/exposure_sky.wgsl?raw';
+import mrtUtciShaderRaw from '$lib/compute/gpu/shaders/mrt_utci.wgsl?raw';
+import mrtUtciOnDemandShaderRaw from '$lib/compute/gpu/shaders/mrt_utci_on_demand.wgsl?raw';
+import bvhRaycastWgsl from '$lib/compute/gpu/shaders/bvh_raycast.wgsl?raw';
+import exposureSolarWgsl from '$lib/compute/gpu/shaders/exposure_solar.wgsl?raw';
+import exposureSkyWgsl from '$lib/compute/gpu/shaders/exposure_sky.wgsl?raw';
 
 interface RunConfig {
 	numPoints: number;
@@ -322,7 +322,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		domeVectors?: Float32Array;
 		domeWeights?: Float32Array;
 		mesh?: { geometry: import('three').BufferGeometry };
-		serializedBvh?: import('$lib/compute/gpu-pipeline').SerializedBvhForGpu;
+		serializedBvh?: import('$lib/compute/gpu/gpu-pipeline').SerializedBvhForGpu;
 	}): Promise<void> {
 		this.weatherData = new Float32Array(params.weather);
 		this.ranExposurePassesThisRun = false;

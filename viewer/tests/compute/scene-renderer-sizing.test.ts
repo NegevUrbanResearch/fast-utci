@@ -6,7 +6,7 @@ import {
 	resetMockWebgpuRenderer,
 	setSizeSpy
 } from '../mocks/mockWebgpuRenderer';
-import { LARGE_BUFFER_REQUIRED_LIMITS } from '$lib/compute/webgpuDeviceLimits';
+import { LARGE_BUFFER_REQUIRED_LIMITS } from '$lib/compute/gpu/webgpuDeviceLimits';
 
 vi.mock('@threlte/core', async () => {
 	const Canvas = (await import('../mocks/MockCanvas.svelte')).default;

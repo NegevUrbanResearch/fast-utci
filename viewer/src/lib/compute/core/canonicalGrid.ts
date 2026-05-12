@@ -1,5 +1,5 @@
-import type { AnalysisBounds } from '$lib/compute/analysisGridFromBounds';
-import { analysisBoundsToViewerRectangularBounds } from '$lib/compute/analysisGridFromBounds';
+import type { AnalysisBounds } from '$lib/compute/core/analysisGridFromBounds';
+import { analysisBoundsToViewerRectangularBounds } from '$lib/compute/core/analysisGridFromBounds';
 
 const EPSILON = 1e-9;
 const FNV32_OFFSET = 0x811c9dc5;

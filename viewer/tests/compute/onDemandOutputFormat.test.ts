@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	ON_DEMAND_OUTPUT_FORMATS,
 	getOnDemandOutputFormat
-} from '$lib/compute/onDemandOutputFormat';
+} from '$lib/compute/on-demand/onDemandOutputFormat';
 
 describe('onDemandOutputFormat', () => {
 	it('returns the baseline f32-utci format metadata', () => {
