@@ -1,6 +1,6 @@
 import type { OnDemandOutputFormat } from '$lib/compute/on-demand/onDemandOutputFormat';
 import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
-import type { SelectedHourOutputHandle } from '$lib/compute/selected-hour/selectedHourOutputHandle';
+import type { SelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 
 export interface PipelineConfig {
 	numPoints: number;

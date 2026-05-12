@@ -429,6 +429,13 @@
 		error?: string;
 	};
 
+	function toNumberArrayOrUndefined(
+		values: Float32Array | number[] | null | undefined,
+	): number[] | undefined {
+		if (!values) return undefined;
+		return Array.from(values);
+	}
+
 	type ParityWindow = Window & {
 		__parityIntermediatesError__?: string;
 		__parityCollectionError__?: string;
@@ -3700,8 +3707,8 @@
 				const win = window as unknown as {
 					__parityResults__?: unknown;
 					__parityIntermediates__?: {
-						solarExposure: number[];
-						skyExposure: number[];
+						solarExposure?: number[];
+						skyExposure?: number[];
 						mrt?: number[];
 						shortErf?: number[];
 						longErf?: number[];
@@ -3756,13 +3763,59 @@
 						const TOME_WEIGHT = 145.24881; // Matches WGSL total_tregenza_weight
 
 						win.__parityIntermediates__ = {
-							solarExposure: results[0] ? results[0].slice(parityMode ? 0 : augustStart, parityMode ? results[0].length : augustEnd) : null,
-							skyExposure: results[1] ? results[1].map(v => v / TOME_WEIGHT) : null,
-							mrt: results[2] ? results[2].slice(parityMode ? 0 : augustStart, parityMode ? results[2].length : augustEnd) : null,
-							shortErf: mrtComponents?.shortErf ? mrtComponents.shortErf.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.shortErf.length : augustEnd) : null,
-							longErf: mrtComponents?.longErf ? mrtComponents.longErf.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.longErf.length : augustEnd) : null,
-							shortDmrt: mrtComponents?.shortDmrt ? mrtComponents.shortDmrt.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.shortDmrt.length : augustEnd) : null,
-							longDmrt: mrtComponents?.longDmrt ? mrtComponents.longDmrt.slice(parityMode ? 0 : augustStart, parityMode ? mrtComponents.longDmrt.length : augustEnd) : null,
+							solarExposure:
+								toNumberArrayOrUndefined(
+									results[0]
+										? results[0].slice(
+												parityMode ? 0 : augustStart,
+												parityMode ? results[0].length : augustEnd,
+											)
+										: null,
+								),
+							skyExposure:
+								toNumberArrayOrUndefined(
+									results[1] ? results[1].map((v) => v / TOME_WEIGHT) : null,
+								),
+							mrt: toNumberArrayOrUndefined(
+								results[2]
+									? results[2].slice(
+											parityMode ? 0 : augustStart,
+											parityMode ? results[2].length : augustEnd,
+										)
+									: null,
+							),
+							shortErf: toNumberArrayOrUndefined(
+								mrtComponents?.shortErf
+									? mrtComponents.shortErf.slice(
+											parityMode ? 0 : augustStart,
+											parityMode ? mrtComponents.shortErf.length : augustEnd,
+										)
+									: null,
+							),
+							longErf: toNumberArrayOrUndefined(
+								mrtComponents?.longErf
+									? mrtComponents.longErf.slice(
+											parityMode ? 0 : augustStart,
+											parityMode ? mrtComponents.longErf.length : augustEnd,
+										)
+									: null,
+							),
+							shortDmrt: toNumberArrayOrUndefined(
+								mrtComponents?.shortDmrt
+									? mrtComponents.shortDmrt.slice(
+											parityMode ? 0 : augustStart,
+											parityMode ? mrtComponents.shortDmrt.length : augustEnd,
+										)
+									: null,
+							),
+							longDmrt: toNumberArrayOrUndefined(
+								mrtComponents?.longDmrt
+									? mrtComponents.longDmrt.slice(
+											parityMode ? 0 : augustStart,
+											parityMode ? mrtComponents.longDmrt.length : augustEnd,
+										)
+									: null,
+							),
 							numPoints,
 							numHours: 24,
 							numMonths: 1,

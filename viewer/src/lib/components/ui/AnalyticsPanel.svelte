@@ -19,6 +19,11 @@
 	} from "$lib/services/validationService";
 	import { getShadingIndex, getUTCIForHour } from "$lib/services/dataLoader";
 	import type { ComparisonStats } from "$lib/services/validationService";
+	import {
+		hasCompactUtciStorage,
+		hasDecodedUtciByHour,
+		isSingleHourData,
+	} from "$lib/types/analysis";
 	import type { Analysis } from "$lib/types/analysis";
 
 	let validationStats: ComparisonStats | null = null;
@@ -95,13 +100,13 @@
 
 	function hasLoadedMetricData(analysis: Analysis | null): boolean {
 		if (!analysis) return false;
-		if (analysis.metadata.analysis_type === "single_hour") {
-			return ((analysis.data as any).utciValues?.length ?? 0) > 0;
+		if (isSingleHourData(analysis.data)) {
+			return analysis.data.utciValues.length > 0;
 		}
-		return (
-			analysis.data.utciStorage != null ||
-			(analysis.data.utciByHour?.length ?? 0) > 0
-		);
+		if (hasCompactUtciStorage(analysis.data)) {
+			return true;
+		}
+		return hasDecodedUtciByHour(analysis.data) && analysis.data.utciByHour.length > 0;
 	}
 
 	async function loadValidation() {
@@ -167,8 +172,8 @@
 
 		let utciValues: Float32Array;
 
-		if (analysis.metadata.analysis_type === "single_hour") {
-			utciValues = (analysis.data as any).utciValues;
+		if (isSingleHourData(analysis.data)) {
+			utciValues = analysis.data.utciValues;
 		} else {
 			if (hourIndex < 0 || hourIndex >= analysis.data.numHours) return null;
 			utciValues = getUTCIForHour(analysis.data, hourIndex);

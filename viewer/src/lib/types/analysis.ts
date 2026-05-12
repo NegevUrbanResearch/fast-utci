@@ -45,6 +45,47 @@ export interface FullDayData {
  */
 export type UTCIData = SingleHourData | FullDayData;
 
+function hasFloat32ArrayValues(value: unknown): value is Float32Array {
+	return value instanceof Float32Array;
+}
+
+function hasUtciStorageShape(value: unknown): value is UtciStorage {
+	if (typeof value !== 'object' || value === null) return false;
+
+	const candidate = value as Partial<UtciStorage>;
+	return (
+		candidate.buffer instanceof Int16Array &&
+		typeof candidate.numPoints === 'number' &&
+		typeof candidate.numSlices === 'number' &&
+		typeof candidate.scale === 'number'
+	);
+}
+
+export function isSingleHourData(data: UTCIData): data is SingleHourData {
+	return data.numHours === 1 && hasFloat32ArrayValues((data as { utciValues?: unknown }).utciValues);
+}
+
+export function isFullDayData(data: UTCIData): data is FullDayData {
+	return !isSingleHourData(data) && (hasDecodedUtciByHour(data) || hasCompactUtciStorage(data));
+}
+
+export function hasDecodedUtciByHour(
+	data: UTCIData
+): data is UTCIData & { utciByHour: Float32Array[] } {
+	const candidate = (data as { utciByHour?: unknown }).utciByHour;
+	return (
+		Array.isArray(candidate) &&
+		candidate.length > 0 &&
+		candidate.every((slice) => hasFloat32ArrayValues(slice))
+	);
+}
+
+export function hasCompactUtciStorage(
+	data: UTCIData
+): data is UTCIData & { utciStorage: UtciStorage } {
+	return hasUtciStorageShape((data as { utciStorage?: unknown }).utciStorage);
+}
+
 /**
  * UTCI value range
  */
@@ -132,4 +173,3 @@ export interface Position {
 	y: number;
 	z: number;
 }
-

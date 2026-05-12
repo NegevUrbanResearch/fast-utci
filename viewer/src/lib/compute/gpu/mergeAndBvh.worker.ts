@@ -61,6 +61,38 @@ function uniqueTransferList(buffers: ArrayBuffer[]): Transferable[] {
 	return transfer;
 }
 
+function ensureOwnedFloat32Array(view: Float32Array): Float32Array {
+	const { buffer, byteOffset, byteLength } = view;
+	if (
+		buffer instanceof ArrayBuffer &&
+		byteOffset === 0 &&
+		byteLength === buffer.byteLength
+	) {
+		return view;
+	}
+	return new Float32Array(new Uint8Array(buffer, byteOffset, byteLength).slice().buffer);
+}
+
+function ensureOwnedUint32Array(view: Uint32Array): Uint32Array {
+	const { buffer, byteOffset, byteLength } = view;
+	if (
+		buffer instanceof ArrayBuffer &&
+		byteOffset === 0 &&
+		byteLength === buffer.byteLength
+	) {
+		return view;
+	}
+	return new Uint32Array(new Uint8Array(buffer, byteOffset, byteLength).slice().buffer);
+}
+
+function ownedTransferBuffer(view: ArrayBufferView): ArrayBuffer {
+	const { buffer } = view;
+	if (buffer instanceof ArrayBuffer) {
+		return buffer;
+	}
+	return new Uint8Array(buffer).slice().buffer;
+}
+
 function postProgress(stage: 'prepare' | 'merge' | 'grid' | 'bvh' | 'transfer', ms?: number, numPoints?: number) {
 	workerScope.postMessage({ type: 'progress', stage, ...(typeof ms === 'number' ? { ms } : {}), ...(typeof numPoints === 'number' ? { numPoints } : {}) });
 }
@@ -131,11 +163,13 @@ async function handleStart(req: StartRequest) {
 
 	const gridPoints = new Float32Array(0);
 	postProgress('transfer', performance.now() - t0, 0);
+	const vertexBuffer = ensureOwnedFloat32Array(serialized.vertexBuffer);
+	const indexBuffer = ensureOwnedUint32Array(serialized.indexBuffer);
 	const transferList = uniqueTransferList([
 		serialized.bvhNodeBuffer,
 		serialized.bvhIndexBuffer,
-		serialized.vertexBuffer.buffer,
-		serialized.indexBuffer.buffer
+		ownedTransferBuffer(vertexBuffer),
+		ownedTransferBuffer(indexBuffer)
 	]);
 	workerScope.postMessage(
 		{
@@ -143,8 +177,8 @@ async function handleStart(req: StartRequest) {
 			serializedBvh: {
 				bvhNodeBuffer: serialized.bvhNodeBuffer,
 				bvhIndexBuffer: serialized.bvhIndexBuffer,
-				vertexBuffer: serialized.vertexBuffer,
-				indexBuffer: serialized.indexBuffer
+				vertexBuffer,
+				indexBuffer
 			}
 		},
 		transferList

@@ -13,6 +13,7 @@ describe('loadWebgpuCollectedFromFs', () => {
 		expect(out.solar?.numPositions).toBe(2);
 		expect(out.solar?.numHours).toBe(24);
 		expect(out.solar?.solarExposure).toBeDefined();
-		expect(Array.isArray(out.solar?.solarExposure) || out.solar?.solarExposure instanceof Float32Array).toBe(true);
+		const solarExposure = out.solar?.solarExposure;
+		expect(Array.isArray(solarExposure) || ArrayBuffer.isView(solarExposure as unknown)).toBe(true);
 	});
 });

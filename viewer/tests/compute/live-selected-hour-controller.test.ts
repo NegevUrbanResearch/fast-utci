@@ -6,6 +6,7 @@ import type {
 	SelectedHourLiveResult,
 	SelectedHourLiveSession
 } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import type { SelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 import {
 	createLiveSelectedHourController,
 	type LiveSelectedHourController,
@@ -502,7 +503,7 @@ describe('liveSelectedHourController', () => {
 
 	it('does not destroy a stale rejected GPU output when it shares the current accepted output handle', async () => {
 		const destroy = vi.fn();
-		const sharedHandle = {
+		const sharedHandle: SelectedHourOutputHandle = {
 			buffer: { destroy } as unknown as GPUBuffer,
 			byteLength: 4,
 			requestId: 31,
@@ -610,7 +611,7 @@ describe('liveSelectedHourController', () => {
 
 	it('does not destroy a stale rejected GPU output when it shares a retired accepted output handle', async () => {
 		const destroy = vi.fn();
-		const sharedHandle = {
+		const sharedHandle: SelectedHourOutputHandle = {
 			buffer: { destroy } as unknown as GPUBuffer,
 			byteLength: 4,
 			requestId: 41,

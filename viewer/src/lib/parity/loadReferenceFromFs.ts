@@ -73,9 +73,9 @@ export async function loadReferenceFromFs(basePath: string): Promise<ReferenceDa
 	} catch (e) {
 		throw new Error(`Failed to load binary from ${binaryPath}: ${e}`);
 	}
-	const data = parseFullDayBinaryNode(
-		buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-	);
+	const ownedBuffer = new Uint8Array(buffer.byteLength);
+	ownedBuffer.set(buffer);
+	const data = parseFullDayBinaryNode(ownedBuffer.buffer);
 	return {
 		metadata,
 		data: {

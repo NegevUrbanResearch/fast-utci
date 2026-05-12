@@ -20,6 +20,7 @@ type StrictExposureOnlyDiagnostics = {
 	gpuResidentCopyError?: string;
 	acceptedGpuResidentUtciRange?: { min: number; max: number };
 	renderTransport?: 'none' | 'compute-buffer-selected-hour' | 'cpu-uploaded-selected-hour';
+	appVisibleSelectedHour?: boolean;
 	path?: string;
 	usedExposureOnlyPrecompute?: boolean;
 	usedRunAllForSelectedHour?: boolean;

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Analysis } from '$lib/types/analysis';
+import type { LiveSelectedHourControllerState } from '$lib/compute/selected-hour/liveSelectedHourController';
 import type { LiveSelectedHourRouteState } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import { projectMainRouteLiveSceneState } from '$lib/compute/selected-hour/liveSelectedHourRouteProjection';
+import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 
 function createFullDayAnalysis(label: string): Analysis {
 	return {
@@ -25,38 +27,43 @@ function createFullDayAnalysis(label: string): Analysis {
 	};
 }
 
+function createControllerState(): LiveSelectedHourControllerState {
+	return {
+		analysis: null,
+		acceptedGpuResidentOutput: null,
+		surfaceIdentity: null,
+		acceptedVisibleSurface: null,
+		acceptedRequestId: undefined,
+		acceptedSelectionKey: undefined,
+		acceptedVisibleAtMs: undefined,
+		visibleSelectedHourReadbackCount: undefined,
+		readbackInstrumentation: 'not-instrumented',
+		selectedHourReadbackReasons: [],
+		selectedHourReadbackReasonCounts: {},
+		loading: false,
+		error: null,
+		renderTransport: 'idle',
+		sameDeviceForComputeAndRender: null,
+		pendingRenderUpdateStartedAt: undefined,
+		renderSurfaceDiagnostics: {},
+		ready: false,
+		renderReady: false,
+		awaitingGpuSurface: false
+	};
+}
+
 function createState(): LiveSelectedHourRouteState {
 	return {
-		base: {
-			analysis: null,
-			acceptedGpuResidentOutput: null,
-			surfaceIdentity: null,
-			loading: false,
-			error: null,
-			renderTransport: 'idle',
-			sameDeviceForComputeAndRender: null,
-			pendingRenderUpdateStartedAt: undefined,
-			renderSurfaceDiagnostics: {},
-			ready: false,
-			renderReady: false,
-			awaitingGpuSurface: false
-		},
-		comparison: {
-			analysis: null,
-			acceptedGpuResidentOutput: null,
-			surfaceIdentity: null,
-			loading: false,
-			error: null,
-			renderTransport: 'idle',
-			sameDeviceForComputeAndRender: null,
-			pendingRenderUpdateStartedAt: undefined,
-			renderSurfaceDiagnostics: {},
-			ready: false,
-			renderReady: false,
-			awaitingGpuSurface: false
-		},
+		base: createControllerState(),
+		comparison: createControllerState(),
 		baseDisplayAnalysis: null,
 		comparisonDisplayAnalysis: undefined,
+		primaryAcceptedVisibleSurface: null,
+		baseAcceptedVisibleSurface: null,
+		comparisonAcceptedVisibleSurface: null,
+		acceptedRequestId: undefined,
+		acceptedSelectionKey: undefined,
+		acceptedVisibleAtMs: undefined,
 		baseHasVisibleLiveSurface: false,
 		comparisonHasVisibleLiveSurface: false,
 		baseSceneSurfaceIdentity: null,
@@ -123,7 +130,7 @@ describe('projectMainRouteLiveSceneState', () => {
 				timeIndex: 180,
 				gpuBuffer: { label: 'gpu-buffer' } as unknown as GPUBuffer
 			}
-		};
+		} satisfies SelectedHourGpuResidentOutput;
 		const liveRouteState = createState();
 		liveRouteState.baseDisplayAnalysis = bootstrapAnalysis;
 		liveRouteState.baseHasVisibleLiveSurface = false;
@@ -179,7 +186,7 @@ describe('projectMainRouteLiveSceneState', () => {
 				timeIndex: 42,
 				gpuBuffer: { label: 'comparison-gpu-buffer' } as unknown as GPUBuffer
 			}
-		};
+		} satisfies SelectedHourGpuResidentOutput;
 		const liveRouteState = createState();
 		liveRouteState.comparisonDisplayAnalysis = comparisonAnalysis;
 		liveRouteState.comparisonHasVisibleLiveSurface = false;
@@ -244,7 +251,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 15,
 			timeIndex: 183,
 			selectionKey: 'base-cpu|7|15',
-			colorMode: 'continuous',
+			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
 		};
@@ -290,7 +297,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 9,
 			timeIndex: 42,
 			selectionKey: 'winter-cpu|1|9',
-			colorMode: 'continuous',
+			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
 		};
@@ -369,7 +376,7 @@ describe('projectMainRouteLiveSceneState', () => {
 				timeIndex: 181,
 				gpuBuffer: { label: 'pending-gpu-buffer' } as unknown as GPUBuffer
 			}
-		};
+		} satisfies SelectedHourGpuResidentOutput;
 		const liveRouteState = createState();
 		liveRouteState.baseDisplayAnalysis = liveAnalysis;
 		liveRouteState.baseHasVisibleLiveSurface = true;

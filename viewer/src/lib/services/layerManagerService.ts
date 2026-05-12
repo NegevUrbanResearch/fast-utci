@@ -37,8 +37,7 @@ export function discoverLayers(model: THREE.Group): Map<string, THREE.Mesh[]> {
 	model.traverse((child) => {
 		// Only track meshes that have layerType in userData
 		// Skip line segments (edges) - they're children of merged meshes
-		if (child.isMesh && child.userData.layerType) {
-			const mesh = child as THREE.Mesh;
+		if (child instanceof THREE.Mesh && child.userData.layerType) {
 			const layerType = child.userData.layerType as string;
 			
 			// Skip edge lines (they're not the actual layer meshes)
@@ -49,7 +48,7 @@ export function discoverLayers(model: THREE.Group): Map<string, THREE.Mesh[]> {
 			if (!layers.has(layerType)) {
 				layers.set(layerType, []);
 			}
-			layers.get(layerType)!.push(mesh);
+			layers.get(layerType)!.push(child);
 		}
 	});
 	
@@ -94,7 +93,7 @@ export function toggleLayerVisibility(layerType: string, visible: boolean): void
 		// Also handle edge lines if they exist (children of merged building meshes)
 		if (mesh.children.length > 0) {
 			mesh.children.forEach((child) => {
-				if (child.isLineSegments && child.name.includes('_edges')) {
+				if (child instanceof THREE.LineSegments && child.name.includes('_edges')) {
 					child.visible = visible;
 				}
 			});

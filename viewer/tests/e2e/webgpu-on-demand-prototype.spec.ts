@@ -41,6 +41,7 @@ type MainRouteUtciRenderDiagnostics = {
 	selectedHourTransferCount?: number;
 	dataTextureBuildCount?: number;
 	baseRenderTransport?: string;
+	baseSameDeviceForComputeAndRender?: boolean | null;
 	comparisonRenderTransport?: string;
 	baseLiveReady?: boolean;
 	comparisonLiveReady?: boolean;
@@ -838,6 +839,8 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 					rendererBackend: string;
 					utciRenderRequested?: string;
 					utciRenderResolved?: string;
+					renderTransport?: string;
+					utciSurfaceSource?: string;
 				};
 			}).__onDemandPrototypeDiagnostics__;
 		});

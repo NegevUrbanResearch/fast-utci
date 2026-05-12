@@ -22,6 +22,7 @@ import {
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 const DEFAULT_BASE_PATH = 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday';
 type CompareMode = 'strict' | 'stats';
+type MrtComponentLabel = 'short_erf' | 'long_erf' | 'short_dmrt' | 'long_dmrt';
 const UTCI_POINTWISE_TOLERANCE = 2;
 
 function parseArgs(): { basePath: string; reportPath: string | null; mode: CompareMode } {
@@ -253,13 +254,13 @@ async function main(): Promise<void> {
 			const ref = await loadReferenceIntermediatesFromFs(basePath, 'mrt');
 			const componentOut: Record<string, unknown> = {};
 			const compareMrtComponent = (
-				label: 'short_erf' | 'long_erf' | 'short_dmrt' | 'long_dmrt',
+				label: MrtComponentLabel,
 				toleranceStrict: number,
 				toleranceMean: number,
 				toleranceMax: number
 			): boolean => {
-				const refArr = (ref as Record<string, unknown>)[label] as Float32Array | undefined;
-				const wgArrRaw = (webgpu.mrt as Record<string, unknown>)[label] as number[] | undefined;
+				const refArr = ref[label];
+				const wgArrRaw = webgpu.mrt?.[label];
 				const hasRef = !!refArr;
 				const hasWebgpu = !!wgArrRaw;
 				if (!hasRef && !hasWebgpu) {
@@ -278,8 +279,11 @@ async function main(): Promise<void> {
 					return false;
 				}
 				// Both are present here.
-				const refComponent = refArr as Float32Array;
-				const wgComponent = wgArrRaw as number[];
+				if (!refArr || !wgArrRaw) {
+					throw new Error(`${label}: internal component narrowing failed`);
+				}
+				const refComponent = refArr;
+				const wgComponent = wgArrRaw;
 				if (mode === 'strict') {
 					const result = compareIntermediates({
 						ref: refComponent,

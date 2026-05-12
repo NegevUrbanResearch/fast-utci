@@ -118,26 +118,24 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 
 	model.traverse((child) => {
 		// Remove lines/curves that aren't needed (not building edges we add)
-		if (child.isLine || child.isLineSegments) {
+		if (child instanceof THREE.Line || child instanceof THREE.LineSegments) {
 			if (!child.name.includes('_edges')) {
 				itemsToRemove.push(child);
 			}
 			return;
 		}
 		
-		if (child.isMesh) {
-			const mesh = child as THREE.Mesh;
-			
+		if (child instanceof THREE.Mesh) {
 			// Extract layer name from scene graph
-			const layerName = getLayerName(mesh);
+			const layerName = getLayerName(child);
 			const layerType = mapLayerNameToType(layerName);
 			
 			// Apply material based on layer type (from pool)
-			mesh.material = getMaterial(layerType);
+			child.material = getMaterial(layerType);
 			
 			// Store layer info in userData for later use (visibility toggles, etc.)
-			mesh.userData.layerType = layerType;
-			mesh.userData.layerName = layerName;
+			child.userData.layerType = layerType;
+			child.userData.layerName = layerName;
 			
 			// Track layer statistics
 			if (!layerStats[layerType]) {
@@ -149,11 +147,11 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 			if (!meshesByLayer.has(layerType)) {
 				meshesByLayer.set(layerType, []);
 			}
-			meshesByLayer.get(layerType)!.push(mesh);
+			meshesByLayer.get(layerType)!.push(child);
 			
 			// Shadow settings (all layers cast/receive shadows initially)
-			mesh.castShadow = true;
-			mesh.receiveShadow = true;
+			child.castShadow = true;
+			child.receiveShadow = true;
 		}
 	});
 
@@ -236,7 +234,7 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 		(baseMaterial as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean; polygonOffset?: boolean }).polygonOffset = false;
 
 		model.traverse((child) => {
-			if (child.isMesh && child.userData.layerType === 'base') {
+			if (child instanceof THREE.Mesh && child.userData.layerType === 'base') {
 				child.material = baseMaterial;
 			}
 		});
@@ -423,4 +421,3 @@ async function mergeLayerMeshesBatched(
 
 	return mergedMesh;
 }
-

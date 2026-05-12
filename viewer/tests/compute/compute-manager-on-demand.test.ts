@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
+import {
+	createEmptyOnDemandDiagnostics,
+	type OnDemandRuntimeDiagnostics
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import type {
 	ExposurePrecomputeParams,
 	OnDemandUtciOutput,
@@ -92,20 +95,12 @@ describe('ComputeManager on-demand wrappers', () => {
 
 	it('getOnDemandDiagnostics surfaces pipeline runtime diagnostics when supported', () => {
 		const diagnostics: OnDemandRuntimeDiagnostics = {
+			...createEmptyOnDemandDiagnostics(),
 			navigatorGpu: true,
 			rendererBackend: 'webgpu',
 			path: 'exposure-only-f32',
-			timeIndices: [],
-			usedRunAllForSelectedHour: false,
 			usedExposureOnlyPrecompute: true,
-			allHoursUtciBytesAllocated: 0,
-			allHoursMrtBytesAllocated: 0,
-			oneHourOutputBytes: 400,
-			selectedHourTransferCount: 0,
-			renderTransport: 'none',
-			debugReadbackCount: 0,
-			dataTextureBuildCount: 0,
-			timings: {}
+			oneHourOutputBytes: 400
 		};
 		const pipeline: UTCIComputePipeline = {
 			...basePipeline(),

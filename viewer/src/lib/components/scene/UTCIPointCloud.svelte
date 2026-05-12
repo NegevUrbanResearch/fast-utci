@@ -75,6 +75,7 @@
 	let gpuResidentCopyRequestId: number | undefined = undefined;
 	let gpuResidentRenderTimings: SelectedHourRenderTimingSubsteps | undefined = undefined;
 	const { renderer, scene, invalidate } = useThrelte();
+	$: void model;
 
 	function setComputeBufferSurfacePendingStorageInit(mesh: Mesh): void {
 		mesh.visible = true;

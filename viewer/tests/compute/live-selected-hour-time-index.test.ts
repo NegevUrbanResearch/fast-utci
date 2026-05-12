@@ -11,7 +11,7 @@ function createAugustAnalysis(): Analysis {
 		metadata: {
 			analysis_type: 'full_day',
 			num_positions: 2,
-			hours: Array.from({ length: 24 }, (_, hour) => hour),
+			hours: Array.from({ length: 24 }, (_, hour) => `${hour}:00`),
 			date: '20250815',
 			utci_range: { min: 23, max: 38 },
 			hour_statistics: Array.from({ length: 24 }, (_, hour) => ({

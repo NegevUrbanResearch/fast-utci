@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	createSelectedHourOutputHandle,
 	disposeSelectedHourOutputHandle
-} from '$lib/compute/selected-hour/selectedHourOutputHandle';
+} from '$lib/compute/gpu/selectedHourOutputHandle';
 
 describe('selectedHourOutputHandle', () => {
 	it('disposes the owned GPU buffer once', () => {

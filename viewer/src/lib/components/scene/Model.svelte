@@ -3,6 +3,11 @@
 	// This ensures each model load gets a truly unique URL, preventing Threlte from
 	// serving a cached (and mutated) version when we return to a previously loaded model
 	let globalModelVersion = 0;
+
+	function nextGlobalModelVersion(): number {
+		globalModelVersion++;
+		return globalModelVersion;
+	}
 </script>
 
 <script lang="ts">
@@ -184,9 +189,7 @@
 			console.log(`[MODEL] Loading model from file: ${modelPath}`);
 			useCache = false;
 			cachedScene = undefined;
-			// @ts-expect-error - Svelte warns about module var mutation but it's intentional here
-			globalModelVersion++;
-			currentModelVersion = globalModelVersion;
+			currentModelVersion = nextGlobalModelVersion();
 		}
 	})()
 	
@@ -224,7 +227,9 @@
 
 <!-- When cached, render the cloned scene directly; otherwise load via GLTF -->
 {#if useCache && gltfGroup}
-	<T is={THREE.Group} oncreate={(ref) => ref.add(gltfGroup!)}>
+	<T is={THREE.Group} oncreate={(ref) => {
+		ref.add(gltfGroup!);
+	}}>
 		<slot />
 	</T>
 {:else}

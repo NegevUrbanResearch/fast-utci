@@ -29,6 +29,9 @@ export interface MrtReference {
  * @param basePath - Full path without extension, e.g. .../Ben-Gurion/20250815_grid_2m_fullday
  * @param stage - 'solar' | 'sky' | 'mrt'
  */
+export function loadReferenceIntermediatesFromFs(basePath: string, stage: 'solar'): Promise<SolarReference>;
+export function loadReferenceIntermediatesFromFs(basePath: string, stage: 'sky'): Promise<SkyReference>;
+export function loadReferenceIntermediatesFromFs(basePath: string, stage: 'mrt'): Promise<MrtReference>;
 export async function loadReferenceIntermediatesFromFs(
 	basePath: string,
 	stage: 'solar' | 'sky' | 'mrt'

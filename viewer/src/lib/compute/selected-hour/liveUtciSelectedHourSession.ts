@@ -20,7 +20,7 @@ import {
 	createSelectedHourOutputHandle,
 	disposeSelectedHourOutputHandle,
 	type SelectedHourOutputHandle
-} from '$lib/compute/selected-hour/selectedHourOutputHandle';
+} from '$lib/compute/gpu/selectedHourOutputHandle';
 import {
 	createEmptyOnDemandDiagnostics,
 	recordSelectedHourReadbackReason,

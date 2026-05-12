@@ -49,12 +49,14 @@ export class LRUCache<V> {
 		// If at capacity, evict least recently used (first item)
 		else if (this.cache.size >= this.maxSize) {
 			const firstKey = this.cache.keys().next().value;
-			const evictedValue = this.cache.get(firstKey)!;
-			this.cache.delete(firstKey);
-			
-			// Call eviction callback if provided
-			if (this.onEvict) {
-				this.onEvict(firstKey, evictedValue);
+			if (firstKey !== undefined) {
+				const evictedValue = this.cache.get(firstKey)!;
+				this.cache.delete(firstKey);
+
+				// Call eviction callback if provided
+				if (this.onEvict) {
+					this.onEvict(firstKey, evictedValue);
+				}
 			}
 		}
 

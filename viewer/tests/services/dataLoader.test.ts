@@ -9,6 +9,10 @@ import {
 	loadAnalysisMetadataOnly
 } from '$lib/services/dataLoader';
 import { buildUtciGridLayout } from '$lib/services/pointCloudService';
+import {
+	hasDecodedUtciByHour,
+	isSingleHourData
+} from '$lib/types/analysis';
 import type { SingleHourData, FullDayData } from '$lib/types/analysis';
 
 // Helper to create ArrayBuffer with binary data
@@ -101,7 +105,8 @@ describe('dataLoader service', () => {
 			expect(analysis.data.positions).toEqual(
 				new Float32Array([0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1])
 			);
-			expect(analysis.data.utciByHour).toEqual([]);
+			expect(hasDecodedUtciByHour(analysis.data)).toBe(false);
+			expect('utciByHour' in analysis.data ? analysis.data.utciByHour : undefined).toEqual([]);
 		});
 
 		it('stores xy-ground metadata-only grid positions in analysis coordinates', async () => {
@@ -235,6 +240,10 @@ describe('dataLoader service', () => {
 			expect(result.numPositions).toBe(2);
 			expect(result.numHours).toBe(3);
 			expect(result.positions).toBeInstanceOf(Float32Array);
+			expect(hasDecodedUtciByHour(result)).toBe(true);
+			if (!hasDecodedUtciByHour(result)) {
+				throw new Error('Expected parsed full-day data to expose decoded utciByHour');
+			}
 			expect(result.utciByHour).toHaveLength(3);
 			expect(result.utciByHour[0]).toBeInstanceOf(Float32Array);
 			expect(result.utciByHour[0].length).toBe(2);
@@ -339,6 +348,7 @@ describe('dataLoader service', () => {
 			};
 			
 			const values = getUTCIForHour(data);
+			expect(isSingleHourData(data)).toBe(true);
 			expect(values).toBe(data.utciValues);
 		});
 
@@ -354,6 +364,10 @@ describe('dataLoader service', () => {
 			};
 			
 			const hour0 = getUTCIForHour(data, 0);
+			expect(hasDecodedUtciByHour(data)).toBe(true);
+			if (!hasDecodedUtciByHour(data)) {
+				throw new Error('Expected full-day test fixture to expose decoded utciByHour');
+			}
 			expect(hour0).toBe(data.utciByHour[0]);
 			
 			const hour1 = getUTCIForHour(data, 1);

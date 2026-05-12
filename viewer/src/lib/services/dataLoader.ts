@@ -12,8 +12,12 @@ import type {
 	UTCIData,
 	Analysis,
 	Position,
-	HourStatistics,
-	UtciStorage
+	HourStatistics
+} from '$lib/types/analysis';
+import {
+	isSingleHourData,
+	hasCompactUtciStorage,
+	hasDecodedUtciByHour
 } from '$lib/types/analysis';
 import { canonicalGridPoints } from '$lib/compute/core/canonicalGrid';
 
@@ -316,17 +320,22 @@ function canonicalGridPointsToAnalysisPositions(params: {
  * @returns UTCI value in Celsius
  */
 export function getUTCIValue(data: UTCIData, positionIndex: number, hourIndex: number = 0): number {
-	if (data.numHours === 1) {
-		return (data as SingleHourData).utciValues[positionIndex];
+	if (isSingleHourData(data)) {
+		return data.utciValues[positionIndex];
 	}
-	const full = data as FullDayData;
-	if (full.utciStorage) {
-		const { buffer, numPoints, scale, numSlices } = full.utciStorage;
+	if (hasCompactUtciStorage(data)) {
+		const { buffer, numPoints, scale, numSlices } = data.utciStorage;
 		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
 		const idx = sliceIndex * numPoints + positionIndex;
 		return buffer[idx] / scale;
 	}
-	return full.utciByHour![hourIndex][positionIndex];
+	if (hasDecodedUtciByHour(data)) {
+		const hourValues = data.utciByHour[hourIndex];
+		if (hourValues) {
+			return hourValues[positionIndex];
+		}
+	}
+	throw new Error('Full-day UTCI data is missing utciStorage and decoded utciByHour slices');
 }
 
 /**
@@ -352,12 +361,11 @@ export function getPosition(data: UTCIData, positionIndex: number): Position {
  * @returns Array of UTCI values
  */
 export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Array {
-	if (data.numHours === 1) {
-		return (data as SingleHourData).utciValues;
+	if (isSingleHourData(data)) {
+		return data.utciValues;
 	}
-	const full = data as FullDayData;
-	if (full.utciStorage) {
-		const { buffer, numPoints, scale, numSlices } = full.utciStorage;
+	if (hasCompactUtciStorage(data)) {
+		const { buffer, numPoints, scale, numSlices } = data.utciStorage;
 		// Clamp to valid slice index to avoid reading wrong month data
 		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
 		const out = new Float32Array(numPoints);
@@ -367,7 +375,13 @@ export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Ar
 		}
 		return out;
 	}
-	return full.utciByHour![hourIndex];
+	if (hasDecodedUtciByHour(data)) {
+		const hourValues = data.utciByHour[hourIndex];
+		if (hourValues) {
+			return hourValues;
+		}
+	}
+	throw new Error('Full-day UTCI data is missing utciStorage and decoded utciByHour slices');
 }
 
 /**
@@ -394,11 +408,7 @@ export function getUtciByHourForExport(data: FullDayData): number[][] {
  * @returns Shading Index array if available, null otherwise
  */
 export function getShadingIndex(data: UTCIData): Float32Array | null {
-	if (data.numHours === 1) {
-		return (data as SingleHourData).shadingIndex || null;
-	} else {
-		return (data as FullDayData).shadingIndex || null;
-	}
+	return data.shadingIndex || null;
 }
 
 /**

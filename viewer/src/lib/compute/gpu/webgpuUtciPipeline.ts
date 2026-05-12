@@ -10,7 +10,7 @@ import {
 	recordOnDemandTiming,
 	type OnDemandRuntimeDiagnostics
 } from '$lib/compute/on-demand/onDemandDiagnostics';
-import { createSelectedHourOutputHandle } from '$lib/compute/selected-hour/selectedHourOutputHandle';
+import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 import { serializeBvhForGpu } from '$lib/compute/gpu/bvhGpuUpload';
 import * as THREE from 'three';
 import mrtUtciShaderRaw from '$lib/compute/gpu/shaders/mrt_utci.wgsl?raw';

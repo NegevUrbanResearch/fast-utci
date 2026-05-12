@@ -83,8 +83,36 @@ function createFakeGpuResidentOutput(requestId: number): SelectedHourGpuResident
 		monthIndex: 7,
 		hourIndex: 12,
 		timeIndex: 180,
-		output: {} as SelectedHourGpuResidentOutput['output'],
+		output: {
+			format: 'f32-utci',
+			numPoints: 2,
+			timeIndex: 180
+		},
 		utciRange: { min: 18, max: 30 }
+	} satisfies SelectedHourGpuResidentOutput;
+}
+
+function createTestSurfaceIdentity(params: {
+	requestId: number;
+	monthIndex: number;
+	hourIndex: number;
+	timeIndex: number;
+	selectionKey: string;
+	pendingRenderUpdateStartedAt: number | undefined;
+	acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
+	controllerIdentity?: string;
+	controllerInstanceId?: number;
+}): LiveSelectedHourSurfaceIdentity {
+	return {
+		controllerIdentity: params.controllerIdentity ?? 'controller',
+		controllerInstanceId: params.controllerInstanceId ?? 0,
+		requestId: params.requestId,
+		monthIndex: params.monthIndex,
+		hourIndex: params.hourIndex,
+		timeIndex: params.timeIndex,
+		selectionKey: params.selectionKey,
+		pendingRenderUpdateStartedAt: params.pendingRenderUpdateStartedAt,
+		acceptedGpuResidentOutput: params.acceptedGpuResidentOutput
 	};
 }
 
@@ -985,7 +1013,7 @@ describe('liveSelectedHourRouteHost', () => {
 						...state,
 						analysis: selectedHourAnalysis,
 						acceptedGpuResidentOutput: pendingGpuResidentOutput,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: pendingGpuResidentOutput.requestId,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -993,7 +1021,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: 1234,
 							acceptedGpuResidentOutput: pendingGpuResidentOutput
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'compute-buffer-selected-hour',
@@ -1011,6 +1039,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -1036,6 +1067,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -1177,6 +1211,9 @@ describe('liveSelectedHourRouteHost', () => {
 				async handleRenderSurfaceDiagnostics() {
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 				dispose() {
 					listeners.clear();
 					state = createInitialControllerState();
@@ -1210,7 +1247,7 @@ describe('liveSelectedHourRouteHost', () => {
 						...state,
 						analysis: selectedHourAnalysis,
 						acceptedGpuResidentOutput: pendingGpuResidentOutput,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: pendingGpuResidentOutput.requestId,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -1218,7 +1255,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: 4321,
 							acceptedGpuResidentOutput: pendingGpuResidentOutput
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'compute-buffer-selected-hour',
@@ -1236,6 +1273,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -1822,7 +1862,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: request.sessionConfig.base,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -1830,7 +1870,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? `selection-${requestId}`,
 							pendingRenderUpdateStartedAt: requestId * 100,
 							acceptedGpuResidentOutput: createFakeGpuResidentOutput(requestId)
-						},
+						}),
 						acceptedGpuResidentOutput: createFakeGpuResidentOutput(requestId),
 						loading: true,
 						error: null,
@@ -1849,6 +1889,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -1875,6 +1918,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -1997,7 +2043,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: null,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -2005,7 +2051,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? `selection-${requestId}`,
 							pendingRenderUpdateStartedAt: requestId * 100,
 							acceptedGpuResidentOutput: createFakeGpuResidentOutput(requestId)
-						},
+						}),
 						acceptedGpuResidentOutput: createFakeGpuResidentOutput(requestId),
 						loading: true,
 						error: null,
@@ -2048,6 +2094,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 				dispose() {
 					listeners.clear();
@@ -2416,7 +2465,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: request.sessionConfig.base,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: baseRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -2424,7 +2473,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'updated-selection',
 							pendingRenderUpdateStartedAt: baseRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'compute-buffer-selected-hour',
@@ -2485,6 +2534,9 @@ describe('liveSelectedHourRouteHost', () => {
 					emit();
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 
 				dispose() {
 					listeners.clear();
@@ -2509,6 +2561,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -2667,7 +2722,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: request.sessionConfig.base,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: baseRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -2675,7 +2730,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: baseRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'cpu-uploaded-selected-hour',
@@ -2703,6 +2758,9 @@ describe('liveSelectedHourRouteHost', () => {
 					};
 					emit();
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 
 				dispose() {
 					listeners.clear();
@@ -2727,6 +2785,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {
@@ -2857,6 +2918,9 @@ describe('liveSelectedHourRouteHost', () => {
 				async handleRenderSurfaceDiagnostics() {
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 				dispose() {
 					listeners.clear();
 					state = createInitialControllerState();
@@ -2893,7 +2957,7 @@ describe('liveSelectedHourRouteHost', () => {
 							baseRequestCount === 1
 								? publishedSelectedHourAnalysis
 								: pendingSelectedHourAnalysis,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: baseRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -2901,7 +2965,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: baseRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'cpu-uploaded-selected-hour',
@@ -2927,6 +2991,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 				dispose() {
 					listeners.clear();
@@ -3041,6 +3108,9 @@ describe('liveSelectedHourRouteHost', () => {
 				async handleRenderSurfaceDiagnostics() {
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 				dispose() {
 					listeners.clear();
 					state = createInitialControllerState();
@@ -3079,7 +3149,7 @@ describe('liveSelectedHourRouteHost', () => {
 							comparisonRequestCount === 1
 								? publishedSelectedHourAnalysis
 								: pendingSelectedHourAnalysis,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: comparisonRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -3087,7 +3157,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: comparisonRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'cpu-uploaded-selected-hour',
@@ -3114,6 +3184,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 
 				dispose() {
@@ -3278,7 +3351,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: request.sessionConfig.base,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: nextRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -3286,7 +3359,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: nextRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'cpu-uploaded-selected-hour',
@@ -3312,6 +3385,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 				dispose() {
 					listeners.clear();
@@ -3471,6 +3547,9 @@ describe('liveSelectedHourRouteHost', () => {
 				async handleRenderSurfaceDiagnostics() {
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 				dispose() {
 					listeners.clear();
 					state = createInitialControllerState();
@@ -3505,7 +3584,7 @@ describe('liveSelectedHourRouteHost', () => {
 						state = {
 							...state,
 							analysis: publishedSelectedHourAnalysis,
-							surfaceIdentity: {
+							surfaceIdentity: createTestSurfaceIdentity({
 								requestId: 1,
 								monthIndex: request.monthIndex,
 								hourIndex: request.hourIndex,
@@ -3513,7 +3592,7 @@ describe('liveSelectedHourRouteHost', () => {
 								selectionKey: request.selectionKey ?? 'selection',
 								pendingRenderUpdateStartedAt: 100,
 								acceptedGpuResidentOutput: null
-							},
+							}),
 							loading: true,
 							error: null,
 							renderTransport: 'cpu-uploaded-selected-hour',
@@ -3542,6 +3621,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 				dispose() {
 					listeners.clear();
@@ -3671,7 +3753,7 @@ describe('liveSelectedHourRouteHost', () => {
 					state = {
 						...state,
 						analysis: request.sessionConfig.base,
-						surfaceIdentity: {
+						surfaceIdentity: createTestSurfaceIdentity({
 							requestId: nextRequestCount,
 							monthIndex: request.monthIndex,
 							hourIndex: request.hourIndex,
@@ -3679,7 +3761,7 @@ describe('liveSelectedHourRouteHost', () => {
 							selectionKey: request.selectionKey ?? 'selection',
 							pendingRenderUpdateStartedAt: nextRequestCount * 100,
 							acceptedGpuResidentOutput: null
-						},
+						}),
 						loading: true,
 						error: null,
 						renderTransport: 'cpu-uploaded-selected-hour',
@@ -3705,6 +3787,9 @@ describe('liveSelectedHourRouteHost', () => {
 						pendingRenderUpdateStartedAt: undefined
 					};
 					emit();
+				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
 				},
 				dispose() {
 					listeners.clear();
@@ -3742,6 +3827,9 @@ describe('liveSelectedHourRouteHost', () => {
 						return { accepted: true, state: createInitialControllerState() };
 					},
 					async handleRenderSurfaceDiagnostics() {
+						return;
+					},
+					releaseAcceptedGpuResidentOutput() {
 						return;
 					},
 					dispose() {
@@ -3876,7 +3964,7 @@ describe('liveSelectedHourRouteHost', () => {
 						state = {
 							...state,
 							analysis: request.sessionConfig.base,
-							surfaceIdentity: {
+							surfaceIdentity: createTestSurfaceIdentity({
 								requestId: 1,
 								monthIndex: request.monthIndex,
 								hourIndex: request.hourIndex,
@@ -3884,7 +3972,7 @@ describe('liveSelectedHourRouteHost', () => {
 								selectionKey: request.selectionKey ?? 'initial-selection',
 								pendingRenderUpdateStartedAt: undefined,
 								acceptedGpuResidentOutput: null
-							},
+							}),
 							loading: false,
 							error: null,
 							renderTransport: 'cpu-uploaded-selected-hour',
@@ -3919,6 +4007,9 @@ describe('liveSelectedHourRouteHost', () => {
 				async handleRenderSurfaceDiagnostics() {
 					return;
 				},
+				releaseAcceptedGpuResidentOutput() {
+					return;
+				},
 
 				dispose() {
 					listeners.clear();
@@ -3943,6 +4034,9 @@ describe('liveSelectedHourRouteHost', () => {
 					return { accepted: true, state: cloneControllerState(state) };
 				},
 				async handleRenderSurfaceDiagnostics() {
+					return;
+				},
+				releaseAcceptedGpuResidentOutput() {
 					return;
 				},
 				dispose() {

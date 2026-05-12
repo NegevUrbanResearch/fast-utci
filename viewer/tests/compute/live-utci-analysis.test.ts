@@ -7,6 +7,11 @@ import {
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
 import type { AnalysisMetadata } from '$lib/types/analysis';
 import {
+	hasCompactUtciStorage,
+	hasDecodedUtciByHour,
+	isSingleHourData,
+} from '$lib/types/analysis';
+import {
 	clearComputeTelemetryHistory,
 	getComputeTelemetryHistory
 } from '$lib/compute/telemetry';
@@ -192,9 +197,9 @@ describe('liveUtciAnalysis adapter', () => {
 		expect(analysis.data.numPositions).toBeGreaterThan(0);
 		expect(analysis.data.positions.length).toBe(analysis.data.numPositions * 3);
 
-		if ('utciStorage' in analysis.data) {
+		if (hasCompactUtciStorage(analysis.data)) {
 			expect(analysis.data.numHours).toBe(24);
-			expect(analysis.data.utciStorage!.numSlices).toBe(24);
+			expect(analysis.data.utciStorage.numSlices).toBe(24);
 
 			const { getUTCIForHour } = await import('$lib/services/dataLoader');
 			for (let h = 0; h < 24; h++) {
@@ -204,10 +209,10 @@ describe('liveUtciAnalysis adapter', () => {
 					expect(Number.isFinite(slice[i])).toBe(true);
 				}
 			}
-		} else if ('utciByHour' in analysis.data) {
+		} else if (hasDecodedUtciByHour(analysis.data)) {
 			expect(analysis.data.numHours).toBe(24);
-			expect(analysis.data.utciByHour!.length).toBe(24);
-			for (const slice of analysis.data.utciByHour!) {
+			expect(analysis.data.utciByHour.length).toBe(24);
+			for (const slice of analysis.data.utciByHour) {
 				expect(slice.length).toBe(analysis.data.numPositions);
 				for (let i = 0; i < slice.length; i++) {
 					expect(Number.isFinite(slice[i])).toBe(true);
@@ -298,8 +303,11 @@ describe('liveUtciAnalysis adapter', () => {
 			{ pipeline }
 		);
 
-		expect(result.data.utciStorage).toBeDefined();
-		expect(result.data.utciStorage!.numSlices).toBe(288);
+		expect(hasCompactUtciStorage(result.data)).toBe(true);
+		if (!hasCompactUtciStorage(result.data)) {
+			throw new Error('Expected 12-month live analysis to expose compact utciStorage');
+		}
+		expect(result.data.utciStorage.numSlices).toBe(288);
 		expect(result.metadata.num_months).toBe(12);
 		expect(result.data.numHours).toBe(288);
 		expect(readUtcisSlice).toHaveBeenCalledTimes(288);
@@ -322,9 +330,16 @@ describe('selected-hour live UTCI helpers', () => {
 		expect(analysis.metadata.num_positions).toBe(3);
 		expect(analysis.metadata.num_months).toBe(1);
 		expect(analysis.metadata.utci_range).toEqual({ min: 5.75, max: 18.25 });
+		expect(isSingleHourData(analysis.data)).toBe(true);
+		if (!isSingleHourData(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose single-hour utciValues');
+		}
 		expect(analysis.data.numHours).toBe(1);
 		expect(analysis.data.utciValues).toBe(utciValues);
-		expect(analysis.data.utciByHour).toEqual([utciValues]);
+		expect(hasDecodedUtciByHour(analysis.data)).toBe(true);
+		if (hasDecodedUtciByHour(analysis.data)) {
+			expect(analysis.data.utciByHour).toEqual([utciValues]);
+		}
 		expect(analysis.data.positions).toBe(base.data.positions);
 		expect(analysis.data.shadingIndex).toBe(base.data.shadingIndex);
 		expect((analysis.data as typeof analysis.data & { selectedMonthIndex: number }).selectedMonthIndex).toBe(2);

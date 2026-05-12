@@ -5,7 +5,7 @@ import {
 	disposeSelectedHourGpuResidentOutput,
 	prepareSelectedHourLiveSession
 } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
-import { createSelectedHourOutputHandle } from '$lib/compute/selected-hour/selectedHourOutputHandle';
+import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 
 const mockState = vi.hoisted(() => ({
 	pipeline: null as any,

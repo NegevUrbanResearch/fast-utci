@@ -165,15 +165,19 @@ async function main(): Promise<void> {
 	console.log('Top cells:', topN);
 	console.log('Binary threshold:', binaryThreshold);
 
-	const [ref, refSolar, refMrt, refSky, webgpu] = await Promise.all([
-		loadReferenceFromFs(basePath),
+	const refPromise = loadReferenceFromFs(basePath);
+	const webgpuPromise = loadWebgpuCollectedFromFs(basePath);
+	const [refSolar, refMrt, refSky] = await Promise.all([
 		loadReferenceIntermediatesFromFs(basePath, 'solar'),
 		loadReferenceIntermediatesFromFs(basePath, 'mrt'),
-		loadReferenceIntermediatesFromFs(basePath, 'sky').catch(() => null),
-		loadWebgpuCollectedFromFs(basePath)
+		loadReferenceIntermediatesFromFs(basePath, 'sky').catch(() => null)
 	]);
+	const [ref, webgpu] = await Promise.all([refPromise, webgpuPromise]);
 	if (!webgpu.solar) throw new Error(`Missing WebGPU solar artifact: ${basePath}_webgpu_solar.json`);
 	if (!webgpu.mrt) throw new Error(`Missing WebGPU MRT artifact: ${basePath}_webgpu_mrt.json`);
+	if (!refMrt.short_erf || !refMrt.short_dmrt || !refMrt.long_erf || !refMrt.long_dmrt) {
+		throw new Error('MRT reference is missing component arrays required for this diagnostic.');
+	}
 
 	if (refSolar.numPositions !== webgpu.solar.numPositions || refSolar.numHours !== webgpu.solar.numHours) {
 		throw new Error(

@@ -14,6 +14,8 @@ describe('compareUtciPointwise', () => {
 		const result = compareUtciPointwise({ ref, webgpu, tolerance: 0.5 });
 		expect(result.pass).toBe(false);
 		expect(result.maxError).toBe(2);
+		expect(result.worst).not.toBeNull();
+		if (!result.worst) throw new Error('Expected worst mismatch');
 		expect(result.worst.hour).toBe(1);
 		expect(result.worst.pointIndex).toBe(1);
 	});

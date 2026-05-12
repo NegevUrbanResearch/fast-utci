@@ -24,9 +24,8 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 
 			// Verify the mesh was remapped to 'base'
 			mesh.traverse((child) => {
-				if (child.isMesh) {
-					const meshChild = child as THREE.Mesh;
-					expect(meshChild.userData.layerType).toBe('base');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('base');
 				}
 			});
 
@@ -57,17 +56,15 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 
 			// Verify base mesh stays as base
 			baseMesh.traverse((child) => {
-				if (child.isMesh) {
-					const meshChild = child as THREE.Mesh;
-					expect(meshChild.userData.layerType).toBe('base');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('base');
 				}
 			});
 
 			// Verify unknown mesh stays as unknown (not remapped)
 			unknownMesh.traverse((child) => {
-				if (child.isMesh) {
-					const meshChild = child as THREE.Mesh;
-					expect(meshChild.userData.layerType).toBe('unknown');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('unknown');
 				}
 			});
 
@@ -98,9 +95,8 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 			// Verify all meshes were remapped to 'base'
 			let baseMeshCount = 0;
 			model.traverse((child) => {
-				if (child.isMesh) {
-					const mesh = child as THREE.Mesh;
-					expect(mesh.userData.layerType).toBe('base');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('base');
 					baseMeshCount++;
 				}
 			});
@@ -135,14 +131,14 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 
 			// Verify layers are correctly identified
 			buildingMesh.traverse((child) => {
-				if (child.isMesh) {
-					expect((child as THREE.Mesh).userData.layerType).toBe('building');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('building');
 				}
 			});
 
 			vegetationMesh.traverse((child) => {
-				if (child.isMesh) {
-					expect((child as THREE.Mesh).userData.layerType).toBe('vegetation');
+				if (child instanceof THREE.Mesh) {
+					expect(child.userData.layerType).toBe('vegetation');
 				}
 			});
 
@@ -167,11 +163,10 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 
 			// Verify the mesh has base material properties
 			mesh.traverse((child) => {
-				if (child.isMesh) {
-					const meshChild = child as THREE.Mesh;
-					expect(meshChild.material).toBeDefined();
+				if (child instanceof THREE.Mesh) {
+					expect(child.material).toBeDefined();
 					// Material should be the base layer material (not unknown material)
-					expect(meshChild.userData.layerType).toBe('base');
+					expect(child.userData.layerType).toBe('base');
 				}
 			});
 		});
@@ -223,4 +218,3 @@ describe('Model Loader Service - Unknown Layer Handling', () => {
 		});
 	});
 });
-

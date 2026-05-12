@@ -84,7 +84,8 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		const pipeline = await createWebgpuUtciPipeline({ device: device as unknown as GPUDevice });
 
 		expect(pipeline.getDeviceForDebug?.()).toBe(device);
-		expect(pipeline.supportsMrtComponentDiagnostics()).toBe(false);
+		expect(pipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(pipeline.supportsMrtComponentDiagnostics?.call(pipeline)).toBe(false);
 	});
 
 	it('enables MRT component diagnostics for a provided device only when its limits support them', async () => {
@@ -100,8 +101,10 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 			enableDiagnostics: true
 		});
 
-		expect(limitedPipeline.supportsMrtComponentDiagnostics()).toBe(false);
-		expect(capablePipeline.supportsMrtComponentDiagnostics()).toBe(true);
+		expect(limitedPipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(capablePipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(limitedPipeline.supportsMrtComponentDiagnostics?.call(limitedPipeline)).toBe(false);
+		expect(capablePipeline.supportsMrtComponentDiagnostics?.call(capablePipeline)).toBe(true);
 	});
 
 	it('clears stale BVH and optional upload buffers when a later upload omits them', async () => {

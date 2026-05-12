@@ -60,10 +60,15 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 						x: number;
 						y: number;
 						z: number;
+						set: (x: number, y: number, z: number) => unknown;
+						applyMatrix4: (m: unknown) => unknown;
 						length: () => number;
 						normalize: () => unknown;
 					};
 					Raycaster: new (origin: unknown, direction: unknown, near?: number, far?: number) => {
+						ray: {
+							intersectsBox: (box: unknown) => boolean;
+						};
 						intersectObject: (obj: unknown, recursive?: boolean) => Array<{
 							distance: number;
 							point: { x: number; y: number; z: number };
@@ -86,6 +91,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 			if (!model || !THREE || !metadata?.sun_positions || !positions) {
 				throw new Error('Missing parity model/THREE/metadata/positions for ray oracle.');
 			}
+			const three = THREE;
 			const touchedMaterials: Array<{ material: { side: number }; prevSide: number }> = [];
 			const touchedMaterialArrays: Array<{ materials: Array<{ side: number }>; prevSides: number[] }> = [];
 			(model as unknown as {
@@ -96,21 +102,21 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 				if (Array.isArray(mesh.material)) {
 					const mats = mesh.material as Array<{ side: number }>;
 					touchedMaterialArrays.push({ materials: mats, prevSides: mats.map((m) => m.side) });
-					for (const m of mats) m.side = (THREE as unknown as { DoubleSide: number }).DoubleSide;
+					for (const m of mats) m.side = (three as unknown as { DoubleSide: number }).DoubleSide;
 					return;
 				}
 				const mat = mesh.material as { side: number };
 				touchedMaterials.push({ material: mat, prevSide: mat.side });
-				mat.side = (THREE as unknown as { DoubleSide: number }).DoubleSide;
+				mat.side = (three as unknown as { DoubleSide: number }).DoubleSide;
 			});
-			const box = new (THREE as unknown as { Box3: new () => { setFromObject: (obj: unknown) => unknown; containsPoint: (v: unknown) => boolean; min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } }).Box3();
+			const box = new (three as unknown as { Box3: new () => { setFromObject: (obj: unknown) => unknown; containsPoint: (v: unknown) => boolean; min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } }).Box3();
 			box.setFromObject(model);
-			const tmpA = new THREE.Vector3();
-			const tmpB = new THREE.Vector3();
-			const tmpC = new THREE.Vector3();
-			const tmpHit = new THREE.Vector3();
-			const tmpBox = new (THREE as unknown as { Box3: new () => { copy: (b: unknown) => unknown; applyMatrix4: (m: unknown) => unknown } }).Box3();
-			const rayCtor = (THREE as unknown as { Ray: new (origin: unknown, direction: unknown) => { intersectTriangle: (a: unknown, b: unknown, c: unknown, backfaceCulling: boolean, target: { x: number; y: number; z: number }) => unknown } }).Ray;
+			const tmpA = new three.Vector3();
+			const tmpB = new three.Vector3();
+			const tmpC = new three.Vector3();
+			const tmpHit = new three.Vector3();
+			const tmpBox = new (three as unknown as { Box3: new () => { copy: (b: unknown) => unknown; applyMatrix4: (m: unknown) => unknown } }).Box3();
+			const rayCtor = (three as unknown as { Ray: new (origin: unknown, direction: unknown) => { intersectTriangle: (a: unknown, b: unknown, c: unknown, backfaceCulling: boolean, target: { x: number; y: number; z: number }) => unknown } }).Ray;
 
 			function bruteForceOcclusion(origin: { x: number; y: number; z: number }, direction: { x: number; y: number; z: number }): { hit: boolean; distance: number | null } {
 				const ray = new rayCtor(origin, direction);
@@ -135,7 +141,7 @@ test.describe('Diagnose solar flip rays with CPU oracle', () => {
 					if (mesh.geometry.boundingBox) {
 						tmpBox.copy(mesh.geometry.boundingBox);
 						tmpBox.applyMatrix4(mesh.matrixWorld);
-						const rc = new THREE.Raycaster(origin as unknown as never, direction as unknown as never, 0, 1_000_000);
+						const rc = new three.Raycaster(origin as unknown as never, direction as unknown as never, 0, 1_000_000);
 						if (rc.ray.intersectsBox(tmpBox as unknown as never) === false) return;
 					}
 					const index = mesh.geometry.getIndex();
