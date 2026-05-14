@@ -9,5 +9,6 @@ export type LiveSelectedHourSurfaceIdentity = {
 	timeIndex: number;
 	selectionKey: string;
 	pendingRenderUpdateStartedAt: number | undefined;
+	selectedHourVisibleStartedAt?: number;
 	acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
 };

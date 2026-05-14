@@ -1,6 +1,6 @@
 # WebGPU Strategy Analysis
 
-Updated: 2026-05-09
+Updated: 2026-05-15
 
 > **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
 
@@ -8,7 +8,7 @@ Updated: 2026-05-09
 
 We should keep the selected-hour **WebGPU compute-on-demand path** as the main direction and make the next decisions from measured cold-start/render-path evidence.
 
-This claim is scoped to the selected-hour active `/debug` route, where the current diagnostics now prove the `compute-buffer-selected-hour` transport. Older `debug-webgpu-utci` route references below are historical captures from before the route rename. It is not yet a blanket statement about every route or fallback path in the repo.
+This claim is now backed by a fresh selected-hour baseline on the main route `/` plus the older debug-route captures below. The current-head main-route artifact is [docs/performance/main-route-selected-hour-current-head.md](performance/main-route-selected-hour-current-head.md). Older `debug-webgpu-utci` route references below are historical captures from before the route rename. It is not yet a blanket statement about every route or fallback path in the repo.
 
 The reason is simple: the viewer already renders with Three.js `WebGPURenderer`, and the current scaling wall is no longer "can we compute UTCI on the GPU?" It is "can the renderer consume GPU-computed UTCI without CPU readback, CPU quantization, and CPU texture/color regeneration?"
 
@@ -39,16 +39,53 @@ Implemented as of 2026-05-09:
 | Debug route default | Plain `/debug` now defaults to on-demand `f32`; `?utciOnDemand=off` opts out, and `?collect=normal` preserves the old full-day collection harness. | `viewer/src/routes/debug/+page.svelte` |
 | MRT diagnostics | Disabled by default; opt-in only when hardware supports enough storage buffers. | `webgpuUtciPipeline.ts` |
 
-## 2026-05-09 App-Visible Cold-Start Snapshot
+## 2026-05-15 Main-Route Selected-Hour Current-HEAD Baseline
 
-This strategy doc should stay the canonical place for the current bottleneck picture.
+Fresh main-route timing now lives in [docs/performance/main-route-selected-hour-current-head.md](performance/main-route-selected-hour-current-head.md).
+
+Scope of that artifact:
+
+- route: `/`, not `/debug`
+- analyses: `Ben-Gurion/20250815_grid_2m_fullday` and `Ness-Tziona/exploded/nes_tziona_unblock_2` only
+- proof boundary: `utciSurfaceSource=compute-buffer-selected-hour`, `baseRenderTransport=compute-buffer-selected-hour`, `dataTextureBuildCount=0`, `selectedHourRuntimeContract.strongVisibleGpuPath=true`
+- debug/parity boundary: no `.bin`, Python, or debug comparison fields, and no forbidden comparison requests
+- memory boundary: tracked app-owned UTCI/WebGPU buffers only (`persistentExposureBytes + allHoursOutputBytes + selectedHourOutputBytes + renderOwnedSelectedHourBytes` when render-owned bytes are published), not total browser/OS/device VRAM
+
+### Fresh Main-Route Snapshot
+
+| Metric | Ben-Gurion 2m | Ness Tziona 2m |
+| --- | ---: | ---: |
+| `pointCount` | 104,445 | 511,840 |
+| `firstSelectedHourVisibleMs` | 1283.8 | 8465.4 |
+| `exposurePrecomputeMs` | 708.3 | 6648.2 |
+| `renderSceneSyncStartDelayMs` | 269.0 | 1140.1 |
+| `renderSceneSyncTotalMs` | 80.9 | 340.1 |
+| `oneHourDispatchMs` | 3.8 | 5.1 |
+| `GPU VRAM` tracked app-owned memory | ~14.34 MiB | ~70.29 MiB |
+
+### Current Main-Route Bottleneck Framing
+
+Fresh `/` numbers shift the route-level timing picture in two important ways:
+
+1. The main-route first-visible timings are the current route-level evidence, so the older 2026-05-09 debug-route table below should no longer be read as the current baseline for `/`.
+2. The next optimization target is still cold-start work before first visible publication, with `exposurePrecomputeMs` dominating and `oneHourDispatchMs` staying tiny.
+
+Important boundary: the fresh main-route capture currently leaves `payloadPrepareMs`, `workerBvhMs`, `pipelineUploadMs`, and `firstSelectedHourReadyMs` as unavailable (`null`) in the JSON artifact. We keep those fields null rather than inventing finer-grained values for `/`.
+
+That means the current optimization inference is based first on the available 2026-05-15 main-route fields (`firstSelectedHourVisibleMs`, `exposurePrecomputeMs`, `renderSceneSyncStartDelayMs`, `renderSceneSyncTotalMs`, `oneHourDispatchMs`) and only secondarily on the older debug-route evidence below when discussing finer sub-buckets.
+
+That is a useful narrowing, but it is **not** a 0.5m proof. This pass only says the current 2m main-route selected-hour path is still bottlenecked by cold-start compute/setup rather than selected-hour transport or `.bin` comparison.
+
+## Historical 2026-05-09 Debug-Route Cold-Start Snapshot
+
+This section is historical debug-route evidence, not the current route-level baseline for `/`.
 
 The older batch reports are still useful supporting evidence:
 
 - Legacy run-all parity/performance: [data/batch-parity-results/parity_performance_report.md](../data/batch-parity-results/parity_performance_report.md)
 - Run-all vs strict exposure-only on-demand: [data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md](../data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md)
 
-But those reports do not capture the app-visible debug-route cold-start/render-path breakdown that was captured before the route was renamed from `/debug-webgpu-utci` to `/debug`. The newer focused timings below are historical route-name captures that we should still use for the next design discussion.
+But those reports do not capture the app-visible debug-route cold-start/render-path breakdown that was captured before the route was renamed from `/debug-webgpu-utci` to `/debug`. The focused timings below remain useful historical debug-route context for sub-buckets that the fresh `/` capture does not currently expose, but the 2026-05-15 main-route baseline above is the current route evidence for timing and memory decisions on `/`.
 
 ### Route Shape Used
 
@@ -92,7 +129,7 @@ This means the selected-hour route is no longer bottlenecked by the old CPU read
 | `renderBufferCopyMs` | 0.0 | 0.0 |
 | `renderQueueDrainMs` | 61.4 | 107.2 |
 
-### Current Bottleneck Framing
+### Historical Debug-Route Bottleneck Framing
 
 The measured cold-start cost is now split into two real buckets:
 

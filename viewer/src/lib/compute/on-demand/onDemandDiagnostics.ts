@@ -86,6 +86,8 @@ export interface TrackedGpuAllocationBytes {
 	allHoursOutputBytes: number;
 	selectedHourOutputBytes: number;
 	selectedHourOutputBytesHighWatermark: number;
+	renderOwnedSelectedHourBytes?: number;
+	renderOwnedSelectedHourBytesHighWatermark?: number;
 	trackingScope: 'utci-owned-webgpu-buffers';
 }
 
@@ -173,6 +175,8 @@ export function createEmptyOnDemandDiagnostics(): OnDemandRuntimeDiagnostics {
 			allHoursOutputBytes: 0,
 			selectedHourOutputBytes: 0,
 			selectedHourOutputBytesHighWatermark: 0,
+			renderOwnedSelectedHourBytes: 0,
+			renderOwnedSelectedHourBytesHighWatermark: 0,
 			trackingScope: 'utci-owned-webgpu-buffers'
 		},
 		renderTransport: 'none',
@@ -337,6 +341,10 @@ export function mergeTrackedGpuAllocationBytes(
 ): OnDemandRuntimeDiagnostics {
 	const selectedHourOutputBytes =
 		patch.selectedHourOutputBytes ?? diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes;
+	const renderOwnedSelectedHourBytes =
+		patch.renderOwnedSelectedHourBytes ??
+		diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes ??
+		0;
 	return {
 		...diagnostics,
 		trackedGpuAllocationBytes: {
@@ -346,6 +354,12 @@ export function mergeTrackedGpuAllocationBytes(
 			selectedHourOutputBytesHighWatermark: Math.max(
 				diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark,
 				selectedHourOutputBytes
+			),
+			renderOwnedSelectedHourBytes,
+			renderOwnedSelectedHourBytesHighWatermark: Math.max(
+				diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytesHighWatermark ??
+					0,
+				renderOwnedSelectedHourBytes
 			),
 			trackingScope: 'utci-owned-webgpu-buffers'
 		}

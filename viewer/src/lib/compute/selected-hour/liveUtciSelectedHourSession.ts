@@ -56,6 +56,7 @@ export type SelectedHourLiveResult = {
 	gpuResidentOutput: SelectedHourGpuResidentOutput | null;
 	cpuFallbackValues?: Float32Array;
 	loadCpuFallback?: () => Promise<SelectedHourCpuFallbackOutput>;
+	selectedHourVisibleStartedAt?: number;
 	pendingRenderUpdateStartedAt: number;
 	renderTransport: 'cpu-uploaded-selected-hour' | 'compute-buffer-selected-hour';
 	sameDeviceForComputeAndRender: boolean | null;
@@ -94,6 +95,16 @@ type PreparedSessionState = {
 	requestSequence: number;
 	selectedDayRangeCache: Map<string, { min: number; max: number }>;
 };
+
+function copyRuntimeDiagnosticsSnapshot(
+	diagnostics: OnDemandRuntimeDiagnostics | undefined
+): Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'> | undefined {
+	if (!diagnostics) return undefined;
+	return {
+		timings: { ...diagnostics.timings },
+		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
+	};
+}
 
 function getGridOriginOffset(
 	baseMetadata: AnalysisMetadata
@@ -309,6 +320,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 		numMonths: state.numMonths,
 		deviceSource: state.deviceSource,
 		async runSelectedHour(params) {
+			const selectedHourVisibleStartedAt = performance.now();
 			const diagnostics = createEmptyOnDemandDiagnostics();
 			const recordReadback = (reason: SelectedHourReadbackReason) => {
 				Object.assign(diagnostics, recordSelectedHourReadbackReason(diagnostics, reason));
@@ -316,6 +328,14 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			ensureNotAborted(state.signal);
 			await ensureExposurePrecompute(state);
 			ensureNotAborted(state.signal);
+			const afterExposureDiagnostics = copyRuntimeDiagnosticsSnapshot(
+				state.computeManager.getOnDemandDiagnostics?.()
+			);
+			if (afterExposureDiagnostics) {
+				diagnostics.timings = afterExposureDiagnostics.timings;
+				diagnostics.trackedGpuAllocationBytes =
+					afterExposureDiagnostics.trackedGpuAllocationBytes;
+			}
 
 			const requestId = ++state.requestSequence;
 			const output = await state.computeManager.runUtciForTimeIndex({
@@ -325,6 +345,14 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				numMonths: state.numMonths,
 				format: 'f32-utci'
 			});
+			const afterDispatchDiagnostics = copyRuntimeDiagnosticsSnapshot(
+				state.computeManager.getOnDemandDiagnostics?.()
+			);
+			if (afterDispatchDiagnostics) {
+				diagnostics.timings = afterDispatchDiagnostics.timings;
+				diagnostics.trackedGpuAllocationBytes =
+					afterDispatchDiagnostics.trackedGpuAllocationBytes;
+			}
 			const gpuOutputHandle = ensureSelectedHourOutputHandle({
 				output,
 				requestId,
@@ -365,6 +393,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					analysis: fallback.analysis,
 					gpuResidentOutput: null,
 					cpuFallbackValues: fallback.cpuFallbackValues,
+					selectedHourVisibleStartedAt,
 					pendingRenderUpdateStartedAt,
 					renderTransport: 'cpu-uploaded-selected-hour',
 					sameDeviceForComputeAndRender,
@@ -433,6 +462,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					tooltipUtciValues: selectedHourUtci
 				},
 				loadCpuFallback,
+				selectedHourVisibleStartedAt,
 				pendingRenderUpdateStartedAt,
 				renderTransport: 'compute-buffer-selected-hour',
 				sameDeviceForComputeAndRender,

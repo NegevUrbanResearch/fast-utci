@@ -231,6 +231,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			Array.from(mesh.userData.gpuNativeUtciSurfaceState.vertexToPointStorageAttribute.array)
 		).toEqual([0, 0, 0, 0, 0, 0]);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 10, max: 40 });
+		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1124);
 	});
 
 	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {

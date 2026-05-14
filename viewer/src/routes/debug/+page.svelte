@@ -36,6 +36,7 @@
 	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
 	import MetricTooltip from "$lib/components/ui/MetricTooltip.svelte";
+	import DebugPerformancePanel from "$lib/components/ui/DebugPerformancePanel.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import {
 		createCanvasInteractionController,
@@ -217,6 +218,7 @@
 	let lastPipeline: UTCIComputePipeline | null = null;
 	/** AbortController for the current live run; aborted when project/model changes so only one run is active. */
 	let liveAbortController: AbortController | null = null;
+	let debugPerformanceDiagnostics: OnDemandPrototypeDiagnostics | null = null;
 	/** Progress during 12-month compute: { current, total } or null. */
 	let liveComputeProgress: { current: number; total: number } | null = null;
 	let rerunLiveAnalysisAfterCurrentCompute = false;
@@ -1379,6 +1381,7 @@
 			},
 		});
 		win.__onDemandPrototypeDiagnostics__ = nextDiagnostics;
+		debugPerformanceDiagnostics = nextDiagnostics;
 		onDemandPrototypeError = nextDiagnostics.error ?? null;
 		onDemandPrototypeStatus = deriveOnDemandPrototypeStatus({
 			diagnostics: nextDiagnostics,
@@ -1987,6 +1990,15 @@
 					timeIndex: params.timeIndex,
 				})
 				: undefined;
+			const pythonSelectedHourMeanUtci = shouldReadbackForComparison
+				? getSelectedHourMeanUtci(params.base, params.hourIndex, params.monthIndex)
+				: undefined;
+			const webgpuSelectedHourMeanUtci = shouldReadbackForComparison
+				? getFloatArrayMean(selectedHourUtci)
+				: undefined;
+			const pythonDerivedOneHourMs = shouldReadbackForComparison
+				? getDerivedPythonOneHourMs(params.base)
+				: undefined;
 			updateOnDemandPrototypeDiagnostics({
 				...pipelineDiagnostics,
 				...buildOnDemandScrubStateDiagnosticsPatch(
@@ -2012,6 +2024,9 @@
 				debugComparisonMonthIndex: shouldReadbackForComparison ? params.monthIndex : undefined,
 				pythonComparisonHourIndex: shouldReadbackForComparison ? params.hourIndex : undefined,
 				webgpuComparisonHourIndex: shouldReadbackForComparison ? params.hourIndex : undefined,
+				pythonSelectedHourMeanUtci,
+				webgpuSelectedHourMeanUtci,
+				pythonDerivedOneHourMs,
 				pythonBinSampleComparison,
 				appVisibleSelectedHour: useGpuResidentSelectedHourRender
 					? false
@@ -2165,6 +2180,42 @@
 			maxAbsDiff,
 			samples,
 		};
+	}
+
+	function getSelectedHourMeanUtci(
+		analysis: Analysis | null,
+		hourIndex: number,
+		monthIndex: number,
+	): number | undefined {
+		const referenceHourIndex = getEffectiveHourIndex(analysis, hourIndex, monthIndex);
+		const value = analysis?.metadata.hour_statistics?.[referenceHourIndex]?.mean;
+		return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+	}
+
+	function getDerivedPythonOneHourMs(analysis: Analysis | null): number | undefined {
+		const runtimeSeconds = (analysis?.metadata as Analysis["metadata"] & { runtime_seconds?: number })
+			?.runtime_seconds;
+		const hourCount = analysis?.metadata.hours?.length ?? 0;
+		if (
+			typeof runtimeSeconds !== "number" ||
+			!Number.isFinite(runtimeSeconds) ||
+			hourCount <= 0
+		) {
+			return undefined;
+		}
+		return (runtimeSeconds / hourCount) * 1000;
+	}
+
+	function getFloatArrayMean(values: Float32Array | undefined): number | undefined {
+		if (!values || values.length === 0) return undefined;
+		let sum = 0;
+		let count = 0;
+		for (const value of values) {
+			if (!Number.isFinite(value)) continue;
+			sum += value;
+			count += 1;
+		}
+		return count > 0 ? sum / count : undefined;
 	}
 
 	async function createSeparateRunAllBaselineManager(params: {
@@ -2774,6 +2825,7 @@
 		} else if (wasOnDemandPrototypeEnabled) {
 			onDemandPrototypeStatus = "idle";
 			onDemandPrototypeError = null;
+			debugPerformanceDiagnostics = null;
 			onDemandDebugPrepared = undefined;
 			invalidateDebugOnDemandScrubSchedule();
 			onDemandScrubState = createOnDemandScrubState();
@@ -4361,6 +4413,11 @@
 			activeAnalysisId={analysisId}
 			onSelectScenarioAnalysisId={handleProjectSelection}
 		/>
+	</svelte:fragment>
+
+	<svelte:fragment slot="analytics">
+		<div class="section-header">Performance</div>
+		<DebugPerformancePanel diagnostics={debugPerformanceDiagnostics} />
 	</svelte:fragment>
 
 	<svelte:fragment slot="time">

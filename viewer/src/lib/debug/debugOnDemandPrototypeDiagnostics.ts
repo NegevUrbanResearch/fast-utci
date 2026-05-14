@@ -41,6 +41,9 @@ export type DebugOnDemandPrototypeDiagnostics = Partial<OnDemandRuntimeDiagnosti
 	debugComparisonMonthIndex?: number;
 	pythonComparisonHourIndex?: number;
 	webgpuComparisonHourIndex?: number;
+	pythonSelectedHourMeanUtci?: number;
+	webgpuSelectedHourMeanUtci?: number;
+	pythonDerivedOneHourMs?: number;
 	pythonBinSampleComparison?: DebugOnDemandPythonSampleComparison;
 	appVisibleSelectedHour?: boolean;
 	selectedHourReadbackCount?: number;

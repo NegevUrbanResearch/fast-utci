@@ -101,7 +101,7 @@
 		}
 		lastAnalysis = null;
 		lastBackend = null;
-		invokeUtciSurfaceDiagnostics({});
+		invokeUtciSurfaceDiagnostics({ renderOwnedSelectedHourBytes: 0 });
 	}
 
 	function invokeUtciSurfaceDiagnostics(diagnostics: UtciSurfaceDiagnostics): void {

@@ -23,6 +23,10 @@
 		comparisonAnalysis,
 	} from "$lib/stores/comparisonStore";
 	import {
+		EMPTY_PERFORMANCE_SNAPSHOT,
+		performanceStore,
+	} from "$lib/stores/performanceStore";
+	import {
 		calculateModelBounds,
 		calculateModelCenter,
 		calculateModelSize,
@@ -37,7 +41,7 @@
 	import ColorLegend from "$lib/components/ui/ColorLegend.svelte";
 	import ScenarioSelector from "$lib/components/ui/ScenarioSelector.svelte";
 	import ProjectSelector from "$lib/components/ui/ProjectSelector.svelte";
-	import AnalyticsPanel from "$lib/components/ui/AnalyticsPanel.svelte";
+	import PerformancePanel from "$lib/components/ui/PerformancePanel.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
@@ -61,6 +65,7 @@
 		resolveMainRouteUtciSurfaceBackend,
 		type UtciRendererBackend,
 	} from "$lib/utciRenderMode";
+	import { buildMainRoutePerformanceSnapshot } from "$lib/performance/mainRoutePerformanceTelemetry";
 	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
 	import {
 		publishMainRouteUtciDiagnostics,
@@ -89,7 +94,7 @@
 	let model: Group | null = null;
 	let gridVisible = false;
 
-	let analyticsOpen = false;
+	let performanceOpen = false;
 	let modelLoading = true;
 	let hasFitOnce = false;
 	let lastModelFile: string | null = null;
@@ -433,10 +438,32 @@
 		});
 	}
 
+	$: if (typeof window !== "undefined") {
+		performanceStore.set(
+			buildMainRoutePerformanceSnapshot({
+				analysisId,
+				projectLabel: currentProjectId,
+				pointCount: $analysisStore?.metadata?.num_positions ?? null,
+				gridSizeMeters: $analysisStore?.metadata?.grid_size ?? null,
+				selectedMonthIndex,
+				selectedHourIndex,
+				diagnostics: {
+					baseLiveReady,
+					timings: liveRouteState.base.runtimeDiagnostics?.timings,
+					trackedGpuAllocationBytes:
+						liveRouteState.base.runtimeDiagnostics?.trackedGpuAllocationBytes,
+					error: liveRouteState.base.error ?? undefined,
+				},
+				now: performance.now(),
+			}),
+		);
+	}
+
 	onDestroy(() => {
 		if (typeof window !== "undefined") {
 			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
 		}
+		performanceStore.set(EMPTY_PERFORMANCE_SNAPSHOT);
 
 		unsubscribeLiveRouteHost();
 		liveRouteHost.dispose();
@@ -473,13 +500,13 @@
 		<button
 			type="button"
 			class="section-header section-header-toggle"
-			on:click={() => (analyticsOpen = !analyticsOpen)}
+			on:click={() => (performanceOpen = !performanceOpen)}
 		>
-			<span>Analytics</span>
-			<span class:open={analyticsOpen} class="chevron">v</span>
+			<span>Performance</span>
+			<span class:open={performanceOpen} class="chevron">v</span>
 		</button>
-		{#if analyticsOpen}
-			<AnalyticsPanel />
+		{#if performanceOpen}
+			<PerformancePanel />
 		{/if}
 	</svelte:fragment>
 

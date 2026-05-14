@@ -110,6 +110,9 @@ export function buildMainRouteLiveSelectedHourDiagnosticsInputs(
 		cameraInteraction: {
 			wheelEventCount: params.cameraWheelEventCount,
 		},
+		timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+		trackedGpuAllocationBytes:
+			params.liveRouteState.base.runtimeDiagnostics?.trackedGpuAllocationBytes,
 		visibleSelectedHourReadbackCount:
 			params.liveRouteState.base.visibleSelectedHourReadbackCount,
 		readbackInstrumentation: params.liveRouteState.base.readbackInstrumentation,

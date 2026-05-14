@@ -61,6 +61,7 @@ describe('utciSurfaceSync', () => {
 		mesh.userData.utciSurfaceSource = 'data-texture';
 		mesh.userData.selectedHourTransferCount = 3;
 		mesh.userData.dataTextureBuildCount = 2;
+		mesh.userData.renderOwnedSelectedHourBytes = 1024;
 
 		const diagnostics = buildUtciSurfaceDiagnostics({
 			mesh,
@@ -79,6 +80,7 @@ describe('utciSurfaceSync', () => {
 			utciSurfaceSource: 'cpu-uploaded-selected-hour',
 			selectedHourTransferCount: 3,
 			dataTextureBuildCount: 2,
+			renderOwnedSelectedHourBytes: 1024,
 			cpuPublishRequestId: 9,
 			gpuResidentCopyStatus: 'complete',
 			gpuResidentCopyRequestId: 9,

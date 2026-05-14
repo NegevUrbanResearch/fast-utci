@@ -10,6 +10,7 @@ export type UtciSurfaceDiagnostics = {
 	utciSurfaceSource?: string;
 	selectedHourTransferCount?: number;
 	dataTextureBuildCount?: number;
+	renderOwnedSelectedHourBytes?: number;
 	cpuPublishRequestId?: number;
 	cpuPublishMonthIndex?: number;
 	cpuPublishHourIndex?: number;
@@ -70,6 +71,9 @@ export function buildUtciSurfaceDiagnostics(params: {
 			| number
 			| undefined,
 		dataTextureBuildCount: params.mesh?.userData.dataTextureBuildCount as number | undefined,
+		renderOwnedSelectedHourBytes: params.mesh?.userData.renderOwnedSelectedHourBytes as
+			| number
+			| undefined,
 		cpuPublishRequestId: cpuPublicationDiagnostics.cpuPublishRequestId,
 		cpuPublishMonthIndex: cpuPublicationDiagnostics.cpuPublishMonthIndex,
 		cpuPublishHourIndex: cpuPublicationDiagnostics.cpuPublishHourIndex,

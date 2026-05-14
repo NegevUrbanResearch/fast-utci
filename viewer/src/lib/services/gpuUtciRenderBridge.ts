@@ -58,7 +58,19 @@ const SURFACE_VERTICES_PER_CELL = 6;
 const SURFACE_COLOR_COMPONENTS = 4;
 const GPU_NATIVE_SURFACE_STATE_KEY = 'gpuNativeUtciSurfaceState';
 const UTCI_COLOR_LUT_SIZE = 256;
+const UTCI_COLOR_LUT_BYTES = UTCI_COLOR_LUT_SIZE * 4;
 const workingColor = new THREE.Color();
+
+function getGeometryGpuAttributeBytes(geometry: THREE.BufferGeometry): number {
+	let total = 0;
+	const attributes = geometry.attributes;
+	for (const attribute of Object.values(attributes)) {
+		const array = (attribute as THREE.BufferAttribute).array;
+		total += array.byteLength;
+	}
+	const indexArray = geometry.index?.array;
+	return total + (indexArray?.byteLength ?? 0);
+}
 
 function createUtciColorLutTexture(): THREE.DataTexture {
 	const bytes = new Uint8Array(UTCI_COLOR_LUT_SIZE * 4);
@@ -187,6 +199,8 @@ export function createGpuNativeUtciSurfaceMesh(
 		vertexCount,
 		source: 'cpu-uploaded-selected-hour'
 	} satisfies GpuNativeUtciSurfaceState;
+	mesh.userData.renderOwnedSelectedHourBytes =
+		getGeometryGpuAttributeBytes(geometry) + colorArray.byteLength;
 
 	return mesh;
 }
@@ -241,6 +255,11 @@ export function createComputeBufferUtciSurfaceMesh(
 		maxUniform,
 		colorLutTexture
 	} satisfies ComputeBufferUtciSurfaceState;
+	mesh.userData.renderOwnedSelectedHourBytes =
+		getGeometryGpuAttributeBytes(geometry) +
+		utciArray.byteLength +
+		vertexToPointArray.byteLength +
+		UTCI_COLOR_LUT_BYTES;
 
 	return mesh;
 }
@@ -271,6 +290,11 @@ export function updateComputeBufferUtciSurfaceMesh(
 	state.maxUniform.value = options.utciRange.max;
 	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
 	mesh.userData.utciLayout = options.layout;
+	mesh.userData.renderOwnedSelectedHourBytes =
+		getGeometryGpuAttributeBytes(mesh.geometry) +
+		state.utciStorageAttribute.array.byteLength +
+		state.vertexToPointStorageAttribute.array.byteLength +
+		UTCI_COLOR_LUT_BYTES;
 	return true;
 }
 
@@ -334,6 +358,7 @@ export function disposeGpuNativeUtciSurfaceMesh(mesh: THREE.Mesh): void {
 
 	mesh.geometry.dispose();
 	delete mesh.userData.pendingComputeBufferUtciSource;
+	delete mesh.userData.renderOwnedSelectedHourBytes;
 	delete mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY];
 }
 

@@ -159,6 +159,15 @@ test.describe('debug route parity runtime diagnostics', () => {
 		expect(diagnostics.selectedMonthIndex).toBe(7);
 		expect(diagnostics.selectedTimeIndex).toBe(168);
 		await expect(page.getByText('Live WebGPU UTCI')).toBeVisible();
+		const performancePanel = page.locator('[data-testid="debug-performance-panel"]');
+		await expect(performancePanel).toBeVisible();
+		await expect(performancePanel.getByRole('columnheader', { name: 'Metric' })).toBeVisible();
+		await expect(performancePanel.getByRole('columnheader', { name: 'Python' })).toBeVisible();
+		await expect(performancePanel.getByRole('columnheader', { name: 'WebGPU' })).toBeVisible();
+		await expect(performancePanel.getByRole('columnheader', { name: 'Diff' })).toBeVisible();
+		await expect(performancePanel.getByText('Mean UTCI')).toBeVisible();
+		await expect(performancePanel.getByText('Visible time')).toBeVisible();
+		await expect(performancePanel.getByText('Debug comparison only')).toBeVisible();
 	});
 
 	test('does not claim non-August Python bin validity', async ({ page }) => {
@@ -192,5 +201,8 @@ test.describe('debug route parity runtime diagnostics', () => {
 		expect(diagnostics.debugComparisonReference).not.toBe('python-bin');
 		expect(diagnostics.pythonBinSampleComparison).toBeUndefined();
 		expect(diagnostics.pythonBaselineStatus).toBe('unavailable-non-august');
+		const performancePanel = page.locator('[data-testid="debug-performance-panel"]');
+		await expect(performancePanel).toBeVisible();
+		await expect(performancePanel.getByText('Unavailable for this selection')).toBeVisible();
 	});
 });

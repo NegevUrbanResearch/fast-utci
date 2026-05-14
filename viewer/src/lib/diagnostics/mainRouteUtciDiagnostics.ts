@@ -13,6 +13,10 @@ import type {
 	WebgpuLargeBufferDeviceLimits,
 	WebgpuLargeBufferRequiredLimits
 } from '$lib/compute/gpu/webgpuDeviceLimits';
+import type {
+	OnDemandTimings,
+	TrackedGpuAllocationBytes
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 
 export type MainRouteUtciDiagnosticsPayload = {
@@ -59,6 +63,8 @@ export type MainRouteUtciDiagnosticsPayload = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
+	timings?: OnDemandTimings;
+	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;
 	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
@@ -104,6 +110,8 @@ export type MainRouteUtciDiagnosticsInputs = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
+	timings?: OnDemandTimings;
+	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;
 	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
@@ -211,6 +219,10 @@ export function buildMainRouteUtciDiagnostics(
 			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId,
 		tooltipInteraction: inputs.tooltipInteraction,
 		cameraInteraction: inputs.cameraInteraction,
+		timings: inputs.timings ? { ...inputs.timings } : undefined,
+		trackedGpuAllocationBytes: inputs.trackedGpuAllocationBytes
+			? { ...inputs.trackedGpuAllocationBytes }
+			: undefined,
 		selectedHourReadbackReasons,
 		selectedHourReadbackReasonCounts,
 		comparisonSelectedHourReadbackReasons: inputs.comparisonSelectedHourReadbackReasons,

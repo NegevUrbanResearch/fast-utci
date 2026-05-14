@@ -6,7 +6,12 @@ import {
 	type SelectedHourGpuResidentOutput,
 	type SelectedHourLiveSession
 } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
-import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
+import {
+	mergeSelectedHourRenderTimings,
+	type OnDemandRuntimeDiagnostics,
+	type TrackedGpuAllocationBytes,
+	type SelectedHourRenderTimingSubsteps
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 import type {
 	SelectedHourReadbackInstrumentation,
@@ -22,6 +27,7 @@ export type LiveSelectedHourControllerSurfaceDiagnostics = {
 	utciSurfaceSource?: string;
 	selectedHourTransferCount?: number;
 	dataTextureBuildCount?: number;
+	renderOwnedSelectedHourBytes?: number;
 	cpuPublishRequestId?: number;
 	cpuPublishMonthIndex?: number;
 	cpuPublishHourIndex?: number;
@@ -36,7 +42,13 @@ export type LiveSelectedHourAcceptedVisibleSurface = {
 	requestId: number;
 	selectionKey: string;
 	visibleAtMs: number;
+	visibleStartedAtMs?: number;
 };
+
+export type LiveSelectedHourRuntimeDiagnostics = Pick<
+	OnDemandRuntimeDiagnostics,
+	'timings' | 'trackedGpuAllocationBytes'
+>;
 
 export type LiveSelectedHourControllerState = {
 	analysis: Analysis | null;
@@ -55,6 +67,7 @@ export type LiveSelectedHourControllerState = {
 	error: string | null;
 	renderTransport: LiveSelectedHourRenderTransport;
 	sameDeviceForComputeAndRender: boolean | null;
+	runtimeDiagnostics?: LiveSelectedHourRuntimeDiagnostics;
 	pendingRenderUpdateStartedAt: number | undefined;
 	renderSurfaceDiagnostics: LiveSelectedHourControllerSurfaceDiagnostics;
 	ready: boolean;
@@ -161,6 +174,14 @@ function cloneState(state: LiveSelectedHourControllerState): LiveSelectedHourCon
 		surfaceIdentity: state.surfaceIdentity ? { ...state.surfaceIdentity } : null,
 		selectedHourReadbackReasons: [...state.selectedHourReadbackReasons],
 		selectedHourReadbackReasonCounts: { ...state.selectedHourReadbackReasonCounts },
+		runtimeDiagnostics: state.runtimeDiagnostics
+			? {
+					timings: { ...state.runtimeDiagnostics.timings },
+					trackedGpuAllocationBytes: {
+						...state.runtimeDiagnostics.trackedGpuAllocationBytes
+					}
+				}
+			: state.runtimeDiagnostics,
 		renderSurfaceDiagnostics: { ...state.renderSurfaceDiagnostics }
 	};
 }
@@ -181,6 +202,7 @@ function createSurfaceIdentity(params: {
 	timeIndex: number;
 	selectionKey: string;
 	pendingRenderUpdateStartedAt: number | undefined;
+	selectedHourVisibleStartedAt: number | undefined;
 	acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
 }): LiveSelectedHourSurfaceIdentity {
 	return {
@@ -192,6 +214,7 @@ function createSurfaceIdentity(params: {
 		timeIndex: params.timeIndex,
 		selectionKey: params.selectionKey,
 		pendingRenderUpdateStartedAt: params.pendingRenderUpdateStartedAt,
+		selectedHourVisibleStartedAt: params.selectedHourVisibleStartedAt,
 		acceptedGpuResidentOutput: params.acceptedGpuResidentOutput
 	};
 }
@@ -272,9 +295,123 @@ function createInitialState(): LiveSelectedHourControllerState {
 		error: null,
 		renderTransport: 'idle',
 		sameDeviceForComputeAndRender: null,
+		runtimeDiagnostics: undefined,
 		pendingRenderUpdateStartedAt: undefined,
 		renderSurfaceDiagnostics: EMPTY_SURFACE_DIAGNOSTICS
 	}, null);
+}
+
+function copyRuntimeDiagnostics(
+	diagnostics: Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'>
+): LiveSelectedHourRuntimeDiagnostics {
+	return {
+		timings: { ...diagnostics.timings },
+		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
+	};
+}
+
+function mergeTrackedGpuAllocationBytesWithRenderSurface(params: {
+	tracked: TrackedGpuAllocationBytes;
+	renderSurfaceDiagnostics: LiveSelectedHourControllerSurfaceDiagnostics;
+}): TrackedGpuAllocationBytes {
+	const hasRenderOwnedBytes = Object.prototype.hasOwnProperty.call(
+		params.renderSurfaceDiagnostics,
+		'renderOwnedSelectedHourBytes'
+	);
+	const renderOwnedSelectedHourBytes =
+		hasRenderOwnedBytes
+			? (params.renderSurfaceDiagnostics.renderOwnedSelectedHourBytes ?? 0)
+			: (params.tracked.renderOwnedSelectedHourBytes ?? 0);
+	return {
+		...params.tracked,
+		renderOwnedSelectedHourBytes,
+		renderOwnedSelectedHourBytesHighWatermark: hasRenderOwnedBytes
+			? renderOwnedSelectedHourBytes
+			: Math.max(
+					params.tracked.renderOwnedSelectedHourBytesHighWatermark ?? 0,
+					renderOwnedSelectedHourBytes
+				),
+		trackingScope: 'utci-owned-webgpu-buffers'
+	};
+}
+
+function mergeRuntimeDiagnosticsWithRenderSurface(params: {
+	runtimeDiagnostics: LiveSelectedHourRuntimeDiagnostics | undefined;
+	renderSurfaceDiagnostics: LiveSelectedHourControllerSurfaceDiagnostics;
+	pendingRenderUpdateStartedAt: number | undefined;
+	selectedHourVisibleStartedAt: number | undefined;
+	visibleAtMs: number | undefined;
+}): LiveSelectedHourRuntimeDiagnostics | undefined {
+	if (!params.runtimeDiagnostics) return params.runtimeDiagnostics;
+	const surfaceUpdateMs =
+		typeof params.pendingRenderUpdateStartedAt === 'number' &&
+		typeof params.visibleAtMs === 'number'
+			? Math.max(0, params.visibleAtMs - params.pendingRenderUpdateStartedAt)
+			: undefined;
+	const selectedHourVisibleMs =
+		typeof params.selectedHourVisibleStartedAt === 'number' &&
+		typeof params.visibleAtMs === 'number'
+			? Math.max(0, params.visibleAtMs - params.selectedHourVisibleStartedAt)
+			: undefined;
+	const trackedGpuAllocationBytes = mergeTrackedGpuAllocationBytesWithRenderSurface({
+		tracked: params.runtimeDiagnostics.trackedGpuAllocationBytes,
+		renderSurfaceDiagnostics: params.renderSurfaceDiagnostics
+	});
+	if (surfaceUpdateMs === undefined) {
+		return {
+			trackedGpuAllocationBytes,
+			timings: {
+				...params.runtimeDiagnostics.timings,
+				firstSelectedHourVisibleMs:
+					selectedHourVisibleMs ??
+					params.runtimeDiagnostics.timings.firstSelectedHourVisibleMs,
+				renderSceneSyncStartDelayMs:
+					params.renderSurfaceDiagnostics.renderSceneSyncStartDelayMs ??
+					params.runtimeDiagnostics.timings.renderSceneSyncStartDelayMs,
+				renderSceneSyncTotalMs:
+					params.renderSurfaceDiagnostics.renderSceneSyncTotalMs ??
+					params.runtimeDiagnostics.timings.renderSceneSyncTotalMs,
+				renderLayoutBuildMs:
+					params.renderSurfaceDiagnostics.renderLayoutBuildMs ??
+					params.runtimeDiagnostics.timings.renderLayoutBuildMs,
+				renderSurfaceMeshMs:
+					params.renderSurfaceDiagnostics.renderSurfaceMeshMs ??
+					params.runtimeDiagnostics.timings.renderSurfaceMeshMs,
+				renderStorageInitWaitMs:
+					params.renderSurfaceDiagnostics.renderStorageInitWaitMs ??
+					params.runtimeDiagnostics.timings.renderStorageInitWaitMs,
+				renderBufferCopyMs:
+					params.renderSurfaceDiagnostics.renderBufferCopyMs ??
+					params.runtimeDiagnostics.timings.renderBufferCopyMs,
+				renderQueueDrainMs:
+					params.renderSurfaceDiagnostics.renderQueueDrainMs ??
+					params.runtimeDiagnostics.timings.renderQueueDrainMs
+			}
+		};
+	}
+	return {
+		trackedGpuAllocationBytes,
+		timings: mergeSelectedHourRenderTimings({
+			existingTimings: params.runtimeDiagnostics.timings,
+			renderUpdateMs: surfaceUpdateMs,
+			gpuSurfaceUpdateMs: surfaceUpdateMs,
+			firstSelectedHourVisibleMs:
+				selectedHourVisibleMs ??
+				params.runtimeDiagnostics.timings.firstSelectedHourVisibleMs ??
+				surfaceUpdateMs,
+			renderSubsteps: {
+				renderSceneSyncStartDelayMs:
+					params.renderSurfaceDiagnostics.renderSceneSyncStartDelayMs,
+				renderSceneSyncTotalMs: params.renderSurfaceDiagnostics.renderSceneSyncTotalMs,
+				renderLayoutBuildMs: params.renderSurfaceDiagnostics.renderLayoutBuildMs,
+				renderSurfaceMeshMs: params.renderSurfaceDiagnostics.renderSurfaceMeshMs,
+				renderStorageInitWaitMs:
+					params.renderSurfaceDiagnostics.renderStorageInitWaitMs,
+				renderBufferCopyMs: params.renderSurfaceDiagnostics.renderBufferCopyMs,
+				renderQueueDrainMs: params.renderSurfaceDiagnostics.renderQueueDrainMs
+			}
+		})
+	};
 }
 
 function isAbortError(error: unknown): boolean {
@@ -322,7 +459,8 @@ function mergeRenderSurfaceDiagnostics(
 			selectedHourTransferCount:
 				diagnostics.selectedHourTransferCount ?? current.selectedHourTransferCount,
 			dataTextureBuildCount:
-				diagnostics.dataTextureBuildCount ?? current.dataTextureBuildCount
+				diagnostics.dataTextureBuildCount ?? current.dataTextureBuildCount,
+			renderOwnedSelectedHourBytes: current.renderOwnedSelectedHourBytes
 		};
 	}
 
@@ -455,6 +593,12 @@ export function createLiveSelectedHourController(
 				'sameDeviceForComputeAndRender' in patch
 					? patch.sameDeviceForComputeAndRender ?? null
 					: state.sameDeviceForComputeAndRender,
+			runtimeDiagnostics:
+				'runtimeDiagnostics' in patch
+					? patch.runtimeDiagnostics
+						? copyRuntimeDiagnostics(patch.runtimeDiagnostics)
+						: undefined
+					: state.runtimeDiagnostics,
 			pendingRenderUpdateStartedAt:
 				'pendingRenderUpdateStartedAt' in patch
 					? patch.pendingRenderUpdateStartedAt
@@ -721,12 +865,14 @@ export function createLiveSelectedHourController(
 							result.renderTransport === 'compute-buffer-selected-hour'
 								? result.pendingRenderUpdateStartedAt
 								: undefined,
+						selectedHourVisibleStartedAt: result.selectedHourVisibleStartedAt,
 						acceptedGpuResidentOutput: acceptedGpuResidentOutput
 					}),
 					loading: result.renderTransport === 'compute-buffer-selected-hour',
 					error: null,
 					renderTransport: result.renderTransport,
 					sameDeviceForComputeAndRender: result.sameDeviceForComputeAndRender,
+					runtimeDiagnostics: copyRuntimeDiagnostics(result.diagnostics),
 					visibleSelectedHourReadbackCount: undefined,
 					readbackInstrumentation: 'not-instrumented',
 					selectedHourReadbackReasons: result.diagnostics.selectedHourReadbackReasons ?? [],
@@ -816,6 +962,7 @@ export function createLiveSelectedHourController(
 				return;
 			}
 			if (acceptsGpuCompletion) {
+				const visibleAtMs = performance.now();
 				deferredCpuFallback = null;
 				acceptedCpuPublication = null;
 				setState({
@@ -823,7 +970,9 @@ export function createLiveSelectedHourController(
 						? {
 								requestId,
 								selectionKey: state.surfaceIdentity.selectionKey,
-								visibleAtMs: performance.now()
+								visibleAtMs,
+								visibleStartedAtMs:
+									state.surfaceIdentity.selectedHourVisibleStartedAt
 							}
 						: null,
 					surfaceIdentity: state.surfaceIdentity
@@ -833,6 +982,14 @@ export function createLiveSelectedHourController(
 								acceptedGpuResidentOutput: state.acceptedGpuResidentOutput
 							}
 						: null,
+						runtimeDiagnostics: mergeRuntimeDiagnosticsWithRenderSurface({
+							runtimeDiagnostics: state.runtimeDiagnostics,
+							renderSurfaceDiagnostics: nextDiagnostics,
+							pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
+							selectedHourVisibleStartedAt:
+								state.surfaceIdentity?.selectedHourVisibleStartedAt,
+							visibleAtMs
+						}),
 					renderSurfaceDiagnostics: nextDiagnostics,
 					loading: false,
 					renderTransport: 'compute-buffer-selected-hour',
@@ -867,19 +1024,39 @@ export function createLiveSelectedHourController(
 				return;
 			}
 
+			const visibleAtMs = acceptsCpuPublication ? performance.now() : undefined;
 			setState(
 				acceptsCpuPublication && acceptedCpuPublication && !cpuPublicationAlreadyVisible
 					? {
+							runtimeDiagnostics: mergeRuntimeDiagnosticsWithRenderSurface({
+								runtimeDiagnostics: state.runtimeDiagnostics,
+								renderSurfaceDiagnostics: nextDiagnostics,
+								pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
+								selectedHourVisibleStartedAt:
+									state.surfaceIdentity?.selectedHourVisibleStartedAt,
+								visibleAtMs
+							}),
 							acceptedVisibleSurface: {
 								requestId: acceptedCpuPublication.requestId,
 								selectionKey: acceptedCpuPublication.selectionKey,
-								visibleAtMs: performance.now()
+								visibleAtMs: visibleAtMs ?? performance.now(),
+								visibleStartedAtMs:
+									state.surfaceIdentity?.selectedHourVisibleStartedAt
 							},
 							renderSurfaceDiagnostics: nextDiagnostics,
 							visibleSelectedHourReadbackCount: 1,
 							readbackInstrumentation: 'instrumented'
 					  }
-					: { renderSurfaceDiagnostics: nextDiagnostics }
+					: {
+							runtimeDiagnostics: mergeRuntimeDiagnosticsWithRenderSurface({
+								runtimeDiagnostics: state.runtimeDiagnostics,
+								renderSurfaceDiagnostics: nextDiagnostics,
+								pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
+								selectedHourVisibleStartedAt: undefined,
+								visibleAtMs: undefined
+							}),
+							renderSurfaceDiagnostics: nextDiagnostics
+					  }
 			);
 
 			if (shouldHandleGpuFallback) {
@@ -954,6 +1131,8 @@ export function createLiveSelectedHourController(
 						timeIndex: acceptedCpuPublication.timeIndex,
 						selectionKey: acceptedCpuPublication.selectionKey,
 						pendingRenderUpdateStartedAt: undefined,
+						selectedHourVisibleStartedAt:
+							state.surfaceIdentity?.selectedHourVisibleStartedAt,
 						acceptedGpuResidentOutput: null
 					}),
 					loading: false,

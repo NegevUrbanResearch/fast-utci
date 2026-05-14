@@ -1922,6 +1922,108 @@ describe('liveSelectedHourController', () => {
 		});
 	});
 
+	it('preserves existing render-update timings when later non-visibility diagnostics arrive', async () => {
+		const gpu = createGpuResidentOutput(94, 94);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		diagnostics.timings.oneHourDispatchMs = 12.5;
+		diagnostics.trackedGpuAllocationBytes.persistentExposureBytes = 128;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes = 64;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark = 64;
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 94,
+					timeIndex: 94,
+					analysis: createSelectionAnalysis('gpu-timing-preserve', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9400,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(94));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderSceneSyncTotalMs: 5.5
+		});
+
+		const afterVisible = controller.getState().runtimeDiagnostics;
+		expect(afterVisible?.timings.oneHourDispatchMs).toBe(12.5);
+		expect(afterVisible?.timings.renderUpdateMs).toBeGreaterThanOrEqual(0);
+		expect(afterVisible?.timings.gpuSurfaceUpdateMs).toBe(afterVisible?.timings.renderUpdateMs);
+
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderSceneSyncTotalMs: 8.25
+		});
+
+		const afterFollowUp = controller.getState().runtimeDiagnostics;
+		expect(afterFollowUp?.timings.oneHourDispatchMs).toBe(12.5);
+		expect(afterFollowUp?.timings.renderUpdateMs).toBe(afterVisible?.timings.renderUpdateMs);
+		expect(afterFollowUp?.timings.gpuSurfaceUpdateMs).toBe(
+			afterVisible?.timings.gpuSurfaceUpdateMs
+		);
+		expect(afterFollowUp?.timings.renderSceneSyncTotalMs).toBe(8.25);
+	});
+
+	it('clears render-owned GPU memory diagnostics when the surface is disposed', async () => {
+		const gpu = createGpuResidentOutput(95, 95);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		diagnostics.trackedGpuAllocationBytes.persistentExposureBytes = 128;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes = 64;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark = 64;
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 95,
+					timeIndex: 95,
+					analysis: createSelectionAnalysis('gpu-memory-clear', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9500,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(95));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderOwnedSelectedHourBytes: 512
+		});
+
+		expect(
+			controller.getState().runtimeDiagnostics?.trackedGpuAllocationBytes
+				.renderOwnedSelectedHourBytes
+		).toBe(512);
+		expect(
+			controller.getState().runtimeDiagnostics?.trackedGpuAllocationBytes
+				.renderOwnedSelectedHourBytesHighWatermark
+		).toBe(512);
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderOwnedSelectedHourBytes: 0
+		});
+
+		expect(controller.getState().renderSurfaceDiagnostics.renderOwnedSelectedHourBytes).toBe(0);
+		expect(
+			controller.getState().runtimeDiagnostics?.trackedGpuAllocationBytes
+				.renderOwnedSelectedHourBytes
+		).toBe(0);
+		expect(
+			controller.getState().runtimeDiagnostics?.trackedGpuAllocationBytes
+				.renderOwnedSelectedHourBytesHighWatermark
+		).toBe(0);
+	});
+
 	it('resets visible-readback proof for a replacement GPU request until the new visible surface completes', async () => {
 		const firstGpu = createGpuResidentOutput(92, 92);
 		const secondGpu = createGpuResidentOutput(93, 93);

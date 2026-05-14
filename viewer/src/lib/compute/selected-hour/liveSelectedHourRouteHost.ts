@@ -162,6 +162,14 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 			selectedHourReadbackReasons: [...state.base.selectedHourReadbackReasons],
 			selectedHourReadbackReasonCounts: { ...state.base.selectedHourReadbackReasonCounts },
 			surfaceIdentity: state.base.surfaceIdentity ? { ...state.base.surfaceIdentity } : null,
+			runtimeDiagnostics: state.base.runtimeDiagnostics
+				? {
+						timings: { ...state.base.runtimeDiagnostics.timings },
+						trackedGpuAllocationBytes: {
+							...state.base.runtimeDiagnostics.trackedGpuAllocationBytes
+						}
+					}
+				: state.base.runtimeDiagnostics,
 			renderSurfaceDiagnostics: { ...state.base.renderSurfaceDiagnostics }
 		},
 		comparison: {
@@ -176,6 +184,14 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 			surfaceIdentity: state.comparison.surfaceIdentity
 				? { ...state.comparison.surfaceIdentity }
 				: null,
+			runtimeDiagnostics: state.comparison.runtimeDiagnostics
+				? {
+						timings: { ...state.comparison.runtimeDiagnostics.timings },
+						trackedGpuAllocationBytes: {
+							...state.comparison.runtimeDiagnostics.trackedGpuAllocationBytes
+						}
+					}
+				: state.comparison.runtimeDiagnostics,
 			renderSurfaceDiagnostics: { ...state.comparison.renderSurfaceDiagnostics }
 		},
 		primaryAcceptedVisibleSurface: state.primaryAcceptedVisibleSurface

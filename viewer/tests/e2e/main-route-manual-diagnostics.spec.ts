@@ -317,6 +317,14 @@ test.describe('main route manual diagnostics probe', () => {
 		});
 
 		const value = await diagnostics.jsonValue() as any;
+		await page.getByRole('button', { name: /performance/i }).click();
+		await expect(page.getByTestId('performance-panel')).toBeVisible();
+		await expect(page.getByText(/Total calculation time/i)).toBeVisible();
+		await expect(page.getByText(/UTCI calculation/i)).toBeVisible();
+		await expect(page.getByText(/Render prep/i)).toHaveCount(0);
+		await expect(page.getByText(/GPU VRAM/i)).toBeVisible();
+		await expect(page.getByText(/Grid size/i)).toBeVisible();
+		await expect(page.getByText(/Validation vs Grasshopper/i)).toHaveCount(0);
 		expect(value.utciRenderResolved).toBe('gpuNative');
 		expect(value.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(value.utciSurfaceSource).toBe('compute-buffer-selected-hour');
@@ -336,6 +344,29 @@ test.describe('main route manual diagnostics probe', () => {
 		});
 		expect(value.baseSelectedTimeIndex).toBe(value.baseRenderContextTimeIndex);
 		expect(value.baseAcceptedUtciRange).toBeDefined();
+		expect(value.timings?.oneHourDispatchMs ?? -1).toBeGreaterThanOrEqual(0);
+		expect(value.timings?.firstSelectedHourVisibleMs ?? -1).toBeGreaterThanOrEqual(0);
+		expect(value.trackedGpuAllocationBytes).toMatchObject({
+			persistentExposureBytes: expect.any(Number),
+			allHoursOutputBytes: 0,
+			selectedHourOutputBytes: expect.any(Number),
+			selectedHourOutputBytesHighWatermark: expect.any(Number),
+			renderOwnedSelectedHourBytes: expect.any(Number),
+			renderOwnedSelectedHourBytesHighWatermark: expect.any(Number),
+			trackingScope: 'utci-owned-webgpu-buffers'
+		});
+		expect(value.trackedGpuAllocationBytes.persistentExposureBytes).toBeGreaterThan(0);
+		expect(value.trackedGpuAllocationBytes.selectedHourOutputBytes).toBeGreaterThan(0);
+		expect(value.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes).toBeGreaterThan(0);
+		expect(value.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark).toBeGreaterThanOrEqual(
+			value.trackedGpuAllocationBytes.selectedHourOutputBytes
+		);
+		expect(
+			value.trackedGpuAllocationBytes.renderOwnedSelectedHourBytesHighWatermark
+		).toBeGreaterThanOrEqual(value.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes);
+		expect(JSON.stringify(value)).not.toMatch(
+			/pythonBin|binComparison|__onDemandPrototypeDiagnostics__|performance\.memory/i
+		);
 
 		const beforeInteraction = {
 			hoverSampleCount: getTooltipHoverSampleCount(value),
