@@ -602,6 +602,44 @@ describe('liveSelectedHourRouteHost', () => {
 		);
 	});
 
+	it('threads selected grid resolution into live session identity and config', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const baseModel = {} as Group;
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				gridResolutionMeters: 2
+			})
+		);
+		await host.flush();
+
+		const firstRequest = factory.records[0].requests[0];
+		expect(firstRequest?.sessionConfig.gridResolution).toBe(2);
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				gridResolutionMeters: 0.5
+			})
+		);
+		await host.flush();
+
+		const replacementRequest = factory.records[2].requests[0];
+		expect(factory.records[0].dispose).toHaveBeenCalledTimes(1);
+		expect(replacementRequest?.sessionConfig.gridResolution).toBe(0.5);
+		expect(replacementRequest?.sessionKey).not.toBe(firstRequest?.sessionKey);
+	});
+
 	it('forwards visible-readback instrumentation to route state', async () => {
 		const factory = createControllerFactory();
 		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));

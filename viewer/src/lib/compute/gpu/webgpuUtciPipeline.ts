@@ -1,4 +1,5 @@
 import {
+	createPointDispatchChunks,
 	getUtciFlatIndex,
 	type OnDemandUtciOutput,
 	type RunUtciForTimeIndexParams,
@@ -514,6 +515,29 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		});
 	}
 
+	private createUintParamsBuffer(values: Uint32Array, transientBuffers: GPUBuffer[]): GPUBuffer {
+		const buffer = this.device.createBuffer({
+			size: values.byteLength,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+		});
+		this.queue.writeBuffer(
+			buffer,
+			0,
+			values.buffer as ArrayBuffer,
+			values.byteOffset,
+			values.byteLength
+		);
+		transientBuffers.push(buffer);
+		return buffer;
+	}
+
+	private destroyTransientUniformBuffers(buffers: GPUBuffer[]): void {
+		for (const buffer of buffers) {
+			buffer.destroy();
+		}
+		buffers.length = 0;
+	}
+
 	private async encodeExposurePasses(params: {
 		encoder: GPUCommandEncoder;
 		numPoints: number;
@@ -521,62 +545,64 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		workgroupSize: number;
 		solarPipeline: GPUComputePipeline;
 		skyPipeline: GPUComputePipeline;
-	}): Promise<void> {
+	}): Promise<GPUBuffer[]> {
 		const { encoder, numPoints, totalTimeSteps, workgroupSize, solarPipeline, skyPipeline } = params;
-		if (!this.paramsBuffer) {
-			throw new Error('WebGPU UTCI pipeline: params buffer not initialized');
-		}
-		const paramsBuffer = this.paramsBuffer;
-		const workgroupsX = Math.ceil(numPoints / workgroupSize);
+		const pointChunks = createPointDispatchChunks(numPoints, workgroupSize);
+		const transientUniformBuffers: GPUBuffer[] = [];
 		const hasBvh = this.bvhNodeBuffer && this.bvhIndexBuffer && this.bvhVertexBuffer && this.bvhParamsBuffer;
 
 		if (hasBvh && this.gridPointsBuffer && this.sunVectorsBuffer && this.solarExposureBuffer) {
 			this.ranExposurePassesThisRun = true;
-			const solarBindGroup0 = this.device.createBindGroup({
-				layout: solarPipeline.getBindGroupLayout(0),
-				entries: [
-					{ binding: 0, resource: { buffer: this.gridPointsBuffer } },
-					{ binding: 1, resource: { buffer: this.sunVectorsBuffer } },
-					{ binding: 2, resource: { buffer: this.solarExposureBuffer } },
-					{ binding: 3, resource: { buffer: paramsBuffer } }
-				]
-			});
 			const solarPass = encoder.beginComputePass();
 			solarPass.setPipeline(solarPipeline);
-			solarPass.setBindGroup(0, solarBindGroup0);
 			solarPass.setBindGroup(1, this.createBvhBindGroup(solarPipeline));
-			solarPass.dispatchWorkgroups(workgroupsX, totalTimeSteps, 1);
+			for (const chunk of pointChunks) {
+				const solarParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([numPoints, totalTimeSteps, chunk.pointOffset, 0]),
+					transientUniformBuffers
+				);
+				const solarBindGroup0 = this.device.createBindGroup({
+					layout: solarPipeline.getBindGroupLayout(0),
+					entries: [
+						{ binding: 0, resource: { buffer: this.gridPointsBuffer } },
+						{ binding: 1, resource: { buffer: this.sunVectorsBuffer } },
+						{ binding: 2, resource: { buffer: this.solarExposureBuffer } },
+						{ binding: 3, resource: { buffer: solarParamsBuffer } }
+					]
+				});
+				solarPass.setBindGroup(0, solarBindGroup0);
+				solarPass.dispatchWorkgroups(chunk.workgroupsX, totalTimeSteps, 1);
+			}
 			solarPass.end();
 		}
 
 		const numPatches = 145;
 		if (hasBvh && this.gridPointsBuffer && this.domeVectorsBuffer && this.domeWeightsBuffer && this.skyExposureBuffer) {
 			this.ranExposurePassesThisRun = true;
-			if (!this.skyParamsBuffer || this.skyParamsBuffer.size !== 16) {
-				this.skyParamsBuffer?.destroy();
-				this.skyParamsBuffer = this.device.createBuffer({
-					size: 16,
-					usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-				});
-			}
-			this.queue.writeBuffer(this.skyParamsBuffer, 0, new Uint32Array([numPoints, numPatches]));
-			const skyBindGroup0 = this.device.createBindGroup({
-				layout: skyPipeline.getBindGroupLayout(0),
-				entries: [
-					{ binding: 0, resource: { buffer: this.gridPointsBuffer } },
-					{ binding: 1, resource: { buffer: this.domeVectorsBuffer } },
-					{ binding: 2, resource: { buffer: this.domeWeightsBuffer } },
-					{ binding: 3, resource: { buffer: this.skyExposureBuffer } },
-					{ binding: 4, resource: { buffer: this.skyParamsBuffer } }
-				]
-			});
 			const skyPass = encoder.beginComputePass();
 			skyPass.setPipeline(skyPipeline);
-			skyPass.setBindGroup(0, skyBindGroup0);
 			skyPass.setBindGroup(1, this.createBvhBindGroup(skyPipeline));
-			skyPass.dispatchWorkgroups(workgroupsX, 1, 1);
+			for (const chunk of pointChunks) {
+				const skyParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([numPoints, numPatches, chunk.pointOffset, 0]),
+					transientUniformBuffers
+				);
+				const skyBindGroup0 = this.device.createBindGroup({
+					layout: skyPipeline.getBindGroupLayout(0),
+					entries: [
+						{ binding: 0, resource: { buffer: this.gridPointsBuffer } },
+						{ binding: 1, resource: { buffer: this.domeVectorsBuffer } },
+						{ binding: 2, resource: { buffer: this.domeWeightsBuffer } },
+						{ binding: 3, resource: { buffer: this.skyExposureBuffer } },
+						{ binding: 4, resource: { buffer: skyParamsBuffer } }
+					]
+				});
+				skyPass.setBindGroup(0, skyBindGroup0);
+				skyPass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+			}
 			skyPass.end();
 		}
+		return transientUniformBuffers;
 	}
 
 	async runAll(params: { numPoints: number; numHours: number; numMonths: number; workgroupSize?: number }): Promise<void> {
@@ -655,7 +681,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const workgroupsX = Math.ceil(numPoints / workgroupSize);
 		this.ranExposurePassesThisRun = false;
 		const encoder = this.device.createCommandEncoder();
-		await this.encodeExposurePasses({
+		const exposureUniformBuffers = await this.encodeExposurePasses({
 			encoder,
 			numPoints,
 			totalTimeSteps,
@@ -726,6 +752,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		pass.end();
 
 		this.queue.submit([encoder.finish()]);
+		void this.queue
+			.onSubmittedWorkDone()
+			.then(() => this.destroyTransientUniformBuffers(exposureUniformBuffers));
 		this.lastConfig = { numPoints, numHours, numMonths };
 	}
 
@@ -757,7 +786,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		this.ranExposurePassesThisRun = false;
 		const encoder = this.device.createCommandEncoder();
-		await this.encodeExposurePasses({
+		const exposureUniformBuffers = await this.encodeExposurePasses({
 			encoder,
 			numPoints,
 			totalTimeSteps,
@@ -768,6 +797,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const exposurePrecomputeStart = performance.now();
 		this.queue.submit([encoder.finish()]);
 		await this.queue.onSubmittedWorkDone();
+		this.destroyTransientUniformBuffers(exposureUniformBuffers);
 		const solarExposureBytes = Math.ceil((numPoints * numHours * numMonths) / 32) * 4;
 		const skyExposureBytes = numPoints * 4;
 		this.onDemandDiagnostics = recordOnDemandTiming(
@@ -844,33 +874,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
 			});
 		}
-		if (!this.onDemandParamsBuffer || this.onDemandParamsBuffer.size !== 32) {
-			this.onDemandParamsBuffer?.destroy();
-			this.onDemandParamsBuffer = this.device.createBuffer({
-				size: 32,
-				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-			});
-		}
 		const onDemandOutputBuffer = this.onDemandOutputBuffer;
-		const onDemandParamsBuffer = this.onDemandParamsBuffer;
-
-		this.queue.writeBuffer(
-			onDemandParamsBuffer,
-			0,
-			new Uint32Array([numPoints, totalTimeSteps, numHours, timeIndex, 0, 0, 0, 0])
-		);
-
-		const bindGroup = this.device.createBindGroup({
-			layout: onDemandPipeline.getBindGroupLayout(0),
-			entries: [
-				{ binding: 0, resource: { buffer: solarExposureBuffer } },
-				{ binding: 1, resource: { buffer: skyExposureBuffer } },
-				{ binding: 2, resource: { buffer: weatherBuffer } },
-				{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
-				{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
-				{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
-			]
-		});
 
 		const snapshotBuffer = this.device.createBuffer({
 			size: outputBytes,
@@ -879,14 +883,42 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const encoder = this.device.createCommandEncoder();
 		const pass = encoder.beginComputePass();
 		pass.setPipeline(onDemandPipeline);
-		pass.setBindGroup(0, bindGroup);
-		pass.dispatchWorkgroups(Math.ceil(numPoints / 64), 1, 1);
+		const onDemandUniformBuffers: GPUBuffer[] = [];
+		for (const chunk of createPointDispatchChunks(numPoints, 64)) {
+			const onDemandParamsBuffer = this.createUintParamsBuffer(
+				new Uint32Array([
+					numPoints,
+					totalTimeSteps,
+					numHours,
+					timeIndex,
+					0,
+					chunk.pointOffset,
+					0,
+					0
+				]),
+				onDemandUniformBuffers
+			);
+			const bindGroup = this.device.createBindGroup({
+				layout: onDemandPipeline.getBindGroupLayout(0),
+				entries: [
+					{ binding: 0, resource: { buffer: solarExposureBuffer } },
+					{ binding: 1, resource: { buffer: skyExposureBuffer } },
+					{ binding: 2, resource: { buffer: weatherBuffer } },
+					{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
+					{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
+					{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
+				]
+			});
+			pass.setBindGroup(0, bindGroup);
+			pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+		}
 		pass.end();
 		encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
 
 		const oneHourDispatchStart = performance.now();
 		this.queue.submit([encoder.finish()]);
 		await this.queue.onSubmittedWorkDone();
+		this.destroyTransientUniformBuffers(onDemandUniformBuffers);
 		const nextTimeIndices = this.onDemandDiagnostics.timeIndices.includes(timeIndex)
 			? this.onDemandDiagnostics.timeIndices
 			: [...this.onDemandDiagnostics.timeIndices, timeIndex];

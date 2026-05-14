@@ -32,6 +32,7 @@ export type LiveSelectedHourRouteInputs = {
 		timeIndex: number;
 		selectionKey: string;
 	};
+	gridResolutionMeters?: number;
 	colorMode: 'normalized' | 'discrete';
 	utciRenderMode: UtciRenderMode;
 	rendererBackend: 'unknown' | 'webgpu';
@@ -226,6 +227,7 @@ function buildControllerIdentity(params: {
 	analysis: Analysis;
 	model: Group;
 	preferredDevice?: GPUDevice;
+	gridResolutionMeters?: number;
 }): string {
 	let analysisIdentity = objectIdentityIds.get(params.analysis);
 	if (analysisIdentity === undefined) {
@@ -254,6 +256,7 @@ function buildControllerIdentity(params: {
 		`analysis:${analysisIdentity}`,
 		`model:${modelIdentity}`,
 		`device:${deviceIdentity ?? 'none'}`,
+		`grid:${params.gridResolutionMeters ?? 'base'}`,
 		params.preferredDevice ? 'renderer' : 'standalone'
 	].join('|');
 }
@@ -263,11 +266,13 @@ function buildSelectionTriggerKey(params: {
 	selectionKey: string;
 	colorMode: 'normalized' | 'discrete';
 	preferGpuResident: boolean;
+	gridResolutionMeters?: number;
 }): string {
 	return [
 		params.controllerIdentity,
 		params.selectionKey,
 		params.colorMode,
+		`grid:${params.gridResolutionMeters ?? 'base'}`,
 		params.preferGpuResident ? 'gpu' : 'cpu'
 	].join('|');
 }
@@ -330,6 +335,7 @@ function buildSelectionPlan(params: {
 	utciSurfaceBackend: LiveSelectedHourRouteInputs['utciSurfaceBackend'];
 	selectionKey: string;
 	colorMode: LiveSelectedHourRouteInputs['colorMode'];
+	gridResolutionMeters?: number;
 }): SelectionPlan {
 	const preferGpuResident =
 		params.rendererBackend === 'webgpu' && params.utciSurfaceBackend === 'gpuNative';
@@ -338,7 +344,8 @@ function buildSelectionPlan(params: {
 		analysisId: params.analysisId,
 		analysis: params.analysis,
 		model: params.model,
-		preferredDevice
+		preferredDevice,
+		gridResolutionMeters: params.gridResolutionMeters
 	});
 	return {
 		preferGpuResident,
@@ -348,6 +355,7 @@ function buildSelectionPlan(params: {
 			controllerIdentity,
 			selectionKey: params.selectionKey,
 			colorMode: params.colorMode,
+			gridResolutionMeters: params.gridResolutionMeters,
 			preferGpuResident
 		})
 	};
@@ -530,7 +538,8 @@ export function createLiveSelectedHourRouteHost(
 				rendererDevice: currentInputs.rendererDevice,
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
-				colorMode: currentInputs.colorMode
+				colorMode: currentInputs.colorMode,
+				gridResolutionMeters: currentInputs.gridResolutionMeters
 			});
 			baseControllerIsCurrent = baseControllerIdentity === selectionPlan.controllerIdentity;
 			basePublishedSurfaceIsCurrent =
@@ -560,7 +569,8 @@ export function createLiveSelectedHourRouteHost(
 					comparisonSourceContext.rendererDevice ?? currentInputs.rendererDevice,
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
-				colorMode: currentInputs.colorMode
+				colorMode: currentInputs.colorMode,
+				gridResolutionMeters: currentInputs.gridResolutionMeters
 			});
 			comparisonControllerIsCurrent =
 				comparisonControllerIdentity === selectionPlan.controllerIdentity;
@@ -866,6 +876,7 @@ export function createLiveSelectedHourRouteHost(
 		model: Group;
 		preferredDevice?: GPUDevice;
 		fallbackProjectId?: string | null;
+		gridResolutionMeters?: number;
 	}): LiveSelectedHourSessionConfig {
 		return {
 			analysisId: params.analysisId,
@@ -875,7 +886,8 @@ export function createLiveSelectedHourRouteHost(
 				analysisId: params.analysisId,
 				fallbackProjectId: params.fallbackProjectId
 			}),
-			preferredDevice: params.preferredDevice
+			preferredDevice: params.preferredDevice,
+			gridResolution: params.gridResolutionMeters
 		};
 	}
 
@@ -902,7 +914,8 @@ export function createLiveSelectedHourRouteHost(
 			rendererDevice: inputs.rendererDevice,
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
-			colorMode: inputs.colorMode
+			colorMode: inputs.colorMode,
+			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
 		if (baseControllerIdentity !== controllerIdentity) {
@@ -925,7 +938,8 @@ export function createLiveSelectedHourRouteHost(
 			analysis: inputs.baseAnalysis,
 			model: inputs.baseModel,
 			preferredDevice: selectionPlan.preferredDevice,
-			fallbackProjectId: resolveProjectId(inputs.analysisId)
+			fallbackProjectId: resolveProjectId(inputs.analysisId),
+			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		baseSelectionTriggerKey = selectionTriggerKey;
 		baseRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({
@@ -998,7 +1012,8 @@ export function createLiveSelectedHourRouteHost(
 			rendererDevice: comparisonSourceContext.rendererDevice ?? inputs.rendererDevice,
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
-			colorMode: inputs.colorMode
+			colorMode: inputs.colorMode,
+			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
 		if (comparisonControllerIdentity !== controllerIdentity) {
@@ -1024,7 +1039,8 @@ export function createLiveSelectedHourRouteHost(
 			analysis: comparisonSourceContext.analysis,
 			model: comparisonSourceContext.model,
 			preferredDevice: selectionPlan.preferredDevice,
-			fallbackProjectId: resolveProjectId(comparisonSourceContext.analysisId)
+			fallbackProjectId: resolveProjectId(comparisonSourceContext.analysisId),
+			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		comparisonSelectionTriggerKey = selectionTriggerKey;
 		comparisonRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({

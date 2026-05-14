@@ -28,6 +28,8 @@ var<storage, read_write> solar_exposure: array<atomic<u32>>;
 struct Params {
 	num_points: u32,
 	num_time_steps: u32,
+	point_offset: u32,
+	_pad0: u32,
 }
 
 @group(0) @binding(3)
@@ -39,7 +41,7 @@ const PROBE_FORCE_WRITE: bool = false;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-	let point_idx = global_id.x;
+	let point_idx = global_id.x + params.point_offset;
 	let time_idx = global_id.y;
 
 	if (point_idx >= params.num_points || time_idx >= params.num_time_steps) {

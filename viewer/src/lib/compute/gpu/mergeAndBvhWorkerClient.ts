@@ -52,6 +52,7 @@ interface PreparePayloadOptions {
 	gridResolution?: number;
 	numHours?: number;
 	numMonths?: number;
+	maxGridPoints?: number;
 	maxEstimatedBytes?: number;
 	hasWorkerSupport?: boolean;
 }
@@ -167,6 +168,7 @@ export async function prepareMeshPayloadForWorkerAsync(
 		gridResolution = 2,
 		numHours = 24,
 		numMonths = 1,
+		maxGridPoints = MAX_GRID_POINTS_GUARD,
 		maxEstimatedBytes = DEFAULT_MAX_ESTIMATED_BYTES,
 		hasWorkerSupport = typeof Worker !== 'undefined'
 	} = options;
@@ -222,9 +224,9 @@ export async function prepareMeshPayloadForWorkerAsync(
 	const width = Math.max(0, bounds.max[0] - bounds.min[0]);
 	const depth = Math.max(0, bounds.max[2] - bounds.min[2]);
 	const estimatedGridPoints = Math.max(1, Math.ceil((width * depth) / Math.max(0.25, gridResolution * gridResolution)));
-	if (estimatedGridPoints > MAX_GRID_POINTS_GUARD) {
+	if (estimatedGridPoints > maxGridPoints) {
 		throw new Error(
-			`Estimated grid too dense (${estimatedGridPoints.toLocaleString()} points) exceeds safety cap (${MAX_GRID_POINTS_GUARD.toLocaleString()}). Increase grid size.`
+			`Estimated grid too dense (${estimatedGridPoints.toLocaleString()} points) exceeds safety cap (${maxGridPoints.toLocaleString()}). Increase grid size.`
 		);
 	}
 

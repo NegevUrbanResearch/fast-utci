@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { createPipelineConfig, calculateDispatch, getUtciFlatIndex } from '$lib/compute/gpu/gpu-pipeline';
+import {
+	createPipelineConfig,
+	calculateDispatch,
+	createPointDispatchChunks,
+	getUtciFlatIndex,
+	MAX_WEBGPU_WORKGROUPS_PER_DIMENSION
+} from '$lib/compute/gpu/gpu-pipeline';
 
 describe('GPU Compute Pipeline', () => {
 	it('should create pipeline config with correct buffer sizes', () => {
@@ -73,5 +79,27 @@ describe('GPU Compute Pipeline', () => {
 		// Sky exposure uses the same X workgroup count over points, but that path is not asserted here.
 		const skyWorkgroupsX = Math.ceil(numPoints / workgroupSize);
 		expect(skyWorkgroupsX).toBe(8);
+	});
+
+	it('chunks dense point dispatches under the WebGPU per-dimension workgroup limit', () => {
+		const workgroupSize = 64;
+		const maxPointsPerChunk = workgroupSize * MAX_WEBGPU_WORKGROUPS_PER_DIMENSION;
+		const chunks = createPointDispatchChunks(maxPointsPerChunk + 100, workgroupSize);
+
+		expect(chunks).toEqual([
+			{
+				pointOffset: 0,
+				pointCount: maxPointsPerChunk,
+				workgroupsX: MAX_WEBGPU_WORKGROUPS_PER_DIMENSION
+			},
+			{
+				pointOffset: maxPointsPerChunk,
+				pointCount: 100,
+				workgroupsX: 2
+			}
+		]);
+		expect(Math.max(...chunks.map((chunk) => chunk.workgroupsX))).toBeLessThanOrEqual(
+			MAX_WEBGPU_WORKGROUPS_PER_DIMENSION
+		);
 	});
 });

@@ -6,12 +6,17 @@ import {
 	prepareSelectedHourLiveSession
 } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
+import {
+	prepareMeshPayloadForWorkerAsync,
+	runMergeAndBvhInWorker
+} from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 
 const mockState = vi.hoisted(() => ({
 	pipeline: null as any,
 	rendererDevice: {} as GPUDevice,
 	gpuBuffer: null as any,
 	outputOverride: null as any,
+	initResult: null as any,
 	constructors: [] as any[]
 }));
 
@@ -52,7 +57,10 @@ vi.mock('$lib/compute/compute-manager', () => ({
 			mockState.constructors.push(this);
 		}
 
-		initFromModelAndWeather = vi.fn(async () => ({ numPoints: 2 }));
+		initFromModelAndWeather = vi.fn(async () => mockState.initResult ?? {
+			numPoints: 2,
+			gridPoints: new Float32Array([0, 0.9, 0, 1, 0.9, 0])
+		});
 		runExposurePrecompute = vi.fn(async () => undefined);
 		runUtciForTimeIndex = vi.fn(async () => mockState.outputOverride ?? { gpuBuffer: mockState.gpuBuffer });
 		getDeviceForDebug = vi.fn(() => mockState.rendererDevice);
@@ -108,6 +116,7 @@ describe('selected-hour live session', () => {
 		mockState.rendererDevice = {} as GPUDevice;
 		mockState.gpuBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
 		mockState.outputOverride = null;
+		mockState.initResult = null;
 		mockState.constructors.length = 0;
 		mockState.pipeline = {
 			uploadStaticData: vi.fn(async () => undefined),
@@ -162,6 +171,171 @@ describe('selected-hour live session', () => {
 			}
 		});
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses an explicitly requested 0.5m grid instead of clamping to base 2m metadata', async () => {
+		vi.mocked(prepareMeshPayloadForWorkerAsync).mockClear();
+		mockState.initResult = {
+			numPoints: 3,
+			gridPoints: new Float32Array([10, 1.8, 20, 11, 1.8, 20, 12, 1.8, 20])
+		};
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			gridResolution: 0.5
+		});
+
+		expect(prepareMeshPayloadForWorkerAsync).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ gridResolution: 0.5 })
+		);
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({ gridResolution: 0.5 })
+		);
+		expect(session.base.metadata.grid_size).toBe(0.5);
+		expect(session.base.metadata.num_positions).toBe(3);
+		expect(session.base.data.numPositions).toBe(3);
+		expect(session.base.data.positions).toHaveLength(9);
+		expect(session.base.data.positions).not.toEqual(createFullDayBaseAnalysis().data.positions);
+	});
+
+	it('does not apply the default 600k grid cap to selected-hour 0.5m preflight or BVH generation', async () => {
+		const densePointCount = 1_896_487;
+		vi.mocked(prepareMeshPayloadForWorkerAsync).mockImplementationOnce(
+			async (_model, options) => {
+				const liveOptions = options as
+					| { gridResolution?: number; maxGridPoints?: number; maxEstimatedBytes?: number }
+					| undefined;
+				if ((liveOptions?.maxGridPoints ?? 100_000) <= densePointCount) {
+					throw new Error(
+						'Estimated grid too dense (1,896,487 points) exceeds safety cap (600,000). Increase grid size.'
+					);
+				}
+				if ((liveOptions?.maxEstimatedBytes ?? 0) < Number.MAX_SAFE_INTEGER) {
+					throw new Error('Selected-hour dense preflight still uses all-hours byte budget');
+				}
+				return {
+					meshes: [],
+					totalTriangles: 0,
+					preflight: {
+						estimatedGridPoints: densePointCount,
+						estimatedBytes: 0,
+						totalTriangles: 0,
+						meshCount: 0,
+						bounds: { min: [0, 0, 0], max: [1, 1, 1] }
+					}
+				};
+			}
+		);
+
+		await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			gridResolution: 0.5
+		});
+
+		expect(prepareMeshPayloadForWorkerAsync).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				gridResolution: 0.5,
+				maxGridPoints: expect.any(Number),
+				maxEstimatedBytes: Number.POSITIVE_INFINITY
+			})
+		);
+		expect(
+			(
+				vi.mocked(prepareMeshPayloadForWorkerAsync).mock.calls[0]?.[1] as
+					| { maxGridPoints?: number }
+					| undefined
+			)?.maxGridPoints
+		).toBeGreaterThan(densePointCount);
+		expect(runMergeAndBvhInWorker).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gridResolution: 0.5,
+				maxGridPoints: expect.any(Number),
+				bvhOnly: true
+			})
+		);
+		expect(
+			(
+				vi.mocked(runMergeAndBvhInWorker).mock.calls[0]?.[0] as
+					| { maxGridPoints?: number }
+					| undefined
+			)?.maxGridPoints
+		).toBeGreaterThan(densePointCount);
+	});
+
+	it.each([
+		['missing', undefined],
+		['wrong-length', new Float32Array([10, 1.8, 20])]
+	])('rejects %s generated grid points instead of publishing stale base positions', async (_label, gridPoints) => {
+		mockState.initResult = {
+			numPoints: 3,
+			gridPoints
+		};
+
+		await expect(
+			prepareSelectedHourLiveSession({
+				analysisId: 'analysis-a',
+				base: createFullDayBaseAnalysis(),
+				model: {} as Group,
+				epwUrl: '/weather.epw',
+				signal: new AbortController().signal,
+				preferredDevice: mockState.rendererDevice,
+				gridResolution: 0.5
+			})
+		).rejects.toThrow(
+			'Live selected-hour generated grid point length mismatch'
+		);
+	});
+
+	it('falls back only to coarser grid resolutions when preflight exceeds budget', async () => {
+		vi.mocked(prepareMeshPayloadForWorkerAsync).mockClear();
+		vi.mocked(prepareMeshPayloadForWorkerAsync).mockImplementation(
+			async (_model, options) => {
+				const gridResolution = options?.gridResolution ?? 0;
+				if ([4, 6, 8].includes(gridResolution)) {
+					throw new Error('grid preflight exceeds budget');
+				}
+				return {
+					meshes: [],
+					totalTriangles: 0,
+					preflight: {
+						estimatedGridPoints: 2,
+						estimatedBytes: 128,
+						totalTriangles: 0,
+						meshCount: 0,
+						bounds: { min: [0, 0, 0], max: [1, 1, 1] }
+					}
+				};
+			}
+		);
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			gridResolution: 4
+		});
+
+		expect(
+			vi.mocked(prepareMeshPayloadForWorkerAsync).mock.calls.map(
+				([, options]) => options?.gridResolution
+			)
+		).toEqual([4, 6, 8, 10]);
+		expect(session.base.metadata.grid_size).toBe(10);
 	});
 
 	it('keeps an accepted GPU output handle alive until explicit selected-hour disposal', async () => {

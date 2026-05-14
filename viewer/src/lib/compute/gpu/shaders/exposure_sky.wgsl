@@ -27,6 +27,8 @@ var<storage, read_write> sky_exposure: array<f32>;
 struct SkyParams {
 	num_points: u32,
 	num_patches: u32,
+	point_offset: u32,
+	_pad0: u32,
 }
 
 @group(0) @binding(4)
@@ -36,7 +38,7 @@ var<uniform> params: SkyParams;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-	let point_idx = global_id.x;
+	let point_idx = global_id.x + params.point_offset;
 	if (point_idx >= params.num_points) {
 		return;
 	}

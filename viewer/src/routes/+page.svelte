@@ -111,6 +111,7 @@
 	const utciOnDemandMode: UtciOnDemandMode = "f32";
 	let rendererBackend: UtciRendererBackend = "unknown";
 	let rendererDeviceForMain: GPUDevice | undefined = undefined;
+	let selectedGridResolutionMeters = 2;
 	$: resolvedUtciSurfaceBackend = resolveMainRouteUtciSurfaceBackend({
 		mode: utciRenderMode,
 		rendererBackend,
@@ -212,6 +213,10 @@
 		releaseComparisonAcceptedGpuResidentOutput(liveRouteHost, params);
 	}
 
+	function handleGridResolutionChange(value: number): void {
+		selectedGridResolutionMeters = value;
+	}
+
 	function handleMainRouteModelLoaded(event: CustomEvent<Group>): void {
 		model = event.detail;
 		modelLoading = false;
@@ -280,6 +285,7 @@
 			timeIndex: selectedTimeIndex,
 			selectionKey: [analysisId, selectedMonthIndex, selectedHourIndex].join("|"),
 		},
+		gridResolutionMeters: selectedGridResolutionMeters,
 		colorMode: $viewerStore.colorMode,
 		utciRenderMode,
 		rendererBackend,
@@ -443,8 +449,13 @@
 			buildMainRoutePerformanceSnapshot({
 				analysisId,
 				projectLabel: currentProjectId,
-				pointCount: $analysisStore?.metadata?.num_positions ?? null,
-				gridSizeMeters: $analysisStore?.metadata?.grid_size ?? null,
+				pointCount: useLiveUtciOnMainRoute
+					? (liveRouteState.base.analysis?.metadata.num_positions ?? null)
+					: ($analysisStore?.metadata?.num_positions ?? null),
+				gridSizeMeters: useLiveUtciOnMainRoute
+					? (liveRouteState.base.analysis?.metadata.grid_size ??
+							selectedGridResolutionMeters)
+					: ($analysisStore?.metadata?.grid_size ?? null),
 				selectedMonthIndex,
 				selectedHourIndex,
 				diagnostics: {
@@ -506,7 +517,10 @@
 			<span class:open={performanceOpen} class="chevron">v</span>
 		</button>
 		{#if performanceOpen}
-			<PerformancePanel />
+			<PerformancePanel
+				selectedGridResolutionMeters={selectedGridResolutionMeters}
+				onGridResolutionChange={handleGridResolutionChange}
+			/>
 		{/if}
 	</svelte:fragment>
 

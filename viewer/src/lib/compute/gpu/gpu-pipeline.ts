@@ -49,6 +49,14 @@ export interface DispatchDimensions {
 	y: number;
 }
 
+export const MAX_WEBGPU_WORKGROUPS_PER_DIMENSION = 65_535;
+
+export interface PointDispatchChunk {
+	pointOffset: number;
+	pointCount: number;
+	workgroupsX: number;
+}
+
 /**
  * Compute flat UTCI index for point-major layout:
  * flatIndex = pointIndex * totalTimeSteps + timeIndex
@@ -84,6 +92,28 @@ export function calculateDispatch(
 		x: Math.ceil(numPoints / workgroupSize),
 		y: totalTimeSteps
 	};
+}
+
+export function createPointDispatchChunks(
+	numPoints: number,
+	workgroupSize: number,
+	maxWorkgroupsX: number = MAX_WEBGPU_WORKGROUPS_PER_DIMENSION
+): PointDispatchChunk[] {
+	if (numPoints <= 0 || workgroupSize <= 0 || maxWorkgroupsX <= 0) {
+		throw new Error('numPoints, workgroupSize and maxWorkgroupsX must all be positive');
+	}
+
+	const maxPointsPerChunk = workgroupSize * maxWorkgroupsX;
+	const chunks: PointDispatchChunk[] = [];
+	for (let pointOffset = 0; pointOffset < numPoints; pointOffset += maxPointsPerChunk) {
+		const pointCount = Math.min(maxPointsPerChunk, numPoints - pointOffset);
+		chunks.push({
+			pointOffset,
+			pointCount,
+			workgroupsX: Math.ceil(pointCount / workgroupSize)
+		});
+	}
+	return chunks;
 }
 
 /**
