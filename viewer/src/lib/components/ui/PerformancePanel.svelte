@@ -4,12 +4,13 @@
 		formatDuration,
 		formatMemory
 	} from '$lib/performance/mainRoutePerformanceTelemetry';
+	import type { MainRouteGridResolution } from '$lib/utils/analysisQuery';
 
 	const GRID_RESOLUTION_STEPS = [10, 8, 6, 4, 2, 1, 0.5] as const;
 
 	type Props = {
-		selectedGridResolutionMeters?: number;
-		onGridResolutionChange?: (value: number) => void;
+		selectedGridResolutionMeters?: MainRouteGridResolution;
+		onGridResolutionChange?: (value: MainRouteGridResolution) => void;
 	};
 
 	let {

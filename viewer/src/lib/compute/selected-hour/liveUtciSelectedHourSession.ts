@@ -23,6 +23,7 @@ import {
 import {
 	createEmptyOnDemandDiagnostics,
 	recordSelectedHourReadbackReason,
+	type OnDemandTimings,
 	type OnDemandRuntimeDiagnostics
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
@@ -95,6 +96,11 @@ type PreparedSessionState = {
 	exposurePrecomputePromise: Promise<void> | null;
 	requestSequence: number;
 	selectedDayRangeCache: Map<string, { min: number; max: number }>;
+	lifecycleTimings: Pick<
+		OnDemandTimings,
+		'payloadPrepareMs' | 'workerBvhMs' | 'pipelineUploadMs'
+	>;
+	coldStartStartedAt: number;
 };
 
 function copyRuntimeDiagnosticsSnapshot(
@@ -104,6 +110,32 @@ function copyRuntimeDiagnosticsSnapshot(
 	return {
 		timings: { ...diagnostics.timings },
 		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
+	};
+}
+
+function applyRuntimeDiagnosticsSnapshot(
+	target: OnDemandRuntimeDiagnostics,
+	snapshot:
+		| Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'>
+		| undefined,
+	lifecycleTimings: PreparedSessionState['lifecycleTimings']
+): void {
+	target.timings = {
+		...lifecycleTimings,
+		...(snapshot?.timings ?? {})
+	};
+	if (snapshot) {
+		target.trackedGpuAllocationBytes = snapshot.trackedGpuAllocationBytes;
+	}
+}
+
+function recordSelectedHourReadyTiming(
+	diagnostics: OnDemandRuntimeDiagnostics,
+	startedAt: number
+): void {
+	diagnostics.timings = {
+		...diagnostics.timings,
+		firstSelectedHourReadyMs: performance.now() - startedAt
 	};
 }
 
@@ -418,6 +450,8 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 		deviceSource: state.deviceSource,
 		async runSelectedHour(params) {
 			const selectedHourVisibleStartedAt = performance.now();
+			const requestReadyStartedAt =
+				state.requestSequence === 0 ? state.coldStartStartedAt : selectedHourVisibleStartedAt;
 			const diagnostics = createEmptyOnDemandDiagnostics();
 			const recordReadback = (reason: SelectedHourReadbackReason) => {
 				Object.assign(diagnostics, recordSelectedHourReadbackReason(diagnostics, reason));
@@ -428,11 +462,11 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			const afterExposureDiagnostics = copyRuntimeDiagnosticsSnapshot(
 				state.computeManager.getOnDemandDiagnostics?.()
 			);
-			if (afterExposureDiagnostics) {
-				diagnostics.timings = afterExposureDiagnostics.timings;
-				diagnostics.trackedGpuAllocationBytes =
-					afterExposureDiagnostics.trackedGpuAllocationBytes;
-			}
+			applyRuntimeDiagnosticsSnapshot(
+				diagnostics,
+				afterExposureDiagnostics,
+				state.lifecycleTimings
+			);
 
 			const requestId = ++state.requestSequence;
 			const output = await state.computeManager.runUtciForTimeIndex({
@@ -445,11 +479,11 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			const afterDispatchDiagnostics = copyRuntimeDiagnosticsSnapshot(
 				state.computeManager.getOnDemandDiagnostics?.()
 			);
-			if (afterDispatchDiagnostics) {
-				diagnostics.timings = afterDispatchDiagnostics.timings;
-				diagnostics.trackedGpuAllocationBytes =
-					afterDispatchDiagnostics.trackedGpuAllocationBytes;
-			}
+			applyRuntimeDiagnosticsSnapshot(
+				diagnostics,
+				afterDispatchDiagnostics,
+				state.lifecycleTimings
+			);
 			const gpuOutputHandle = ensureSelectedHourOutputHandle({
 				output,
 				requestId,
@@ -482,6 +516,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					throw error;
 				});
 				disposeGpuBuffer(output);
+				recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
 				return {
 					requestId,
 					monthIndex: params.monthIndex,
@@ -538,6 +573,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 							recordReadback
 						});
 
+			recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
 			return {
 				requestId,
 				monthIndex: params.monthIndex,
@@ -601,6 +637,8 @@ export async function prepareSelectedHourLiveSession(params: {
 	const requestedGridResolution = gridResolution ?? base.metadata.grid_size ?? 2;
 	const numHours = base.data.numHours ?? base.metadata.hours.length ?? 24;
 	const resolutionsToTry = buildResolutionsToTry(requestedGridResolution);
+	const coldStartStartedAt = performance.now();
+	const lifecycleTimings: PreparedSessionState['lifecycleTimings'] = {};
 
 	let meshes: Awaited<ReturnType<typeof prepareMeshPayloadForWorkerAsync>>['meshes'] | null = null;
 	let totalTriangles = 0;
@@ -611,6 +649,7 @@ export async function prepareSelectedHourLiveSession(params: {
 	let lastError: unknown = null;
 
 	for (const tryResolution of resolutionsToTry) {
+		const payloadPrepareStartedAt = performance.now();
 		try {
 			const result = await prepareMeshPayloadForWorkerAsync(model, {
 				signal,
@@ -636,6 +675,10 @@ export async function prepareSelectedHourLiveSession(params: {
 				continue;
 			}
 			throw error;
+		} finally {
+			lifecycleTimings.payloadPrepareMs =
+				(lifecycleTimings.payloadPrepareMs ?? 0) +
+				(performance.now() - payloadPrepareStartedAt);
 		}
 	}
 
@@ -671,6 +714,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			null;
 		if (typeof Worker !== 'undefined') {
 			try {
+				const workerBvhStartedAt = performance.now();
 				workerResult = await runMergeAndBvhInWorker({
 					meshes,
 					gridResolution: effectiveGridResolution,
@@ -679,6 +723,7 @@ export async function prepareSelectedHourLiveSession(params: {
 					maxGridPoints: LIVE_SELECTED_HOUR_MAX_GRID_POINTS,
 					bvhOnly: true
 				});
+				lifecycleTimings.workerBvhMs = performance.now() - workerBvhStartedAt;
 			} catch (error) {
 				if (error instanceof DOMException && error.name === 'AbortError') {
 					throw error;
@@ -725,6 +770,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			startMonth
 		});
 
+		const pipelineUploadStartedAt = performance.now();
 		const initResult = await uploadManager.initFromModelAndWeather({
 			serializedBvh: workerResult.serializedBvh,
 			useRectangularGridFromBounds: true,
@@ -737,6 +783,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			signal
 		});
 		ensureNotAborted(signal);
+		lifecycleTimings.pipelineUploadMs = performance.now() - pipelineUploadStartedAt;
 
 		emitComputeTelemetry('pipeline.upload.done', {
 			data: { numPoints: initResult.numPoints, numHours, numMonths }
@@ -761,7 +808,9 @@ export async function prepareSelectedHourLiveSession(params: {
 			exposureReady: false,
 			exposurePrecomputePromise: null,
 			requestSequence: 0,
-			selectedDayRangeCache: new Map()
+			selectedDayRangeCache: new Map(),
+			lifecycleTimings,
+			coldStartStartedAt
 		});
 	} catch (error) {
 		pipeline?.dispose?.();

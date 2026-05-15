@@ -13,6 +13,7 @@ import type {
 	LiveSelectedHourRouteState,
 } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
+import type { ColorMode } from '$lib/types/viewer';
 
 export type MainRouteWindow = Window & {
 	__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
@@ -43,6 +44,9 @@ export type MainRouteLiveSelectedHourDiagnosticsParams = {
 	selectedMonthIndex: number;
 	selectedHourIndex: number;
 	selectedTimeIndex: number;
+	baseColorMode?: ColorMode;
+	basePointCount?: number | null;
+	baseMetadataGridSize?: number | null;
 	baseSceneRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	tooltipHoverSampleCount: number;
@@ -96,6 +100,9 @@ export function buildMainRouteLiveSelectedHourDiagnosticsInputs(
 		baseSelectedMonthIndex: params.selectedMonthIndex,
 		baseSelectedHourIndex: params.selectedHourIndex,
 		baseSelectedTimeIndex: params.selectedTimeIndex,
+		baseColorMode: params.baseColorMode,
+		basePointCount: params.basePointCount,
+		baseMetadataGridSize: params.baseMetadataGridSize,
 		baseRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 		baseAcceptedUtciRange: params.baseAcceptedUtciRange,
 		comparisonSurfaceRequestId:

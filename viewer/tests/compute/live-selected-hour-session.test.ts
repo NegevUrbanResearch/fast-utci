@@ -17,6 +17,7 @@ const mockState = vi.hoisted(() => ({
 	gpuBuffer: null as any,
 	outputOverride: null as any,
 	initResult: null as any,
+	runtimeDiagnostics: null as any,
 	constructors: [] as any[]
 }));
 
@@ -63,6 +64,7 @@ vi.mock('$lib/compute/compute-manager', () => ({
 		});
 		runExposurePrecompute = vi.fn(async () => undefined);
 		runUtciForTimeIndex = vi.fn(async () => mockState.outputOverride ?? { gpuBuffer: mockState.gpuBuffer });
+		getOnDemandDiagnostics = vi.fn(() => mockState.runtimeDiagnostics);
 		getDeviceForDebug = vi.fn(() => mockState.rendererDevice);
 	}
 }));
@@ -117,6 +119,21 @@ describe('selected-hour live session', () => {
 		mockState.gpuBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
 		mockState.outputOverride = null;
 		mockState.initResult = null;
+		mockState.runtimeDiagnostics = {
+			timings: {
+				exposurePrecomputeMs: 12.5,
+				oneHourDispatchMs: 3.75
+			},
+			trackedGpuAllocationBytes: {
+				persistentExposureBytes: 128,
+				allHoursOutputBytes: 0,
+				selectedHourOutputBytes: 8,
+				selectedHourOutputBytesHighWatermark: 8,
+				renderOwnedSelectedHourBytes: 0,
+				renderOwnedSelectedHourBytesHighWatermark: 0,
+				trackingScope: 'utci-owned-webgpu-buffers'
+			}
+		};
 		mockState.constructors.length = 0;
 		mockState.pipeline = {
 			uploadStaticData: vi.fn(async () => undefined),
@@ -134,6 +151,36 @@ describe('selected-hour live session', () => {
 			}))
 		);
 		vi.stubGlobal('Worker', vi.fn());
+	});
+
+	it('propagates live session lifecycle timings onto selected-hour runtime diagnostics', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.diagnostics.timings).toMatchObject({
+			exposurePrecomputeMs: 12.5,
+			oneHourDispatchMs: 3.75
+		});
+		expect(result.diagnostics.timings.payloadPrepareMs).toEqual(expect.any(Number));
+		expect(result.diagnostics.timings.workerBvhMs).toEqual(expect.any(Number));
+		expect(result.diagnostics.timings.pipelineUploadMs).toEqual(expect.any(Number));
+		expect(result.diagnostics.timings.firstSelectedHourReadyMs).toEqual(expect.any(Number));
+		expect(result.diagnostics.timings.firstSelectedHourReadyMs ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
 	it('attaches live selected-hour values for same-device GPU-resident range and tooltip data', async () => {

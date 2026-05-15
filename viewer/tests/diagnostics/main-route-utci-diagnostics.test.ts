@@ -54,6 +54,9 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			baseSelectedMonthIndex: 7,
 			baseSelectedHourIndex: 12,
 			baseSelectedTimeIndex: 180,
+			baseColorMode: 'normalized',
+			basePointCount: 1234,
+			baseMetadataGridSize: 0.5,
 			baseRenderContextTimeIndex: 180,
 			baseAcceptedUtciRange: { min: 20, max: 41 },
 			comparisonSameDeviceForComputeAndRender: null,
@@ -77,6 +80,9 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			baseSelectedMonthIndex: 7,
 			baseSelectedHourIndex: 12,
 			baseSelectedTimeIndex: 180,
+			baseColorMode: 'normalized',
+			basePointCount: 1234,
+			baseMetadataGridSize: 0.5,
 			baseAcceptedUtciRange: { min: 20, max: 41 }
 		});
 		expect(diagnostics?.selectedHourRuntimeContract.readbackInstrumentation).toBe('not-instrumented');

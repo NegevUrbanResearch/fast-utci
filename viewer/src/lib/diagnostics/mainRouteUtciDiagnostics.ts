@@ -18,6 +18,7 @@ import type {
 	TrackedGpuAllocationBytes
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
+import type { ColorMode } from '$lib/types/viewer';
 
 export type MainRouteUtciDiagnosticsPayload = {
 	utciOnDemand: 'f32';
@@ -46,6 +47,9 @@ export type MainRouteUtciDiagnosticsPayload = {
 	baseSelectedMonthIndex: number;
 	baseSelectedHourIndex: number;
 	baseSelectedTimeIndex: number;
+	baseColorMode?: ColorMode;
+	basePointCount?: number | null;
+	baseMetadataGridSize?: number | null;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	comparisonSurfaceRequestId?: number;
@@ -99,6 +103,9 @@ export type MainRouteUtciDiagnosticsInputs = {
 	baseSelectedMonthIndex: number;
 	baseSelectedHourIndex: number;
 	baseSelectedTimeIndex: number;
+	baseColorMode?: ColorMode;
+	basePointCount?: number | null;
+	baseMetadataGridSize?: number | null;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	comparisonSurfaceRequestId?: number;
@@ -200,6 +207,9 @@ export function buildMainRouteUtciDiagnostics(
 		baseSelectedMonthIndex: inputs.baseSelectedMonthIndex,
 		baseSelectedHourIndex: inputs.baseSelectedHourIndex,
 		baseSelectedTimeIndex: inputs.baseSelectedTimeIndex,
+		baseColorMode: inputs.baseColorMode,
+		basePointCount: inputs.basePointCount,
+		baseMetadataGridSize: inputs.baseMetadataGridSize,
 		baseRenderContextTimeIndex: inputs.baseRenderContextTimeIndex,
 		baseAcceptedUtciRange: inputs.baseAcceptedUtciRange,
 		comparisonSurfaceRequestId: inputs.comparisonSurfaceRequestId,

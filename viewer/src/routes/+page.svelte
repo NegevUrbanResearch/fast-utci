@@ -45,6 +45,10 @@
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import "$lib/styles/variables.css";
 	import { getDefaultAnalysisId } from "$lib/config/projects";
+	import {
+		parseMainRouteGridResolution,
+		type MainRouteGridResolution,
+	} from "$lib/utils/analysisQuery";
 	import { resolveProjectId } from "$lib/utils/analysisPaths";
 	import type { Analysis } from "$lib/types/analysis";
 	import type { LiveSelectedHourControllerSurfaceDiagnostics } from "$lib/compute/selected-hour/liveSelectedHourController";
@@ -111,7 +115,9 @@
 	const utciOnDemandMode: UtciOnDemandMode = "f32";
 	let rendererBackend: UtciRendererBackend = "unknown";
 	let rendererDeviceForMain: GPUDevice | undefined = undefined;
-	let selectedGridResolutionMeters = 2;
+	let selectedGridResolutionMeters = parseMainRouteGridResolution(
+		typeof window !== "undefined" ? window.location.search : "",
+	);
 	$: resolvedUtciSurfaceBackend = resolveMainRouteUtciSurfaceBackend({
 		mode: utciRenderMode,
 		rendererBackend,
@@ -213,7 +219,7 @@
 		releaseComparisonAcceptedGpuResidentOutput(liveRouteHost, params);
 	}
 
-	function handleGridResolutionChange(value: number): void {
+	function handleGridResolutionChange(value: MainRouteGridResolution): void {
 		selectedGridResolutionMeters = value;
 	}
 
@@ -437,6 +443,9 @@
 			selectedMonthIndex,
 			selectedHourIndex,
 			selectedTimeIndex,
+			baseColorMode: $viewerStore.colorMode,
+			basePointCount: liveRouteState.base.analysis?.metadata.num_positions ?? null,
+			baseMetadataGridSize: liveRouteState.base.analysis?.metadata.grid_size ?? null,
 			baseSceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
 			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
 			tooltipHoverSampleCount,
