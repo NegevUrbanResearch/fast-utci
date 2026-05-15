@@ -28,6 +28,7 @@
 		invokeDiagnosticsCallbackSafely,
 		type SelectedHourRenderTimingSubsteps
 	} from '$lib/compute/on-demand/onDemandDiagnostics';
+	import { createRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 	import {
 		buildCpuPublicationDiagnostics,
 		buildUtciSurfaceDiagnostics,
@@ -222,14 +223,24 @@
 		acceptedOutput: SelectedHourGpuResidentOutput;
 		activeSyncRun: AcceptedGpuResidentSurfaceSyncRun;
 		syncStartedAt: number;
+		sceneSurfaceReceivedAtMs: number;
+		publicationEffectStartedAtMs: number;
 		renderTimings: SelectedHourRenderTimingSubsteps;
+		meshAction: 'created' | 'reused';
+		layout: ReturnType<typeof extractUtciLayout>;
+		lastRenderTargetByteLength: { value: number | undefined };
 	}): Promise<void> {
 		const {
 			mesh,
 			acceptedOutput,
 			activeSyncRun,
 			syncStartedAt,
-			renderTimings
+			sceneSurfaceReceivedAtMs,
+			publicationEffectStartedAtMs,
+			renderTimings,
+			meshAction,
+			layout,
+			lastRenderTargetByteLength
 		} = params;
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
 		if (!sourceBuffer) {
@@ -273,6 +284,8 @@
 					? 'Three storage buffer was not initialized within the GPU-resident render timeout.'
 					: 'Renderer WebGPU device was not available within the GPU-resident render timeout.'
 		});
+		lastRenderTargetByteLength.value = targetBuffer.size;
+		const renderStorageReadyAtMs = performance.now();
 		renderTimings.renderStorageInitWaitMs = waitMs;
 		if (isSuperseded()) {
 			acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
@@ -303,6 +316,27 @@
 			Boolean(analysis && $viewerStore?.utciVisible)
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
+		const sceneSyncCompletedAtMs = performance.now();
+		renderTimings.renderPublication = createRenderPublicationDiagnostics({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: acceptedOutput.requestId <= 1 ? 'initial' : 'scrub',
+			renderPublicationMeshAction: meshAction,
+			renderPublicationPointCount: layout.numPositions,
+			renderPublicationVertexCount: layout.width * layout.height * 6,
+			renderPublicationGridWidth: layout.width,
+			renderPublicationGridHeight: layout.height,
+			renderPublicationGridSize: layout.gridSize,
+			renderPublicationSourceByteLength: sourceBuffer.size,
+			renderPublicationTargetByteLength: lastRenderTargetByteLength.value,
+			renderPublicationRenderOwnedBytes:
+				mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
+			renderPublicationTimeline: {
+				sceneSurfaceReceivedAtMs,
+				publicationEffectStartedAtMs,
+				renderStorageReadyAtMs,
+				sceneSyncCompletedAtMs
+			}
+		});
 		if (
 			acceptedGpuResidentSurfaceSync.completeSync(activeSyncRun, {
 				...getCurrentGpuResidentSyncLiveState(),
@@ -316,7 +350,8 @@
 
 	async function syncAcceptedGpuResidentSurface(
 		activeAnalysis: Analysis,
-		acceptedOutput: SelectedHourGpuResidentOutput
+		acceptedOutput: SelectedHourGpuResidentOutput,
+		sceneSurfaceReceivedAtMs: number
 	): Promise<void> {
 		const activeSyncRun =
 			acceptedGpuResidentSurfaceSync.startSync({
@@ -328,6 +363,7 @@
 		}
 
 		try {
+			const publicationEffectStartedAtMs = performance.now();
 			const syncStartedAt = performance.now();
 			const renderTimings: SelectedHourRenderTimingSubsteps = {};
 			if (pendingRenderUpdateStartedAt !== undefined) {
@@ -338,10 +374,15 @@
 			}
 			const layoutStartedAt = performance.now();
 			const layout = extractUtciLayout(activeAnalysis);
+			let meshAction: 'created' | 'reused' = 'reused';
+			const lastRenderTargetByteLength: { value: number | undefined } = {
+				value: undefined
+			};
 			renderTimings.renderLayoutBuildMs = performance.now() - layoutStartedAt;
 
 			if (!utciSurface || !isComputeBufferUtciSurface(utciSurface) || activeAnalysis !== lastAnalysis) {
 				const surfaceMeshStartedAt = performance.now();
+				meshAction = 'created';
 				recreateComputeBufferSurface(activeAnalysis, acceptedOutput, layout);
 				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
 			} else {
@@ -356,6 +397,7 @@
 					utciRange: acceptedOutput.utciRange
 				});
 				if (!updated) {
+					meshAction = 'created';
 					recreateComputeBufferSurface(activeAnalysis, acceptedOutput, layout);
 				} else {
 					applySurfaceMeshState(utciSurface, layout, 'gpuNative');
@@ -373,7 +415,12 @@
 				acceptedOutput,
 				activeSyncRun,
 				syncStartedAt,
-				renderTimings
+				sceneSurfaceReceivedAtMs,
+				publicationEffectStartedAtMs,
+				renderTimings,
+				meshAction,
+				layout,
+				lastRenderTargetByteLength
 			});
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -476,10 +523,7 @@
 				renderState.analysis !== lastAnalysis ||
 				!isComputeBufferUtciSurface(utciSurface)
 			) {
-				void syncAcceptedGpuResidentSurface(
-					renderState.analysis,
-					acceptedGpuResidentOutput
-				);
+				void syncAcceptedGpuResidentSurface(renderState.analysis, acceptedGpuResidentOutput, performance.now());
 			}
 		} else {
 			acceptedGpuResidentSurfaceSync.reset();

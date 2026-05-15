@@ -5,12 +5,18 @@ import {
 	type LiveSelectedHourAcceptedVisibleSurface,
 	type LiveSelectedHourController,
 	type LiveSelectedHourGpuResidentRelease,
+	copyRenderSurfaceDiagnostics,
+	copyRuntimeDiagnosticsTimings,
 	type LiveSelectedHourControllerRequest,
 	type LiveSelectedHourControllerState,
 	type LiveSelectedHourControllerSurfaceDiagnostics,
 	type LiveSelectedHourSessionConfig
 } from '$lib/compute/selected-hour/liveSelectedHourController';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import {
+	mergeRenderPublicationDiagnostics,
+	stampRenderPublicationTimeline
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import { getEpwUrlForAnalysis } from '$lib/compute/weather/projectWeather';
 import {
 	createLiveSelectedHourPublishedRenderContext,
@@ -126,6 +132,11 @@ type PublishedSurfaceSnapshot = {
 	renderContext: LiveSelectedHourPublishedRenderContext;
 };
 
+type RoutePublishedTimelineStamp = {
+	key: string;
+	atMs: number;
+};
+
 const objectIdentityIds = new WeakMap<object, number>();
 let nextObjectIdentityId = 1;
 
@@ -165,13 +176,15 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 			surfaceIdentity: state.base.surfaceIdentity ? { ...state.base.surfaceIdentity } : null,
 			runtimeDiagnostics: state.base.runtimeDiagnostics
 				? {
-						timings: { ...state.base.runtimeDiagnostics.timings },
+						timings: copyRuntimeDiagnosticsTimings(state.base.runtimeDiagnostics.timings),
 						trackedGpuAllocationBytes: {
 							...state.base.runtimeDiagnostics.trackedGpuAllocationBytes
 						}
 					}
 				: state.base.runtimeDiagnostics,
-			renderSurfaceDiagnostics: { ...state.base.renderSurfaceDiagnostics }
+			renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(
+				state.base.renderSurfaceDiagnostics
+			)
 		},
 		comparison: {
 			...state.comparison,
@@ -187,13 +200,17 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 				: null,
 			runtimeDiagnostics: state.comparison.runtimeDiagnostics
 				? {
-						timings: { ...state.comparison.runtimeDiagnostics.timings },
+						timings: copyRuntimeDiagnosticsTimings(
+							state.comparison.runtimeDiagnostics.timings
+						),
 						trackedGpuAllocationBytes: {
 							...state.comparison.runtimeDiagnostics.trackedGpuAllocationBytes
 						}
 					}
 				: state.comparison.runtimeDiagnostics,
-			renderSurfaceDiagnostics: { ...state.comparison.renderSurfaceDiagnostics }
+			renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(
+				state.comparison.renderSurfaceDiagnostics
+			)
 		},
 		primaryAcceptedVisibleSurface: state.primaryAcceptedVisibleSurface
 			? { ...state.primaryAcceptedVisibleSurface }
@@ -397,6 +414,22 @@ function attachControllerIdentityToSurfaceIdentity(params: {
 	};
 }
 
+function resolveRenderPublicationPath(
+	renderTransport: LiveSelectedHourControllerState['renderTransport']
+): 'compute-buffer-selected-hour' | 'cpu-uploaded-selected-hour' | 'none' {
+	if (renderTransport === 'compute-buffer-selected-hour') {
+		return 'compute-buffer-selected-hour';
+	}
+	if (renderTransport === 'cpu-uploaded-selected-hour') {
+		return 'cpu-uploaded-selected-hour';
+	}
+	return 'none';
+}
+
+function resolveRenderPublicationPhase(requestId: number): 'initial' | 'scrub' {
+	return requestId <= 1 ? 'initial' : 'scrub';
+}
+
 export function createLiveSelectedHourRouteHost(
 	deps: LiveSelectedHourRouteHostDeps = {}
 ): LiveSelectedHourRouteHost {
@@ -436,6 +469,8 @@ export function createLiveSelectedHourRouteHost(
 	let comparisonControllerInstanceId = nextControllerInstanceId++;
 	let basePublishedSurface: PublishedSurfaceSnapshot | null = null;
 	let comparisonPublishedSurface: PublishedSurfaceSnapshot | null = null;
+	let basePublishedTimelineStamp: RoutePublishedTimelineStamp | null = null;
+	let comparisonPublishedTimelineStamp: RoutePublishedTimelineStamp | null = null;
 	let unsubscribeBaseController: () => void = () => undefined;
 	let unsubscribeComparisonController: () => void = () => undefined;
 	const listeners = new Set<(state: LiveSelectedHourRouteState) => void>();
@@ -470,6 +505,94 @@ export function createLiveSelectedHourRouteHost(
 				controllerInstanceId: params.controllerInstanceId
 			}),
 			renderContext: params.renderContext
+		};
+	}
+
+	function getPublishedSurfaceTimelineKey(
+		publishedSurface: PublishedSurfaceSnapshot | null
+	): string | null {
+		if (!publishedSurface) return null;
+		return [
+			publishedSurface.controllerIdentity,
+			publishedSurface.selectionTriggerKey,
+			publishedSurface.surfaceIdentity.requestId,
+			publishedSurface.surfaceIdentity.selectionKey
+		].join('|');
+	}
+
+	function getOrStampRoutePublishedAtMs(params: {
+		slot: ControllerSlot;
+		publishedSurface: PublishedSurfaceSnapshot | null;
+	}): number | undefined {
+		const key = getPublishedSurfaceTimelineKey(params.publishedSurface);
+		if (!key) return undefined;
+		const currentStamp =
+			params.slot === 'base' ? basePublishedTimelineStamp : comparisonPublishedTimelineStamp;
+		if (currentStamp?.key === key) {
+			return currentStamp.atMs;
+		}
+		const nextStamp = {
+			key,
+			atMs: performance.now()
+		};
+		if (params.slot === 'base') {
+			basePublishedTimelineStamp = nextStamp;
+		} else {
+			comparisonPublishedTimelineStamp = nextStamp;
+		}
+		return nextStamp.atMs;
+	}
+
+	function stampRoutePublishedTimelineOnControllerState(params: {
+		controllerState: LiveSelectedHourControllerState;
+		publishedSurface: PublishedSurfaceSnapshot | null;
+		slot: ControllerSlot;
+		controllerIdentity: string | null;
+		controllerInstanceId: number;
+	}): LiveSelectedHourControllerState {
+		const routePublishedAtMs = getOrStampRoutePublishedAtMs(params);
+		const requestId = params.publishedSurface?.surfaceIdentity.requestId;
+		const publishedSurfaceIdentity = params.publishedSurface?.surfaceIdentity;
+		const isCurrentPublishedSurface =
+			params.controllerIdentity != null &&
+			publishedSurfaceIdentity?.controllerIdentity === params.controllerIdentity &&
+			publishedSurfaceIdentity.controllerInstanceId === params.controllerInstanceId;
+		if (
+			routePublishedAtMs === undefined ||
+			requestId === undefined ||
+			!isCurrentPublishedSurface
+		) {
+			return params.controllerState;
+		}
+		const stampedRenderPublication = stampRenderPublicationTimeline({
+			current:
+				params.controllerState.runtimeDiagnostics?.timings.renderPublication ??
+				params.controllerState.renderSurfaceDiagnostics.renderPublication,
+			timeline: {
+				routePublishedAtMs
+			},
+			fallback: {
+				renderPublicationPath: resolveRenderPublicationPath(
+					params.controllerState.renderTransport
+				),
+				renderPublicationPhase: resolveRenderPublicationPhase(requestId),
+				renderPublicationMeshAction: 'skipped'
+			}
+		});
+		return {
+			...params.controllerState,
+			runtimeDiagnostics: params.controllerState.runtimeDiagnostics
+				? {
+						...params.controllerState.runtimeDiagnostics,
+						timings: {
+							...params.controllerState.runtimeDiagnostics.timings,
+							renderPublication: mergeRenderPublicationDiagnostics(
+								params.controllerState.runtimeDiagnostics.timings.renderPublication,
+								stampedRenderPublication
+							)
+						}
+					}
+				: params.controllerState.runtimeDiagnostics
 		};
 	}
 
@@ -590,10 +713,26 @@ export function createLiveSelectedHourRouteHost(
 		}
 
 		const exposedBaseState =
-			liveEnabled && baseControllerIsCurrent ? baseControllerState : IDLE_CONTROLLER_STATE;
+			liveEnabled && baseControllerIsCurrent
+				? stampRoutePublishedTimelineOnControllerState({
+						controllerState: baseControllerState,
+						publishedSurface: basePublishedSurfaceIsCurrent ? baseVisibleSurface : null,
+						slot: 'base',
+						controllerIdentity: baseControllerIdentity,
+						controllerInstanceId: baseControllerInstanceId
+				  })
+				: IDLE_CONTROLLER_STATE;
 		const exposedComparisonState =
 			liveEnabled && comparisonEligible && comparisonControllerIsCurrent
-				? comparisonControllerState
+				? stampRoutePublishedTimelineOnControllerState({
+						controllerState: comparisonControllerState,
+						publishedSurface: comparisonPublishedSurfaceIsCurrent
+							? comparisonVisibleSurface
+							: null,
+						slot: 'comparison',
+						controllerIdentity: comparisonControllerIdentity,
+						controllerInstanceId: comparisonControllerInstanceId
+				  })
 				: IDLE_CONTROLLER_STATE;
 		const baseBootstrapAnalysis =
 			liveEnabled &&
@@ -821,6 +960,7 @@ export function createLiveSelectedHourRouteHost(
 			baseSelectionTriggerKey = null;
 			baseRequestedRenderContext = null;
 			basePublishedSurface = null;
+			basePublishedTimelineStamp = null;
 			baseControllerGeneration += 1;
 			baseControllerInstanceId = nextControllerInstanceId++;
 			unsubscribeBaseController = bindController('base', baseController);
@@ -835,6 +975,7 @@ export function createLiveSelectedHourRouteHost(
 		comparisonSelectionTriggerKey = null;
 		comparisonRequestedRenderContext = null;
 		comparisonPublishedSurface = null;
+		comparisonPublishedTimelineStamp = null;
 		comparisonControllerGeneration += 1;
 		comparisonControllerInstanceId = nextControllerInstanceId++;
 		unsubscribeComparisonController = bindController('comparison', comparisonController);

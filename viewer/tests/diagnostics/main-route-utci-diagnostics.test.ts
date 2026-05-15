@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMainRouteUtciDiagnostics } from '$lib/diagnostics/mainRouteUtciDiagnostics';
+import { createRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 describe('buildMainRouteUtciDiagnostics', () => {
 	it('returns undefined when diagnostics are disabled', () => {
@@ -210,6 +211,95 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			visibleSelectedHourReadbackCount: 0,
 			visibleSelectedHourReadbackCountInstrumented: true,
 			strongVisibleGpuPath: true
+		});
+	});
+
+	it('exposes render publication timings without changing proof fields', () => {
+		const renderPublication = createRenderPublicationDiagnostics({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103,
+				routePublishedAtMs: 107,
+				routeProjectedAtMs: 109,
+				sceneSurfaceReceivedAtMs: 113,
+				publicationEffectStartedAtMs: 127,
+				renderStorageReadyAtMs: 131,
+				sceneSyncCompletedAtMs: 137
+			}
+		});
+		const diagnostics = buildMainRouteUtciDiagnostics({
+			enabled: true,
+			utciOnDemand: 'f32',
+			utciRenderRequested: 'auto',
+			utciRenderResolved: 'gpuNative',
+			rendererBackend: 'webgpu',
+			baseSurfaceDiagnostics: {
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				selectedHourTransferCount: 0,
+				dataTextureBuildCount: 0,
+				gpuResidentCopyStatus: 'complete',
+				gpuResidentCopyRequestId: 3
+			},
+			comparisonSurfaceDiagnostics: {},
+			baseRenderTransport: 'compute-buffer-selected-hour',
+			comparisonRenderTransport: 'idle',
+			baseLiveReady: true,
+			comparisonLiveReady: true,
+			baseSurfaceRequestId: 3,
+			baseSelectionKey: 'analysis|7|12',
+			baseSceneSurfaceRequestId: 3,
+			baseSceneSelectionKey: 'analysis|7|12',
+			baseSameDeviceForComputeAndRender: true,
+			baseSelectedMonthIndex: 7,
+			baseSelectedHourIndex: 12,
+			baseSelectedTimeIndex: 180,
+			comparisonSameDeviceForComputeAndRender: null,
+			timings: {
+				oneHourDispatchMs: 12.5,
+				renderPublication
+			}
+		});
+
+		renderPublication.renderPublicationPhase = 'unknown';
+		renderPublication.renderPublicationPointCount = 12;
+		renderPublication.renderPublicationTimeline!.sceneSyncCompletedAtMs = 999;
+
+		expect(diagnostics?.timings?.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103,
+				routePublishedAtMs: 107,
+				routeProjectedAtMs: 109,
+				sceneSurfaceReceivedAtMs: 113,
+				publicationEffectStartedAtMs: 127,
+				renderStorageReadyAtMs: 131,
+				sceneSyncCompletedAtMs: 137
+			}
+		});
+		expect(diagnostics?.selectedHourRuntimeContract).toMatchObject({
+			acceptedRequestId: 3,
+			sceneRequestId: 3,
+			requestMatchesScene: true,
+			strongVisibleGpuPath: false,
+			visibleRenderPathAvoidsCpuReadback: false
+		});
+
+		if (diagnostics?.timings?.renderPublication?.renderPublicationTimeline) {
+			diagnostics.timings.renderPublication.renderPublicationTimeline.routeProjectedAtMs = 777;
+		}
+		expect(diagnostics?.timings?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routeProjectedAtMs: 777
 		});
 	});
 });

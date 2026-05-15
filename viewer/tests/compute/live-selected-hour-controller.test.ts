@@ -14,6 +14,7 @@ import {
 } from '$lib/compute/selected-hour/liveSelectedHourController';
 import { createEmptyOnDemandDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
+import { createRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 function decomposeTimeIndex(timeIndex: number) {
 	return {
@@ -1531,6 +1532,75 @@ describe('liveSelectedHourController', () => {
 		expect(controller.getState().renderSurfaceDiagnostics).toMatchObject(pendingDiagnostics);
 	});
 
+	it('does not treat changed render publication detail bytes as an idempotent diagnostics update', async () => {
+		const gpu = createGpuResidentOutput(38, 38);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 38,
+					timeIndex: 38,
+					analysis: createSelectionAnalysis('gpu-render-publication-detail-change', [18, 20]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 3800
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(38));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationVertexCount: 49030566,
+				renderPublicationGridWidth: 2861,
+				renderPublicationGridHeight: 2856,
+				renderPublicationGridSize: 0.5,
+				renderPublicationSourceByteLength: 32687044,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationRenderOwnedBytes: 32687044
+			}
+		});
+
+		const emittedStates: LiveSelectedHourControllerSurfaceDiagnostics[] = [];
+		const unsubscribe = controller.subscribe((state) => {
+			emittedStates.push(state.renderSurfaceDiagnostics);
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationVertexCount: 49030566,
+				renderPublicationGridWidth: 2861,
+				renderPublicationGridHeight: 2856,
+				renderPublicationGridSize: 0.5,
+				renderPublicationSourceByteLength: 32687044,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationRenderOwnedBytes: 65374088
+			}
+		});
+
+		unsubscribe();
+		expect(emittedStates).toHaveLength(1);
+		expect(controller.getState().renderSurfaceDiagnostics.renderPublication).toMatchObject({
+			renderPublicationRenderOwnedBytes: 65374088
+		});
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationRenderOwnedBytes: 65374088
+		});
+	});
+
 	it('does not accept compute-buffer transport without same-device proof', async () => {
 		const gpu = createGpuResidentOutput(61, 13);
 		const sessionMock = createSessionMock([
@@ -1969,6 +2039,186 @@ describe('liveSelectedHourController', () => {
 			afterVisible?.timings.gpuSurfaceUpdateMs
 		);
 		expect(afterFollowUp?.timings.renderSceneSyncTotalMs).toBe(8.25);
+	});
+
+	it('preserves detailed render publication diagnostics after visible surface acknowledgement', async () => {
+		const gpu = createGpuResidentOutput(96, 96);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		diagnostics.timings.oneHourDispatchMs = 12.5;
+		diagnostics.trackedGpuAllocationBytes.persistentExposureBytes = 128;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes = 64;
+		diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark = 64;
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 96,
+					timeIndex: 96,
+					analysis: createSelectionAnalysis(
+						'gpu-render-publication-diagnostics',
+						[18, 22]
+					),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9600,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(96));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderSceneSyncTotalMs: 8.25,
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationTargetByteLength: 32687044
+			}
+		});
+
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044
+		});
+	});
+
+	it('isolates render publication diagnostics from caller and returned state mutations', async () => {
+		const gpu = createGpuResidentOutput(97, 97);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 97,
+					timeIndex: 97,
+					analysis: createSelectionAnalysis('gpu-render-publication-isolation', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9700,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+		const renderPublication = createRenderPublicationDiagnostics({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044
+		});
+
+		await controller.requestSelection(createRequestParams(97));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication
+		});
+
+		renderPublication.renderPublicationPhase = 'unknown';
+		renderPublication.renderPublicationPointCount = 12;
+
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044
+		});
+
+		const snapshot = controller.getState();
+		expect(snapshot.runtimeDiagnostics?.timings.renderPublication).toBeDefined();
+		snapshot.runtimeDiagnostics!.timings.renderPublication!.renderPublicationPhase = 'unknown';
+		snapshot.runtimeDiagnostics!.timings.renderPublication!.renderPublicationPointCount = 24;
+
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044
+		});
+	});
+
+	it('stamps compute and controller acceptance timeline values and preserves them after scene diagnostics merge', async () => {
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
+			.mockReturnValueOnce(103)
+			.mockReturnValueOnce(107);
+		const gpu = createGpuResidentOutput(98, 98);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 98,
+					timeIndex: 98,
+					analysis: createSelectionAnalysis('gpu-render-publication-timeline', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9800,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(98));
+
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'initial',
+			renderPublicationMeshAction: 'skipped',
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103
+			}
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationTimeline: {
+					sceneSurfaceReceivedAtMs: 211,
+					publicationEffectStartedAtMs: 223
+				}
+			})
+		});
+
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103,
+				sceneSurfaceReceivedAtMs: 211,
+				publicationEffectStartedAtMs: 223
+			}
+		});
+
+		nowSpy.mockRestore();
 	});
 
 	it('clears render-owned GPU memory diagnostics when the surface is disposed', async () => {

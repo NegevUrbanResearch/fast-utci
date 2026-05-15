@@ -87,4 +87,46 @@ describe('utciSurfaceSync', () => {
 			renderBufferCopyMs: 1.5
 		});
 	});
+
+	it('includes render publication diagnostics in UTCI surface diagnostics', () => {
+		const renderPublication = {
+			renderPublicationVersion: 1 as const,
+			renderPublicationPath: 'compute-buffer-selected-hour' as const,
+			renderPublicationPhase: 'scrub' as const,
+			renderPublicationMeshAction: 'reused' as const,
+			renderPublicationPointCount: 100,
+			renderPublicationTargetByteLength: 400,
+			renderPublicationTimeline: {
+				routeProjectedAtMs: 101,
+				sceneSurfaceReceivedAtMs: 103,
+				sceneSyncCompletedAtMs: 107
+			}
+		};
+		const diagnostics = buildUtciSurfaceDiagnostics({
+			mesh: {
+				userData: {
+					utciSurfaceSource: 'compute-buffer-selected-hour',
+					renderOwnedSelectedHourBytes: 2048
+				}
+			} as any,
+			gpuResidentCopyStatus: 'complete',
+			gpuResidentRenderTimings: {
+				renderSceneSyncTotalMs: 10,
+				renderPublication
+			}
+		});
+
+		renderPublication.renderPublicationTimeline.sceneSyncCompletedAtMs = 999;
+
+		expect(diagnostics.renderPublication).toMatchObject({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationTimeline: {
+				routeProjectedAtMs: 101,
+				sceneSurfaceReceivedAtMs: 103,
+				sceneSyncCompletedAtMs: 107
+			}
+		});
+	});
 });

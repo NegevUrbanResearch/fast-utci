@@ -72,6 +72,7 @@
 	import { buildMainRoutePerformanceSnapshot } from "$lib/performance/mainRoutePerformanceTelemetry";
 	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
 	import {
+		createMainRouteRenderPublicationProjectionTracker,
 		publishMainRouteUtciDiagnostics,
 		releaseBaseAcceptedGpuResidentOutput,
 		releaseComparisonAcceptedGpuResidentOutput,
@@ -166,6 +167,8 @@
 	let showMainRouteComparisonOverlay = false;
 	let tooltipHoverSampleCount = 0;
 	let cameraWheelEventCount = 0;
+	const mainRouteRenderPublicationProjectionTracker =
+		createMainRouteRenderPublicationProjectionTracker();
 
 	function updateUtciRenderDiagnostics(
 		params: MainRouteLiveSelectedHourDiagnosticsParams,
@@ -450,6 +453,13 @@
 			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
 			tooltipHoverSampleCount,
 			cameraWheelEventCount,
+			timingsOverride: mainRouteRenderPublicationProjectionTracker.apply({
+				enabled: useLiveUtciOnMainRoute,
+				timings: liveRouteState.base.runtimeDiagnostics?.timings,
+				publishedSurfaceIdentity: liveRouteState.baseSurfaceIdentity,
+				sceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
+				selectedTimeIndex,
+			}),
 		});
 	}
 

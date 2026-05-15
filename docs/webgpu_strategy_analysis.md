@@ -76,6 +76,67 @@ That means the current optimization inference is based first on the available 20
 
 That is a useful narrowing, but it is **not** a 0.5m proof. This pass only says the current 2m main-route selected-hour path is still bottlenecked by cold-start compute/setup rather than selected-hour transport or `.bin` comparison.
 
+## 2026-05-15 Main-Route 0.5m Stress Baseline
+
+Fresh 0.5m main-route timing now lives in [docs/performance/main-route-selected-hour-0_5m-base.md](performance/main-route-selected-hour-0_5m-base.md), backed by [data/performance-results/main-route-selected-hour-0_5m-base.json](../data/performance-results/main-route-selected-hour-0_5m-base.json).
+
+Scope of that artifact:
+
+- route: `/`, not `/debug`
+- query: `gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1`
+- analyses: `Ben-Gurion/20250815_grid_2m_fullday` and `Ness-Tziona/exploded/nes_tziona_unblock_2`
+- color modes: normalized/full-day and discrete/per-hour
+- scrub sample: app-visible hour slider scrub from hour `0` to hour `1`
+- proof boundary: `utciSurfaceSource=compute-buffer-selected-hour`, `baseRenderTransport=compute-buffer-selected-hour`, `dataTextureBuildCount=0`, `selectedHourRuntimeContract.strongVisibleGpuPath=true`
+- debug/parity boundary: no `.bin`, Python, or debug comparison fields, and no forbidden comparison requests
+- memory boundary: tracked app-owned UTCI/WebGPU buffers only, not total browser/OS/device VRAM
+
+### 0.5m Main-Route Snapshot
+
+| Metric | Ben-Gurion 0.5m | Ness Tziona 0.5m |
+| --- | ---: | ---: |
+| `pointCount` | 1,662,657 | 8,171,761 |
+| `firstSelectedHourVisibleMs`, initial normalized | 8414.5 | 23883.8 |
+| `firstSelectedHourVisibleMs`, scrub normalized | 986.9 | 4889.3 |
+| `firstSelectedHourVisibleMs`, scrub discrete | 998.9 | 4707.8 |
+| `exposurePrecomputeMs` | ~6040-6055 | ~16224-16266 |
+| `oneHourDispatchMs`, scrub | 11.6-69.7 | 11.1-16.9 |
+| `renderUpdateMs`, scrub | 916.8-987.1 | 4696.5-4871.8 |
+| `renderSceneSyncStartDelayMs`, scrub | 707.9-785.1 | 3609.8-3665.4 |
+| `renderSceneSyncTotalMs`, scrub | 201.8-208.6 | 1086.6-1206.0 |
+| `GPU VRAM` tracked app-owned memory | ~228.33 MiB | ~1122.22 MiB |
+| `renderOwnedSelectedHourBytes` | ~158.56 MiB | ~779.32 MiB |
+
+### 0.5m Optimization Inference
+
+The 0.5m route proves that the current selected-hour direction is memory-plausible on the tested machine, but it also shows that the user-visible bottleneck has shifted.
+
+The UTCI selected-hour dispatch is not the main issue. At Ness Tziona 0.5m it stays around `11-17 ms` for the scrub samples, while the new hour takes about `4.7-4.9 s` to become visible. That gap points at render publication and scene synchronization, especially:
+
+- render update time
+- scene sync start delay
+- scene sync total time
+- render-owned selected-hour storage handling
+- queue drain and first-use storage setup
+
+The next main-route optimization should therefore be diagnostics-first render publication work. Do not start by changing UTCI equations, color ramps, or `.bin`/debug comparison surfaces.
+
+### Future Analysis Boundary
+
+Future all-hours histograms are feasible if they are implemented as async derived summaries, not as all-hours/all-points resident fields.
+
+The safe shape is:
+
+1. compute one selected hour or one tile/hour batch
+2. reduce on GPU or in bounded tiles into bins/counts/min/max/threshold summaries
+3. read back only the compact summary
+4. persist the compact result
+5. release or reuse the large selected-hour buffers
+
+The unsafe shape is keeping all point values for all representative hours in browser memory. For Ness Tziona 0.5m, `8.17M points * 288 hours * f32` is roughly `9.4 GB` for one scalar field, before any render/model overhead. That remains outside the browser-product budget.
+
+Point wind, scenario deltas, and richer climate layers should be treated as later product/data-contract decisions. They should not be allowed to pull the main route back into all-hours CPU readback or store-all browser memory.
+
 ## Historical 2026-05-09 Debug-Route Cold-Start Snapshot
 
 This section is historical debug-route evidence, not the current route-level baseline for `/`.
@@ -231,22 +292,23 @@ For the current route, 0.5m is primarily gated by:
 So the bottleneck story has changed:
 
 - **Old story:** memory blow-up from all-hours UTCI/MRT storage and CPU copies
-- **Current story:** selected-hour memory is much more plausible, but cold-start/render-path performance is still not proven at 0.5m
+- **Current story:** selected-hour memory is now proven plausible on the tested 0.5m main-route cases, but 0.5m scrub/render publication is still UX-poor.
 
-Important caveat: we have **not** recollected the current selected-hour route at 0.5m after the recent hover and cold-start instrumentation work, so 0.5m remains a projected target, not a currently verified route.
+Important caveat: we have collected the current main route at 0.5m, but we have **not** recollected it after the planned render-publication diagnostics pass. The next evidence target is therefore not "prove 0.5m exists"; it is "explain and rank the measured 0.5m render-publication bottlenecks."
 
 ## Recommended Next Step
 
-The next step should be an intentional **cold-start/render-path design pass** based on the measured bottlenecks, not another opportunistic optimization without a clear target.
+The next step should be an intentional **main-route render publication diagnostics pass** based on the measured 0.5m bottlenecks, not another opportunistic optimization without a clear target.
 
-Current planning artifact: [2026-05-11 selected-hour runtime quality baseline](superpowers/plans/2026-05-11-selected-hour-runtime-quality-baseline.md).
+Current planning artifact: [2026-05-15 main-route render diagnostics plan](superpowers/plans/2026-05-15-main-route-render-diagnostics.md).
 
 Current objective:
 
-1. Keep the plain debug route on the on-demand path by default.
-2. Use the existing diagnostics to understand cold-start cost before changing architecture again.
-3. Decide which cold-start bucket should be attacked first: pre-scene-sync delay, scene-sync surface setup, or both.
-4. Preserve `dataTexture` and other legacy/fallback paths until the selected-hour route is clearly good enough to replace them more broadly.
+1. Keep `/` as the canonical product proof route and keep `/debug` thin/proof-oriented.
+2. Add deeper modular diagnostics around the render publication path without turning `viewer/src/routes/+page.svelte` back into a debug shell.
+3. Explain the multi-second 0.5m scrub gap between selected-hour compute completion and visible render publication.
+4. Decide whether the first optimization should be render-owned storage reuse, layout/mesh reuse, queue-drain scheduling, scene sync handoff, or tiling.
+5. Preserve `dataTexture` and other legacy/fallback paths until the selected-hour route is clearly good enough to replace them more broadly.
 
 Historical plan trail for this route:
 
@@ -370,12 +432,13 @@ Do not spend the next major effort on CPU decoded-slice LRU unless the selected-
 ## Next Investigation And Optimization Plan
 
 1. **Preserve the measurement baseline**
-   - Keep using the plain on-demand debug route for BG and NZ 2m.
+   - Keep using the main route `/` for BG/NZ 2m and 0.5m route-level proof.
    - Keep route-level proof visible: `compute-buffer-selected-hour`, zero selected-hour readback, zero `dataTexture` rebuilds.
 
-2. **Map the pre-scene-sync delay**
-   - Trace what sits inside `payloadPrepareMs`, `workerBvhMs`, `pipelineUploadMs`, and the gap before `renderSceneSyncStartDelayMs`.
-   - Decide which parts are one-time setup, repeated work, or unavoidable waits.
+2. **Map the render publication gap**
+   - Trace the time from selected-hour output acceptance to scene sync start.
+   - Split mesh create vs mesh reuse, layout extraction, render-owned storage wait, buffer copy, queue drain, visibility publication, and invalidation.
+   - Decide which parts are one-time setup, repeated scrub work, or unavoidable waits.
 
 3. **Map the scene-sync path**
    - Treat `renderSurfaceMeshMs`, `renderStorageInitWaitMs`, and `renderQueueDrainMs` as the current measured scene-sync suspects.
@@ -387,10 +450,10 @@ Do not spend the next major effort on CPU decoded-slice LRU unless the selected-
    - Reduce explicit first-use synchronization / queue drain where it is not actually required.
    - Avoid repeated payload/BVH/upload work when the selected analysis has not changed.
 
-5. **Remeasure before broadening scope**
-   - Recollect BG and NZ 2m after the first optimization.
-   - Only then decide whether to move the same path more broadly beyond the debug route.
-   - Revisit 0.5m only after the 2m cold-start story is materially better.
+5. **Remeasure before optimizing**
+   - Recollect BG and NZ 0.5m after the diagnostics pass.
+   - Produce a short evidence note that ranks the suspected render buckets.
+   - Only then choose the first behavior-changing optimization.
 
 ## Open Risks And Boundaries
 
@@ -398,7 +461,7 @@ Do not spend the next major effort on CPU decoded-slice LRU unless the selected-
 | --- | --- |
 | We optimize the wrong bucket first. | Keep BG/NZ timing splits current and choose changes from the measured breakdown, not intuition. |
 | The large remaining NZ cost may be split across both pre-scene-sync delay and scene sync. | Keep `renderSceneSyncStartDelayMs` and `renderSceneSyncTotalMs` as separate live suspects in the next design pass. |
-| 0.5m may be memory-plausible but still UX-poor on cold start. | Do not treat the new architecture as 0.5m-proven until the current route is actually recollected there. |
+| 0.5m is measured but still UX-poor on scrub/render publication. | Do not treat 0.5m as product-smooth until the route is recollected after render-publication diagnostics and the measured bottlenecks are ranked. |
 | Capability/status reporting can still mislead future debugging. | Keep trusting stronger runtime proof over weak `navigatorGpu`/overlay capability checks. |
 | Solar bitmask at 0.5m is still hundreds of MB. | Add spatial tiling after bridge proof; keep BVH persistent and tile exposure/results. |
 | GPU-only values are inconvenient for charts, exports, and picking. | Add small targeted readbacks for summaries/picked cells, not full-field readback. |

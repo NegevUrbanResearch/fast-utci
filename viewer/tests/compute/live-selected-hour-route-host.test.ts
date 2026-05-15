@@ -3,6 +3,7 @@ import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import type { SelectedHourRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import {
 	createLiveSelectedHourRouteHost,
 	type LiveSelectedHourRouteHostDeps,
@@ -669,6 +670,173 @@ describe('liveSelectedHourRouteHost', () => {
 			visibleSelectedHourReadbackCount: 0,
 			readbackInstrumentation: 'instrumented'
 		});
+	});
+
+	it('does not let nested renderPublication mutations on returned host snapshots leak into later state', async () => {
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(401)
+			.mockReturnValueOnce(777);
+		const renderPublication: SelectedHourRenderPublicationDiagnostics = {
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationVertexCount: 49030566,
+			renderPublicationGridWidth: 2861,
+			renderPublicationGridHeight: 2856,
+			renderPublicationGridSize: 0.5,
+			renderPublicationSourceByteLength: 32687044,
+			renderPublicationTargetByteLength: 32687044,
+			renderPublicationRenderOwnedBytes: 32687044,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103
+			}
+		};
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const baseModel = {} as Group;
+		const host = createLiveSelectedHourRouteHost({
+			createController: () => {
+				let state: LiveSelectedHourControllerState = {
+					...createInitialControllerState(),
+					analysis: baseAnalysis,
+					surfaceIdentity: {
+						controllerIdentity: 'controller',
+						controllerInstanceId: 1,
+						requestId: 1,
+						monthIndex: 7,
+						hourIndex: 12,
+						timeIndex: 180,
+						selectionKey: 'Ben-Gurion/base|7|12|180',
+						pendingRenderUpdateStartedAt: undefined,
+						selectedHourVisibleStartedAt: 95,
+						acceptedGpuResidentOutput: null
+					},
+					runtimeDiagnostics: {
+						timings: {
+							payloadPrepareMs: 11,
+							exposurePrecomputeMs: 12,
+							oneHourDispatchMs: 13,
+							renderUpdateMs: 14,
+							firstSelectedHourVisibleMs: 15,
+							renderPublication
+						},
+						trackedGpuAllocationBytes: {
+							persistentExposureBytes: 101,
+							allHoursOutputBytes: 102,
+							selectedHourOutputBytes: 103,
+							selectedHourOutputBytesHighWatermark: 104,
+							trackingScope: 'utci-owned-webgpu-buffers'
+						}
+					},
+					renderSurfaceDiagnostics: {
+						utciSurfaceSource: 'compute-buffer-selected-hour',
+						renderPublication
+					},
+					renderTransport: 'compute-buffer-selected-hour',
+					ready: true,
+					renderReady: true
+				};
+				const listeners = new Set<(state: LiveSelectedHourControllerState) => void>();
+				return {
+					getState() {
+						return cloneControllerState(state);
+					},
+					subscribe(listener) {
+						listeners.add(listener);
+						listener(cloneControllerState(state));
+						return () => {
+							listeners.delete(listener);
+						};
+					},
+					async requestSelection() {
+						return { accepted: true, state: cloneControllerState(state) };
+					},
+					async handleRenderSurfaceDiagnostics() {
+						return;
+					},
+					releaseAcceptedGpuResidentOutput() {
+						return;
+					},
+					dispose() {
+						listeners.clear();
+						state = createInitialControllerState();
+					}
+				};
+			},
+			resolveEpwUrl: ({ analysisId }) => `/weather/${analysisId ?? 'default'}.epw`
+		});
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel
+			})
+		);
+		await host.flush();
+
+		const firstSnapshot = host.getState();
+		expect(firstSnapshot.base.runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationPointCount: 8171761,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103,
+				routePublishedAtMs: 401
+			}
+		});
+		expect(firstSnapshot.base.renderSurfaceDiagnostics.renderPublication).toMatchObject({
+			renderPublicationPointCount: 8171761,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103
+			}
+		});
+
+		if (firstSnapshot.base.runtimeDiagnostics?.timings.renderPublication) {
+			firstSnapshot.base.runtimeDiagnostics.timings.renderPublication.renderPublicationPointCount =
+				999;
+			firstSnapshot.base.runtimeDiagnostics.timings.renderPublication.renderPublicationTimeline!.routePublishedAtMs =
+				999;
+		}
+		if (firstSnapshot.base.renderSurfaceDiagnostics.renderPublication) {
+			firstSnapshot.base.renderSurfaceDiagnostics.renderPublication.renderPublicationPointCount =
+				555;
+			firstSnapshot.base.renderSurfaceDiagnostics.renderPublication.renderPublicationTimeline!.controllerAcceptedAtMs =
+				555;
+		}
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel
+			})
+		);
+		await host.flush();
+
+		const laterSnapshot = host.getState();
+		expect(laterSnapshot.base.runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationPointCount: 8171761,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103,
+				routePublishedAtMs: 401
+			}
+		});
+		expect(laterSnapshot.base.renderSurfaceDiagnostics.renderPublication).toMatchObject({
+			renderPublicationPointCount: 8171761,
+			renderPublicationTimeline: {
+				computeCompletedAtMs: 101,
+				controllerAcceptedAtMs: 103
+			}
+		});
+		nowSpy.mockRestore();
 	});
 
 	it('resets forwarded visible-readback proof while a replacement base GPU surface is pending', async () => {

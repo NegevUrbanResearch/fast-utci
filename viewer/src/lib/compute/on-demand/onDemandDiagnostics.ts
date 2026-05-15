@@ -1,4 +1,8 @@
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
+import {
+	copyRenderPublicationDiagnostics,
+	type SelectedHourRenderPublicationDiagnostics
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 export type OnDemandRendererBackend = 'webgpu' | 'unknown';
 
@@ -20,6 +24,7 @@ export interface OnDemandTimings {
 	renderStorageInitWaitMs?: number;
 	renderBufferCopyMs?: number;
 	renderQueueDrainMs?: number;
+	renderPublication?: SelectedHourRenderPublicationDiagnostics;
 	debugReadbackMs?: number;
 	selectedHourReadbackMs?: number;
 	selectedHourAnalysisBuildMs?: number;
@@ -53,7 +58,9 @@ export type SelectedHourRenderTimingSubsteps = Pick<
 	| 'renderStorageInitWaitMs'
 	| 'renderBufferCopyMs'
 	| 'renderQueueDrainMs'
->;
+> & {
+	renderPublication?: SelectedHourRenderPublicationDiagnostics;
+};
 
 const SELECTED_HOUR_RENDER_SUBSTEP_KEYS = [
 	'renderSceneSyncStartDelayMs',
@@ -242,13 +249,18 @@ export function mergeSelectedHourRenderTimings(params: {
 		nextTimings.firstSelectedHourVisibleMs = firstSelectedHourVisibleMs;
 	}
 
+	delete nextTimings.renderPublication;
+
 	if (!renderSubsteps) {
 		return nextTimings;
 	}
 
-	for (const [key, value] of Object.entries(renderSubsteps) as Array<
-		[keyof SelectedHourRenderTimingSubsteps, number | undefined]
-	>) {
+	nextTimings.renderPublication = copyRenderPublicationDiagnostics(
+		renderSubsteps.renderPublication
+	);
+
+	for (const key of SELECTED_HOUR_RENDER_SUBSTEP_KEYS) {
+		const value = renderSubsteps[key];
 		if (value !== undefined) {
 			nextTimings[key] = value;
 		}
@@ -262,6 +274,7 @@ export function clearSelectedHourRenderTimings(existingTimings?: OnDemandTimings
 	for (const key of SELECTED_HOUR_RENDER_TIMING_KEYS) {
 		delete nextTimings[key];
 	}
+	delete nextTimings.renderPublication;
 	return nextTimings;
 }
 

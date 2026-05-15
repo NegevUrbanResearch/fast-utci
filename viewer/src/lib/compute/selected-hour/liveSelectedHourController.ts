@@ -17,6 +17,11 @@ import type {
 	SelectedHourReadbackInstrumentation,
 	SelectedHourReadbackReason
 } from '$lib/diagnostics/selectedHourRuntimeContract';
+import {
+	copyRenderPublicationDiagnostics,
+	mergeRenderPublicationDiagnostics,
+	stampRenderPublicationTimeline
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 export type LiveSelectedHourRenderTransport =
 	| 'idle'
@@ -165,6 +170,95 @@ type CreateLiveSelectedHourControllerOptions = {
 
 const EMPTY_SURFACE_DIAGNOSTICS: LiveSelectedHourControllerSurfaceDiagnostics = {};
 
+export function copyRenderPublication(
+	renderPublication:
+		| LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		| LiveSelectedHourRuntimeDiagnostics['timings']['renderPublication']
+): typeof renderPublication {
+	return copyRenderPublicationDiagnostics(renderPublication);
+}
+
+export function copyRuntimeDiagnosticsTimings(
+	timings: LiveSelectedHourRuntimeDiagnostics['timings']
+): LiveSelectedHourRuntimeDiagnostics['timings'] {
+	return {
+		...timings,
+		renderPublication: copyRenderPublication(timings.renderPublication)
+	};
+}
+
+export function copyRenderSurfaceDiagnostics(
+	diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
+): LiveSelectedHourControllerSurfaceDiagnostics {
+	const next: LiveSelectedHourControllerSurfaceDiagnostics = {
+		...diagnostics,
+		renderPublication: copyRenderPublication(diagnostics.renderPublication)
+	};
+	if (next.renderPublication === undefined) {
+		delete next.renderPublication;
+	}
+	return next;
+}
+
+function areRenderPublicationEqual(
+	left:
+		| LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		| undefined,
+	right:
+		| LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.renderPublicationVersion === right.renderPublicationVersion &&
+		left.renderPublicationPath === right.renderPublicationPath &&
+		left.renderPublicationPhase === right.renderPublicationPhase &&
+		left.renderPublicationMeshAction === right.renderPublicationMeshAction &&
+		left.renderPublicationPointCount === right.renderPublicationPointCount &&
+		left.renderPublicationVertexCount === right.renderPublicationVertexCount &&
+		left.renderPublicationGridWidth === right.renderPublicationGridWidth &&
+		left.renderPublicationGridHeight === right.renderPublicationGridHeight &&
+		left.renderPublicationGridSize === right.renderPublicationGridSize &&
+		left.renderPublicationSourceByteLength === right.renderPublicationSourceByteLength &&
+		left.renderPublicationTargetByteLength === right.renderPublicationTargetByteLength &&
+		left.renderPublicationRenderOwnedBytes ===
+			right.renderPublicationRenderOwnedBytes &&
+		left.renderPublicationTimeline?.computeCompletedAtMs ===
+			right.renderPublicationTimeline?.computeCompletedAtMs &&
+		left.renderPublicationTimeline?.controllerAcceptedAtMs ===
+			right.renderPublicationTimeline?.controllerAcceptedAtMs &&
+		left.renderPublicationTimeline?.routePublishedAtMs ===
+			right.renderPublicationTimeline?.routePublishedAtMs &&
+		left.renderPublicationTimeline?.routeProjectedAtMs ===
+			right.renderPublicationTimeline?.routeProjectedAtMs &&
+		left.renderPublicationTimeline?.sceneSurfaceReceivedAtMs ===
+			right.renderPublicationTimeline?.sceneSurfaceReceivedAtMs &&
+		left.renderPublicationTimeline?.publicationEffectStartedAtMs ===
+			right.renderPublicationTimeline?.publicationEffectStartedAtMs &&
+		left.renderPublicationTimeline?.renderStorageReadyAtMs ===
+			right.renderPublicationTimeline?.renderStorageReadyAtMs &&
+		left.renderPublicationTimeline?.sceneSyncCompletedAtMs ===
+			right.renderPublicationTimeline?.sceneSyncCompletedAtMs
+	);
+}
+
+function resolveRenderPublicationPath(
+	renderTransport: LiveSelectedHourRenderTransport
+): 'compute-buffer-selected-hour' | 'cpu-uploaded-selected-hour' | 'none' {
+	if (renderTransport === 'compute-buffer-selected-hour') {
+		return 'compute-buffer-selected-hour';
+	}
+	if (renderTransport === 'cpu-uploaded-selected-hour') {
+		return 'cpu-uploaded-selected-hour';
+	}
+	return 'none';
+}
+
+function resolveRenderPublicationPhase(requestId: number): 'initial' | 'scrub' {
+	return requestId <= 1 ? 'initial' : 'scrub';
+}
+
 function cloneState(state: LiveSelectedHourControllerState): LiveSelectedHourControllerState {
 	return {
 		...state,
@@ -176,13 +270,13 @@ function cloneState(state: LiveSelectedHourControllerState): LiveSelectedHourCon
 		selectedHourReadbackReasonCounts: { ...state.selectedHourReadbackReasonCounts },
 		runtimeDiagnostics: state.runtimeDiagnostics
 			? {
-					timings: { ...state.runtimeDiagnostics.timings },
+					timings: copyRuntimeDiagnosticsTimings(state.runtimeDiagnostics.timings),
 					trackedGpuAllocationBytes: {
 						...state.runtimeDiagnostics.trackedGpuAllocationBytes
 					}
 				}
 			: state.runtimeDiagnostics,
-		renderSurfaceDiagnostics: { ...state.renderSurfaceDiagnostics }
+		renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(state.renderSurfaceDiagnostics)
 	};
 }
 
@@ -305,7 +399,7 @@ function copyRuntimeDiagnostics(
 	diagnostics: Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'>
 ): LiveSelectedHourRuntimeDiagnostics {
 	return {
-		timings: { ...diagnostics.timings },
+		timings: copyRuntimeDiagnosticsTimings(diagnostics.timings),
 		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
 	};
 }
@@ -357,6 +451,11 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 		tracked: params.runtimeDiagnostics.trackedGpuAllocationBytes,
 		renderSurfaceDiagnostics: params.renderSurfaceDiagnostics
 	});
+	const renderPublication =
+		mergeRenderPublicationDiagnostics(
+			params.runtimeDiagnostics.timings.renderPublication,
+			params.renderSurfaceDiagnostics.renderPublication
+		);
 	if (surfaceUpdateMs === undefined) {
 		return {
 			trackedGpuAllocationBytes,
@@ -385,7 +484,8 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 					params.runtimeDiagnostics.timings.renderBufferCopyMs,
 				renderQueueDrainMs:
 					params.renderSurfaceDiagnostics.renderQueueDrainMs ??
-					params.runtimeDiagnostics.timings.renderQueueDrainMs
+					params.runtimeDiagnostics.timings.renderQueueDrainMs,
+				renderPublication: copyRenderPublication(renderPublication)
 			}
 		};
 	}
@@ -408,7 +508,8 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 				renderStorageInitWaitMs:
 					params.renderSurfaceDiagnostics.renderStorageInitWaitMs,
 				renderBufferCopyMs: params.renderSurfaceDiagnostics.renderBufferCopyMs,
-				renderQueueDrainMs: params.renderSurfaceDiagnostics.renderQueueDrainMs
+				renderQueueDrainMs: params.renderSurfaceDiagnostics.renderQueueDrainMs,
+				renderPublication: copyRenderPublication(renderPublication)
 			}
 		})
 	};
@@ -490,6 +591,14 @@ function mergeRenderSurfaceDiagnostics(
 		...current,
 		...diagnostics
 	};
+	if (current.renderPublication || diagnostics.renderPublication) {
+		next.renderPublication = mergeRenderPublicationDiagnostics(
+			current.renderPublication,
+			diagnostics.renderPublication
+		);
+	} else {
+		delete next.renderPublication;
+	}
 	const isAcceptedIdleCpuPublication =
 		hasCpuRequestScopedUpdate &&
 		diagnostics.gpuResidentCopyStatus === 'idle' &&
@@ -516,7 +625,14 @@ function areDiagnosticsEqual(
 		return false;
 	}
 	for (const key of leftKeys) {
-		if (left[key as keyof LiveSelectedHourControllerSurfaceDiagnostics] !== right[key as keyof LiveSelectedHourControllerSurfaceDiagnostics]) {
+		const typedKey = key as keyof LiveSelectedHourControllerSurfaceDiagnostics;
+		if (typedKey === 'renderPublication') {
+			if (!areRenderPublicationEqual(left.renderPublication, right.renderPublication)) {
+				return false;
+			}
+			continue;
+		}
+		if (left[typedKey] !== right[typedKey]) {
 			return false;
 		}
 	}
@@ -819,6 +935,7 @@ export function createLiveSelectedHourController(
 					};
 				}
 
+				const computeCompletedAtMs = performance.now();
 				const controllerRequestId = requestToken;
 				const acceptedGpuResidentOutput = withControllerRequestId(
 					result.gpuResidentOutput,
@@ -852,6 +969,41 @@ export function createLiveSelectedHourController(
 								selectionKey: acceptedSelectionKey
 							}
 						: null;
+				const acceptedRuntimeDiagnostics = copyRuntimeDiagnostics({
+					...result.diagnostics,
+					timings: {
+						...result.diagnostics.timings,
+						renderPublication: stampRenderPublicationTimeline({
+							current: stampRenderPublicationTimeline({
+								current: result.diagnostics.timings.renderPublication,
+								timeline: {
+									computeCompletedAtMs
+								},
+								fallback: {
+									renderPublicationPath: resolveRenderPublicationPath(
+										result.renderTransport
+									),
+									renderPublicationPhase: resolveRenderPublicationPhase(
+										controllerRequestId
+									),
+									renderPublicationMeshAction: 'skipped'
+								}
+							}),
+							timeline: {
+								controllerAcceptedAtMs: performance.now()
+							},
+							fallback: {
+								renderPublicationPath: resolveRenderPublicationPath(
+									result.renderTransport
+								),
+								renderPublicationPhase: resolveRenderPublicationPhase(
+									controllerRequestId
+								),
+								renderPublicationMeshAction: 'skipped'
+							}
+						})
+					}
+				});
 
 				replaceAcceptedGpuResidentOutput(acceptedGpuResidentOutput, {
 					analysis: result.analysis,
@@ -872,7 +1024,7 @@ export function createLiveSelectedHourController(
 					error: null,
 					renderTransport: result.renderTransport,
 					sameDeviceForComputeAndRender: result.sameDeviceForComputeAndRender,
-					runtimeDiagnostics: copyRuntimeDiagnostics(result.diagnostics),
+					runtimeDiagnostics: acceptedRuntimeDiagnostics,
 					visibleSelectedHourReadbackCount: undefined,
 					readbackInstrumentation: 'not-instrumented',
 					selectedHourReadbackReasons: result.diagnostics.selectedHourReadbackReasons ?? [],

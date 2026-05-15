@@ -17,8 +17,16 @@ import type {
 	OnDemandTimings,
 	TrackedGpuAllocationBytes
 } from '$lib/compute/on-demand/onDemandDiagnostics';
+import {
+	copyRenderPublicationDiagnostics as copySelectedHourRenderPublicationDiagnostics,
+	type SelectedHourRenderPublicationDiagnostics
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
+
+type MainRouteUtciDiagnosticsTimings = Omit<OnDemandTimings, 'renderPublication'> & {
+	renderPublication?: SelectedHourRenderPublicationDiagnostics;
+};
 
 export type MainRouteUtciDiagnosticsPayload = {
 	utciOnDemand: 'f32';
@@ -67,7 +75,7 @@ export type MainRouteUtciDiagnosticsPayload = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
-	timings?: OnDemandTimings;
+	timings?: MainRouteUtciDiagnosticsTimings;
 	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;
 	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
@@ -117,7 +125,7 @@ export type MainRouteUtciDiagnosticsInputs = {
 	cameraInteraction?: {
 		wheelEventCount: number;
 	};
-	timings?: OnDemandTimings;
+	timings?: MainRouteUtciDiagnosticsTimings;
 	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;
 	readbackInstrumentation?: SelectedHourReadbackInstrumentation;
@@ -164,6 +172,22 @@ function mergeSelectedHourReadbackReasonCounts(
 		}
 	}
 	return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function copyRenderPublicationDiagnostics(
+	renderPublication: MainRouteUtciDiagnosticsTimings['renderPublication']
+): MainRouteUtciDiagnosticsTimings['renderPublication'] {
+	return copySelectedHourRenderPublicationDiagnostics(renderPublication);
+}
+
+function copyDiagnosticsTimings(
+	timings: MainRouteUtciDiagnosticsTimings | undefined
+): MainRouteUtciDiagnosticsTimings | undefined {
+	if (!timings) return undefined;
+	return {
+		...timings,
+		renderPublication: copyRenderPublicationDiagnostics(timings.renderPublication)
+	};
 }
 
 export function buildMainRouteUtciDiagnostics(
@@ -229,7 +253,7 @@ export function buildMainRouteUtciDiagnostics(
 			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId,
 		tooltipInteraction: inputs.tooltipInteraction,
 		cameraInteraction: inputs.cameraInteraction,
-		timings: inputs.timings ? { ...inputs.timings } : undefined,
+		timings: copyDiagnosticsTimings(inputs.timings),
 		trackedGpuAllocationBytes: inputs.trackedGpuAllocationBytes
 			? { ...inputs.trackedGpuAllocationBytes }
 			: undefined,

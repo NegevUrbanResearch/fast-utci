@@ -1,0 +1,677 @@
+{
+  "collectedOn": "2026-05-15",
+  "sourceRoute": "/",
+  "targetGridResolutionMeters": 0.5,
+  "includedAnalyses": [
+    "Ben-Gurion/20250815_grid_2m_fullday",
+    "Ness-Tziona/exploded/nes_tziona_unblock_2"
+  ],
+  "excludedBgVariantsExplanation": "This 0.5m stress pass intentionally excludes other Ben-Gurion variants and uses only the BG base case plus Ness Tziona base/exploded model.",
+  "collectionMethod": "Main route only: / with gridResolution=0.5&utciRenderDiagnostics=1, app-visible color-mode buttons and hour slider scrub, no debug route and no parity/.bin comparison.",
+  "cases": [
+    {
+      "projectLabel": "Ben-Gurion",
+      "analysisId": "Ben-Gurion/20250815_grid_2m_fullday",
+      "sourcePointCount": 104445,
+      "sourceGridSizeMeters": 2,
+      "pointCount": 1662657,
+      "gridSizeMeters": 0.5,
+      "modes": {
+        "normalized": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "normalized",
+            "collectionMethod": "Initial main-route load at / with default Full day color mode.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-15T23:31:14.422Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 148.79999999701977,
+              "workerBvhMs": 101.8999999910593,
+              "pipelineUploadMs": 203.8999999910593,
+              "exposurePrecomputeMs": 6086.79999999702,
+              "oneHourDispatchMs": 5.4000000059604645,
+              "firstSelectedHourReadyMs": 7870.5,
+              "firstSelectedHourVisibleMs": 8420.29999999702,
+              "renderUpdateMs": 2109.7000000029802,
+              "renderSceneSyncStartDelayMs": 1724.2000000029802,
+              "renderSceneSyncTotalMs": 385.1000000089407,
+              "renderLayoutBuildMs": 96.20000000298023,
+              "renderSurfaceMeshMs": 0.09999999403953552,
+              "renderStorageInitWaitMs": 132.6000000089407,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 156,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 166266724,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 9144.79999999702,
+                  "controllerAcceptedAtMs": 9144.90000000596,
+                  "routePublishedAtMs": 10215.59999999404,
+                  "routeProjectedAtMs": 10216.5,
+                  "sceneSurfaceReceivedAtMs": 9829.70000000298,
+                  "publicationEffectStartedAtMs": 9829.79999999702,
+                  "renderStorageReadyAtMs": 10058.79999999702,
+                  "sceneSyncCompletedAtMs": 10214.90000000596
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 166266724,
+              "renderOwnedSelectedHourBytesHighWatermark": 166266724,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 239423632,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "normalized",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-15T23:31:14.424Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 148.79999999701977,
+              "workerBvhMs": 101.8999999910593,
+              "pipelineUploadMs": 203.8999999910593,
+              "exposurePrecomputeMs": 6086.79999999702,
+              "oneHourDispatchMs": 5,
+              "firstSelectedHourReadyMs": 102.5,
+              "firstSelectedHourVisibleMs": 1069.7000000029802,
+              "renderUpdateMs": 1064.2000000029802,
+              "renderSceneSyncStartDelayMs": 833.2000000029802,
+              "renderSceneSyncTotalMs": 230.70000000298023,
+              "renderLayoutBuildMs": 117.90000000596046,
+              "renderSurfaceMeshMs": 0,
+              "renderStorageInitWaitMs": 53.69999998807907,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 59.1000000089407,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 166266724,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 10390.79999999702,
+                  "controllerAcceptedAtMs": 10390.79999999702,
+                  "routePublishedAtMs": 11358.20000000298,
+                  "routeProjectedAtMs": 11358.59999999404,
+                  "sceneSurfaceReceivedAtMs": 11126.90000000596,
+                  "publicationEffectStartedAtMs": 11127,
+                  "renderStorageReadyAtMs": 11298.59999999404,
+                  "sceneSyncCompletedAtMs": 11357.70000000298
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 166266724,
+              "renderOwnedSelectedHourBytesHighWatermark": 166266724,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 239423632,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        },
+        "discrete": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "discrete",
+            "collectionMethod": "Initial collected discrete sample after app-visible Color scale mode -> Per hour button interaction; no URL color-mode parameter exists.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-15T23:31:24.694Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 168.29999999701977,
+              "workerBvhMs": 96.79999999701977,
+              "pipelineUploadMs": 202.8999999910593,
+              "exposurePrecomputeMs": 6040.5,
+              "oneHourDispatchMs": 6.5,
+              "firstSelectedHourReadyMs": 6822.5,
+              "firstSelectedHourVisibleMs": 7517.79999999702,
+              "renderUpdateMs": 1277.2999999970198,
+              "renderSceneSyncStartDelayMs": 873.0999999940395,
+              "renderSceneSyncTotalMs": 403.90000000596046,
+              "renderLayoutBuildMs": 107.20000000298023,
+              "renderSurfaceMeshMs": 0,
+              "renderStorageInitWaitMs": 146.5,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 150,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 166266724,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 7971.20000000298,
+                  "controllerAcceptedAtMs": 7971.20000000298,
+                  "routePublishedAtMs": 9136.40000000596,
+                  "routeProjectedAtMs": 9136.90000000596,
+                  "sceneSurfaceReceivedAtMs": 8711.79999999702,
+                  "publicationEffectStartedAtMs": 8732.09999999404,
+                  "renderStorageReadyAtMs": 8985.90000000596,
+                  "sceneSyncCompletedAtMs": 9136
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 166266724,
+              "renderOwnedSelectedHourBytesHighWatermark": 166266724,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 239423632,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "discrete",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-15T23:31:24.694Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 168.29999999701977,
+              "workerBvhMs": 96.79999999701977,
+              "pipelineUploadMs": 202.8999999910593,
+              "exposurePrecomputeMs": 6040.5,
+              "oneHourDispatchMs": 12.599999994039536,
+              "firstSelectedHourReadyMs": 47.8999999910593,
+              "firstSelectedHourVisibleMs": 1030.7000000029802,
+              "renderUpdateMs": 1017.8000000119209,
+              "renderSceneSyncStartDelayMs": 794.5,
+              "renderSceneSyncTotalMs": 223.1000000089407,
+              "renderLayoutBuildMs": 89.30000001192093,
+              "renderSurfaceMeshMs": 0.09999999403953552,
+              "renderStorageInitWaitMs": 68,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 65.6000000089407,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 166266724,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 9250.20000000298,
+                  "controllerAcceptedAtMs": 9250.29999999702,
+                  "routePublishedAtMs": 10209.59999999404,
+                  "routeProjectedAtMs": 10210,
+                  "sceneSurfaceReceivedAtMs": 9986,
+                  "publicationEffectStartedAtMs": 9986.09999999404,
+                  "renderStorageReadyAtMs": 10143.59999999404,
+                  "sceneSyncCompletedAtMs": 10209.20000000298
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 166266724,
+              "renderOwnedSelectedHourBytesHighWatermark": 166266724,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 239423632,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        }
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    },
+    {
+      "projectLabel": "Ness-Tziona",
+      "analysisId": "Ness-Tziona/exploded/nes_tziona_unblock_2",
+      "sourcePointCount": 511840,
+      "sourceGridSizeMeters": 2,
+      "pointCount": 8171761,
+      "gridSizeMeters": 0.5,
+      "modes": {
+        "normalized": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "normalized",
+            "collectionMethod": "Initial main-route load at / with default Full day color mode.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-15T23:31:57.077Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 275.5,
+              "workerBvhMs": 219.59999999403954,
+              "pipelineUploadMs": 1037.7999999970198,
+              "exposurePrecomputeMs": 16258.90000000596,
+              "oneHourDispatchMs": 16.5,
+              "firstSelectedHourReadyMs": 20651.20000000298,
+              "firstSelectedHourVisibleMs": 23896.70000000298,
+              "renderUpdateMs": 7453.20000000298,
+              "renderSceneSyncStartDelayMs": 5748.0999999940395,
+              "renderSceneSyncTotalMs": 1704.7999999970198,
+              "renderLayoutBuildMs": 492.29999999701977,
+              "renderSurfaceMeshMs": 0.20000000298023224,
+              "renderStorageInitWaitMs": 561.4000000059605,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 650.7000000029802,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 817177124,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 22365.20000000298,
+                  "controllerAcceptedAtMs": 22365.29999999702,
+                  "routePublishedAtMs": 27377.29999999702,
+                  "routeProjectedAtMs": 27378,
+                  "sceneSurfaceReceivedAtMs": 25672,
+                  "publicationEffectStartedAtMs": 25672,
+                  "renderStorageReadyAtMs": 26725.90000000596,
+                  "sceneSyncCompletedAtMs": 27376.79999999702
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 817177124,
+              "renderOwnedSelectedHourBytesHighWatermark": 817177124,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1176734608,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "normalized",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-15T23:31:57.077Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 275.5,
+              "workerBvhMs": 219.59999999403954,
+              "pipelineUploadMs": 1037.7999999970198,
+              "exposurePrecomputeMs": 16258.90000000596,
+              "oneHourDispatchMs": 24.900000005960464,
+              "firstSelectedHourReadyMs": 195.59999999403954,
+              "firstSelectedHourVisibleMs": 4622.70000000298,
+              "renderUpdateMs": 4597.4000000059605,
+              "renderSceneSyncStartDelayMs": 3443.1000000089407,
+              "renderSceneSyncTotalMs": 1154.0999999940395,
+              "renderLayoutBuildMs": 551.6999999880791,
+              "renderSurfaceMeshMs": 0,
+              "renderStorageInitWaitMs": 165.5,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 436.79999999701977,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 817177124,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 27648.90000000596,
+                  "controllerAcceptedAtMs": 27648.90000000596,
+                  "routePublishedAtMs": 32076,
+                  "routeProjectedAtMs": 32076.5,
+                  "sceneSurfaceReceivedAtMs": 30921.40000000596,
+                  "publicationEffectStartedAtMs": 30921.60000000894,
+                  "renderStorageReadyAtMs": 31638.90000000596,
+                  "sceneSyncCompletedAtMs": 32075.70000000298
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 817177124,
+              "renderOwnedSelectedHourBytesHighWatermark": 817177124,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1176734608,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        },
+        "discrete": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "discrete",
+            "collectionMethod": "Initial collected discrete sample after app-visible Color scale mode -> Per hour button interaction; no URL color-mode parameter exists.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-15T23:32:27.596Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 285.59999999403954,
+              "workerBvhMs": 218.20000000298023,
+              "pipelineUploadMs": 1036.0999999940395,
+              "exposurePrecomputeMs": 16334.40000000596,
+              "oneHourDispatchMs": 16.899999991059303,
+              "firstSelectedHourReadyMs": 18451.79999999702,
+              "firstSelectedHourVisibleMs": 21692.20000000298,
+              "renderUpdateMs": 5157,
+              "renderSceneSyncStartDelayMs": 3496.3999999910593,
+              "renderSceneSyncTotalMs": 1659.7999999970198,
+              "renderLayoutBuildMs": 477.6000000089407,
+              "renderSurfaceMeshMs": 0,
+              "renderStorageInitWaitMs": 535.5,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 646.2999999970198,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 817177124,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 20670.70000000298,
+                  "controllerAcceptedAtMs": 20670.70000000298,
+                  "routePublishedAtMs": 25574.70000000298,
+                  "routeProjectedAtMs": 25575.79999999702,
+                  "sceneSurfaceReceivedAtMs": 23913.39999999106,
+                  "publicationEffectStartedAtMs": 23913.59999999404,
+                  "renderStorageReadyAtMs": 24926.79999999702,
+                  "sceneSyncCompletedAtMs": 25573.5
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 817177124,
+              "renderOwnedSelectedHourBytesHighWatermark": 817177124,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1176734608,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "discrete",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-15T23:32:27.597Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 285.59999999403954,
+              "workerBvhMs": 218.20000000298023,
+              "pipelineUploadMs": 1036.0999999940395,
+              "exposurePrecomputeMs": 16334.40000000596,
+              "oneHourDispatchMs": 10.799999997019768,
+              "firstSelectedHourReadyMs": 168.79999999701977,
+              "firstSelectedHourVisibleMs": 4852.20000000298,
+              "renderUpdateMs": 4841.20000000298,
+              "renderSceneSyncStartDelayMs": 3682.3999999910593,
+              "renderSceneSyncTotalMs": 1158.6000000089407,
+              "renderLayoutBuildMs": 557.4000000059605,
+              "renderSurfaceMeshMs": 0.09999999403953552,
+              "renderStorageInitWaitMs": 159.3999999910593,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 441.5,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 817177124,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 25899,
+                  "controllerAcceptedAtMs": 25899.09999999404,
+                  "routePublishedAtMs": 30466.29999999702,
+                  "routeProjectedAtMs": 30466.70000000298,
+                  "sceneSurfaceReceivedAtMs": 29307.29999999702,
+                  "publicationEffectStartedAtMs": 29307.39999999106,
+                  "renderStorageReadyAtMs": 30024.39999999106,
+                  "sceneSyncCompletedAtMs": 30466
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 817177124,
+              "renderOwnedSelectedHourBytesHighWatermark": 817177124,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1176734608,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        }
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    }
+  ]
+}

@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 const RESULTS_DIR = resolve(REPO_ROOT, 'data/performance-results');
-const ARTIFACT_PATH = resolve(RESULTS_DIR, 'main-route-selected-hour-0_5m-base.json');
+const ARTIFACT_FILENAME = 'main-route-selected-hour-render-diagnostics-next.json';
+const ARTIFACT_PATH = resolve(RESULTS_DIR, ARTIFACT_FILENAME);
 const COLLECTED_ON = '2026-05-15';
 const SOURCE_ROUTE = '/';
 const TARGET_GRID_RESOLUTION_METERS = 0.5;
@@ -24,6 +25,111 @@ type AnalysisMetadata = {
 	num_positions?: number;
 };
 
+type RenderPublicationTiming = {
+	renderPublicationVersion: number | null;
+	renderPublicationPath:
+		| 'compute-buffer-selected-hour'
+		| 'cpu-uploaded-selected-hour'
+		| 'none'
+		| null;
+	renderPublicationPhase: 'initial' | 'scrub' | 'unknown' | null;
+	renderPublicationMeshAction: 'created' | 'reused' | 'skipped' | null;
+	renderPublicationPointCount: number | null;
+	renderPublicationVertexCount: number | null;
+	renderPublicationGridWidth: number | null;
+	renderPublicationGridHeight: number | null;
+	renderPublicationGridSize: number | null;
+	renderPublicationSourceByteLength: number | null;
+	renderPublicationTargetByteLength: number | null;
+	renderPublicationRenderOwnedBytes: number | null;
+	renderPublicationTimeline: RenderPublicationTimelineTiming | null;
+};
+
+type RenderPublicationTimelineTiming = {
+	computeCompletedAtMs: number | null;
+	controllerAcceptedAtMs: number | null;
+	routePublishedAtMs: number | null;
+	routeProjectedAtMs: number | null;
+	sceneSurfaceReceivedAtMs: number | null;
+	publicationEffectStartedAtMs: number | null;
+	renderStorageReadyAtMs: number | null;
+	sceneSyncCompletedAtMs: number | null;
+};
+
+type ExtractedTimings = {
+	payloadPrepareMs: number | null;
+	workerBvhMs: number | null;
+	pipelineUploadMs: number | null;
+	exposurePrecomputeMs: number | null;
+	oneHourDispatchMs: number | null;
+	firstSelectedHourReadyMs: number | null;
+	firstSelectedHourVisibleMs: number | null;
+	renderUpdateMs: number | null;
+	renderSceneSyncStartDelayMs: number | null;
+	renderSceneSyncTotalMs: number | null;
+	renderLayoutBuildMs: number | null;
+	renderSurfaceMeshMs: number | null;
+	renderStorageInitWaitMs: number | null;
+	renderBufferCopyMs: number | null;
+	renderQueueDrainMs: number | null;
+	renderPublication: RenderPublicationTiming | null;
+};
+
+type DiagnosticsTimingsInput = {
+	payloadPrepareMs?: unknown;
+	workerBvhMs?: unknown;
+	pipelineUploadMs?: unknown;
+	exposurePrecomputeMs?: unknown;
+	oneHourDispatchMs?: unknown;
+	firstSelectedHourReadyMs?: unknown;
+	firstSelectedHourVisibleMs?: unknown;
+	renderUpdateMs?: unknown;
+	renderSceneSyncStartDelayMs?: unknown;
+	renderSceneSyncTotalMs?: unknown;
+	renderLayoutBuildMs?: unknown;
+	renderSurfaceMeshMs?: unknown;
+	renderStorageInitWaitMs?: unknown;
+	renderBufferCopyMs?: unknown;
+	renderQueueDrainMs?: unknown;
+	renderPublication?: unknown;
+};
+
+type SelectedHourRuntimeContractDiagnostics = {
+	route?: unknown;
+	readbackInstrumentation?: unknown;
+	visibleSelectedHourReadbackCount?: unknown;
+	strongVisibleGpuPath?: unknown;
+};
+
+type TrackedGpuAllocationBytesDiagnostics = {
+	persistentExposureBytes: number;
+	allHoursOutputBytes: number;
+	selectedHourOutputBytes: number;
+	selectedHourOutputBytesHighWatermark: number;
+	renderOwnedSelectedHourBytes: number;
+	renderOwnedSelectedHourBytesHighWatermark: number;
+	trackingScope: string;
+};
+
+type DiagnosticsSnapshot = {
+	timings?: DiagnosticsTimingsInput;
+	trackedGpuAllocationBytes: TrackedGpuAllocationBytesDiagnostics;
+	baseSelectedMonthIndex: number;
+	baseSelectedHourIndex: number;
+	baseSelectedTimeIndex: number;
+	baseSelectionKey?: string | null;
+	baseSurfaceRequestId?: number | null;
+	rendererBackend: string;
+	utciRenderResolved: string;
+	utciSurfaceSource?: string | null;
+	baseRenderTransport: string;
+	dataTextureBuildCount?: number | null;
+	selectedHourRuntimeContract?: SelectedHourRuntimeContractDiagnostics;
+	baseSameDeviceForComputeAndRender?: boolean | null;
+	baseMetadataGridSize?: number | null;
+	basePointCount?: number | null;
+};
+
 type CollectedSample = {
 	phase: CollectionPhase;
 	colorMode: ColorMode;
@@ -36,7 +142,7 @@ type CollectedSample = {
 	collectedAt: string;
 	sourceRoute: '/';
 	sourceUrl: string;
-	timings: Record<string, number | null>;
+	timings: ExtractedTimings;
 	trackedGpuAllocationBytes: {
 		persistentExposureBytes: number;
 		allHoursOutputBytes: number;
@@ -171,7 +277,7 @@ async function waitForSelectedHourPublication(
 		);
 	});
 
-	return diagnostics.jsonValue() as Promise<any>;
+	return diagnostics.jsonValue() as Promise<DiagnosticsSnapshot>;
 }
 
 function collectForbiddenComparisonFields(diagnostics: Record<string, unknown>) {
@@ -190,7 +296,87 @@ function numberOrNull(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function extractTimings(timings: Record<string, unknown> | undefined) {
+function stringOrNull(value: unknown): string | null {
+	return typeof value === 'string' ? value : null;
+}
+
+function booleanOrNull(value: unknown): boolean | null {
+	return typeof value === 'boolean' ? value : null;
+}
+
+function stringFromSetOrNull<const T extends string>(
+	value: unknown,
+	allowed: readonly T[]
+): T | null {
+	return typeof value === 'string' && allowed.includes(value as T) ? (value as T) : null;
+}
+
+function extractRenderPublication(
+	value: unknown
+): RenderPublicationTiming | null {
+	if (typeof value !== 'object' || value == null) {
+		return null;
+	}
+
+	const payload = value as Record<string, unknown>;
+	return {
+		renderPublicationVersion: numberOrNull(payload.renderPublicationVersion),
+		renderPublicationPath: stringFromSetOrNull(payload.renderPublicationPath, [
+			'compute-buffer-selected-hour',
+			'cpu-uploaded-selected-hour',
+			'none'
+		]),
+		renderPublicationPhase: stringFromSetOrNull(payload.renderPublicationPhase, [
+			'initial',
+			'scrub',
+			'unknown'
+		]),
+		renderPublicationMeshAction: stringFromSetOrNull(payload.renderPublicationMeshAction, [
+			'created',
+			'reused',
+			'skipped'
+		]),
+		renderPublicationPointCount: numberOrNull(payload.renderPublicationPointCount),
+		renderPublicationVertexCount: numberOrNull(payload.renderPublicationVertexCount),
+		renderPublicationGridWidth: numberOrNull(payload.renderPublicationGridWidth),
+		renderPublicationGridHeight: numberOrNull(payload.renderPublicationGridHeight),
+		renderPublicationGridSize: numberOrNull(payload.renderPublicationGridSize),
+		renderPublicationSourceByteLength: numberOrNull(
+			payload.renderPublicationSourceByteLength
+		),
+		renderPublicationTargetByteLength: numberOrNull(
+			payload.renderPublicationTargetByteLength
+		),
+		renderPublicationRenderOwnedBytes: numberOrNull(
+			payload.renderPublicationRenderOwnedBytes
+		),
+		renderPublicationTimeline: extractRenderPublicationTimeline(
+			payload.renderPublicationTimeline
+		)
+	};
+}
+
+function extractRenderPublicationTimeline(
+	value: unknown
+): RenderPublicationTimelineTiming | null {
+	if (typeof value !== 'object' || value == null) {
+		return null;
+	}
+
+	const payload = value as Record<string, unknown>;
+	return {
+		computeCompletedAtMs: numberOrNull(payload.computeCompletedAtMs),
+		controllerAcceptedAtMs: numberOrNull(payload.controllerAcceptedAtMs),
+		routePublishedAtMs: numberOrNull(payload.routePublishedAtMs),
+		routeProjectedAtMs: numberOrNull(payload.routeProjectedAtMs),
+		sceneSurfaceReceivedAtMs: numberOrNull(payload.sceneSurfaceReceivedAtMs),
+		publicationEffectStartedAtMs: numberOrNull(payload.publicationEffectStartedAtMs),
+		renderStorageReadyAtMs: numberOrNull(payload.renderStorageReadyAtMs),
+		sceneSyncCompletedAtMs: numberOrNull(payload.sceneSyncCompletedAtMs)
+	};
+}
+
+function extractTimings(timings: DiagnosticsTimingsInput | undefined) {
 	return {
 		payloadPrepareMs: numberOrNull(timings?.payloadPrepareMs),
 		workerBvhMs: numberOrNull(timings?.workerBvhMs),
@@ -206,11 +392,159 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 		renderSurfaceMeshMs: numberOrNull(timings?.renderSurfaceMeshMs),
 		renderStorageInitWaitMs: numberOrNull(timings?.renderStorageInitWaitMs),
 		renderBufferCopyMs: numberOrNull(timings?.renderBufferCopyMs),
-		renderQueueDrainMs: numberOrNull(timings?.renderQueueDrainMs)
+		renderQueueDrainMs: numberOrNull(timings?.renderQueueDrainMs),
+		renderPublication: extractRenderPublication(timings?.renderPublication)
 	};
 }
 
-function expectTimingFields(diagnostics: Record<string, any>) {
+function expectValidRenderPublication(
+	sample: CollectedSample,
+	label: string
+) {
+	const renderPublication = sample.timings.renderPublication;
+	expect(renderPublication, `${label} renderPublication`).not.toBeNull();
+	expect(renderPublication).toMatchObject({
+		renderPublicationVersion: 1,
+		renderPublicationPath: 'compute-buffer-selected-hour',
+		renderPublicationPhase: sample.phase
+	});
+	expect(
+		renderPublication?.renderPublicationMeshAction,
+		`${label} renderPublicationMeshAction`
+	).toMatch(/^(created|reused|skipped)$/);
+	expect(
+		renderPublication?.renderPublicationGridWidth,
+		`${label} renderPublicationGridWidth`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationGridHeight,
+		`${label} renderPublicationGridHeight`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationGridSize,
+		`${label} renderPublicationGridSize`
+	).toBe(TARGET_GRID_RESOLUTION_METERS);
+	expect(
+		renderPublication?.renderPublicationPointCount,
+		`${label} renderPublicationPointCount`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationVertexCount,
+		`${label} renderPublicationVertexCount`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationSourceByteLength,
+		`${label} renderPublicationSourceByteLength`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationTargetByteLength,
+		`${label} renderPublicationTargetByteLength`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationRenderOwnedBytes,
+		`${label} renderPublicationRenderOwnedBytes`
+	).toEqual(expect.any(Number));
+	expect(
+		renderPublication?.renderPublicationGridWidth ?? 0,
+		`${label} renderPublicationGridWidth`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationGridHeight ?? 0,
+		`${label} renderPublicationGridHeight`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationPointCount ?? 0,
+		`${label} renderPublicationPointCount`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationVertexCount ?? 0,
+		`${label} renderPublicationVertexCount`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationSourceByteLength ?? 0,
+		`${label} renderPublicationSourceByteLength`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationTargetByteLength ?? 0,
+		`${label} renderPublicationTargetByteLength`
+	).toBeGreaterThan(0);
+	expect(
+		renderPublication?.renderPublicationRenderOwnedBytes ?? 0,
+		`${label} renderPublicationRenderOwnedBytes`
+	).toBeGreaterThan(0);
+	expectValidRenderPublicationTimeline(renderPublication, label);
+}
+
+function expectTimelineOrder(
+	timeline: RenderPublicationTimelineTiming,
+	keys: readonly (keyof RenderPublicationTimelineTiming)[],
+	label: string
+) {
+	let previousValue: number | undefined;
+	for (const key of keys) {
+		const value = timeline[key];
+		expect(value, `${label} ${key}`).toEqual(expect.any(Number));
+		expect(Number.isFinite(value), `${label} ${key} should be finite`).toBe(true);
+		if (previousValue !== undefined) {
+			expect(value, `${label} ${key} should be ordered`).toBeGreaterThanOrEqual(
+				previousValue
+			);
+		}
+		previousValue = value ?? undefined;
+	}
+}
+
+function expectValidRenderPublicationTimeline(
+	renderPublication: RenderPublicationTiming | null,
+	label: string
+) {
+	const timeline = renderPublication?.renderPublicationTimeline;
+	expect(timeline, `${label} renderPublicationTimeline`).not.toBeNull();
+	if (!timeline) {
+		throw new Error(`${label} missing renderPublicationTimeline`);
+	}
+
+	expectTimelineOrder(
+		timeline,
+		[
+			'computeCompletedAtMs',
+			'controllerAcceptedAtMs',
+			'routePublishedAtMs',
+			'routeProjectedAtMs'
+		],
+		label
+	);
+	expectTimelineOrder(
+		timeline,
+		[
+			'controllerAcceptedAtMs',
+			'sceneSurfaceReceivedAtMs',
+			'publicationEffectStartedAtMs',
+			'renderStorageReadyAtMs',
+			'sceneSyncCompletedAtMs'
+		],
+		label
+	);
+}
+
+function expectRenderPublicationForAllSamples(collectedCase: CollectedCase) {
+	for (const colorMode of ['normalized', 'discrete'] as const) {
+		for (const phase of ['initial', 'scrub'] as const) {
+			expectValidRenderPublication(
+				collectedCase.modes[colorMode][phase],
+				`${collectedCase.projectLabel} ${colorMode}.${phase}`
+			);
+		}
+	}
+}
+
+function expectTimingFields(diagnostics: DiagnosticsSnapshot) {
+	const timings = diagnostics.timings;
+	expect(timings, 'timings').toBeDefined();
+	if (!timings) {
+		throw new Error('Expected diagnostics.timings to be present');
+	}
+
 	for (const key of [
 		'payloadPrepareMs',
 		'workerBvhMs',
@@ -218,14 +552,14 @@ function expectTimingFields(diagnostics: Record<string, any>) {
 		'exposurePrecomputeMs',
 		'oneHourDispatchMs',
 		'firstSelectedHourReadyMs'
-	]) {
-		expect(diagnostics.timings?.[key], key).toEqual(expect.any(Number));
-		expect(diagnostics.timings[key], key).toBeGreaterThanOrEqual(0);
+	] as const satisfies readonly (keyof DiagnosticsTimingsInput)[]) {
+		expect(timings[key], key).toEqual(expect.any(Number));
+		expect(numberOrNull(timings[key]), key).toBeGreaterThanOrEqual(0);
 	}
 }
 
 function buildSample(params: {
-	diagnostics: Record<string, any>;
+	diagnostics: DiagnosticsSnapshot;
 	phase: CollectionPhase;
 	colorMode: ColorMode;
 	collectionMethod: string;
@@ -270,13 +604,15 @@ function buildSample(params: {
 			baseRenderTransport: diagnostics.baseRenderTransport,
 			dataTextureBuildCount: diagnostics.dataTextureBuildCount ?? 0,
 			selectedHourRuntimeContract: {
-				route: diagnostics.selectedHourRuntimeContract?.route ?? null,
-				readbackInstrumentation:
-					diagnostics.selectedHourRuntimeContract?.readbackInstrumentation ?? null,
+				route: stringOrNull(diagnostics.selectedHourRuntimeContract?.route),
+				readbackInstrumentation: stringOrNull(
+					diagnostics.selectedHourRuntimeContract?.readbackInstrumentation
+				),
 				visibleSelectedHourReadbackCount:
-					diagnostics.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount ?? null,
-				strongVisibleGpuPath:
-					diagnostics.selectedHourRuntimeContract?.strongVisibleGpuPath ?? null
+					numberOrNull(diagnostics.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount),
+				strongVisibleGpuPath: booleanOrNull(
+					diagnostics.selectedHourRuntimeContract?.strongVisibleGpuPath
+				)
 			},
 			baseSameDeviceForComputeAndRender:
 				diagnostics.baseSameDeviceForComputeAndRender ?? null
@@ -375,8 +711,7 @@ async function collectCase(
 	});
 	expect(representative.trackedGpuAllocationBytes.persistentExposureBytes).toBeGreaterThan(0);
 	expect(representative.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes).toBeGreaterThan(0);
-
-	return {
+	const collectedCase: CollectedCase = {
 		projectLabel: caseConfig.projectLabel,
 		analysisId: caseConfig.analysisId,
 		sourcePointCount: metadata.num_positions ?? 0,
@@ -394,6 +729,10 @@ async function collectCase(
 			memoryScope: representative.trackedGpuAllocationBytes.trackingScope
 		}
 	};
+
+	expectRenderPublicationForAllSamples(collectedCase);
+
+	return collectedCase;
 }
 
 test.describe('main route 0.5m performance collector', () => {
@@ -429,7 +768,7 @@ test.describe('main route 0.5m performance collector', () => {
 
 		const json = JSON.stringify(artifact, null, 2);
 		writeFileSync(ARTIFACT_PATH, json, 'utf8');
-		await testInfo.attach('main-route-selected-hour-0_5m-base.json', {
+		await testInfo.attach(ARTIFACT_FILENAME, {
 			body: json,
 			contentType: 'application/json'
 		});

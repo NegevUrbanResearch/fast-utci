@@ -196,10 +196,60 @@ describe('on-demand diagnostics helpers', () => {
 		});
 	});
 
-	it('keeps render timing substeps optional when the scene did not measure them', () => {
+	it('preserves render publication diagnostics when merging selected-hour render timings', () => {
 		const merged = mergeSelectedHourRenderTimings({
 			existingTimings: {
 				exposurePrecomputeMs: 12
+			},
+			renderUpdateMs: 42,
+			gpuSurfaceUpdateMs: 42,
+			firstSelectedHourVisibleMs: 50,
+			renderSubsteps: {
+				renderSceneSyncStartDelayMs: 3,
+				renderSceneSyncTotalMs: 39,
+				renderLayoutBuildMs: 4,
+				renderSurfaceMeshMs: 5,
+				renderStorageInitWaitMs: 6,
+				renderBufferCopyMs: 7,
+				renderQueueDrainMs: 8,
+				renderPublication: {
+					renderPublicationVersion: 1,
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase: 'scrub',
+					renderPublicationMeshAction: 'reused',
+					renderPublicationPointCount: 8171761,
+					renderPublicationVertexCount: 49030566,
+					renderPublicationGridWidth: 2860,
+					renderPublicationGridHeight: 2857,
+					renderPublicationGridSize: 0.5,
+					renderPublicationSourceByteLength: 32687044,
+					renderPublicationTargetByteLength: 32687044,
+					renderPublicationRenderOwnedBytes: 817177124
+				}
+			}
+		});
+
+		expect(merged.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'scrub',
+			renderPublicationMeshAction: 'reused',
+			renderPublicationPointCount: 8171761,
+			renderPublicationTargetByteLength: 32687044
+		});
+	});
+
+	it('keeps render timing substeps optional when the scene did not measure them', () => {
+		const merged = mergeSelectedHourRenderTimings({
+			existingTimings: {
+				exposurePrecomputeMs: 12,
+				renderPublication: {
+					renderPublicationVersion: 1,
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase: 'scrub',
+					renderPublicationMeshAction: 'reused',
+					renderPublicationPointCount: 8171761
+				}
 			},
 			renderUpdateMs: 22.5,
 			gpuSurfaceUpdateMs: 22.5
@@ -217,6 +267,7 @@ describe('on-demand diagnostics helpers', () => {
 		expect(merged.renderStorageInitWaitMs).toBeUndefined();
 		expect(merged.renderBufferCopyMs).toBeUndefined();
 		expect(merged.renderQueueDrainMs).toBeUndefined();
+		expect(merged.renderPublication).toBeUndefined();
 	});
 
 	it('clears stale render timing substeps from earlier GPU-resident renders', () => {

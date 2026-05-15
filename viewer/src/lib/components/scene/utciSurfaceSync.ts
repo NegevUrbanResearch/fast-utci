@@ -2,6 +2,7 @@ import type { Mesh } from 'three';
 import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
+import { copyRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import { getGpuNativeUtciSurfaceSource } from '$lib/services/gpuUtciRenderBridge';
 
 export type GpuResidentCopyStatus = 'idle' | 'pending' | 'complete' | 'failed';
@@ -82,6 +83,9 @@ export function buildUtciSurfaceDiagnostics(params: {
 		gpuResidentCopyStatus: params.gpuResidentCopyStatus,
 		gpuResidentCopyError: params.gpuResidentCopyError,
 		gpuResidentCopyRequestId: params.gpuResidentCopyRequestId,
-		...params.gpuResidentRenderTimings
+		...params.gpuResidentRenderTimings,
+		renderPublication: copyRenderPublicationDiagnostics(
+			params.gpuResidentRenderTimings?.renderPublication
+		)
 	};
 }

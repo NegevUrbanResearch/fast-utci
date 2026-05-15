@@ -217,6 +217,66 @@ function expectFiniteUtciRange(range: unknown) {
 	expect(typedRange.max).toBeGreaterThan(typedRange.min);
 }
 
+function expectFiniteRenderPublicationTimeline(
+	renderPublication: any
+): Record<string, number> {
+	expect(renderPublication).toBeDefined();
+	const timeline = renderPublication?.renderPublicationTimeline;
+	expect(timeline).toBeDefined();
+
+	const requiredKeys = [
+		'computeCompletedAtMs',
+		'controllerAcceptedAtMs',
+		'routePublishedAtMs',
+		'routeProjectedAtMs',
+		'sceneSurfaceReceivedAtMs',
+		'publicationEffectStartedAtMs',
+		'renderStorageReadyAtMs',
+		'sceneSyncCompletedAtMs'
+	] as const;
+
+	for (const key of requiredKeys) {
+		const value = timeline?.[key];
+		expect(typeof value, `${key} should be a finite number`).toBe('number');
+		expect(Number.isFinite(value), `${key} should be finite`).toBe(true);
+	}
+
+	return timeline as Record<string, number>;
+}
+
+function expectTruthfulRenderPublicationTimeline(renderPublication: any) {
+	const timeline = expectFiniteRenderPublicationTimeline(renderPublication);
+
+	expect(
+		timeline.controllerAcceptedAtMs,
+		'controllerAcceptedAtMs should not precede computeCompletedAtMs'
+	).toBeGreaterThanOrEqual(timeline.computeCompletedAtMs);
+	expect(
+		timeline.routePublishedAtMs,
+		'routePublishedAtMs should not precede controllerAcceptedAtMs'
+	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	expect(
+		timeline.routeProjectedAtMs,
+		'routeProjectedAtMs should not precede routePublishedAtMs'
+	).toBeGreaterThanOrEqual(timeline.routePublishedAtMs);
+	expect(
+		timeline.sceneSurfaceReceivedAtMs,
+		'sceneSurfaceReceivedAtMs should not precede controllerAcceptedAtMs'
+	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	expect(
+		timeline.publicationEffectStartedAtMs,
+		'publicationEffectStartedAtMs should not precede sceneSurfaceReceivedAtMs'
+	).toBeGreaterThanOrEqual(timeline.sceneSurfaceReceivedAtMs);
+	expect(
+		timeline.renderStorageReadyAtMs,
+		'renderStorageReadyAtMs should not precede publicationEffectStartedAtMs'
+	).toBeGreaterThanOrEqual(timeline.publicationEffectStartedAtMs);
+	expect(
+		timeline.sceneSyncCompletedAtMs,
+		'sceneSyncCompletedAtMs should not precede renderStorageReadyAtMs'
+	).toBeGreaterThanOrEqual(timeline.renderStorageReadyAtMs);
+}
+
 async function readUtciLegendValues(page: Page): Promise<number[]> {
 	return page
 		.locator('.color-legend .label')
@@ -346,6 +406,32 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(value.baseAcceptedUtciRange).toBeDefined();
 		expect(value.timings?.oneHourDispatchMs ?? -1).toBeGreaterThanOrEqual(0);
 		expect(value.timings?.firstSelectedHourVisibleMs ?? -1).toBeGreaterThanOrEqual(0);
+		expect(value.timings?.renderPublication).toMatchObject({
+			renderPublicationVersion: 1,
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationMeshAction: expect.stringMatching(/^(created|reused)$/)
+		});
+		expect(value.timings?.renderPublication?.renderPublicationPointCount ?? 0).toBeGreaterThan(0);
+		expect(
+			value.timings?.renderPublication?.renderPublicationRenderOwnedBytes ?? 0
+		).toBeGreaterThan(0);
+		expect(
+			value.timings?.renderPublication?.renderPublicationSourceByteLength ?? 0
+		).toBeGreaterThan(0);
+		expect(
+			value.timings?.renderPublication?.renderPublicationTargetByteLength ?? 0
+		).toBeGreaterThan(0);
+		if (
+			typeof value.timings?.renderPublication?.renderPublicationSourceByteLength === 'number' &&
+			typeof value.timings?.renderPublication?.renderPublicationTargetByteLength === 'number'
+		) {
+			expect(
+				value.timings.renderPublication.renderPublicationTargetByteLength
+			).toBeGreaterThanOrEqual(
+				value.timings.renderPublication.renderPublicationSourceByteLength
+			);
+		}
+		expectTruthfulRenderPublicationTimeline(value.timings?.renderPublication);
 		expect(value.trackedGpuAllocationBytes).toMatchObject({
 			persistentExposureBytes: expect.any(Number),
 			allHoursOutputBytes: 0,
@@ -437,6 +523,7 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.baseSelectedTimeIndex).toBe(7 * 24 + 1);
 		expect(updated.baseRenderContextTimeIndex).toBe(7 * 24 + 1);
 		expect(updated.baseAcceptedUtciRange).toEqual(initial.baseAcceptedUtciRange);
+		expectTruthfulRenderPublicationTimeline(updated.timings?.renderPublication);
 
 		await setColorScaleMode(page, 'per hour');
 
@@ -451,6 +538,7 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(perHour.baseAcceptedUtciRange.max).toBeLessThanOrEqual(
 			initial.baseAcceptedUtciRange.max
 		);
+		expectTruthfulRenderPublicationTimeline(perHour.timings?.renderPublication);
 	});
 
 	test('publishes a new compute-buffer surface after changing the selected month', async ({
@@ -477,6 +565,7 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expect(updated.baseSelectedTimeIndex).toBe(8 * 24);
 		expect(updated.baseRenderContextTimeIndex).toBe(8 * 24);
+		expectTruthfulRenderPublicationTimeline(updated.timings?.renderPublication);
 	});
 
 	test('keeps visible GPU path strong while comparison readbacks are accounted separately', async ({
@@ -543,5 +632,6 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(updated.baseSelectionKey).toBe(updated.baseSceneSelectionKey);
 		expectFiniteUtciRange(updated.baseAcceptedUtciRange);
 		expect(updated.baseAcceptedUtciRange).not.toEqual(initial.baseAcceptedUtciRange);
+		expectTruthfulRenderPublicationTimeline(updated.timings?.renderPublication);
 	});
 });
