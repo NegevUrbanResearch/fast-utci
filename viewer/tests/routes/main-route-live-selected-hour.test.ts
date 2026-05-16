@@ -173,6 +173,7 @@ describe('main route live selected-hour helper', () => {
 		const first = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
@@ -180,15 +181,18 @@ describe('main route live selected-hour helper', () => {
 		const second = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
 		});
 
 		expect(first?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
 		});
 		expect(second?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
 		});
 
@@ -234,6 +238,7 @@ describe('main route live selected-hour helper', () => {
 		const first = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
@@ -241,6 +246,10 @@ describe('main route live selected-hour helper', () => {
 		const second = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: {
+				...params.liveRouteState.baseSceneSurfaceIdentity!,
+				controllerInstanceId: 2
+			},
 			publishedSurfaceIdentity: {
 				...params.liveRouteState.baseSurfaceIdentity,
 				controllerInstanceId: 2
@@ -250,9 +259,11 @@ describe('main route live selected-hour helper', () => {
 		});
 
 		expect(first?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
 		});
 		expect(second?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 777,
 			routeProjectedAtMs: 777
 		});
 
@@ -287,6 +298,7 @@ describe('main route live selected-hour helper', () => {
 		const first = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
@@ -294,6 +306,7 @@ describe('main route live selected-hour helper', () => {
 		const transientLoss = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: undefined,
 			selectedTimeIndex: params.selectedTimeIndex
@@ -301,27 +314,38 @@ describe('main route live selected-hour helper', () => {
 		const recovered = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
 		});
 
 		expect(first?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
+		});
+		expect(
+			transientLoss?.renderPublication?.renderPublicationTimeline
+		).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501
 		});
 		expect(
 			transientLoss?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
 		).toBeUndefined();
 		expect(recovered?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
 		});
 
 		nowSpy.mockRestore();
 	});
 
-	it('does not stamp routeProjectedAtMs for a bootstrap candidate before the published visible surface exists', () => {
+	it('stamps routePendingSurfaceExposedAtMs before routeProjectedAtMs for a bootstrap candidate', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
-		const nowSpy = vi.spyOn(performance, 'now').mockReturnValueOnce(501);
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(777);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -344,6 +368,7 @@ describe('main route live selected-hour helper', () => {
 		const bootstrapOnly = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
 			publishedSurfaceIdentity: null,
 			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 			selectedTimeIndex: params.selectedTimeIndex
@@ -351,6 +376,17 @@ describe('main route live selected-hour helper', () => {
 		const published = tracker.apply({
 			enabled: true,
 			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: {
+				controllerIdentity: 'controller-a',
+				controllerInstanceId: 1,
+				requestId: 11,
+				monthIndex: 7,
+				hourIndex: 12,
+				timeIndex: 180,
+				selectionKey: 'analysis|7|12',
+				pendingRenderUpdateStartedAt: undefined,
+				acceptedGpuResidentOutput: null
+			},
 			publishedSurfaceIdentity: {
 				controllerIdentity: 'controller-a',
 				controllerInstanceId: 1,
@@ -366,11 +402,238 @@ describe('main route live selected-hour helper', () => {
 			selectedTimeIndex: params.selectedTimeIndex
 		});
 
-		expect(bootstrapOnly?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs).toBe(
-			undefined
-		);
+		expect(bootstrapOnly?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501
+		});
+		expect(
+			bootstrapOnly?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
+		).toBe(undefined);
 		expect(published?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501
+		});
+		expect(
+			published?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
+		).toBeGreaterThanOrEqual(501);
+
+		nowSpy.mockRestore();
+	});
+
+	it('stamps a fresh routePendingSurfaceExposedAtMs when the projected scene surface key changes before publish visibility', () => {
+		const tracker = createMainRouteRenderPublicationProjectionTracker();
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(777);
+		const params = createDiagnosticsParams();
+		params.liveRouteState.base.runtimeDiagnostics = {
+			timings: {
+				renderPublication: {
+					renderPublicationVersion: 1,
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase: 'scrub',
+					renderPublicationMeshAction: 'reused'
+				}
+			},
+			trackedGpuAllocationBytes: {
+				persistentExposureBytes: 0,
+				allHoursOutputBytes: 0,
+				selectedHourOutputBytes: 0,
+				selectedHourOutputBytesHighWatermark: 0,
+				trackingScope: 'utci-owned-webgpu-buffers'
+			}
+		} as NonNullable<typeof params.liveRouteState.base.runtimeDiagnostics>;
+
+		const first = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
+			publishedSurfaceIdentity: null,
+			sceneRenderContextTimeIndex: undefined,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const second = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: {
+				...params.liveRouteState.baseSceneSurfaceIdentity!,
+				requestId: 12
+			},
+			publishedSurfaceIdentity: null,
+			sceneRenderContextTimeIndex: undefined,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+
+		expect(first?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501
+		});
+		expect(
+			first?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
+		).toBeUndefined();
+		expect(
+			second?.renderPublication?.renderPublicationTimeline?.routePendingSurfaceExposedAtMs
+		).toBeGreaterThan(501);
+		expect(
+			second?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
+		).toBeUndefined();
+
+		nowSpy.mockRestore();
+	});
+
+	it('does not pair a new pending surface exposure with an old visible surface projection', () => {
+		const tracker = createMainRouteRenderPublicationProjectionTracker();
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(777)
+			.mockReturnValueOnce(999);
+		const params = createDiagnosticsParams();
+		params.liveRouteState.base.runtimeDiagnostics = {
+			timings: {
+				renderPublication: {
+					renderPublicationVersion: 1,
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase: 'scrub',
+					renderPublicationMeshAction: 'reused'
+				}
+			},
+			trackedGpuAllocationBytes: {
+				persistentExposureBytes: 0,
+				allHoursOutputBytes: 0,
+				selectedHourOutputBytes: 0,
+				selectedHourOutputBytesHighWatermark: 0,
+				trackingScope: 'utci-owned-webgpu-buffers'
+			}
+		} as NonNullable<typeof params.liveRouteState.base.runtimeDiagnostics>;
+
+		const visibleSurfaceA = {
+			...params.liveRouteState.baseSurfaceIdentity!
+		};
+		const pendingSurfaceB = {
+			...params.liveRouteState.baseSceneSurfaceIdentity!,
+			requestId: 12
+		};
+
+		const visibleA = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: visibleSurfaceA,
+			publishedSurfaceIdentity: visibleSurfaceA,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const pendingBWhileVisibleA = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: pendingSurfaceB,
+			publishedSurfaceIdentity: visibleSurfaceA,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const publishedB = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: pendingSurfaceB,
+			publishedSurfaceIdentity: pendingSurfaceB,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+
+		expect(visibleA?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
 			routeProjectedAtMs: 501
+		});
+		expect(
+			pendingBWhileVisibleA?.renderPublication?.renderPublicationTimeline
+		).toMatchObject({
+			routePendingSurfaceExposedAtMs: 777
+		});
+		expect(
+			pendingBWhileVisibleA?.renderPublication?.renderPublicationTimeline?.routeProjectedAtMs
+		).toBeUndefined();
+		expect(publishedB?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 777,
+			routeProjectedAtMs: 999
+		});
+
+		nowSpy.mockRestore();
+	});
+
+	it('resets pending and projected timeline state across disable and teardown boundaries', () => {
+		const tracker = createMainRouteRenderPublicationProjectionTracker();
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(777);
+		const params = createDiagnosticsParams();
+		params.liveRouteState.base.runtimeDiagnostics = {
+			timings: {
+				renderPublication: {
+					renderPublicationVersion: 1,
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase: 'scrub',
+					renderPublicationMeshAction: 'reused'
+				}
+			},
+			trackedGpuAllocationBytes: {
+				persistentExposureBytes: 0,
+				allHoursOutputBytes: 0,
+				selectedHourOutputBytes: 0,
+				selectedHourOutputBytesHighWatermark: 0,
+				trackingScope: 'utci-owned-webgpu-buffers'
+			}
+		} as NonNullable<typeof params.liveRouteState.base.runtimeDiagnostics>;
+
+		const first = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
+			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const disabled = tracker.apply({
+			enabled: false,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
+			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const tornDown = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: null,
+			publishedSurfaceIdentity: null,
+			sceneRenderContextTimeIndex: undefined,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const noTimings = tracker.apply({
+			enabled: true,
+			timings: undefined,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
+			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+		const rebuilt = tracker.apply({
+			enabled: true,
+			timings: params.liveRouteState.base.runtimeDiagnostics?.timings,
+			projectedSceneSurfaceIdentity: params.liveRouteState.baseSceneSurfaceIdentity,
+			publishedSurfaceIdentity: params.liveRouteState.baseSurfaceIdentity,
+			sceneRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
+			selectedTimeIndex: params.selectedTimeIndex
+		});
+
+		expect(first?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 501,
+			routeProjectedAtMs: 501
+		});
+		expect(disabled?.renderPublication?.renderPublicationTimeline).toBeUndefined();
+		expect(tornDown?.renderPublication?.renderPublicationTimeline).toBeUndefined();
+		expect(noTimings).toBeUndefined();
+		expect(rebuilt?.renderPublication?.renderPublicationTimeline).toMatchObject({
+			routePendingSurfaceExposedAtMs: 777,
+			routeProjectedAtMs: 777
 		});
 
 		nowSpy.mockRestore();

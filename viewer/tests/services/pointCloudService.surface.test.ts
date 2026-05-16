@@ -7,9 +7,11 @@ import {
 	updateUtciSurfaceMesh
 } from '$lib/services/pointCloudService';
 import {
+	createCellToPointIndexArray,
 	createVertexToPointIndexArray,
 	createComputeBufferUtciSurfaceMesh,
 	getGpuNativeUtciSurfaceSource,
+	isComputeBufferUtciSurfaceLayoutCompatible,
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
 import type { Analysis } from '$lib/types/analysis';
@@ -170,7 +172,37 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(material.map ?? null).toBeNull();
 	});
 
+	it('keeps CPU-uploaded gpuNative surfaces front-sided and normally frustum culled', () => {
+		const analysis = createAnalysis();
+		const mesh = createUtciSurfaceMesh({
+			analysis,
+			backend: 'gpuNative'
+		});
+		const material = mesh.material as THREE.Material;
+
+		expect(material.side).toBe(THREE.FrontSide);
+		expect(mesh.frustumCulled).toBe(true);
+	});
+
 	it('maps each surface vertex back to the shuffled source point index', () => {
+		const cellToPoint = createCellToPointIndexArray({
+			width: 2,
+			height: 2,
+			gridSize: 1,
+			numPositions: 4,
+			centerX: 1,
+			centerZ: 1,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			coordinateSystem: 'xy_ground',
+			minY: 0,
+			maxY: 0,
+			indexToRow: new Uint32Array([1, 0, 1, 0]),
+			indexToColumn: new Uint32Array([1, 0, 0, 1]),
+			indexToTexel: new Uint32Array([0, 1, 2, 3]),
+			colorBuffer: new Uint8Array(2 * 2 * 4)
+		});
 		const vertexToPoint = createVertexToPointIndexArray({
 			width: 2,
 			height: 2,
@@ -190,6 +222,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			colorBuffer: new Uint8Array(2 * 2 * 4)
 		});
 
+		expect(Array.from(cellToPoint)).toEqual([1, 3, 2, 0]);
 		expect(Array.from(vertexToPoint)).toEqual([
 			1, 1, 1, 1, 1, 1,
 			3, 3, 3, 3, 3, 3,
@@ -222,16 +255,19 @@ describe('pointCloudService UTCI surface seam', () => {
 			utciBuffer: computeBuffer,
 			utciRange: { min: 10, max: 40 }
 		});
+		const material = mesh.material as THREE.Material;
 
 		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('compute-buffer-selected-hour');
+		expect(material.side).toBe(THREE.FrontSide);
+		expect(mesh.frustumCulled).toBe(true);
 		expect(mesh.userData.utciSurfaceSource).toBeUndefined();
 		expect(mesh.userData.pendingComputeBufferUtciSource).toBe(computeBuffer);
 		expect(Array.from(mesh.userData.gpuNativeUtciSurfaceState.utciStorageAttribute.array)).toEqual([0]);
 		expect(
-			Array.from(mesh.userData.gpuNativeUtciSurfaceState.vertexToPointStorageAttribute.array)
-		).toEqual([0, 0, 0, 0, 0, 0]);
+			Array.from(mesh.userData.gpuNativeUtciSurfaceState.cellToPointStorageAttribute.array)
+		).toEqual([0]);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 10, max: 40 });
-		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1124);
+		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1104);
 	});
 
 	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {
@@ -277,6 +313,106 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 5, max: 55 });
 		expect(mesh.userData.gpuNativeUtciSurfaceState.minUniform.value).toBe(5);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.maxUniform.value).toBe(55);
+		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1184);
+	});
+
+	it('reports compute-buffer layout compatibility without mutating surface state', () => {
+		const layout = {
+			width: 2,
+			height: 1,
+			gridSize: 1,
+			numPositions: 2,
+			centerX: 1,
+			centerZ: 0.5,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			coordinateSystem: 'xy_ground' as const,
+			minY: 0,
+			maxY: 0,
+			indexToRow: new Uint32Array([0, 0]),
+			indexToColumn: new Uint32Array([0, 1]),
+			cellToPointIndex: new Int32Array([0, 1]),
+			indexToTexel: new Uint32Array([0, 1]),
+			colorBuffer: new Uint8Array(2 * 4)
+		};
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+		const originalPendingSource = mesh.userData.pendingComputeBufferUtciSource;
+		const originalRange = { ...mesh.userData.gpuNativeUtciSurfaceState.utciRange };
+
+		expect(isComputeBufferUtciSurfaceLayoutCompatible(mesh, layout)).toBe(true);
+		expect(
+			isComputeBufferUtciSurfaceLayoutCompatible(mesh, {
+				...layout,
+				width: 1
+			})
+		).toBe(false);
+		expect(
+			isComputeBufferUtciSurfaceLayoutCompatible(mesh, {
+				...layout,
+				numPositions: 1,
+				indexToRow: new Uint32Array([0]),
+				indexToColumn: new Uint32Array([0]),
+				indexToTexel: new Uint32Array([0]),
+				colorBuffer: new Uint8Array(4)
+			})
+		).toBe(false);
+		expect(
+			isComputeBufferUtciSurfaceLayoutCompatible(mesh, {
+				...layout,
+				cellToPointIndex: new Int32Array([1, 0])
+			})
+		).toBe(false);
+		expect(isComputeBufferUtciSurfaceLayoutCompatible(null, layout)).toBe(false);
+		expect(mesh.userData.pendingComputeBufferUtciSource).toBe(originalPendingSource);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual(originalRange);
+	});
+
+	it('rejects compute-buffer layout reuse when ambiguous cells rebuild to a different effective mapping', () => {
+		const layout = {
+			width: 1,
+			height: 1,
+			gridSize: 1,
+			numPositions: 2,
+			centerX: 0.5,
+			centerZ: 0.5,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			coordinateSystem: 'xy_ground' as const,
+			minY: 0,
+			maxY: 0,
+			indexToRow: new Uint32Array([0, 0]),
+			indexToColumn: new Uint32Array([0, 0]),
+			cellToPointIndex: new Int32Array([-2]),
+			indexToTexel: new Uint32Array([0, 0]),
+			colorBuffer: new Uint8Array(4)
+		};
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(isComputeBufferUtciSurfaceLayoutCompatible(mesh, layout)).toBe(true);
+		expect(
+			isComputeBufferUtciSurfaceLayoutCompatible(mesh, {
+				...layout,
+				indexToRow: new Uint32Array([0, 0]),
+				indexToColumn: new Uint32Array([0, 0])
+			})
+		).toBe(true);
+		expect(
+			isComputeBufferUtciSurfaceLayoutCompatible(mesh, {
+				...layout,
+				indexToRow: new Uint32Array([0, 0]),
+				indexToColumn: new Uint32Array([0, 1])
+			})
+		).toBe(false);
 	});
 
 	it('refuses generic gpuNative CPU updates on compute-buffer backed meshes', () => {

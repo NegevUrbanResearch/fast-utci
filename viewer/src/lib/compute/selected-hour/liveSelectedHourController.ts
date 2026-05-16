@@ -228,19 +228,164 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.computeCompletedAtMs &&
 		left.renderPublicationTimeline?.controllerAcceptedAtMs ===
 			right.renderPublicationTimeline?.controllerAcceptedAtMs &&
+		left.renderPublicationTimeline?.routePendingSurfaceExposedAtMs ===
+			right.renderPublicationTimeline?.routePendingSurfaceExposedAtMs &&
 		left.renderPublicationTimeline?.routePublishedAtMs ===
 			right.renderPublicationTimeline?.routePublishedAtMs &&
 		left.renderPublicationTimeline?.routeProjectedAtMs ===
 			right.renderPublicationTimeline?.routeProjectedAtMs &&
+		left.renderPublicationTimeline?.scenePendingSurfaceObservedAtMs ===
+			right.renderPublicationTimeline?.scenePendingSurfaceObservedAtMs &&
+		left.renderPublicationTimeline?.sceneSyncAttemptStartedAtMs ===
+			right.renderPublicationTimeline?.sceneSyncAttemptStartedAtMs &&
+		left.renderPublicationTimeline?.sceneSyncAttemptToken ===
+			right.renderPublicationTimeline?.sceneSyncAttemptToken &&
 		left.renderPublicationTimeline?.sceneSurfaceReceivedAtMs ===
 			right.renderPublicationTimeline?.sceneSurfaceReceivedAtMs &&
 		left.renderPublicationTimeline?.publicationEffectStartedAtMs ===
 			right.renderPublicationTimeline?.publicationEffectStartedAtMs &&
+		areRenderSurfaceMeshTracesEqual(
+			left.renderPublicationTimeline?.renderSurfaceMeshTrace,
+			right.renderPublicationTimeline?.renderSurfaceMeshTrace
+		) &&
 		left.renderPublicationTimeline?.renderStorageReadyAtMs ===
 			right.renderPublicationTimeline?.renderStorageReadyAtMs &&
+		areRenderStorageWaitTracesEqual(
+			left.renderPublicationTimeline?.renderStorageWaitTrace,
+			right.renderPublicationTimeline?.renderStorageWaitTrace
+		) &&
 		left.renderPublicationTimeline?.sceneSyncCompletedAtMs ===
-			right.renderPublicationTimeline?.sceneSyncCompletedAtMs
+			right.renderPublicationTimeline?.sceneSyncCompletedAtMs &&
+		areSceneSyncResetHistoriesEqual(
+			left.renderPublicationTimeline?.sceneSyncResetHistory,
+			right.renderPublicationTimeline?.sceneSyncResetHistory
+		) &&
+		areSceneSyncResetHistoriesEqual(
+			left.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory,
+			right.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory
+		)
 	);
+}
+
+function areRenderSurfaceMeshTracesEqual(
+	left:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderSurfaceMeshTrace']
+		| undefined,
+	right:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderSurfaceMeshTrace']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.action === right.action &&
+		left.totalMs === right.totalMs &&
+		left.recreateDecision?.missingSurface === right.recreateDecision?.missingSurface &&
+		left.recreateDecision?.notComputeBufferSurface ===
+			right.recreateDecision?.notComputeBufferSurface &&
+		left.recreateDecision?.analysisIdentityChanged ===
+			right.recreateDecision?.analysisIdentityChanged &&
+		left.recreateDecision?.layoutCompatible ===
+			right.recreateDecision?.layoutCompatible &&
+		left.disposeResetMeshRemovalMs === right.disposeResetMeshRemovalMs &&
+		left.createComputeBufferSurfaceMeshMs === right.createComputeBufferSurfaceMeshMs &&
+		left.updateComputeBufferSurfaceMeshMs === right.updateComputeBufferSurfaceMeshMs &&
+		left.fallbackDecisionMs === right.fallbackDecisionMs &&
+		left.applySurfaceMeshStateMs === right.applySurfaceMeshStateMs &&
+		left.setCreatedSurfacePendingStorageInitMs ===
+			right.setCreatedSurfacePendingStorageInitMs &&
+		left.setPostSurfacePendingStorageInitMs ===
+			right.setPostSurfacePendingStorageInitMs &&
+		left.sceneAddMs === right.sceneAddMs &&
+		left.publishUtciSurfaceDiagnosticsMs === right.publishUtciSurfaceDiagnosticsMs
+	);
+}
+
+function areRenderStorageWaitTracesEqual(
+	left:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderStorageWaitTrace']
+		| undefined,
+	right:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderStorageWaitTrace']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.waitStartedAtMs === right.waitStartedAtMs &&
+		left.waitFinishedAtMs === right.waitFinishedAtMs &&
+		left.waitMs === right.waitMs &&
+		left.readAttemptCount === right.readAttemptCount &&
+		left.frameWaitCount === right.frameWaitCount &&
+		left.deviceAvailableCount === right.deviceAvailableCount &&
+		left.backendEntryAvailableCount === right.backendEntryAvailableCount &&
+		left.bufferAvailableCount === right.bufferAvailableCount &&
+		left.firstDeviceAtMs === right.firstDeviceAtMs &&
+		left.firstBackendEntryAtMs === right.firstBackendEntryAtMs &&
+		left.firstBufferAtMs === right.firstBufferAtMs &&
+		left.lastReadState.deviceAvailable === right.lastReadState.deviceAvailable &&
+		left.lastReadState.backendEntryAvailable ===
+			right.lastReadState.backendEntryAvailable &&
+		left.lastReadState.bufferAvailable === right.lastReadState.bufferAvailable &&
+		left.samples.length === right.samples.length &&
+		left.samples.every((leftSample, index) => {
+			const rightSample = right.samples[index];
+			return (
+				leftSample.atMs === rightSample.atMs &&
+				leftSample.deviceAvailable === rightSample.deviceAvailable &&
+				leftSample.backendEntryAvailable === rightSample.backendEntryAvailable &&
+				leftSample.bufferAvailable === rightSample.bufferAvailable
+			);
+		})
+	);
+}
+
+function areSceneSyncResetHistoriesEqual(
+	left:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['sceneSyncResetHistory']
+		| undefined,
+	right:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['sceneSyncResetHistory']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	if (left.length !== right.length) return false;
+	return left.every((leftEvent, index) => {
+		const rightEvent = right[index];
+		return (
+			leftEvent.resetAtMs === rightEvent.resetAtMs &&
+			leftEvent.resetReason === rightEvent.resetReason &&
+			leftEvent.invalidateActiveRun === rightEvent.invalidateActiveRun &&
+			leftEvent.previousCopyRunToken === rightEvent.previousCopyRunToken &&
+			leftEvent.nextCopyRunToken === rightEvent.nextCopyRunToken &&
+			leftEvent.previousSyncRunKey === rightEvent.previousSyncRunKey
+		);
+	});
 }
 
 function resolveRenderPublicationPath(

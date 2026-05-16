@@ -532,7 +532,9 @@ export function applySurfaceMeshState(
 ): void {
 	mesh.position.set(layout.centerX, layout.baseY, layout.centerZ);
 	mesh.renderOrder = 2;
-	mesh.frustumCulled = false;
+	if (backend !== 'gpuNative') {
+		mesh.frustumCulled = false;
+	}
 	mesh.userData.utciLayout = layout;
 	mesh.userData.utciSurfaceBackend = backend;
 	if (backend === 'gpuNative') {

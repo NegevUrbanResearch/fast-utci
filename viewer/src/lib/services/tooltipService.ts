@@ -59,6 +59,7 @@ type TooltipSurfaceBounds = {
 };
 
 export const TOOLTIP_SLOW_BUDGET_MS = 8;
+const rebuiltCellToPointIndexCache = new WeakMap<UtciGridLayout, Int32Array | null>();
 
 export function createEmptyTooltipInteractionDiagnostics(
 	disabledByQuery: boolean
@@ -187,34 +188,31 @@ function getSurfaceCellCoordinates(
 function getPositionIndexFromSurfaceCell(
 	intersection: THREE.Intersection,
 	layout: UtciGridLayout,
-	analysis: Analysis
-): number | null {
+	analysis: Analysis,
+	options?: { enforceDistanceThreshold?: boolean }
+): { positionIndex: number | null; mappingMs: number } {
+	const mappingStartedAt = performance.now();
 	const worldPoint = intersection.point;
-	if (!worldPoint) return null;
+	if (!worldPoint) return { positionIndex: null, mappingMs: 0 };
 
 	const object = intersection.object;
-	if (!object) return null;
+	if (!object) return { positionIndex: null, mappingMs: 0 };
 
-	const cellToPointIndex = layout.cellToPointIndex;
 	const expectedCellCount = layout.width * layout.height;
-	if (!cellToPointIndex || cellToPointIndex.length !== expectedCellCount) {
-		return null;
-	}
-
 	const localPoint = getSurfaceLocalPoint(worldPoint, object);
 	if (!localPoint) {
-		return null;
+		return { positionIndex: null, mappingMs: 0 };
 	}
 
 	const cellCoordinates = getSurfaceCellCoordinates(localPoint, layout);
 	if (!cellCoordinates) {
-		return null;
+		return { positionIndex: null, mappingMs: 0 };
 	}
 
 	const { column, row } = cellCoordinates;
-	const pointIndex = cellToPointIndex[row * layout.width + column];
+	const pointIndex = getTooltipCellPointIndex(layout, analysis.data.numPositions, row, column, expectedCellCount);
 	if (pointIndex < 0 || pointIndex >= analysis.data.numPositions) {
-		return null;
+		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
 	}
 
 	const transformed = new THREE.Vector3();
@@ -229,17 +227,78 @@ function getPositionIndexFromSurfaceCell(
 		!Number.isFinite(transformed.y) ||
 		!Number.isFinite(transformed.z)
 	) {
-		return null;
+		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
+	}
+	if (options?.enforceDistanceThreshold === false) {
+		return { positionIndex: pointIndex, mappingMs: performance.now() - mappingStartedAt };
 	}
 
 	const dx = worldPoint.x - transformed.x;
 	const dz = worldPoint.z - transformed.z;
 	const distance = Math.sqrt(dx * dx + dz * dz);
 	if (!Number.isFinite(distance) || distance > getTooltipDistanceThreshold(analysis)) {
+		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
+	}
+
+	return { positionIndex: pointIndex, mappingMs: performance.now() - mappingStartedAt };
+}
+
+function getTooltipCellPointIndex(
+	layout: UtciGridLayout,
+	numPositions: number,
+	row: number,
+	column: number,
+	expectedCellCount: number
+): number {
+	const cellIndex = row * layout.width + column;
+	const mappedPointIndex = layout.cellToPointIndex?.[cellIndex];
+	if (
+		layout.cellToPointIndex &&
+		layout.cellToPointIndex.length === expectedCellCount &&
+		mappedPointIndex !== undefined &&
+		mappedPointIndex >= -1 &&
+		mappedPointIndex < numPositions
+	) {
+		return mappedPointIndex;
+	}
+
+	return getRebuiltCellToPointIndex(layout, numPositions, expectedCellCount)?.[cellIndex] ?? -1;
+}
+
+function getRebuiltCellToPointIndex(
+	layout: UtciGridLayout,
+	numPositions: number,
+	expectedCellCount: number
+): Int32Array | null {
+	const cached = rebuiltCellToPointIndexCache.get(layout);
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	if (
+		layout.indexToRow.length < numPositions ||
+		layout.indexToColumn.length < numPositions ||
+		expectedCellCount <= 0
+	) {
+		rebuiltCellToPointIndexCache.set(layout, null);
 		return null;
 	}
 
-	return pointIndex;
+	const rebuilt = new Int32Array(expectedCellCount);
+	rebuilt.fill(-1);
+
+	for (let pointIndex = 0; pointIndex < numPositions; pointIndex += 1) {
+		const row = layout.indexToRow[pointIndex];
+		const column = layout.indexToColumn[pointIndex];
+		if (row >= layout.height || column >= layout.width) {
+			continue;
+		}
+
+		rebuilt[row * layout.width + column] = pointIndex;
+	}
+
+	rebuiltCellToPointIndexCache.set(layout, rebuilt);
+	return rebuilt;
 }
 
 /**
@@ -332,13 +391,16 @@ function resolveTooltipPositionIndex(
 	intersection: THREE.Intersection,
 	layout: UtciGridLayout,
 	analysis: Analysis,
-	diagnosticsEnabled: boolean
+	diagnosticsEnabled: boolean,
+	options?: { enforceDistanceThreshold?: boolean }
 ): { positionIndex: number | null; nearestPointMs: number } {
-	const directPositionIndex = getPositionIndexFromSurfaceCell(intersection, layout, analysis);
-	if (directPositionIndex !== null) {
+	const directResolution = getPositionIndexFromSurfaceCell(intersection, layout, analysis, {
+		enforceDistanceThreshold: options?.enforceDistanceThreshold
+	});
+	if (directResolution.positionIndex !== null) {
 		return {
-			positionIndex: directPositionIndex,
-			nearestPointMs: 0
+			positionIndex: directResolution.positionIndex,
+			nearestPointMs: diagnosticsEnabled ? directResolution.mappingMs : 0
 		};
 	}
 
@@ -355,7 +417,9 @@ export function resolvePositionIndexFromIntersection(
 	layout: UtciGridLayout,
 	analysis: Analysis
 ): number | null {
-	return resolveTooltipPositionIndex(intersection, layout, analysis, false).positionIndex;
+	return resolveTooltipPositionIndex(intersection, layout, analysis, false, {
+		enforceDistanceThreshold: true
+	}).positionIndex;
 }
 
 /**
@@ -463,7 +527,8 @@ export function getTooltipData(
 			planeIntersection,
 			layout,
 			analysis,
-			diagnosticsEnabled
+			diagnosticsEnabled,
+			{ enforceDistanceThreshold: false }
 		);
 		positionIndex = planeResolution.positionIndex;
 		nearestPointMs += planeResolution.nearestPointMs;
@@ -482,7 +547,8 @@ export function getTooltipData(
 			intersections[0],
 			layout,
 			analysis,
-			diagnosticsEnabled
+			diagnosticsEnabled,
+			{ enforceDistanceThreshold: false }
 		);
 		positionIndex = meshResolution.positionIndex;
 		nearestPointMs += meshResolution.nearestPointMs;

@@ -2,7 +2,10 @@ import type { Mesh } from 'three';
 import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
 import type { SelectedHourRenderTimingSubsteps } from '$lib/compute/on-demand/onDemandDiagnostics';
-import { copyRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import {
+	copyRenderPublicationDiagnostics,
+	type SelectedHourRenderSurfaceMeshRecreateDecision
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import { getGpuNativeUtciSurfaceSource } from '$lib/services/gpuUtciRenderBridge';
 
 export type GpuResidentCopyStatus = 'idle' | 'pending' | 'complete' | 'failed';
@@ -31,6 +34,21 @@ export function getAcceptedGpuResidentKey(
 
 export function isComputeBufferUtciSurface(mesh: Mesh | null): boolean {
 	return mesh != null && getGpuNativeUtciSurfaceSource(mesh) === 'compute-buffer-selected-hour';
+}
+
+export function shouldRecreateComputeBufferUtciSurface(
+	recreateDecision: SelectedHourRenderSurfaceMeshRecreateDecision
+): {
+	shouldRecreate: boolean;
+	recreateDecision: SelectedHourRenderSurfaceMeshRecreateDecision;
+} {
+	return {
+		shouldRecreate:
+			recreateDecision.missingSurface ||
+			recreateDecision.notComputeBufferSurface ||
+			!recreateDecision.layoutCompatible,
+		recreateDecision
+	};
 }
 
 export function buildCpuPublicationDiagnostics(params: {

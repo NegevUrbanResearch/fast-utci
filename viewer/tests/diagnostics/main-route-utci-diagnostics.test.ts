@@ -224,12 +224,82 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			renderPublicationTimeline: {
 				computeCompletedAtMs: 101,
 				controllerAcceptedAtMs: 103,
+				routePendingSurfaceExposedAtMs: 105,
 				routePublishedAtMs: 107,
 				routeProjectedAtMs: 109,
+				scenePendingSurfaceObservedAtMs: 111,
+				sceneSyncAttemptStartedAtMs: 112,
+				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
 				publicationEffectStartedAtMs: 127,
+				renderSurfaceMeshTrace: {
+					action: 'updated',
+					totalMs: 9,
+					recreateDecision: {
+						missingSurface: false,
+						notComputeBufferSurface: false,
+						analysisIdentityChanged: false,
+						layoutCompatible: true
+					},
+					updateComputeBufferSurfaceMeshMs: 4,
+					fallbackDecisionMs: 1,
+					applySurfaceMeshStateMs: 2,
+					setPostSurfacePendingStorageInitMs: 0.5
+				},
 				renderStorageReadyAtMs: 131,
-				sceneSyncCompletedAtMs: 137
+				renderStorageWaitTrace: {
+					waitStartedAtMs: 127,
+					waitFinishedAtMs: 131,
+					waitMs: 4,
+					readAttemptCount: 2,
+					frameWaitCount: 1,
+					deviceAvailableCount: 2,
+					backendEntryAvailableCount: 1,
+					bufferAvailableCount: 1,
+					firstDeviceAtMs: 127.5,
+					firstBackendEntryAtMs: 130.5,
+					firstBufferAtMs: 130.5,
+					lastReadState: {
+						deviceAvailable: true,
+						backendEntryAvailable: true,
+						bufferAvailable: true
+					},
+					samples: [
+						{
+							atMs: 127.5,
+							deviceAvailable: true,
+							backendEntryAvailable: false,
+							bufferAvailable: false
+						},
+						{
+							atMs: 130.5,
+							deviceAvailable: true,
+							backendEntryAvailable: true,
+							bufferAvailable: true
+						}
+					]
+				},
+				sceneSyncCompletedAtMs: 137,
+				sceneSyncResetHistory: [
+					{
+						resetAtMs: 108,
+						resetReason: 'fallback-cpu-surface',
+						invalidateActiveRun: false,
+						previousCopyRunToken: 4,
+						nextCopyRunToken: 4,
+						previousSyncRunKey: 'old-sync'
+					}
+				],
+				sceneSyncActiveWindowResetHistory: [
+					{
+						resetAtMs: 111.5,
+						resetReason: 'fallback-cpu-surface',
+						invalidateActiveRun: false,
+						previousCopyRunToken: 6,
+						nextCopyRunToken: 6,
+						previousSyncRunKey: 'current-sync'
+					}
+				]
 			}
 		});
 		const diagnostics = buildMainRouteUtciDiagnostics({
@@ -268,6 +338,17 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		renderPublication.renderPublicationPhase = 'unknown';
 		renderPublication.renderPublicationPointCount = 12;
 		renderPublication.renderPublicationTimeline!.sceneSyncCompletedAtMs = 999;
+		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.totalMs = 999;
+		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.recreateDecision!.layoutCompatible =
+			false;
+		renderPublication.renderPublicationTimeline!.renderStorageWaitTrace!.lastReadState.bufferAvailable =
+			false;
+		renderPublication.renderPublicationTimeline!.renderStorageWaitTrace!.samples[0].bufferAvailable =
+			true;
+		renderPublication.renderPublicationTimeline!.sceneSyncResetHistory![0].resetReason =
+			'mutated';
+		renderPublication.renderPublicationTimeline!.sceneSyncActiveWindowResetHistory![0].resetReason =
+			'mutated';
 
 		expect(diagnostics?.timings?.renderPublication).toMatchObject({
 			renderPublicationVersion: 1,
@@ -279,12 +360,82 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			renderPublicationTimeline: {
 				computeCompletedAtMs: 101,
 				controllerAcceptedAtMs: 103,
+				routePendingSurfaceExposedAtMs: 105,
 				routePublishedAtMs: 107,
 				routeProjectedAtMs: 109,
+				scenePendingSurfaceObservedAtMs: 111,
+				sceneSyncAttemptStartedAtMs: 112,
+				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
 				publicationEffectStartedAtMs: 127,
+				renderSurfaceMeshTrace: {
+					action: 'updated',
+					totalMs: 9,
+					recreateDecision: {
+						missingSurface: false,
+						notComputeBufferSurface: false,
+						analysisIdentityChanged: false,
+						layoutCompatible: true
+					},
+					updateComputeBufferSurfaceMeshMs: 4,
+					fallbackDecisionMs: 1,
+					applySurfaceMeshStateMs: 2,
+					setPostSurfacePendingStorageInitMs: 0.5
+				},
 				renderStorageReadyAtMs: 131,
-				sceneSyncCompletedAtMs: 137
+				renderStorageWaitTrace: {
+					waitStartedAtMs: 127,
+					waitFinishedAtMs: 131,
+					waitMs: 4,
+					readAttemptCount: 2,
+					frameWaitCount: 1,
+					deviceAvailableCount: 2,
+					backendEntryAvailableCount: 1,
+					bufferAvailableCount: 1,
+					firstDeviceAtMs: 127.5,
+					firstBackendEntryAtMs: 130.5,
+					firstBufferAtMs: 130.5,
+					lastReadState: {
+						deviceAvailable: true,
+						backendEntryAvailable: true,
+						bufferAvailable: true
+					},
+					samples: [
+						{
+							atMs: 127.5,
+							deviceAvailable: true,
+							backendEntryAvailable: false,
+							bufferAvailable: false
+						},
+						{
+							atMs: 130.5,
+							deviceAvailable: true,
+							backendEntryAvailable: true,
+							bufferAvailable: true
+						}
+					]
+				},
+				sceneSyncCompletedAtMs: 137,
+				sceneSyncResetHistory: [
+					{
+						resetAtMs: 108,
+						resetReason: 'fallback-cpu-surface',
+						invalidateActiveRun: false,
+						previousCopyRunToken: 4,
+						nextCopyRunToken: 4,
+						previousSyncRunKey: 'old-sync'
+					}
+				],
+				sceneSyncActiveWindowResetHistory: [
+					{
+						resetAtMs: 111.5,
+						resetReason: 'fallback-cpu-surface',
+						invalidateActiveRun: false,
+						previousCopyRunToken: 6,
+						nextCopyRunToken: 6,
+						previousSyncRunKey: 'current-sync'
+					}
+				]
 			}
 		});
 		expect(diagnostics?.selectedHourRuntimeContract).toMatchObject({
@@ -297,9 +448,32 @@ describe('buildMainRouteUtciDiagnostics', () => {
 
 		if (diagnostics?.timings?.renderPublication?.renderPublicationTimeline) {
 			diagnostics.timings.renderPublication.renderPublicationTimeline.routeProjectedAtMs = 777;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.sceneSyncResetHistory![0].resetReason =
+				'output-mutated';
+			diagnostics.timings.renderPublication.renderPublicationTimeline.sceneSyncActiveWindowResetHistory![0].resetReason =
+				'output-mutated';
 		}
 		expect(diagnostics?.timings?.renderPublication?.renderPublicationTimeline).toMatchObject({
-			routeProjectedAtMs: 777
+			routeProjectedAtMs: 777,
+			sceneSyncResetHistory: [
+				{
+					resetReason: 'output-mutated'
+				}
+			],
+			sceneSyncActiveWindowResetHistory: [
+				{
+					resetReason: 'output-mutated'
+				}
+			]
+		});
+		expect(
+			diagnostics?.timings?.renderPublication?.renderPublicationTimeline?.renderSurfaceMeshTrace
+				?.recreateDecision
+		).toEqual({
+			missingSurface: false,
+			notComputeBufferSurface: false,
+			analysisIdentityChanged: false,
+			layoutCompatible: true
 		});
 	});
 });

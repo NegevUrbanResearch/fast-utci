@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MeshBasicNodeMaterial, StorageBufferAttribute } from 'three/webgpu';
-import { clamp, float, storage, texture, uniform, vec2, vertexIndex } from 'three/tsl';
+import { clamp, float, storage, texture, uint, uniform, vec2, vertexIndex } from 'three/tsl';
 import type { UtciGridLayout } from './pointCloudService';
 import { mapUTCIToColor } from '$lib/services/colorScale';
 
@@ -43,7 +43,7 @@ interface GpuNativeUtciSurfaceState {
 interface ComputeBufferUtciSurfaceState extends GpuNativeUtciSurfaceState {
 	source: 'compute-buffer-selected-hour';
 	utciStorageAttribute: StorageBufferAttribute;
-	vertexToPointStorageAttribute: StorageBufferAttribute;
+	cellToPointStorageAttribute: StorageBufferAttribute;
 	utciRange: { min: number; max: number };
 	minUniform: ReturnType<typeof uniform>;
 	maxUniform: ReturnType<typeof uniform>;
@@ -178,7 +178,7 @@ export function createGpuNativeUtciSurfaceMesh(
 	).toReadOnly();
 
 	const material = new MeshBasicNodeMaterial({
-		side: THREE.DoubleSide,
+		side: THREE.FrontSide,
 		transparent: true,
 		depthTest: true,
 		depthWrite: false
@@ -189,7 +189,6 @@ export function createGpuNativeUtciSurfaceMesh(
 
 	const mesh = new THREE.Mesh(geometry, material);
 	mesh.name = 'GpuNativeUtciSurfaceMesh';
-	mesh.frustumCulled = false;
 	mesh.renderOrder = 2;
 	mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] = {
 		colorStorageAttribute,
@@ -212,21 +211,21 @@ export function createComputeBufferUtciSurfaceMesh(
 	const vertexCount = geometry.getAttribute('position').count;
 	const utciArray = new Float32Array(options.layout.numPositions);
 	const utciStorageAttribute = new StorageBufferAttribute(utciArray, 1);
-	const vertexToPointArray = createVertexToPointIndexArray(options.layout);
-	const vertexToPointStorageAttribute = new StorageBufferAttribute(vertexToPointArray, 1);
+	const cellToPointArray = createCellToPointIndexArray(options.layout);
+	const cellToPointStorageAttribute = new StorageBufferAttribute(cellToPointArray, 1);
 	const minUniform = uniform(options.utciRange.min);
 	const maxUniform = uniform(options.utciRange.max);
 	const colorLutTexture = createUtciColorLutTexture();
 	const { colorNode, opacityNode } = createUtciColorNode(
 		utciStorageAttribute,
-		vertexToPointStorageAttribute,
+		cellToPointStorageAttribute,
 		minUniform,
 		maxUniform,
 		colorLutTexture
 	);
 
 	const material = new MeshBasicNodeMaterial({
-		side: THREE.DoubleSide,
+		side: THREE.FrontSide,
 		transparent: true,
 		depthTest: true,
 		depthWrite: false
@@ -237,14 +236,13 @@ export function createComputeBufferUtciSurfaceMesh(
 
 	const mesh = new THREE.Mesh(geometry, material);
 	mesh.name = 'UTCI GPU Resident Surface Overlay';
-	mesh.frustumCulled = false;
 	mesh.renderOrder = 2;
 	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
 	mesh.userData.utciLayout = options.layout;
 	mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] = {
 		colorStorageAttribute: utciStorageAttribute,
 		utciStorageAttribute,
-		vertexToPointStorageAttribute,
+		cellToPointStorageAttribute,
 		width: options.layout.width,
 		height: options.layout.height,
 		gridSize: options.layout.gridSize,
@@ -258,7 +256,7 @@ export function createComputeBufferUtciSurfaceMesh(
 	mesh.userData.renderOwnedSelectedHourBytes =
 		getGeometryGpuAttributeBytes(geometry) +
 		utciArray.byteLength +
-		vertexToPointArray.byteLength +
+		cellToPointArray.byteLength +
 		UTCI_COLOR_LUT_BYTES;
 
 	return mesh;
@@ -268,22 +266,10 @@ export function updateComputeBufferUtciSurfaceMesh(
 	mesh: THREE.Mesh,
 	options: ComputeBufferUtciSurfaceMeshOptions
 ): boolean {
-	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
-		| ComputeBufferUtciSurfaceState
-		| undefined;
-	if (!state || state.source !== 'compute-buffer-selected-hour') {
+	if (!isComputeBufferUtciSurfaceLayoutCompatible(mesh, options.layout)) {
 		return false;
 	}
-
-	const expectedVertexCount = options.layout.width * options.layout.height * SURFACE_VERTICES_PER_CELL;
-	if (
-		state.width !== options.layout.width ||
-		state.height !== options.layout.height ||
-		state.gridSize !== options.layout.gridSize ||
-		state.vertexCount !== expectedVertexCount
-	) {
-		return false;
-	}
+	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as ComputeBufferUtciSurfaceState;
 
 	state.utciRange = { ...options.utciRange };
 	state.minUniform.value = options.utciRange.min;
@@ -293,8 +279,110 @@ export function updateComputeBufferUtciSurfaceMesh(
 	mesh.userData.renderOwnedSelectedHourBytes =
 		getGeometryGpuAttributeBytes(mesh.geometry) +
 		state.utciStorageAttribute.array.byteLength +
-		state.vertexToPointStorageAttribute.array.byteLength +
+		state.cellToPointStorageAttribute.array.byteLength +
 		UTCI_COLOR_LUT_BYTES;
+	return true;
+}
+
+export function isComputeBufferUtciSurfaceLayoutCompatible(
+	mesh: THREE.Mesh | null | undefined,
+	layout: UtciGridLayout
+): boolean {
+	const state = mesh?.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
+		| ComputeBufferUtciSurfaceState
+		| undefined;
+	if (!state || state.source !== 'compute-buffer-selected-hour') {
+		return false;
+	}
+
+	const expectedVertexCount = layout.width * layout.height * SURFACE_VERTICES_PER_CELL;
+	if (
+		state.width !== layout.width ||
+		state.height !== layout.height ||
+		state.gridSize !== layout.gridSize ||
+		state.vertexCount !== expectedVertexCount ||
+		state.utciStorageAttribute.count !== layout.numPositions
+	) {
+		return false;
+	}
+
+	const previousLayout = mesh?.userData.utciLayout as UtciGridLayout | undefined;
+	if (!previousLayout) {
+		return false;
+	}
+
+	return areUtciGridLayoutsPointCompatible(previousLayout, layout);
+}
+
+function areUtciGridLayoutsPointCompatible(
+	previousLayout: UtciGridLayout,
+	nextLayout: UtciGridLayout
+): boolean {
+	if (
+		previousLayout.numPositions !== nextLayout.numPositions ||
+		previousLayout.coordinateSystem !== nextLayout.coordinateSystem ||
+		previousLayout.minX !== nextLayout.minX ||
+		previousLayout.minZ !== nextLayout.minZ ||
+		previousLayout.baseY !== nextLayout.baseY
+	) {
+		return false;
+	}
+
+	if (
+		previousLayout.cellToPointIndex &&
+		nextLayout.cellToPointIndex &&
+		previousLayout.cellToPointIndex.length === nextLayout.cellToPointIndex.length
+	) {
+		const cellCount = previousLayout.width * previousLayout.height;
+		if (
+			previousLayout.cellToPointIndex.length !== cellCount ||
+			nextLayout.cellToPointIndex.length !== cellCount
+		) {
+			return false;
+		}
+		if (
+			hasAmbiguousCellEntries(previousLayout.cellToPointIndex) ||
+			hasAmbiguousCellEntries(nextLayout.cellToPointIndex)
+		) {
+			return uint32ArraysEqual(
+				createCellToPointIndexArray(previousLayout),
+				createCellToPointIndexArray(nextLayout)
+			);
+		}
+
+		return int32ArraysEqual(previousLayout.cellToPointIndex, nextLayout.cellToPointIndex);
+	}
+	if (previousLayout.cellToPointIndex || nextLayout.cellToPointIndex) {
+		return false;
+	}
+
+	return (
+		uint32ArraysEqual(previousLayout.indexToRow, nextLayout.indexToRow) &&
+		uint32ArraysEqual(previousLayout.indexToColumn, nextLayout.indexToColumn)
+	);
+}
+
+function int32ArraysEqual(left: Int32Array, right: Int32Array): boolean {
+	if (left.length !== right.length) {
+		return false;
+	}
+	for (let index = 0; index < left.length; index += 1) {
+		if (left[index] !== right[index]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function uint32ArraysEqual(left: Uint32Array, right: Uint32Array): boolean {
+	if (left.length !== right.length) {
+		return false;
+	}
+	for (let index = 0; index < left.length; index += 1) {
+		if (left[index] !== right[index]) {
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -384,18 +472,19 @@ export function getComputeBufferUtciStorageAttribute(
 
 function createUtciColorNode(
 	utciStorageAttribute: StorageBufferAttribute,
-	vertexToPointStorageAttribute: StorageBufferAttribute,
+	cellToPointStorageAttribute: StorageBufferAttribute,
 	minUniform: ReturnType<typeof uniform>,
 	maxUniform: ReturnType<typeof uniform>,
 	colorLutTexture: THREE.DataTexture
 ) {
 	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
-	const vertexToPointStorage = storage(
-		vertexToPointStorageAttribute,
+	const cellToPointStorage = storage(
+		cellToPointStorageAttribute,
 		'uint',
-		vertexToPointStorageAttribute.count
+		cellToPointStorageAttribute.count
 	).toReadOnly();
-	const pointIndex = vertexToPointStorage.element(vertexIndex);
+	const cellIndex = vertexIndex.div(uint(SURFACE_VERTICES_PER_CELL));
+	const pointIndex = cellToPointStorage.element(cellIndex);
 	const value = utciStorage.element(pointIndex);
 	const t = clamp(
 		value.sub(minUniform).div(maxUniform.sub(minUniform).max(float(0.001))),
@@ -413,15 +502,26 @@ function createUtciColorNode(
 	};
 }
 
-export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Array {
+export function createCellToPointIndexArray(layout: UtciGridLayout): Uint32Array {
 	const cellCount = layout.width * layout.height;
 	const fallbackPointIndex = 0;
 	const cellToPoint = getCellToPointIndex(layout, cellCount);
+	const indices = new Uint32Array(cellCount);
+	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+		const mappedPointIndex = cellToPoint[cellIndex] ?? -1;
+		indices[cellIndex] = mappedPointIndex >= 0 ? mappedPointIndex : fallbackPointIndex;
+	}
+
+	return indices;
+}
+
+export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Array {
+	const cellCount = layout.width * layout.height;
+	const cellToPoint = createCellToPointIndexArray(layout);
 	const indices = new Uint32Array(cellCount * SURFACE_VERTICES_PER_CELL);
 	let offset = 0;
 	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
-		const mappedPointIndex = cellToPoint[cellIndex] ?? -1;
-		const pointIndex = mappedPointIndex >= 0 ? mappedPointIndex : fallbackPointIndex;
+		const pointIndex = cellToPoint[cellIndex] ?? 0;
 		for (let vertex = 0; vertex < SURFACE_VERTICES_PER_CELL; vertex += 1) {
 			indices[offset++] = pointIndex;
 		}

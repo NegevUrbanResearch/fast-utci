@@ -227,6 +227,7 @@ function expectFiniteRenderPublicationTimeline(
 	const requiredKeys = [
 		'computeCompletedAtMs',
 		'controllerAcceptedAtMs',
+		'routePendingSurfaceExposedAtMs',
 		'routePublishedAtMs',
 		'routeProjectedAtMs',
 		'sceneSurfaceReceivedAtMs',
@@ -252,17 +253,61 @@ function expectTruthfulRenderPublicationTimeline(renderPublication: any) {
 		'controllerAcceptedAtMs should not precede computeCompletedAtMs'
 	).toBeGreaterThanOrEqual(timeline.computeCompletedAtMs);
 	expect(
+		timeline.routePendingSurfaceExposedAtMs,
+		'routePendingSurfaceExposedAtMs should not precede controllerAcceptedAtMs'
+	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	expect(
 		timeline.routePublishedAtMs,
 		'routePublishedAtMs should not precede controllerAcceptedAtMs'
 	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
 	expect(
 		timeline.routeProjectedAtMs,
-		'routeProjectedAtMs should not precede routePublishedAtMs'
-	).toBeGreaterThanOrEqual(timeline.routePublishedAtMs);
+		'routeProjectedAtMs should not precede controllerAcceptedAtMs'
+	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	if (typeof timeline.scenePendingSurfaceObservedAtMs === 'number') {
+		expect(
+			Number.isFinite(timeline.scenePendingSurfaceObservedAtMs),
+			'scenePendingSurfaceObservedAtMs should be finite when present'
+		).toBe(true);
+		expect(
+			timeline.scenePendingSurfaceObservedAtMs,
+			'scenePendingSurfaceObservedAtMs should not precede controllerAcceptedAtMs'
+		).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	}
+	if (typeof timeline.sceneSyncAttemptStartedAtMs === 'number') {
+		expect(
+			Number.isFinite(timeline.sceneSyncAttemptStartedAtMs),
+			'sceneSyncAttemptStartedAtMs should be finite when present'
+		).toBe(true);
+		if (typeof timeline.scenePendingSurfaceObservedAtMs === 'number') {
+			expect(
+				timeline.sceneSyncAttemptStartedAtMs,
+				'sceneSyncAttemptStartedAtMs should not precede scenePendingSurfaceObservedAtMs'
+			).toBeGreaterThanOrEqual(timeline.scenePendingSurfaceObservedAtMs);
+		}
+	}
+	if (typeof timeline.sceneSyncAttemptToken === 'number') {
+		expect(
+			Number.isFinite(timeline.sceneSyncAttemptToken),
+			'sceneSyncAttemptToken should be finite when present'
+		).toBe(true);
+	}
 	expect(
 		timeline.sceneSurfaceReceivedAtMs,
 		'sceneSurfaceReceivedAtMs should not precede controllerAcceptedAtMs'
 	).toBeGreaterThanOrEqual(timeline.controllerAcceptedAtMs);
+	if (typeof timeline.scenePendingSurfaceObservedAtMs === 'number') {
+		expect(
+			timeline.sceneSurfaceReceivedAtMs,
+			'sceneSurfaceReceivedAtMs should not precede scenePendingSurfaceObservedAtMs'
+		).toBeGreaterThanOrEqual(timeline.scenePendingSurfaceObservedAtMs);
+	}
+	if (typeof timeline.sceneSyncAttemptStartedAtMs === 'number') {
+		expect(
+			timeline.sceneSyncAttemptStartedAtMs,
+			'sceneSyncAttemptStartedAtMs should not precede sceneSurfaceReceivedAtMs'
+		).toBeGreaterThanOrEqual(timeline.sceneSurfaceReceivedAtMs);
+	}
 	expect(
 		timeline.publicationEffectStartedAtMs,
 		'publicationEffectStartedAtMs should not precede sceneSurfaceReceivedAtMs'

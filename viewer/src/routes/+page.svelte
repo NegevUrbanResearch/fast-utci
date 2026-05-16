@@ -456,6 +456,7 @@
 			timingsOverride: mainRouteRenderPublicationProjectionTracker.apply({
 				enabled: useLiveUtciOnMainRoute,
 				timings: liveRouteState.base.runtimeDiagnostics?.timings,
+				projectedSceneSurfaceIdentity: baseSceneSurfaceIdentity,
 				publishedSurfaceIdentity: liveRouteState.baseSurfaceIdentity,
 				sceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
 				selectedTimeIndex,

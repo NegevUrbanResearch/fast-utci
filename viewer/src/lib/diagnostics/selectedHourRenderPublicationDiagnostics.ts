@@ -1,3 +1,7 @@
+import type {
+	RenderStorageWaitDiagnostics
+} from '$lib/components/scene/utciComputeBufferRenderBridge';
+
 export type SelectedHourRenderPublicationPath =
 	| 'compute-buffer-selected-hour'
 	| 'cpu-uploaded-selected-hour'
@@ -7,15 +11,59 @@ export type SelectedHourRenderPublicationPhase = 'initial' | 'scrub' | 'unknown'
 
 export type SelectedHourRenderPublicationMeshAction = 'created' | 'reused' | 'skipped';
 
+export type SelectedHourRenderSurfaceMeshTraceAction =
+	| 'created'
+	| 'updated'
+	| 'update-failed-created';
+
+export type SelectedHourRenderSurfaceMeshRecreateDecision = {
+	missingSurface: boolean;
+	notComputeBufferSurface: boolean;
+	analysisIdentityChanged: boolean;
+	layoutCompatible: boolean;
+};
+
+export type SelectedHourRenderSurfaceMeshTrace = {
+	action: SelectedHourRenderSurfaceMeshTraceAction;
+	totalMs: number;
+	recreateDecision?: SelectedHourRenderSurfaceMeshRecreateDecision;
+	disposeResetMeshRemovalMs?: number;
+	createComputeBufferSurfaceMeshMs?: number;
+	updateComputeBufferSurfaceMeshMs?: number;
+	fallbackDecisionMs?: number;
+	applySurfaceMeshStateMs?: number;
+	setCreatedSurfacePendingStorageInitMs?: number;
+	setPostSurfacePendingStorageInitMs?: number;
+	sceneAddMs?: number;
+	publishUtciSurfaceDiagnosticsMs?: number;
+};
+
+export type SelectedHourRenderPublicationSceneSyncResetEvent = {
+	resetAtMs: number;
+	resetReason: string;
+	invalidateActiveRun: boolean;
+	previousCopyRunToken: number;
+	nextCopyRunToken: number;
+	previousSyncRunKey?: string;
+};
+
 export type SelectedHourRenderPublicationTimeline = {
 	computeCompletedAtMs?: number;
 	controllerAcceptedAtMs?: number;
+	routePendingSurfaceExposedAtMs?: number;
 	routePublishedAtMs?: number;
 	routeProjectedAtMs?: number;
+	scenePendingSurfaceObservedAtMs?: number;
+	sceneSyncAttemptStartedAtMs?: number;
+	sceneSyncAttemptToken?: number;
 	sceneSurfaceReceivedAtMs?: number;
 	publicationEffectStartedAtMs?: number;
+	renderSurfaceMeshTrace?: SelectedHourRenderSurfaceMeshTrace;
 	renderStorageReadyAtMs?: number;
+	renderStorageWaitTrace?: RenderStorageWaitDiagnostics;
 	sceneSyncCompletedAtMs?: number;
+	sceneSyncResetHistory?: SelectedHourRenderPublicationSceneSyncResetEvent[];
+	sceneSyncActiveWindowResetHistory?: SelectedHourRenderPublicationSceneSyncResetEvent[];
 };
 
 export type SelectedHourRenderPublicationDiagnostics = {
@@ -37,7 +85,38 @@ export type SelectedHourRenderPublicationDiagnostics = {
 export function copyRenderPublicationTimeline(
 	timeline: SelectedHourRenderPublicationTimeline | undefined
 ): SelectedHourRenderPublicationTimeline | undefined {
-	return timeline ? { ...timeline } : timeline;
+	return timeline
+		? {
+				...timeline,
+				renderSurfaceMeshTrace: timeline.renderSurfaceMeshTrace
+					? {
+							...timeline.renderSurfaceMeshTrace,
+							recreateDecision: timeline.renderSurfaceMeshTrace.recreateDecision
+								? {
+										...timeline.renderSurfaceMeshTrace.recreateDecision
+									}
+								: timeline.renderSurfaceMeshTrace.recreateDecision
+						}
+					: timeline.renderSurfaceMeshTrace,
+				renderStorageWaitTrace: timeline.renderStorageWaitTrace
+					? {
+							...timeline.renderStorageWaitTrace,
+							lastReadState: {
+								...timeline.renderStorageWaitTrace.lastReadState
+							},
+							samples: timeline.renderStorageWaitTrace.samples.map((sample) => ({
+								...sample
+							}))
+						}
+					: timeline.renderStorageWaitTrace,
+				sceneSyncResetHistory: timeline.sceneSyncResetHistory?.map((event) => ({
+					...event
+				})),
+				sceneSyncActiveWindowResetHistory: timeline.sceneSyncActiveWindowResetHistory?.map((event) => ({
+					...event
+				}))
+			}
+		: timeline;
 }
 
 export function copyRenderPublicationDiagnostics(
@@ -58,10 +137,10 @@ export function mergeRenderPublicationTimeline(
 ): SelectedHourRenderPublicationTimeline | undefined {
 	if (!current) return copyRenderPublicationTimeline(next);
 	if (!next) return copyRenderPublicationTimeline(current);
-	return {
+	return copyRenderPublicationTimeline({
 		...current,
 		...next
-	};
+	});
 }
 
 export function mergeRenderPublicationDiagnostics(

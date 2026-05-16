@@ -64,13 +64,23 @@ function resolveRenderPublicationPhase(requestId: number): 'initial' | 'scrub' {
 }
 
 export function createMainRouteRenderPublicationProjectionTracker() {
+	let pendingSurfaceProjectedKey: string | null = null;
+	let routePendingSurfaceExposedAtMs: number | undefined;
 	let projectedKey: string | null = null;
 	let routeProjectedAtMs: number | undefined;
+
+	function resetProjectionState(): void {
+		pendingSurfaceProjectedKey = null;
+		routePendingSurfaceExposedAtMs = undefined;
+		projectedKey = null;
+		routeProjectedAtMs = undefined;
+	}
 
 	return {
 		apply(params: {
 			enabled: boolean;
 			timings: MainRouteUtciDiagnosticsInputs['timings'] | undefined;
+			projectedSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
 			publishedSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null;
 			sceneRenderContextTimeIndex: number | undefined;
 			selectedTimeIndex: number;
@@ -83,41 +93,80 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 						)
 					}
 				: undefined;
+			if (!params.enabled || params.projectedSceneSurfaceIdentity == null || timings == null) {
+				resetProjectionState();
+				return timings;
+			}
+			const projectedSceneControllerIdentity =
+				params.projectedSceneSurfaceIdentity?.controllerIdentity;
+			const projectedSceneControllerInstanceId =
+				params.projectedSceneSurfaceIdentity?.controllerInstanceId;
+			const projectedSceneRequestId =
+				params.projectedSceneSurfaceIdentity?.requestId;
+			const projectedSceneSelectionKey =
+				params.projectedSceneSurfaceIdentity?.selectionKey;
+			let pendingSurfaceExposureStampedThisPass = false;
+			const shouldStampPendingSurfaceExposure =
+				projectedSceneControllerIdentity !== undefined &&
+				projectedSceneControllerInstanceId !== undefined &&
+				projectedSceneRequestId !== undefined &&
+				projectedSceneSelectionKey !== undefined;
+			if (shouldStampPendingSurfaceExposure) {
+				const nextPendingSurfaceProjectedKey = `${projectedSceneControllerIdentity}|${projectedSceneControllerInstanceId}|${projectedSceneRequestId}|${projectedSceneSelectionKey}`;
+				if (pendingSurfaceProjectedKey !== nextPendingSurfaceProjectedKey) {
+					pendingSurfaceProjectedKey = nextPendingSurfaceProjectedKey;
+					routePendingSurfaceExposedAtMs = performance.now();
+					pendingSurfaceExposureStampedThisPass = true;
+				}
+			}
 			const controllerIdentity = params.publishedSurfaceIdentity?.controllerIdentity;
 			const controllerInstanceId =
 				params.publishedSurfaceIdentity?.controllerInstanceId;
 			const requestId = params.publishedSurfaceIdentity?.requestId;
 			const selectionKey = params.publishedSurfaceIdentity?.selectionKey;
 			const shouldStamp =
-				params.enabled &&
 				controllerIdentity !== undefined &&
 				controllerInstanceId !== undefined &&
 				requestId !== undefined &&
 				selectionKey !== undefined &&
 				params.sceneRenderContextTimeIndex === params.selectedTimeIndex;
-			if (!shouldStamp) {
+			if (!shouldStamp && routePendingSurfaceExposedAtMs === undefined) {
 				return timings;
 			}
 
-			const nextProjectedKey = `${controllerIdentity}|${controllerInstanceId}|${requestId}|${selectionKey}`;
-			if (projectedKey !== nextProjectedKey) {
-				projectedKey = nextProjectedKey;
-				routeProjectedAtMs = performance.now();
+			let nextProjectedKey: string | null = null;
+			if (shouldStamp) {
+				nextProjectedKey = `${controllerIdentity}|${controllerInstanceId}|${requestId}|${selectionKey}`;
+				if (projectedKey !== nextProjectedKey) {
+					projectedKey = nextProjectedKey;
+					routeProjectedAtMs =
+						pendingSurfaceExposureStampedThisPass &&
+						nextProjectedKey === pendingSurfaceProjectedKey
+							? routePendingSurfaceExposedAtMs
+							: performance.now();
+				}
 			}
+			const projectedAtMsForCurrentSurface =
+				shouldStamp && nextProjectedKey === pendingSurfaceProjectedKey
+					? routeProjectedAtMs
+					: undefined;
 
 			return {
 				...timings,
 				renderPublication: stampRenderPublicationTimeline({
 					current: timings?.renderPublication,
 					timeline: {
-						routeProjectedAtMs
+						routePendingSurfaceExposedAtMs,
+						routeProjectedAtMs: projectedAtMsForCurrentSurface
 					},
 					fallback: {
 						renderPublicationPath:
 							timings?.renderPublication?.renderPublicationPath ?? 'none',
 						renderPublicationPhase:
 							timings?.renderPublication?.renderPublicationPhase ??
-							resolveRenderPublicationPhase(requestId),
+							resolveRenderPublicationPhase(
+								requestId ?? projectedSceneRequestId ?? 0
+							),
 						renderPublicationMeshAction:
 							timings?.renderPublication?.renderPublicationMeshAction ?? 'skipped'
 					}

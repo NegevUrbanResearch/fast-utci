@@ -1601,6 +1601,81 @@ describe('liveSelectedHourController', () => {
 		});
 	});
 
+	it('does not treat changed active-window reset history as an idempotent diagnostics update', async () => {
+		const gpu = createGpuResidentOutput(39, 39);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 39,
+					timeIndex: 39,
+					analysis: createSelectionAnalysis('gpu-active-reset-window-change', [18, 20]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 3900
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(39));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					scenePendingSurfaceObservedAtMs: 101,
+					sceneSyncAttemptStartedAtMs: 105,
+					sceneSyncActiveWindowResetHistory: []
+				}
+			})
+		});
+
+		const emittedStates: LiveSelectedHourControllerSurfaceDiagnostics[] = [];
+		const unsubscribe = controller.subscribe((state) => {
+			emittedStates.push(state.renderSurfaceDiagnostics);
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					scenePendingSurfaceObservedAtMs: 101,
+					sceneSyncAttemptStartedAtMs: 105,
+					sceneSyncActiveWindowResetHistory: [
+						{
+							resetAtMs: 103,
+							resetReason: 'fallback-cpu-surface',
+							invalidateActiveRun: false,
+							previousCopyRunToken: 3,
+							nextCopyRunToken: 3
+						}
+					]
+				}
+			})
+		});
+
+		unsubscribe();
+		expect(emittedStates).toHaveLength(1);
+		expect(
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory
+		).toEqual([
+			{
+				resetAtMs: 103,
+				resetReason: 'fallback-cpu-surface',
+				invalidateActiveRun: false,
+				previousCopyRunToken: 3,
+				nextCopyRunToken: 3
+			}
+		]);
+	});
+
 	it('does not accept compute-buffer transport without same-device proof', async () => {
 		const gpu = createGpuResidentOutput(61, 13);
 		const sessionMock = createSessionMock([
@@ -2198,8 +2273,24 @@ describe('liveSelectedHourController', () => {
 				renderPublicationPointCount: 8171761,
 				renderPublicationTargetByteLength: 32687044,
 				renderPublicationTimeline: {
+					scenePendingSurfaceObservedAtMs: 205,
+					sceneSyncAttemptStartedAtMs: 209,
+					sceneSyncAttemptToken: 17,
 					sceneSurfaceReceivedAtMs: 211,
-					publicationEffectStartedAtMs: 223
+					publicationEffectStartedAtMs: 223,
+					renderSurfaceMeshTrace: {
+						action: 'updated',
+						totalMs: 12,
+						recreateDecision: {
+							missingSurface: false,
+							notComputeBufferSurface: false,
+							analysisIdentityChanged: false,
+							layoutCompatible: true
+						},
+						updateComputeBufferSurfaceMeshMs: 9,
+						fallbackDecisionMs: 1,
+						applySurfaceMeshStateMs: 2
+					}
 				}
 			})
 		});
@@ -2213,8 +2304,24 @@ describe('liveSelectedHourController', () => {
 			renderPublicationTimeline: {
 				computeCompletedAtMs: 101,
 				controllerAcceptedAtMs: 103,
+				scenePendingSurfaceObservedAtMs: 205,
+				sceneSyncAttemptStartedAtMs: 209,
+				sceneSyncAttemptToken: 17,
 				sceneSurfaceReceivedAtMs: 211,
-				publicationEffectStartedAtMs: 223
+				publicationEffectStartedAtMs: 223,
+				renderSurfaceMeshTrace: {
+					action: 'updated',
+					totalMs: 12,
+					recreateDecision: {
+						missingSurface: false,
+						notComputeBufferSurface: false,
+						analysisIdentityChanged: false,
+						layoutCompatible: true
+					},
+					updateComputeBufferSurfaceMeshMs: 9,
+					fallbackDecisionMs: 1,
+					applySurfaceMeshStateMs: 2
+				}
 			}
 		});
 

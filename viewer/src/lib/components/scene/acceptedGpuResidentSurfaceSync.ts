@@ -34,11 +34,22 @@ export type AcceptedGpuResidentSurfaceSyncTerminalResult =
 	| 'superseded'
 	| 'already-released';
 
+export type AcceptedGpuResidentSurfaceSyncResetEvent = {
+	resetAtMs: number;
+	resetReason: string;
+	invalidateActiveRun: boolean;
+	previousCopyRunToken: number;
+	nextCopyRunToken: number;
+	previousSyncRunKey?: string;
+};
+
 type GpuResidentCopyDiagnosticsOptions = {
 	error?: string;
 	requestId?: number;
 	renderTimings?: SelectedHourRenderTimingSubsteps;
 };
+
+const MAX_RESET_HISTORY_LENGTH = 10;
 
 export function createAcceptedGpuResidentSurfaceSync(params: {
 	componentName: string;
@@ -53,6 +64,7 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 	let activeSyncKey: string | null = null;
 	let activeSyncRunKey: string | null = null;
 	let activeCopyRunToken = 0;
+	let resetHistory: AcceptedGpuResidentSurfaceSyncResetEvent[] = [];
 
 	function getSyncRunKey(input: {
 		acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
@@ -72,13 +84,51 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 		return `${syncKey}|${controllerIdentity}|${controllerInstanceId}`;
 	}
 
-	function reset(options: { invalidateActiveRun?: boolean } = {}): void {
+	function reset(
+		options: {
+			invalidateActiveRun?: boolean;
+			now?: () => number;
+			reason?: string;
+		} = {}
+	): void {
+		const invalidateActiveRun = options.invalidateActiveRun === true;
+		const previousCopyRunToken = activeCopyRunToken;
+		const previousSyncRunKey = activeSyncRunKey ?? undefined;
 		if (options.invalidateActiveRun) {
 			activeCopyRunToken += 1;
 		}
+		resetHistory = [
+			...resetHistory,
+			{
+				resetAtMs: options.now?.() ?? performance.now(),
+				resetReason: options.reason ?? 'unspecified',
+				invalidateActiveRun,
+				previousCopyRunToken,
+				nextCopyRunToken: activeCopyRunToken,
+				previousSyncRunKey
+			}
+		].slice(-MAX_RESET_HISTORY_LENGTH);
 		activeSyncKey = null;
 		activeSyncRunKey = null;
 		params.setCopyDiagnostics('idle');
+	}
+
+	function resetUnlessActiveSyncRunKeyMatches(
+		options: {
+			expectedActiveSyncRunKey: string | null;
+			invalidateActiveRun?: boolean;
+			now?: () => number;
+			reason?: string;
+		}
+	): boolean {
+		if (
+			options.expectedActiveSyncRunKey &&
+			activeSyncRunKey === options.expectedActiveSyncRunKey
+		) {
+			return false;
+		}
+		reset(options);
+		return true;
 	}
 
 	function startSync(input: {
@@ -107,7 +157,10 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 			!input.liveSelectedHourSurfaceIdentity?.controllerIdentity ||
 			input.liveSelectedHourSurfaceIdentity.controllerInstanceId == null
 		) {
-			reset({ invalidateActiveRun: true });
+			reset({
+				invalidateActiveRun: true,
+				reason: 'missing-controller-identity'
+			});
 			return null;
 		}
 
@@ -203,9 +256,11 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 		getActiveSyncKey: () => activeSyncKey,
 		getActiveSyncRunKey: () => activeSyncRunKey,
 		getActiveCopyRunToken: () => activeCopyRunToken,
+		getResetHistory: () => resetHistory.map((event) => ({ ...event })),
 		getSyncRunKey,
 		isSuperseded,
 		reset,
+		resetUnlessActiveSyncRunKeyMatches,
 		startSync,
 		supersedeSync
 	};

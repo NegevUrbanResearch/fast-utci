@@ -84,7 +84,6 @@
 	}
 
 	function handleMouseMove(event: MouseEvent) {
-		tooltipHoverSampleCount += 1;
 		const now = performance.now();
 		const hoverPolicy = getMainRouteTooltipHoverPolicy({
 			tooltipMotionSuppression,
@@ -99,6 +98,7 @@
 		if (hoverPolicy.shouldThrottle) {
 			return;
 		}
+		tooltipHoverSampleCount += 1;
 		lastTooltipUpdate = hoverPolicy.nextTooltipUpdate;
 
 		if (

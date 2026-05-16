@@ -70,7 +70,7 @@ describe('resolvePositionIndexFromIntersection', () => {
 		expect(positionIndex).toBeNull();
 	});
 
-	it('falls back conservatively when multiple points map into the same cell', () => {
+	it('uses the render-consistent last-writer mapping when multiple points map into the same cell', () => {
 		const analysis = createAmbiguousCellAnalysis();
 		const layout = buildUtciGridLayout(analysis);
 		const mesh = createSurfaceTestMesh(layout);
@@ -81,7 +81,47 @@ describe('resolvePositionIndexFromIntersection', () => {
 			analysis
 		);
 
-		expect(positionIndex).toBe(0);
+		expect(positionIndex).toBe(1);
+	});
+
+	it('uses a deterministic layout fallback for ambiguous cells without scanning nearest points', () => {
+		const analysis = createAmbiguousCellAnalysis();
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const samples: Array<{
+			hit: boolean;
+			raycastMs: number;
+			nearestPointMs: number;
+			totalMs: number;
+			overBudget: boolean;
+		}> = [];
+
+		const positionIndex = resolvePositionIndexFromIntersection(
+			createIntersection(mesh, 0, layout.baseY, 0),
+			layout,
+			analysis
+		);
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			createHoverCamera({
+				position: new THREE.Vector3(0, 5, 0),
+				target: new THREE.Vector3(0, layout.baseY, 0)
+			}),
+			mesh,
+			analysis,
+			'utci',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
+		);
+
+		expect(positionIndex).toBe(1);
+		expect(result?.positionIndex).toBe(1);
+		expect(samples).toHaveLength(1);
+		expect(samples[0]?.nearestPointMs).toEqual(expect.any(Number));
+		expect(samples[0]?.nearestPointMs).toBeGreaterThanOrEqual(0);
 	});
 });
 
@@ -126,7 +166,7 @@ describe('tooltip interaction diagnostics', () => {
 		intersectSpy.mockRestore();
 	});
 
-	it('keeps the conservative ambiguous-cell fallback on the plane fast path', () => {
+	it('keeps the ambiguous-cell plane fast path off the mesh raycast fallback', () => {
 		const analysis = createAmbiguousCellAnalysis();
 		const layout = buildUtciGridLayout(analysis);
 		const mesh = createSurfaceTestMesh(layout);
@@ -146,7 +186,7 @@ describe('tooltip interaction diagnostics', () => {
 			createDomRect()
 		);
 
-		expect(result?.positionIndex).toBe(0);
+		expect(result?.positionIndex).toBe(1);
 		expect(intersectSpy).not.toHaveBeenCalled();
 
 		intersectSpy.mockRestore();
@@ -329,11 +369,15 @@ describe('tooltip interaction diagnostics', () => {
 		intersectSpy.mockRestore();
 	});
 
-	it('records zero nearestPointMs when the direct cell path resolves the hit', () => {
+	it('records direct cell mapping time when the direct cell path resolves the hit', () => {
 		const analysis = createGridAnalysis();
 		const layout = buildUtciGridLayout(analysis);
 		const mesh = createSurfaceTestMesh(layout);
-		const performanceSpy = mockPerformanceNow([0, 1, 2, 5]);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+		const performanceSpy = mockPerformanceNow([0, 1, 3, 5]);
 		const intersectSpy = vi
 			.spyOn(THREE.Raycaster.prototype, 'intersectObject')
 			.mockReturnValue([createIntersection(mesh, 1, layout.baseY, 1)]);
@@ -347,7 +391,7 @@ describe('tooltip interaction diagnostics', () => {
 
 		const result = getTooltipData(
 			{ clientX: 50, clientY: 50 } as MouseEvent,
-			new THREE.PerspectiveCamera(),
+			camera,
 			mesh,
 			analysis,
 			'utci',
@@ -360,17 +404,21 @@ describe('tooltip interaction diagnostics', () => {
 
 		expect(result?.positionIndex).toBe(3);
 		expect(samples).toHaveLength(1);
-		expect(samples[0]?.nearestPointMs).toBe(0);
+		expect(samples[0]?.nearestPointMs).toBe(2);
 
 		intersectSpy.mockRestore();
 		performanceSpy.mockRestore();
 	});
 
-	it('records nearestPointMs only when the conservative fallback scan runs', () => {
+	it('records mapping time when ambiguous cells resolve through the layout fallback', () => {
 		const analysis = createAmbiguousCellAnalysis();
 		const layout = buildUtciGridLayout(analysis);
 		const mesh = createSurfaceTestMesh(layout);
-		const performanceSpy = mockPerformanceNow([0, 1, 2, 3, 7, 9]);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(0, 5, 0),
+			target: new THREE.Vector3(0, layout.baseY, 0)
+		});
+		const performanceSpy = mockPerformanceNow([0, 1, 4, 6]);
 		const intersectSpy = vi
 			.spyOn(THREE.Raycaster.prototype, 'intersectObject')
 			.mockReturnValue([createIntersection(mesh, 0, layout.baseY, 0)]);
@@ -384,7 +432,7 @@ describe('tooltip interaction diagnostics', () => {
 
 		const result = getTooltipData(
 			{ clientX: 50, clientY: 50 } as MouseEvent,
-			new THREE.PerspectiveCamera(),
+			camera,
 			mesh,
 			analysis,
 			'utci',
@@ -395,12 +443,51 @@ describe('tooltip interaction diagnostics', () => {
 			}
 		);
 
-		expect(result?.positionIndex).toBe(0);
+		expect(result?.positionIndex).toBe(1);
 		expect(samples).toHaveLength(1);
-		expect(samples[0]?.nearestPointMs).toBe(4);
+		expect(samples[0]?.nearestPointMs).toBe(3);
 
 		intersectSpy.mockRestore();
 		performanceSpy.mockRestore();
+	});
+
+	it('keeps 0.5m near-corner ambiguous cells on the render-consistent direct path', () => {
+		const analysis = createNearCornerAmbiguousCellAnalysis();
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(0.49, 5, 0.49),
+			target: new THREE.Vector3(0.49, layout.baseY, 0.49)
+		});
+		const intersectSpy = vi
+			.spyOn(THREE.Raycaster.prototype, 'intersectObject')
+			.mockReturnValue([createIntersection(mesh, 0.49, layout.baseY, 0.49)]);
+		const samples: Array<{
+			hit: boolean;
+			raycastMs: number;
+			nearestPointMs: number;
+			totalMs: number;
+			overBudget: boolean;
+		}> = [];
+
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'utci',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
+		);
+
+		expect(result?.positionIndex).toBe(1);
+		expect(samples).toHaveLength(1);
+		expect(intersectSpy).not.toHaveBeenCalled();
+
+		intersectSpy.mockRestore();
 	});
 });
 
@@ -451,6 +538,24 @@ function createAmbiguousCellAnalysis() {
 		},
 		metadata: {
 			grid_size: 1,
+			coordinate_system: 'xz_ground'
+		}
+	} as any;
+}
+
+function createNearCornerAmbiguousCellAnalysis() {
+	return {
+		data: {
+			numPositions: 2,
+			numHours: 1,
+			positions: new Float32Array([
+				0, 0, 0,
+				0.49, 0, 0.49
+			]),
+			utciValues: new Float32Array([20, 21])
+		},
+		metadata: {
+			grid_size: 0.5,
 			coordinate_system: 'xz_ground'
 		}
 	} as any;

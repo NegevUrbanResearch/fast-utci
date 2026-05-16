@@ -18,4 +18,20 @@ describe('main route tooltip layer source lock', () => {
 		const handlerSource = source.slice(source.indexOf('function handleMouseMove'));
 		expect(handlerSource).toMatch(/getComparisonUtciMesh\(\)/);
 	});
+
+	it('counts hover samples only after suppression and throttle gates', () => {
+		if (!existsSync(tooltipLayerPath)) return;
+
+		const source = readFileSync(tooltipLayerPath, 'utf8');
+		const handlerSource = source.slice(source.indexOf('function handleMouseMove'));
+		const suppressIndex = handlerSource.indexOf('if (hoverPolicy.shouldSuppress)');
+		const throttleIndex = handlerSource.indexOf('if (hoverPolicy.shouldThrottle)');
+		const incrementIndex = handlerSource.indexOf('tooltipHoverSampleCount += 1;');
+
+		expect(suppressIndex).toBeGreaterThanOrEqual(0);
+		expect(throttleIndex).toBeGreaterThanOrEqual(0);
+		expect(incrementIndex).toBeGreaterThanOrEqual(0);
+		expect(incrementIndex).toBeGreaterThan(suppressIndex);
+		expect(incrementIndex).toBeGreaterThan(throttleIndex);
+	});
 });

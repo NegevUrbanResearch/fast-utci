@@ -22,6 +22,48 @@ describe('utciComputeBufferRenderBridge', () => {
 		expect(result.waitMs).toBeGreaterThanOrEqual(0);
 	});
 
+	it('collects bounded storage wait diagnostics without changing wait behavior', async () => {
+		const targetBuffer = { size: 64 } as GPUBuffer;
+		let time = 0;
+		let attempt = 0;
+		const device = {} as GPUDevice;
+
+		const result = await waitForRenderStorageBuffer({
+			deadlineMs: 100,
+			now: () => (time += 1),
+			waitForNextFrame: async () => undefined,
+			isSuperseded: () => false,
+			collectDiagnostics: true,
+			readStorageBuffer: () => null,
+			readStorageState: () => {
+				attempt += 1;
+				return {
+					device,
+					backendEntryAvailable: attempt >= 2,
+					targetBuffer: attempt >= 6 ? targetBuffer : undefined
+				};
+			}
+		});
+
+		expect(result.targetBuffer).toBe(targetBuffer);
+		expect(result.waitTrace).toMatchObject({
+			readAttemptCount: 6,
+			frameWaitCount: 5,
+			deviceAvailableCount: 6,
+			backendEntryAvailableCount: 5,
+			bufferAvailableCount: 1,
+			lastReadState: {
+				deviceAvailable: true,
+				backendEntryAvailable: true,
+				bufferAvailable: true
+			}
+		});
+		expect(result.waitTrace?.firstDeviceAtMs).toEqual(expect.any(Number));
+		expect(result.waitTrace?.firstBackendEntryAtMs).toEqual(expect.any(Number));
+		expect(result.waitTrace?.firstBufferAtMs).toEqual(expect.any(Number));
+		expect(result.waitTrace?.samples.length).toBeLessThanOrEqual(8);
+	});
+
 	it('fails when a copy is superseded before storage initializes', async () => {
 		await expect(
 			waitForRenderStorageBuffer({
