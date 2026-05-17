@@ -216,6 +216,35 @@ The repeated-scrub soak still plateaus: retained CPU layout bytes remain flat at
 
 The next action should not be another frame/layout optimization. The structural-frame bucket is now proven gone for warm scrubs. The remaining work is the post-key scene/update path: after `renderStoragePreWaitMs` fell to `33.5 ms` for Ness Tziona, the remaining render update still spends about `155-248 ms` outside frame derivation and actual storage wait. That should be investigated as a separate render-update split before touching cold-start/init.
 
+## 2026-05-18 Interaction Diagnostics Verification
+
+Collector command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-performance-0_5m.spec.ts --project=chromium --workers=1 --reporter=list --grep "collects BG and Ness Tziona 0.5m main-route timing, memory, color-mode, and scrub samples"
+```
+
+Result: `1 passed (2.3m)` on 2026-05-18. The run refreshed [data/performance-results/main-route-selected-hour-render-diagnostics-next.json](../../data/performance-results/main-route-selected-hour-render-diagnostics-next.json).
+
+| Project | Mode | Visible ms | Render update ms | Scene sync ms | Queue ms | Reuse action | Frame cache |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| Ben-Gurion | normalized | 73.8 | 64.6 | 26.6 | 3.5 | `reused` / `reuse-safe` | structural |
+| Ben-Gurion | discrete | 78.7 | 69.0 | 11.3 | 3.9 | `reused` / `reuse-safe` | structural |
+| Ness-Tziona | normalized | 208.8 | 198.4 | 37.0 | 3.1 | `reused` / `reuse-safe` | structural |
+| Ness-Tziona | discrete | 308.4 | 294.6 | 38.5 | 3.3 | `reused` / `reuse-safe` | structural |
+
+The browser interaction probe now covers Ness Tziona 0.5m directly:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-manual-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --grep "publishes selected-hour diagnostics|Ness Tziona 0.5m camera"
+```
+
+Result: `2 passed (33.5s)` on 2026-05-18. The dense-route probe keeps the proof boundary intact (`gpuNative`, `compute-buffer-selected-hour`, `strongVisibleGpuPath=true`) and verifies that main-route diagnostics publish both camera frame samples and tooltip interaction counters after real canvas interaction.
+
+The interaction fix is intentionally scoped: the UTCI overlay stays visible, tooltip picking is suppressed longer during camera motion, and the per-frame camera sampler only runs when `utciRenderDiagnostics=1`.
+
 ## Historical Diagnostics
 
 Older pre-implementation diagnostics were split into [main-route-selected-hour-render-diagnostics-history.md](main-route-selected-hour-render-diagnostics-history.md) so this file stays focused on the current 2026-05-17 layout-reuse implementation recollection. Those historical sections preserve the earlier evidence trail but are superseded by the current measurements above.

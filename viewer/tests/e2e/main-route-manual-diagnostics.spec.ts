@@ -9,6 +9,7 @@ async function readUtciRenderDiagnostics(page: Page) {
 async function waitForSelectedHourPublication(page: Page, options?: {
 	previousRequestId?: number;
 	expectedSelectionKey?: string;
+	timeoutMs?: number;
 }) {
 	const diagnostics = await page.waitForFunction(
 		(args) => {
@@ -39,7 +40,7 @@ async function waitForSelectedHourPublication(page: Page, options?: {
 			previousRequestId: options?.previousRequestId,
 			expectedSelectionKey: options?.expectedSelectionKey
 		},
-		{ timeout: 15_000 }
+		{ timeout: options?.timeoutMs ?? 15_000 }
 	).catch(async (error) => {
 		const lastDiagnostics = await readUtciRenderDiagnostics(page).catch((readError) => ({
 			readError: readError instanceof Error ? readError.message : String(readError)
@@ -149,6 +150,10 @@ function getCameraWheelEventCount(diagnostics: any): number {
 	return diagnostics?.cameraInteraction?.wheelEventCount ?? 0;
 }
 
+function getCameraFrameSampleCount(diagnostics: any): number {
+	return diagnostics?.cameraInteraction?.sampleCount ?? 0;
+}
+
 async function exerciseMainRouteCanvasInteractions(page: Page) {
 	const canvas = page.locator('canvas').first();
 	await expect(canvas).toBeVisible();
@@ -168,20 +173,25 @@ async function exerciseMainRouteCanvasInteractions(page: Page) {
 		clientX,
 		clientY
 	});
+	await page.mouse.down();
+	await page.mouse.move(clientX + canvasBox.width * 0.08, clientY, { steps: 8 });
+	await page.mouse.up();
 }
 
 async function waitForMainRouteInteractionDiagnostics(
 	page: Page,
-	before: { hoverSampleCount: number; wheelEventCount: number }
+	before: { hoverSampleCount: number; wheelEventCount: number; frameSampleCount: number }
 ) {
 	const handle = await page.waitForFunction(
 		(args) => {
 			const value = (window as any).__utciRenderDiagnostics__;
 			const hoverSampleCount = value?.tooltipInteraction?.hoverSampleCount ?? 0;
 			const wheelEventCount = value?.cameraInteraction?.wheelEventCount ?? 0;
+			const frameSampleCount = value?.cameraInteraction?.sampleCount ?? 0;
 			if (
 				hoverSampleCount > args.hoverSampleCount &&
-				wheelEventCount > args.wheelEventCount
+				wheelEventCount > args.wheelEventCount &&
+				frameSampleCount > args.frameSampleCount
 			) {
 				return value;
 			}
@@ -428,7 +438,7 @@ test.describe('main route manual diagnostics probe', () => {
 		await expect(page.getByText(/UTCI calculation/i)).toBeVisible();
 		await expect(page.getByText(/Render prep/i)).toHaveCount(0);
 		await expect(page.getByText(/GPU VRAM/i)).toBeVisible();
-		await expect(page.getByText(/Grid size/i)).toBeVisible();
+		await expect(page.getByTestId('performance-grid-resolution-slider')).toBeVisible();
 		await expect(page.getByText(/Validation vs Grasshopper/i)).toHaveCount(0);
 		expect(value.utciRenderResolved).toBe('gpuNative');
 		expect(value.baseRenderTransport).toBe('compute-buffer-selected-hour');
@@ -501,7 +511,8 @@ test.describe('main route manual diagnostics probe', () => {
 
 		const beforeInteraction = {
 			hoverSampleCount: getTooltipHoverSampleCount(value),
-			wheelEventCount: getCameraWheelEventCount(value)
+			wheelEventCount: getCameraWheelEventCount(value),
+			frameSampleCount: getCameraFrameSampleCount(value)
 		};
 		await exerciseMainRouteCanvasInteractions(page);
 		const afterInteraction = await waitForMainRouteInteractionDiagnostics(
@@ -514,9 +525,57 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(getCameraWheelEventCount(afterInteraction)).toBeGreaterThan(
 			beforeInteraction.wheelEventCount
 		);
+		expect(getCameraFrameSampleCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.frameSampleCount
+		);
+		expect(afterInteraction?.cameraInteraction?.p95FrameMs ?? 0).toBeGreaterThan(0);
 		expect(afterInteraction?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
 		expect(afterInteraction?.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(afterInteraction?.baseSameDeviceForComputeAndRender).toBe(true);
+	});
+
+	test('publishes Ness Tziona 0.5m camera and tooltip interaction diagnostics', async ({
+		page
+	}) => {
+		test.setTimeout(45_000);
+		await page.goto(
+			'/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1'
+		);
+
+		const value = await waitForSelectedHourPublication(page, { timeoutMs: 30_000 });
+		expect(value.utciRenderResolved).toBe('gpuNative');
+		expect(value.baseMetadataGridSize).toBe(0.5);
+		expect(value.baseRenderTransport).toBe('compute-buffer-selected-hour');
+		expect(value.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+
+		const beforeInteraction = {
+			hoverSampleCount: getTooltipHoverSampleCount(value),
+			wheelEventCount: getCameraWheelEventCount(value),
+			frameSampleCount: getCameraFrameSampleCount(value)
+		};
+
+		await exerciseMainRouteCanvasInteractions(page);
+		const afterInteraction = await waitForMainRouteInteractionDiagnostics(
+			page,
+			beforeInteraction
+		);
+
+		expect(getTooltipHoverSampleCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.hoverSampleCount
+		);
+		expect(getCameraWheelEventCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.wheelEventCount
+		);
+		expect(getCameraFrameSampleCount(afterInteraction)).toBeGreaterThan(
+			beforeInteraction.frameSampleCount
+		);
+		expect(afterInteraction?.cameraInteraction?.p95FrameMs ?? 0).toBeGreaterThan(0);
+		expect(
+			afterInteraction?.tooltipInteraction?.suppressedHoverCount ?? 0
+		).toBeGreaterThanOrEqual(value?.tooltipInteraction?.suppressedHoverCount ?? 0);
+		expect(afterInteraction?.selectedHourRuntimeContract?.strongVisibleGpuPath).toBe(
+			true
+		);
 	});
 
 	test('ignores debug parity query params on the main route without bin requests', async ({

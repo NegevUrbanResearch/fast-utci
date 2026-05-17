@@ -10,6 +10,17 @@
 	} from '$lib/components/viewer/canvasInteractionController';
 	import { getTooltipData } from '$lib/services/tooltipService';
 	import {
+		createEmptyTooltipInteractionDiagnostics,
+		recordTooltipInteractionMeasurement,
+		type TooltipInteractionDiagnostics
+	} from '$lib/services/tooltipService';
+	import {
+		createEmptyCameraInteractionTelemetry,
+		recordCameraInteractionFrame,
+		type CameraInteractionDiagnostics,
+		type CameraInteractionTelemetry
+	} from '$lib/services/cameraInteractionTelemetry';
+	import {
 		armTooltipMotionSuppression,
 		createTooltipMotionSuppressionState,
 		releaseTooltipMotionPointer,
@@ -36,6 +47,14 @@
 	export let diagnosticsEnabled = false;
 	export let tooltipHoverSampleCount = 0;
 	export let cameraWheelEventCount = 0;
+	export let tooltipInteractionDiagnostics: TooltipInteractionDiagnostics & {
+		hoverSampleCount: number;
+	} = {
+		...createEmptyTooltipInteractionDiagnostics(false),
+		hoverSampleCount: 0
+	};
+	export let cameraInteractionDiagnostics: CameraInteractionDiagnostics =
+		createEmptyCameraInteractionTelemetry().diagnostics;
 
 	let tooltipVisible = false;
 	let tooltipX = 0;
@@ -45,6 +64,17 @@
 	let lastTooltipUpdate = 0;
 	const TOOLTIP_THROTTLE_MS = 16;
 	let tooltipMotionSuppression = createTooltipMotionSuppressionState();
+	let cameraInteractionTelemetry: CameraInteractionTelemetry =
+		createEmptyCameraInteractionTelemetry();
+	let cameraInteractionFrameId: number | null = null;
+	let cameraInteractionLastFrameTimeMs: number | null = null;
+	let cameraInteractionPointerDown = false;
+	let cameraInteractionSequenceActive = false;
+	let cameraInteractionArmedUntilMs = 0;
+	let hasCameraInteractionSnapshot = false;
+	let previousDiagnosticsEnabled = diagnosticsEnabled;
+	const lastCameraInteractionPosition = new THREE.Vector3();
+	const lastCameraInteractionQuaternion = new THREE.Quaternion();
 
 	let hoverInteractionController: CanvasInteractionController | null = null;
 	let hoverInteractionCanvas: HTMLCanvasElement | null = null;
@@ -68,6 +98,133 @@
 		__mainRouteLastTooltip__?: MainRouteTooltipSnapshot | null | undefined;
 	};
 
+	const CAMERA_INTERACTION_ARM_WINDOW_MS = 500;
+	const CAMERA_INTERACTION_POSITION_EPSILON_SQ = 1e-8;
+	const CAMERA_INTERACTION_QUATERNION_EPSILON = 1e-8;
+	const MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS = 900;
+
+	function publishTooltipDiagnostics(
+		diagnostics: TooltipInteractionDiagnostics = tooltipInteractionDiagnostics
+	): void {
+		if (!diagnosticsEnabled) return;
+		tooltipInteractionDiagnostics = {
+			...diagnostics,
+			hoverSampleCount: tooltipHoverSampleCount
+		};
+	}
+
+	function publishCameraDiagnostics(): void {
+		if (!diagnosticsEnabled) return;
+		cameraInteractionDiagnostics = cameraInteractionTelemetry.diagnostics;
+	}
+
+	function resetInteractionDiagnostics(): void {
+		tooltipHoverSampleCount = 0;
+		cameraWheelEventCount = 0;
+		tooltipInteractionDiagnostics = {
+			...createEmptyTooltipInteractionDiagnostics(false),
+			hoverSampleCount: 0
+		};
+		cameraInteractionTelemetry = createEmptyCameraInteractionTelemetry();
+		cameraInteractionDiagnostics = cameraInteractionTelemetry.diagnostics;
+		cameraInteractionSequenceActive = false;
+		cameraInteractionArmedUntilMs = 0;
+		cameraInteractionLastFrameTimeMs = null;
+		hasCameraInteractionSnapshot = false;
+	}
+
+	function armCameraInteractionTelemetry(
+		windowMs = CAMERA_INTERACTION_ARM_WINDOW_MS
+	): void {
+		cameraInteractionArmedUntilMs = Math.max(
+			cameraInteractionArmedUntilMs,
+			performance.now() + windowMs
+		);
+	}
+
+	function snapshotCameraInteractionTransform(camera: PerspectiveCamera): void {
+		lastCameraInteractionPosition.copy(camera.position);
+		lastCameraInteractionQuaternion.copy(camera.quaternion);
+		hasCameraInteractionSnapshot = true;
+	}
+
+	function hasCameraInteractionTransformChanged(camera: PerspectiveCamera): boolean {
+		return (
+			camera.position.distanceToSquared(lastCameraInteractionPosition) >
+				CAMERA_INTERACTION_POSITION_EPSILON_SQ ||
+			1 - Math.abs(camera.quaternion.dot(lastCameraInteractionQuaternion)) >
+				CAMERA_INTERACTION_QUATERNION_EPSILON
+		);
+	}
+
+	function stopCameraInteractionTelemetryLoop(): void {
+		if (cameraInteractionFrameId !== null) {
+			cancelAnimationFrame(cameraInteractionFrameId);
+			cameraInteractionFrameId = null;
+		}
+		cameraInteractionLastFrameTimeMs = null;
+		hasCameraInteractionSnapshot = false;
+	}
+
+	function startCameraInteractionTelemetryLoop(): void {
+		if (
+			typeof window === 'undefined' ||
+			!diagnosticsEnabled ||
+			cameraInteractionFrameId !== null
+		) {
+			return;
+		}
+
+		const tick = (frameTimeMs: number) => {
+			cameraInteractionFrameId = requestAnimationFrame(tick);
+			const activeCamera = cameraRef;
+			if (!activeCamera) {
+				cameraInteractionLastFrameTimeMs = frameTimeMs;
+				hasCameraInteractionSnapshot = false;
+				return;
+			}
+
+			if (!hasCameraInteractionSnapshot) {
+				snapshotCameraInteractionTransform(activeCamera);
+				cameraInteractionLastFrameTimeMs = frameTimeMs;
+				return;
+			}
+
+			const frameMs =
+				cameraInteractionLastFrameTimeMs == null
+					? 0
+					: frameTimeMs - cameraInteractionLastFrameTimeMs;
+			const cameraChanged = hasCameraInteractionTransformChanged(activeCamera);
+			const interactionArmed =
+				cameraInteractionPointerDown ||
+				frameTimeMs <= cameraInteractionArmedUntilMs ||
+				cameraInteractionSequenceActive;
+
+			if (cameraChanged && interactionArmed) {
+				cameraInteractionTelemetry = recordCameraInteractionFrame(
+					cameraInteractionTelemetry,
+					frameMs
+				);
+				cameraInteractionSequenceActive = true;
+				armCameraInteractionTelemetry();
+				tooltipMotionSuppression = armTooltipMotionSuppression(
+					tooltipMotionSuppression,
+					frameTimeMs,
+					MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS
+				);
+				hideTooltip();
+				publishCameraDiagnostics();
+			} else if (!cameraChanged) {
+				cameraInteractionSequenceActive = false;
+			}
+
+			snapshotCameraInteractionTransform(activeCamera);
+			cameraInteractionLastFrameTimeMs = frameTimeMs;
+		};
+
+		cameraInteractionFrameId = requestAnimationFrame(tick);
+	}
+
 	function getTooltipSnapshotAtPoint(params: {
 		canvas: HTMLCanvasElement | null;
 		camera: PerspectiveCamera | undefined;
@@ -87,7 +244,19 @@
 			analysis,
 			metricType,
 			hourIndex,
-			canvas.getBoundingClientRect()
+			canvas.getBoundingClientRect(),
+			diagnosticsEnabled
+				? {
+						onDiagnosticsSample: (measurement) => {
+							publishTooltipDiagnostics(
+								recordTooltipInteractionMeasurement(
+									tooltipInteractionDiagnostics,
+									measurement
+								)
+							);
+						}
+				  }
+				: undefined
 		);
 		return tooltipData
 			? {
@@ -103,7 +272,8 @@
 
 	function getTooltipSnapshotForClientPoint(
 		clientX: number,
-		clientY: number
+		clientY: number,
+		comparisonMesh: Mesh | null = getComparisonUtciMesh()
 	): MainRouteTooltipSnapshot | null {
 		if (
 			!baseMesh ||
@@ -119,7 +289,7 @@
 			baseMesh,
 			baseAnalysis: baseDisplayedAnalysis,
 			baseSceneTimeIndex,
-			comparisonMesh: getComparisonUtciMesh(),
+			comparisonMesh,
 			comparisonAnalysis: comparisonDisplayedAnalysis,
 			comparisonSceneTimeIndex,
 			useLiveUtciOnMainRoute,
@@ -250,10 +420,13 @@
 	}
 
 	function handleTooltipMotionPointerDown() {
+		cameraInteractionPointerDown = true;
+		armCameraInteractionTelemetry();
 		tooltipMotionSuppression = setTooltipMotionPointerDown(
 			tooltipMotionSuppression,
 			true,
-			performance.now()
+			performance.now(),
+			MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS
 		);
 		hideTooltip();
 	}
@@ -262,24 +435,45 @@
 		const hadCanvasPointerInteraction = tooltipMotionSuppression.pointerDown;
 		tooltipMotionSuppression = releaseTooltipMotionPointer(
 			tooltipMotionSuppression,
-			performance.now()
+			performance.now(),
+			MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS
 		);
+		cameraInteractionPointerDown = false;
 		if (hadCanvasPointerInteraction) {
+			armCameraInteractionTelemetry();
 			hideTooltip();
 		}
 	}
 
 	function handleTooltipMotionWheel() {
 		cameraWheelEventCount += 1;
+		if (diagnosticsEnabled) {
+			cameraInteractionTelemetry = {
+				...cameraInteractionTelemetry,
+				diagnostics: {
+					...cameraInteractionTelemetry.diagnostics,
+					wheelEventCount: cameraWheelEventCount
+				}
+			};
+			publishCameraDiagnostics();
+		}
+		armCameraInteractionTelemetry();
 		tooltipMotionSuppression = armTooltipMotionSuppression(
 			tooltipMotionSuppression,
-			performance.now()
+			performance.now(),
+			MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS
 		);
 		hideTooltip();
 	}
 
 	function handleMouseMove(event: MouseEvent) {
 		const now = performance.now();
+		if (diagnosticsEnabled) {
+			publishTooltipDiagnostics({
+				...tooltipInteractionDiagnostics,
+				hoverAttemptCount: tooltipInteractionDiagnostics.hoverAttemptCount + 1
+			});
+		}
 		const hoverPolicy = getMainRouteTooltipHoverPolicy({
 			tooltipMotionSuppression,
 			now,
@@ -287,16 +481,38 @@
 			throttleMs: TOOLTIP_THROTTLE_MS
 		});
 		if (hoverPolicy.shouldSuppress) {
+			if (diagnosticsEnabled) {
+				publishTooltipDiagnostics({
+					...tooltipInteractionDiagnostics,
+					suppressedHoverCount:
+						tooltipInteractionDiagnostics.suppressedHoverCount + 1
+				});
+			}
 			hideTooltip();
 			return;
 		}
 		if (hoverPolicy.shouldThrottle) {
+			if (diagnosticsEnabled) {
+				publishTooltipDiagnostics({
+					...tooltipInteractionDiagnostics,
+					throttledHoverCount:
+						tooltipInteractionDiagnostics.throttledHoverCount + 1
+				});
+			}
 			return;
 		}
 		tooltipHoverSampleCount += 1;
+		if (diagnosticsEnabled) {
+			publishTooltipDiagnostics();
+		}
 		lastTooltipUpdate = hoverPolicy.nextTooltipUpdate;
 
-		const tooltipData = getTooltipSnapshotForClientPoint(event.clientX, event.clientY);
+		const comparisonMesh = getComparisonUtciMesh();
+		const tooltipData = getTooltipSnapshotForClientPoint(
+			event.clientX,
+			event.clientY,
+			comparisonMesh
+		);
 
 		if (tooltipData) {
 			tooltipVisible = true;
@@ -330,6 +546,11 @@
 	}
 
 	$: if (typeof window !== 'undefined') {
+		if (previousDiagnosticsEnabled !== diagnosticsEnabled) {
+			previousDiagnosticsEnabled = diagnosticsEnabled;
+			resetInteractionDiagnostics();
+		}
+
 		if (diagnosticsEnabled) {
 			(window as MainRouteTooltipProbeWindow).__mainRouteTooltipProbe__ = () =>
 				computeTooltipProbe({
@@ -375,12 +596,18 @@
 			});
 			tooltipMotionInteractionCanvas = canvasElement;
 		}
+		if (diagnosticsEnabled) {
+			startCameraInteractionTelemetryLoop();
+		} else {
+			stopCameraInteractionTelemetryLoop();
+		}
 	}
 
 	onDestroy(() => {
 		clearTooltipProbeGlobals();
 		detachHoverListeners();
 		detachTooltipMotionListeners();
+		stopCameraInteractionTelemetryLoop();
 	});
 </script>
 

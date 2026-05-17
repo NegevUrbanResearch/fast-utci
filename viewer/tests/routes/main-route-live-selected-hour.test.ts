@@ -101,8 +101,35 @@ function createDiagnosticsParams(): MainRouteLiveSelectedHourDiagnosticsParams {
 		selectedTimeIndex: 180,
 		baseSceneRenderContextTimeIndex: 180,
 		baseAcceptedUtciRange: { min: -10, max: 42 },
-		tooltipHoverSampleCount: 3,
-		cameraWheelEventCount: 1
+		tooltipInteraction: {
+			enabled: true,
+			disabledByQuery: false,
+			slowThresholdMs: 8,
+			hoverAttemptCount: 3,
+			suppressedHoverCount: 0,
+			throttledHoverCount: 0,
+			hoverSampleCount: 3,
+			sampleCount: 1,
+			hitCount: 1,
+			missCount: 0,
+			overBudgetCount: 0,
+			lastOutcome: 'hit',
+			lastRaycastMs: 0,
+			maxRaycastMs: 0,
+			lastNearestPointMs: 0,
+			maxNearestPointMs: 0,
+			lastTotalMs: 1,
+			maxTotalMs: 1
+		},
+		cameraInteraction: {
+			slowThresholdMs: 20,
+			sampleCount: 2,
+			wheelEventCount: 1,
+			overBudgetCount: 0,
+			lastFrameMs: 16,
+			maxFrameMs: 17,
+			p95FrameMs: 17
+		}
 	};
 }
 

@@ -32,6 +32,9 @@ export interface TooltipInteractionDiagnostics {
 	enabled: boolean;
 	disabledByQuery: boolean;
 	slowThresholdMs: number;
+	hoverAttemptCount: number;
+	suppressedHoverCount: number;
+	throttledHoverCount: number;
 	sampleCount: number;
 	hitCount: number;
 	missCount: number;
@@ -68,6 +71,9 @@ export function createEmptyTooltipInteractionDiagnostics(
 		enabled: !disabledByQuery,
 		disabledByQuery,
 		slowThresholdMs: TOOLTIP_SLOW_BUDGET_MS,
+		hoverAttemptCount: 0,
+		suppressedHoverCount: 0,
+		throttledHoverCount: 0,
 		sampleCount: 0,
 		hitCount: 0,
 		missCount: 0,

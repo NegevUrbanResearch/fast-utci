@@ -90,6 +90,14 @@
 	import MainRouteOverlays from "./main/MainRouteOverlays.svelte";
 	import MainRouteTooltipLayer from "./main/MainRouteTooltipLayer.svelte";
 	import MainRouteViewport from "./main/MainRouteViewport.svelte";
+	import {
+		createEmptyTooltipInteractionDiagnostics,
+		type TooltipInteractionDiagnostics,
+	} from "$lib/services/tooltipService";
+	import {
+		createEmptyCameraInteractionTelemetry,
+		type CameraInteractionDiagnostics,
+	} from "$lib/services/cameraInteractionTelemetry";
 
 	const MAIN_ROUTE_DIAGNOSTICS_GRID_RESOLUTIONS = new Set<number>([
 		10,
@@ -200,6 +208,14 @@
 	let showMainRouteComparisonOverlay = false;
 	let tooltipHoverSampleCount = 0;
 	let cameraWheelEventCount = 0;
+	let tooltipInteractionDiagnostics: TooltipInteractionDiagnostics & {
+		hoverSampleCount: number;
+	} = {
+		...createEmptyTooltipInteractionDiagnostics(false),
+		hoverSampleCount: 0,
+	};
+	let cameraInteractionDiagnostics: CameraInteractionDiagnostics =
+		createEmptyCameraInteractionTelemetry().diagnostics;
 	const mainRouteRenderPublicationProjectionTracker =
 		createMainRouteRenderPublicationProjectionTracker();
 
@@ -565,8 +581,8 @@
 			baseMetadataGridSize: liveRouteState.base.analysis?.metadata.grid_size ?? null,
 			baseSceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
 			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
-			tooltipHoverSampleCount,
-			cameraWheelEventCount,
+			tooltipInteraction: tooltipInteractionDiagnostics,
+			cameraInteraction: cameraInteractionDiagnostics,
 			timingsOverride: mainRouteRenderPublicationProjectionTracker.apply({
 				enabled: useLiveUtciOnMainRoute,
 				timings: liveRouteState.base.runtimeDiagnostics?.timings,
@@ -688,6 +704,8 @@
 		<MainRouteTooltipLayer
 			bind:tooltipHoverSampleCount
 			bind:cameraWheelEventCount
+			bind:tooltipInteractionDiagnostics
+			bind:cameraInteractionDiagnostics
 			{canvasElement}
 			{cameraRef}
 			baseMesh={utciMesh}

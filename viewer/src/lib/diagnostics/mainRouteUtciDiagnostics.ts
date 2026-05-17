@@ -23,6 +23,8 @@ import {
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
+import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
+import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
 
 type MainRouteUtciDiagnosticsTimings = Omit<OnDemandTimings, 'renderPublication'> & {
 	renderPublication?: SelectedHourRenderPublicationDiagnostics;
@@ -69,12 +71,10 @@ export type MainRouteUtciDiagnosticsPayload = {
 	comparisonGpuResidentCopyStatus?: 'idle' | 'pending' | 'complete' | 'failed';
 	comparisonGpuResidentCopyError?: string;
 	comparisonGpuResidentCopyRequestId?: number;
-	tooltipInteraction?: {
+	tooltipInteraction?: TooltipInteractionDiagnostics & {
 		hoverSampleCount: number;
 	};
-	cameraInteraction?: {
-		wheelEventCount: number;
-	};
+	cameraInteraction?: CameraInteractionDiagnostics;
 	timings?: MainRouteUtciDiagnosticsTimings;
 	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;
@@ -119,12 +119,10 @@ export type MainRouteUtciDiagnosticsInputs = {
 	comparisonSurfaceRequestId?: number;
 	comparisonSelectionKey?: string;
 	comparisonSameDeviceForComputeAndRender: boolean | null;
-	tooltipInteraction?: {
+	tooltipInteraction?: TooltipInteractionDiagnostics & {
 		hoverSampleCount: number;
 	};
-	cameraInteraction?: {
-		wheelEventCount: number;
-	};
+	cameraInteraction?: CameraInteractionDiagnostics;
 	timings?: MainRouteUtciDiagnosticsTimings;
 	trackedGpuAllocationBytes?: TrackedGpuAllocationBytes;
 	visibleSelectedHourReadbackCount?: number;

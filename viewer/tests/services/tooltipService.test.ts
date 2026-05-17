@@ -249,6 +249,9 @@ describe('tooltip interaction diagnostics', () => {
 		expect(diagnostics.enabled).toBe(true);
 		expect(diagnostics.disabledByQuery).toBe(false);
 		expect(diagnostics.slowThresholdMs).toBe(TOOLTIP_SLOW_BUDGET_MS);
+		expect(diagnostics.hoverAttemptCount).toBe(0);
+		expect(diagnostics.suppressedHoverCount).toBe(0);
+		expect(diagnostics.throttledHoverCount).toBe(0);
 		expect(diagnostics.sampleCount).toBe(0);
 		expect(diagnostics.hitCount).toBe(0);
 		expect(diagnostics.missCount).toBe(0);

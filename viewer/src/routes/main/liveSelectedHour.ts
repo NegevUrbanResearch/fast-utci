@@ -19,6 +19,8 @@ import {
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
+import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
+import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
 
 export type MainRouteWindow = Window & {
 	__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
@@ -54,8 +56,8 @@ export type MainRouteLiveSelectedHourDiagnosticsParams = {
 	baseMetadataGridSize?: number | null;
 	baseSceneRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
-	tooltipHoverSampleCount: number;
-	cameraWheelEventCount: number;
+	tooltipInteraction: TooltipInteractionDiagnostics & { hoverSampleCount: number };
+	cameraInteraction: CameraInteractionDiagnostics;
 	timingsOverride?: MainRouteUtciDiagnosticsInputs['timings'];
 };
 
@@ -234,12 +236,8 @@ export function buildMainRouteLiveSelectedHourDiagnosticsInputs(
 			params.liveRouteState.comparisonSurfaceIdentity?.selectionKey,
 		comparisonSameDeviceForComputeAndRender:
 			params.liveRouteState.comparison.sameDeviceForComputeAndRender,
-		tooltipInteraction: {
-			hoverSampleCount: params.tooltipHoverSampleCount,
-		},
-		cameraInteraction: {
-			wheelEventCount: params.cameraWheelEventCount,
-		},
+		tooltipInteraction: params.tooltipInteraction,
+		cameraInteraction: params.cameraInteraction,
 		timings:
 			params.timingsOverride ?? params.liveRouteState.base.runtimeDiagnostics?.timings,
 		trackedGpuAllocationBytes:
