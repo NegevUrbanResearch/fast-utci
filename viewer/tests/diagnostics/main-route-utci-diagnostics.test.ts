@@ -223,6 +223,7 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			renderPublicationTargetByteLength: 32687044,
 			renderPublicationTimeline: {
 				computeCompletedAtMs: 101,
+				selectedHourValuePublicationStartedAtMs: 102,
 				controllerAcceptedAtMs: 103,
 				routePendingSurfaceExposedAtMs: 105,
 				routePublishedAtMs: 107,
@@ -231,7 +232,11 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneSyncAttemptStartedAtMs: 112,
 				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
+				controllerVisibleAcknowledgedAtMs: 126,
 				publicationEffectStartedAtMs: 127,
+				sceneLayoutKeyStartedAtMs: 112.25,
+				sceneLayoutKeyCompletedAtMs: 113.25,
+				scenePublicationPlanReadyAtMs: 119,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,
@@ -275,8 +280,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				renderLayoutReuseReason: 'reuse-safe',
 				renderLayoutReuseDecisionMs: 0.5,
 				renderLayoutReuseKeyMs: 0.75,
+				renderLayoutReuseSourceSignatureMs: 0.2,
+				renderLayoutReusePositionsSignatureMs: 0.15,
+				renderLayoutReusePositionsSignatureCacheHit: false,
+				renderLayoutReuseFrameCacheLookupMs: 0.1,
 				renderLayoutReuseFrameDerivationMs: 0.25,
 				renderLayoutReuseFrameCacheHit: false,
+				renderLayoutReuseFrameCacheKind: 'structural',
 				renderLayoutReuseKeyMatch: true,
 				renderLayoutReuseProofSource: 'fresh-build-proof',
 				renderLayoutReusePreviousKey: null,
@@ -297,6 +307,8 @@ describe('buildMainRouteUtciDiagnostics', () => {
 					applySurfaceMeshStateMs: 2,
 					setPostSurfacePendingStorageInitMs: 0.5
 				},
+				renderStorageWaitStartedAtMs: 127,
+				renderStoragePreWaitMs: 15,
 				renderStorageReadyAtMs: 131,
 				renderStorageWaitTrace: {
 					waitStartedAtMs: 127,
@@ -401,6 +413,11 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			'layout-key-mismatch';
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseDecisionMs = 777;
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseKeyMs = 888;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseSourceSignatureMs = 444;
+		renderPublication.renderPublicationTimeline!.renderLayoutReusePositionsSignatureMs = 333;
+		renderPublication.renderPublicationTimeline!.renderLayoutReusePositionsSignatureCacheHit =
+			true;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseFrameCacheLookupMs = 222;
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseFrameDerivationMs =
 			999;
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseFrameCacheHit = true;
@@ -414,6 +431,8 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.totalMs = 999;
 		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.recreateDecision!.layoutCompatible =
 			false;
+		renderPublication.renderPublicationTimeline!.renderStorageWaitStartedAtMs = 999;
+		renderPublication.renderPublicationTimeline!.renderStoragePreWaitMs = 999;
 		renderPublication.renderPublicationTimeline!.renderStorageWaitTrace!.lastReadState.bufferAvailable =
 			false;
 		renderPublication.renderPublicationTimeline!.renderStorageWaitTrace!.samples[0].bufferAvailable =
@@ -432,6 +451,7 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			renderPublicationTargetByteLength: 32687044,
 			renderPublicationTimeline: {
 				computeCompletedAtMs: 101,
+				selectedHourValuePublicationStartedAtMs: 102,
 				controllerAcceptedAtMs: 103,
 				routePendingSurfaceExposedAtMs: 105,
 				routePublishedAtMs: 107,
@@ -440,7 +460,11 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneSyncAttemptStartedAtMs: 112,
 				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
+				controllerVisibleAcknowledgedAtMs: 126,
 				publicationEffectStartedAtMs: 127,
+				sceneLayoutKeyStartedAtMs: 112.25,
+				sceneLayoutKeyCompletedAtMs: 113.25,
+				scenePublicationPlanReadyAtMs: 119,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,
@@ -484,8 +508,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				renderLayoutReuseReason: 'reuse-safe',
 				renderLayoutReuseDecisionMs: 0.5,
 				renderLayoutReuseKeyMs: 0.75,
+				renderLayoutReuseSourceSignatureMs: 0.2,
+				renderLayoutReusePositionsSignatureMs: 0.15,
+				renderLayoutReusePositionsSignatureCacheHit: false,
+				renderLayoutReuseFrameCacheLookupMs: 0.1,
 				renderLayoutReuseFrameDerivationMs: 0.25,
 				renderLayoutReuseFrameCacheHit: false,
+				renderLayoutReuseFrameCacheKind: 'structural',
 				renderLayoutReuseKeyMatch: true,
 				renderLayoutReuseProofSource: 'fresh-build-proof',
 				renderLayoutReusePreviousKey: null,
@@ -506,6 +535,8 @@ describe('buildMainRouteUtciDiagnostics', () => {
 					applySurfaceMeshStateMs: 2,
 					setPostSurfacePendingStorageInitMs: 0.5
 				},
+				renderStorageWaitStartedAtMs: 127,
+				renderStoragePreWaitMs: 15,
 				renderStorageReadyAtMs: 131,
 				renderStorageWaitTrace: {
 					waitStartedAtMs: 127,
@@ -650,6 +681,7 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			renderLayoutReuseKeyMs: 444,
 			renderLayoutReuseFrameDerivationMs: 555,
 			renderLayoutReuseFrameCacheHit: true,
+			renderLayoutReuseFrameCacheKind: 'structural',
 			renderLayoutReuseKeyMatch: false,
 			renderLayoutReuseProofSource: 'fresh-build-proof',
 			renderLayoutReusePreviousKey: 'output-mutated-key',

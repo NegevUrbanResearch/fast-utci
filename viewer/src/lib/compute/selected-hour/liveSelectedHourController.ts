@@ -226,6 +226,8 @@ function areRenderPublicationEqual(
 			right.renderPublicationRenderOwnedBytes &&
 		left.renderPublicationTimeline?.computeCompletedAtMs ===
 			right.renderPublicationTimeline?.computeCompletedAtMs &&
+		left.renderPublicationTimeline?.selectedHourValuePublicationStartedAtMs ===
+			right.renderPublicationTimeline?.selectedHourValuePublicationStartedAtMs &&
 		left.renderPublicationTimeline?.controllerAcceptedAtMs ===
 			right.renderPublicationTimeline?.controllerAcceptedAtMs &&
 		left.renderPublicationTimeline?.routePendingSurfaceExposedAtMs ===
@@ -242,8 +244,16 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.sceneSyncAttemptToken &&
 		left.renderPublicationTimeline?.sceneSurfaceReceivedAtMs ===
 			right.renderPublicationTimeline?.sceneSurfaceReceivedAtMs &&
+		left.renderPublicationTimeline?.controllerVisibleAcknowledgedAtMs ===
+			right.renderPublicationTimeline?.controllerVisibleAcknowledgedAtMs &&
 		left.renderPublicationTimeline?.publicationEffectStartedAtMs ===
 			right.renderPublicationTimeline?.publicationEffectStartedAtMs &&
+		left.renderPublicationTimeline?.sceneLayoutKeyStartedAtMs ===
+			right.renderPublicationTimeline?.sceneLayoutKeyStartedAtMs &&
+		left.renderPublicationTimeline?.sceneLayoutKeyCompletedAtMs ===
+			right.renderPublicationTimeline?.sceneLayoutKeyCompletedAtMs &&
+		left.renderPublicationTimeline?.scenePublicationPlanReadyAtMs ===
+			right.renderPublicationTimeline?.scenePublicationPlanReadyAtMs &&
 		areRenderLayoutBuildTracesEqual(
 			left.renderPublicationTimeline?.renderLayoutBuildTrace,
 			right.renderPublicationTimeline?.renderLayoutBuildTrace
@@ -260,10 +270,20 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.renderLayoutReuseDecisionMs &&
 		left.renderPublicationTimeline?.renderLayoutReuseKeyMs ===
 			right.renderPublicationTimeline?.renderLayoutReuseKeyMs &&
+		left.renderPublicationTimeline?.renderLayoutReuseSourceSignatureMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseSourceSignatureMs &&
+		left.renderPublicationTimeline?.renderLayoutReusePositionsSignatureMs ===
+			right.renderPublicationTimeline?.renderLayoutReusePositionsSignatureMs &&
+		left.renderPublicationTimeline?.renderLayoutReusePositionsSignatureCacheHit ===
+			right.renderPublicationTimeline?.renderLayoutReusePositionsSignatureCacheHit &&
+		left.renderPublicationTimeline?.renderLayoutReuseFrameCacheLookupMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheLookupMs &&
 		left.renderPublicationTimeline?.renderLayoutReuseFrameDerivationMs ===
 			right.renderPublicationTimeline?.renderLayoutReuseFrameDerivationMs &&
 		left.renderPublicationTimeline?.renderLayoutReuseFrameCacheHit ===
 			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheHit &&
+		left.renderPublicationTimeline?.renderLayoutReuseFrameCacheKind ===
+			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheKind &&
 		left.renderPublicationTimeline?.renderLayoutReuseKeyMatch ===
 			right.renderPublicationTimeline?.renderLayoutReuseKeyMatch &&
 		left.renderPublicationTimeline?.renderLayoutReuseProofSource ===
@@ -280,6 +300,12 @@ function areRenderPublicationEqual(
 			left.renderPublicationTimeline?.renderSurfaceMeshTrace,
 			right.renderPublicationTimeline?.renderSurfaceMeshTrace
 		) &&
+		left.renderPublicationTimeline?.sceneSurfacePendingStorageInitAtMs ===
+			right.renderPublicationTimeline?.sceneSurfacePendingStorageInitAtMs &&
+		left.renderPublicationTimeline?.renderStorageWaitStartedAtMs ===
+			right.renderPublicationTimeline?.renderStorageWaitStartedAtMs &&
+		left.renderPublicationTimeline?.renderStoragePreWaitMs ===
+			right.renderPublicationTimeline?.renderStoragePreWaitMs &&
 		left.renderPublicationTimeline?.renderStorageReadyAtMs ===
 			right.renderPublicationTimeline?.renderStorageReadyAtMs &&
 		areRenderStorageWaitTracesEqual(
@@ -700,6 +726,7 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 	pendingRenderUpdateStartedAt: number | undefined;
 	selectedHourVisibleStartedAt: number | undefined;
 	visibleAtMs: number | undefined;
+	visibleAcknowledgementEligible?: boolean;
 }): LiveSelectedHourRuntimeDiagnostics | undefined {
 	if (!params.runtimeDiagnostics) return params.runtimeDiagnostics;
 	const surfaceUpdateMs =
@@ -721,6 +748,36 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 			params.runtimeDiagnostics.timings.renderPublication,
 			params.renderSurfaceDiagnostics.renderPublication
 		);
+	const shouldStampVisibleAcknowledgement =
+		typeof params.visibleAtMs === 'number' &&
+		params.visibleAcknowledgementEligible === true;
+	const renderPublicationWithVisibleAcknowledgement =
+		shouldStampVisibleAcknowledgement
+			? stampRenderPublicationTimeline({
+					current: renderPublication,
+					timeline: {
+						controllerVisibleAcknowledgedAtMs: params.visibleAtMs
+					},
+					fallback: {
+						renderPublicationPath:
+							params.renderSurfaceDiagnostics.renderPublication?.renderPublicationPath ??
+							params.runtimeDiagnostics.timings.renderPublication
+								?.renderPublicationPath ??
+							'none',
+						renderPublicationPhase:
+							params.renderSurfaceDiagnostics.renderPublication?.renderPublicationPhase ??
+							params.runtimeDiagnostics.timings.renderPublication
+								?.renderPublicationPhase ??
+							'unknown',
+						renderPublicationMeshAction:
+							params.renderSurfaceDiagnostics.renderPublication
+								?.renderPublicationMeshAction ??
+							params.runtimeDiagnostics.timings.renderPublication
+								?.renderPublicationMeshAction ??
+							'skipped'
+					}
+				})
+			: renderPublication;
 	if (surfaceUpdateMs === undefined) {
 		return {
 			trackedGpuAllocationBytes,
@@ -750,7 +807,9 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 				renderQueueDrainMs:
 					params.renderSurfaceDiagnostics.renderQueueDrainMs ??
 					params.runtimeDiagnostics.timings.renderQueueDrainMs,
-				renderPublication: copyRenderPublication(renderPublication)
+				renderPublication: copyRenderPublication(
+					renderPublicationWithVisibleAcknowledgement
+				)
 			}
 		};
 	}
@@ -774,7 +833,9 @@ function mergeRuntimeDiagnosticsWithRenderSurface(params: {
 					params.renderSurfaceDiagnostics.renderStorageInitWaitMs,
 				renderBufferCopyMs: params.renderSurfaceDiagnostics.renderBufferCopyMs,
 				renderQueueDrainMs: params.renderSurfaceDiagnostics.renderQueueDrainMs,
-				renderPublication: copyRenderPublication(renderPublication)
+				renderPublication: copyRenderPublication(
+					renderPublicationWithVisibleAcknowledgement
+				)
 			}
 		})
 	};
@@ -1242,7 +1303,9 @@ export function createLiveSelectedHourController(
 							current: stampRenderPublicationTimeline({
 								current: result.diagnostics.timings.renderPublication,
 								timeline: {
-									computeCompletedAtMs
+									computeCompletedAtMs,
+									selectedHourValuePublicationStartedAtMs:
+										result.pendingRenderUpdateStartedAt
 								},
 								fallback: {
 									renderPublicationPath: resolveRenderPublicationPath(
@@ -1405,7 +1468,12 @@ export function createLiveSelectedHourController(
 							pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
 							selectedHourVisibleStartedAt:
 								state.surfaceIdentity?.selectedHourVisibleStartedAt,
-							visibleAtMs
+							visibleAtMs,
+							visibleAcknowledgementEligible:
+								diagnostics.utciSurfaceSource ===
+									'compute-buffer-selected-hour' ||
+								diagnostics.renderPublication?.renderPublicationPath ===
+									'compute-buffer-selected-hour'
 						}),
 					renderSurfaceDiagnostics: nextDiagnostics,
 					loading: false,
@@ -1450,8 +1518,9 @@ export function createLiveSelectedHourController(
 								renderSurfaceDiagnostics: nextDiagnostics,
 								pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
 								selectedHourVisibleStartedAt:
-									state.surfaceIdentity?.selectedHourVisibleStartedAt,
-								visibleAtMs
+								state.surfaceIdentity?.selectedHourVisibleStartedAt,
+								visibleAtMs,
+								visibleAcknowledgementEligible: false
 							}),
 							acceptedVisibleSurface: {
 								requestId: acceptedCpuPublication.requestId,
@@ -1468,10 +1537,11 @@ export function createLiveSelectedHourController(
 							runtimeDiagnostics: mergeRuntimeDiagnosticsWithRenderSurface({
 								runtimeDiagnostics: state.runtimeDiagnostics,
 								renderSurfaceDiagnostics: nextDiagnostics,
-								pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
-								selectedHourVisibleStartedAt: undefined,
-								visibleAtMs: undefined
-							}),
+							pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
+							selectedHourVisibleStartedAt: undefined,
+							visibleAtMs: undefined,
+							visibleAcknowledgementEligible: false
+						}),
 							renderSurfaceDiagnostics: nextDiagnostics
 					  }
 			);

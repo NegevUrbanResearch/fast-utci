@@ -55,6 +55,7 @@ type RenderPublicationTiming = {
 
 type RenderPublicationTimelineTiming = {
 	computeCompletedAtMs: number | null;
+	selectedHourValuePublicationStartedAtMs: number | null;
 	controllerAcceptedAtMs: number | null;
 	routePendingSurfaceExposedAtMs: number | null;
 	routePublishedAtMs: number | null;
@@ -63,12 +64,28 @@ type RenderPublicationTimelineTiming = {
 	sceneSyncAttemptStartedAtMs: number | null;
 	sceneSyncAttemptToken: number | null;
 	sceneSurfaceReceivedAtMs: number | null;
+	controllerVisibleAcknowledgedAtMs: number | null;
 	publicationEffectStartedAtMs: number | null;
+	sceneLayoutKeyStartedAtMs: number | null;
+	sceneLayoutKeyCompletedAtMs: number | null;
+	scenePublicationPlanReadyAtMs: number | null;
 	renderLayoutBuildTrace: RenderLayoutBuildTrace | null;
 	renderLayoutReuseProofTrace: RenderLayoutReuseProofTrace | null;
 	renderLayoutReuseAction: 'reuse-candidate' | 'build-required' | 'reused' | null;
 	renderLayoutReuseReason: string | null;
 	renderLayoutReuseDecisionMs: number | null;
+	renderLayoutReuseKeyMs: number | null;
+	renderLayoutReuseSourceSignatureMs: number | null;
+	renderLayoutReusePositionsSignatureMs: number | null;
+	renderLayoutReusePositionsSignatureCacheHit: boolean | null;
+	renderLayoutReuseFrameCacheLookupMs: number | null;
+	renderLayoutReuseFrameDerivationMs: number | null;
+	renderLayoutReuseFrameCacheHit: boolean | null;
+	renderLayoutReuseFrameCacheKind:
+		| 'analysis-object'
+		| 'structural'
+		| 'miss'
+		| null;
 	renderLayoutReuseKeyMatch: boolean | null;
 	renderLayoutReuseProofSource:
 		| 'fresh-build-proof'
@@ -79,6 +96,9 @@ type RenderPublicationTimelineTiming = {
 	renderLayoutReusePreviousSelectionKey: string | null;
 	activeLayoutCandidateCount: number | null;
 	renderSurfaceMeshTrace: RenderSurfaceMeshTrace | null;
+	sceneSurfacePendingStorageInitAtMs: number | null;
+	renderStorageWaitStartedAtMs: number | null;
+	renderStoragePreWaitMs: number | null;
 	renderStorageReadyAtMs: number | null;
 	renderStorageWaitTrace: RenderStorageWaitTrace | null;
 	sceneSyncCompletedAtMs: number | null;
@@ -190,19 +210,13 @@ type RenderPublicationSceneSyncResetEvent = {
 	previousSyncRunKey: string | null;
 };
 
-type RenderPublicationTimelineNumberKey = Exclude<
-	keyof RenderPublicationTimelineTiming,
-	| 'renderStorageWaitTrace'
-	| 'renderLayoutBuildTrace'
-	| 'renderLayoutReuseProofTrace'
-	| 'renderLayoutReuseAction'
-	| 'renderLayoutReuseReason'
-	| 'renderLayoutReuseKeyMatch'
-	| 'renderLayoutReuseProofSource'
-	| 'renderSurfaceMeshTrace'
-	| 'sceneSyncResetHistory'
-	| 'sceneSyncActiveWindowResetHistory'
->;
+type RenderPublicationTimelineNumberKey = {
+	[K in keyof RenderPublicationTimelineTiming]: RenderPublicationTimelineTiming[K] extends
+		| number
+		| null
+		? K
+		: never;
+}[keyof RenderPublicationTimelineTiming];
 
 type ExtractedTimings = {
 	payloadPrepareMs: number | null;
@@ -717,6 +731,9 @@ function extractRenderPublicationTimeline(
 	const payload = value as Record<string, unknown>;
 	return {
 		computeCompletedAtMs: numberOrNull(payload.computeCompletedAtMs),
+		selectedHourValuePublicationStartedAtMs: numberOrNull(
+			payload.selectedHourValuePublicationStartedAtMs
+		),
 		controllerAcceptedAtMs: numberOrNull(payload.controllerAcceptedAtMs),
 		routePendingSurfaceExposedAtMs: numberOrNull(
 			payload.routePendingSurfaceExposedAtMs
@@ -729,7 +746,13 @@ function extractRenderPublicationTimeline(
 		sceneSyncAttemptStartedAtMs: numberOrNull(payload.sceneSyncAttemptStartedAtMs),
 		sceneSyncAttemptToken: numberOrNull(payload.sceneSyncAttemptToken),
 		sceneSurfaceReceivedAtMs: numberOrNull(payload.sceneSurfaceReceivedAtMs),
+		controllerVisibleAcknowledgedAtMs: numberOrNull(
+			payload.controllerVisibleAcknowledgedAtMs
+		),
 		publicationEffectStartedAtMs: numberOrNull(payload.publicationEffectStartedAtMs),
+		sceneLayoutKeyStartedAtMs: numberOrNull(payload.sceneLayoutKeyStartedAtMs),
+		sceneLayoutKeyCompletedAtMs: numberOrNull(payload.sceneLayoutKeyCompletedAtMs),
+		scenePublicationPlanReadyAtMs: numberOrNull(payload.scenePublicationPlanReadyAtMs),
 		renderLayoutBuildTrace: extractRenderLayoutBuildTrace(
 			payload.renderLayoutBuildTrace
 		),
@@ -743,6 +766,29 @@ function extractRenderPublicationTimeline(
 		]),
 		renderLayoutReuseReason: stringOrNull(payload.renderLayoutReuseReason),
 		renderLayoutReuseDecisionMs: numberOrNull(payload.renderLayoutReuseDecisionMs),
+		renderLayoutReuseKeyMs: numberOrNull(payload.renderLayoutReuseKeyMs),
+		renderLayoutReuseSourceSignatureMs: numberOrNull(
+			payload.renderLayoutReuseSourceSignatureMs
+		),
+		renderLayoutReusePositionsSignatureMs: numberOrNull(
+			payload.renderLayoutReusePositionsSignatureMs
+		),
+		renderLayoutReusePositionsSignatureCacheHit: booleanOrNull(
+			payload.renderLayoutReusePositionsSignatureCacheHit
+		),
+		renderLayoutReuseFrameCacheLookupMs: numberOrNull(
+			payload.renderLayoutReuseFrameCacheLookupMs
+		),
+		renderLayoutReuseFrameDerivationMs: numberOrNull(
+			payload.renderLayoutReuseFrameDerivationMs
+		),
+		renderLayoutReuseFrameCacheHit: booleanOrNull(
+			payload.renderLayoutReuseFrameCacheHit
+		),
+		renderLayoutReuseFrameCacheKind: stringFromSetOrNull(
+			payload.renderLayoutReuseFrameCacheKind,
+			['analysis-object', 'structural', 'miss']
+		),
 		renderLayoutReuseKeyMatch: booleanOrNull(payload.renderLayoutReuseKeyMatch),
 		renderLayoutReuseProofSource: stringFromSetOrNull(
 			payload.renderLayoutReuseProofSource,
@@ -759,6 +805,11 @@ function extractRenderPublicationTimeline(
 		renderSurfaceMeshTrace: extractRenderSurfaceMeshTrace(
 			payload.renderSurfaceMeshTrace
 		),
+		sceneSurfacePendingStorageInitAtMs: numberOrNull(
+			payload.sceneSurfacePendingStorageInitAtMs
+		),
+		renderStorageWaitStartedAtMs: numberOrNull(payload.renderStorageWaitStartedAtMs),
+		renderStoragePreWaitMs: numberOrNull(payload.renderStoragePreWaitMs),
 		renderStorageReadyAtMs: numberOrNull(payload.renderStorageReadyAtMs),
 		renderStorageWaitTrace: extractRenderStorageWaitTrace(
 			payload.renderStorageWaitTrace
@@ -1033,6 +1084,42 @@ function expectValidRenderPublication(
 	sample: CollectedSample,
 	label: string
 ) {
+	expect(
+		sample.proof.rendererBackend,
+		`${label} renderer backend should stay on WebGPU for compute-buffer render diagnostics`
+	).toBe('webgpu');
+	expect(
+		sample.proof.utciRenderResolved,
+		`${label} utciRenderResolved should stay gpuNative for compute-buffer render diagnostics`
+	).toBe('gpuNative');
+	expect(
+		sample.proof.utciSurfaceSource,
+		`${label} utciSurfaceSource regressed before compute-buffer render-publication validation`
+	).toBe('compute-buffer-selected-hour');
+	expect(
+		sample.proof.baseRenderTransport,
+		`${label} baseRenderTransport regressed before compute-buffer render-publication validation`
+	).toBe('compute-buffer-selected-hour');
+	expect(
+		sample.proof.baseSameDeviceForComputeAndRender,
+		`${label} same-device proof regressed before compute-buffer render-publication validation`
+	).toBe(true);
+	expect(
+		sample.proof.selectedHourRuntimeContract.route,
+		`${label} selectedHourRuntimeContract.route regressed before compute-buffer render-publication validation`
+	).toBe('main');
+	expect(
+		sample.proof.selectedHourRuntimeContract.readbackInstrumentation,
+		`${label} selectedHourRuntimeContract.readbackInstrumentation regressed before compute-buffer render-publication validation`
+	).toBe('instrumented');
+	expect(
+		sample.proof.selectedHourRuntimeContract.visibleSelectedHourReadbackCount,
+		`${label} visibleSelectedHourReadbackCount regressed before compute-buffer render-publication validation`
+	).toBe(0);
+	expect(
+		sample.proof.selectedHourRuntimeContract.strongVisibleGpuPath,
+		`${label} strongVisibleGpuPath regressed before compute-buffer render-publication validation`
+	).toBe(true);
 	const renderPublication = sample.timings.renderPublication;
 	expect(renderPublication, `${label} renderPublication`).not.toBeNull();
 	expect(renderPublication).toMatchObject({
@@ -1150,16 +1237,21 @@ function expectValidRenderPublicationTimeline(
 		throw new Error(`${label} missing renderPublicationTimeline`);
 	}
 
-	expectTimelineOrder(
-		timeline,
-		['computeCompletedAtMs', 'controllerAcceptedAtMs'],
-		label
-	);
+	requireTimelineNumber(timeline, 'computeCompletedAtMs', label);
 	const controllerAcceptedAtMs = requireTimelineNumber(
 		timeline,
 		'controllerAcceptedAtMs',
 		label
 	);
+	const selectedHourValuePublicationStartedAtMs = requireTimelineNumber(
+		timeline,
+		'selectedHourValuePublicationStartedAtMs',
+		label
+	);
+	expect(
+		selectedHourValuePublicationStartedAtMs,
+		`${label} selectedHourValuePublicationStartedAtMs should not follow controllerAcceptedAtMs`
+	).toBeLessThanOrEqual(controllerAcceptedAtMs);
 	const routePendingSurfaceExposedAtMs = requireTimelineNumber(
 		timeline,
 		'routePendingSurfaceExposedAtMs',
@@ -1237,6 +1329,30 @@ function expectValidRenderPublicationTimeline(
 		`${label} renderLayoutReuseDecisionMs`
 	).toEqual(expect.any(Number));
 	expect(
+		timeline.renderLayoutReuseKeyMs,
+		`${label} renderLayoutReuseKeyMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReuseSourceSignatureMs,
+		`${label} renderLayoutReuseSourceSignatureMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReusePositionsSignatureMs,
+		`${label} renderLayoutReusePositionsSignatureMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReusePositionsSignatureCacheHit,
+		`${label} renderLayoutReusePositionsSignatureCacheHit`
+	).toEqual(expect.any(Boolean));
+	expect(
+		timeline.renderLayoutReuseFrameCacheLookupMs,
+		`${label} renderLayoutReuseFrameCacheLookupMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReuseFrameCacheHit,
+		`${label} renderLayoutReuseFrameCacheHit`
+	).toEqual(expect.any(Boolean));
+	expect(
 		timeline.renderLayoutReuseKeyMatch,
 		`${label} renderLayoutReuseKeyMatch`
 	).toEqual(expect.any(Boolean));
@@ -1266,6 +1382,10 @@ function expectValidRenderPublicationTimeline(
 			timeline.renderLayoutReusePreviousSelectionKey,
 			`${label} renderLayoutReusePreviousSelectionKey`
 		).toEqual(expect.any(String));
+		expect(
+			timeline.renderLayoutReuseFrameDerivationMs,
+			`${label} renderLayoutReuseFrameDerivationMs`
+		).toEqual(expect.any(Number));
 	} else {
 		expect(timeline.renderLayoutBuildTrace, `${label} renderLayoutBuildTrace`).not.toBeNull();
 		expect(timeline.renderLayoutBuildTrace).toEqual({
@@ -1299,6 +1419,21 @@ function expectValidRenderPublicationTimeline(
 		'routeProjectedAtMs',
 		label
 	);
+	const sceneLayoutKeyStartedAtMs = requireTimelineNumber(
+		timeline,
+		'sceneLayoutKeyStartedAtMs',
+		label
+	);
+	const sceneLayoutKeyCompletedAtMs = requireTimelineNumber(
+		timeline,
+		'sceneLayoutKeyCompletedAtMs',
+		label
+	);
+	const scenePublicationPlanReadyAtMs = requireTimelineNumber(
+		timeline,
+		'scenePublicationPlanReadyAtMs',
+		label
+	);
 	const sceneSurfaceReceivedAtMs = requireTimelineNumber(
 		timeline,
 		'sceneSurfaceReceivedAtMs',
@@ -1309,6 +1444,11 @@ function expectValidRenderPublicationTimeline(
 	const sceneSyncAttemptToken = requireTimelineNumber(
 		timeline,
 		'sceneSyncAttemptToken',
+		label
+	);
+	const controllerVisibleAcknowledgedAtMs = requireTimelineNumber(
+		timeline,
+		'controllerVisibleAcknowledgedAtMs',
 		label
 	);
 	expect(
@@ -1357,12 +1497,86 @@ function expectValidRenderPublicationTimeline(
 			sceneSyncAttemptStartedAtMs,
 			`${label} sceneSyncAttemptStartedAtMs should not precede sceneSurfaceReceivedAtMs`
 		).toBeGreaterThanOrEqual(sceneSurfaceReceivedAtMs);
+		expect(
+			sceneLayoutKeyStartedAtMs,
+			`${label} sceneLayoutKeyStartedAtMs should not precede sceneSyncAttemptStartedAtMs`
+		).toBeGreaterThanOrEqual(sceneSyncAttemptStartedAtMs);
+	}
+	expect(
+		sceneLayoutKeyCompletedAtMs,
+		`${label} sceneLayoutKeyCompletedAtMs should not precede sceneLayoutKeyStartedAtMs`
+	).toBeGreaterThanOrEqual(sceneLayoutKeyStartedAtMs);
+	expect(
+		scenePublicationPlanReadyAtMs,
+		`${label} scenePublicationPlanReadyAtMs should not precede sceneLayoutKeyCompletedAtMs`
+	).toBeGreaterThanOrEqual(sceneLayoutKeyCompletedAtMs);
+	expect(
+		controllerVisibleAcknowledgedAtMs,
+		`${label} controllerVisibleAcknowledgedAtMs should not precede controllerAcceptedAtMs`
+	).toBeGreaterThanOrEqual(controllerAcceptedAtMs);
+	expect(
+		controllerVisibleAcknowledgedAtMs,
+		`${label} controllerVisibleAcknowledgedAtMs should not precede selectedHourValuePublicationStartedAtMs`
+	).toBeGreaterThanOrEqual(selectedHourValuePublicationStartedAtMs);
+	const publicationEffectStartedAtMs = requireTimelineNumber(
+		timeline,
+		'publicationEffectStartedAtMs',
+		label
+	);
+	if (sceneSyncAttemptStartedAtMs != null) {
+		expect(
+			publicationEffectStartedAtMs,
+			`${label} publicationEffectStartedAtMs should not precede sceneSyncAttemptStartedAtMs`
+		).toBeGreaterThanOrEqual(sceneSyncAttemptStartedAtMs);
+		expect(
+			sceneLayoutKeyStartedAtMs,
+			`${label} sceneLayoutKeyStartedAtMs should not precede publicationEffectStartedAtMs`
+		).toBeGreaterThanOrEqual(publicationEffectStartedAtMs);
+	}
+	const sceneSurfacePendingStorageInitAtMs = requireTimelineNumber(
+		timeline,
+		'sceneSurfacePendingStorageInitAtMs',
+		label
+	);
+	expect(
+		sceneSurfacePendingStorageInitAtMs,
+		`${label} sceneSurfacePendingStorageInitAtMs should not precede scenePublicationPlanReadyAtMs`
+	).toBeGreaterThanOrEqual(scenePublicationPlanReadyAtMs);
+	const renderStorageWaitStartedAtMs = requireTimelineNumber(
+		timeline,
+		'renderStorageWaitStartedAtMs',
+		label
+	);
+	expect(
+		renderStorageWaitStartedAtMs,
+		`${label} renderStorageWaitStartedAtMs should not precede sceneSurfacePendingStorageInitAtMs`
+	).toBeGreaterThanOrEqual(sceneSurfacePendingStorageInitAtMs);
+	expect(
+		timeline.renderStoragePreWaitMs,
+		`${label} renderStoragePreWaitMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderStoragePreWaitMs ?? -1,
+		`${label} renderStoragePreWaitMs should be nonnegative`
+	).toBeGreaterThanOrEqual(0);
+	if (sceneSyncAttemptStartedAtMs != null) {
+		expect(
+			Math.abs(
+				(timeline.renderStoragePreWaitMs ?? 0) -
+					(renderStorageWaitStartedAtMs - sceneSyncAttemptStartedAtMs)
+			),
+			`${label} renderStoragePreWaitMs should match waitStarted - sceneSyncAttemptStarted`
+		).toBeLessThanOrEqual(1);
 	}
 	expectTimelineOrder(
 		timeline,
 		[
 			'sceneSurfaceReceivedAtMs',
-			'publicationEffectStartedAtMs',
+			'sceneLayoutKeyStartedAtMs',
+			'sceneLayoutKeyCompletedAtMs',
+			'scenePublicationPlanReadyAtMs',
+			'sceneSurfacePendingStorageInitAtMs',
+			'renderStorageWaitStartedAtMs',
 			'renderStorageReadyAtMs',
 			'sceneSyncCompletedAtMs'
 		],
@@ -1416,6 +1630,10 @@ function expectResetProofRenderStorageWaitTrace(
 	expect(trace.readAttemptCount).toBeGreaterThan(0);
 	expect(trace.frameWaitCount).toBeGreaterThanOrEqual(0);
 	expect(trace.deviceAvailableCount).toBeGreaterThan(0);
+	expect(
+		timeline.renderStorageWaitStartedAtMs,
+		`${label} renderStorageWaitStartedAtMs`
+	).toBe(waitStartedAtMs);
 	expect(trace.backendEntryAvailableCount).toBeGreaterThan(0);
 	expect(trace.bufferAvailableCount).toBeGreaterThan(0);
 	expect(
@@ -1709,6 +1927,21 @@ function expectRenderPublicationForAllSamples(collectedCase: CollectedCase) {
 						?.activeLayoutCandidateCount,
 					`${label} scrub active layout candidate count`
 				).toBe(1);
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseFrameCacheHit,
+					`${label} renderLayoutReuseFrameCacheHit`
+				).toBe(true);
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseFrameCacheKind,
+					`${label} renderLayoutReuseFrameCacheKind`
+				).toBe('structural');
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseFrameDerivationMs ?? 0,
+					`${label} renderLayoutReuseFrameDerivationMs should be zero on cache hit`
+				).toBe(0);
 			}
 		}
 	}

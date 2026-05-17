@@ -81,8 +81,13 @@ export type UtciLayoutReuseKey = {
 };
 export type UtciLayoutReuseKeyDiagnostics = {
 	keyBuildMs?: number;
+	layoutSourceSignatureMs?: number;
+	positionsSourceSignatureMs?: number;
+	positionsSourceSignatureCacheHit?: boolean;
+	frameCacheLookupMs?: number;
 	frameDerivationMs?: number;
 	frameCacheHit?: boolean;
+	frameCacheKind?: 'analysis-object' | 'structural' | 'miss';
 };
 export type UtciLayoutReusePublicationState = {
 	proof: UtciGridLayoutReuseProofDiagnostics;
@@ -121,16 +126,43 @@ export type UtciLayoutPublicationPlan =
 			keyMatch: boolean;
 	  };
 const positionsIdentityIds = new WeakMap<Float32Array, number>();
-const positionsSourceSignatureCache = new WeakMap<Float32Array, string>();
-const utciLayoutFrameCache = new WeakMap<
+let positionsSourceSignatureCache = new WeakMap<Float32Array, string>();
+let utciLayoutFrameCache = new WeakMap<
 	Analysis,
 	{
 		layoutSourceSignature: string;
 		frame: DerivedUtciLayoutFrame;
 	}
 >();
+const STRUCTURAL_FRAME_CACHE_LIMIT = 8;
+const structuralUtciLayoutFrameCache = new Map<
+	string,
+	{
+		frame: DerivedUtciLayoutFrame;
+		layoutSourceSignature: string;
+	}
+>();
 let nextPositionsIdentityId = 1;
 let positionsSourceSignatureComputationCount = 0;
+
+function rememberStructuralUtciLayoutFrame(
+	key: string,
+	entry: {
+		frame: DerivedUtciLayoutFrame;
+		layoutSourceSignature: string;
+	}
+): void {
+	if (
+		!structuralUtciLayoutFrameCache.has(key) &&
+		structuralUtciLayoutFrameCache.size >= STRUCTURAL_FRAME_CACHE_LIMIT
+	) {
+		const oldestKey = structuralUtciLayoutFrameCache.keys().next().value;
+		if (oldestKey !== undefined) {
+			structuralUtciLayoutFrameCache.delete(oldestKey);
+		}
+	}
+	structuralUtciLayoutFrameCache.set(key, entry);
+}
 
 function getPositionsIdentityId(positions: Float32Array): number {
 	const existing = positionsIdentityIds.get(positions);
@@ -921,9 +953,17 @@ function getAnalysisIdentity(analysis: Analysis): string {
 	);
 }
 
-function getPositionsSourceSignature(positions: Float32Array): string {
+function getPositionsSourceSignature(
+	positions: Float32Array,
+	diagnostics?: UtciLayoutReuseKeyDiagnostics
+): string {
+	const startedAt = diagnostics ? performance.now() : undefined;
 	const cached = positionsSourceSignatureCache.get(positions);
 	if (cached !== undefined) {
+		if (diagnostics && startedAt !== undefined) {
+			diagnostics.positionsSourceSignatureCacheHit = true;
+			diagnostics.positionsSourceSignatureMs = performance.now() - startedAt;
+		}
 		return cached;
 	}
 
@@ -931,14 +971,25 @@ function getPositionsSourceSignature(positions: Float32Array): string {
 	const hash = appendHashFloat32Array(2166136261, positions);
 	const signature = `pos:${hash.toString(16)}`;
 	positionsSourceSignatureCache.set(positions, signature);
+	if (diagnostics && startedAt !== undefined) {
+		diagnostics.positionsSourceSignatureCacheHit = false;
+		diagnostics.positionsSourceSignatureMs = performance.now() - startedAt;
+	}
 	return signature;
 }
 
-function getLayoutSourceSignature(analysis: Analysis): string {
+function getLayoutSourceSignature(
+	analysis: Analysis,
+	diagnostics?: UtciLayoutReuseKeyDiagnostics
+): string {
+	const startedAt = diagnostics ? performance.now() : undefined;
 	let hash = 2166136261;
 	hash = appendHashString(hash, (analysis as { __source?: string }).__source ?? 'loaded');
 	hash = appendHashString(hash, getAnalysisIdentity(analysis));
-	hash = appendHashString(hash, getPositionsSourceSignature(analysis.data.positions));
+	hash = appendHashString(
+		hash,
+		getPositionsSourceSignature(analysis.data.positions, diagnostics)
+	);
 	const bounds = analysis.metadata.bounds;
 	if (bounds) {
 		hash = appendHashNumber(hash, bounds.x_min);
@@ -947,7 +998,11 @@ function getLayoutSourceSignature(analysis: Analysis): string {
 		hash = appendHashNumber(hash, bounds.y_max);
 		hash = appendHashNumber(hash, bounds.z ?? 0);
 	}
-	return `v1:${hash.toString(16)}`;
+	const signature = `v1:${hash.toString(16)}`;
+	if (diagnostics && startedAt !== undefined) {
+		diagnostics.layoutSourceSignatureMs = performance.now() - startedAt;
+	}
+	return signature;
 }
 
 export function getUtciLayoutReuseSignatureDiagnosticsForTest(): {
@@ -958,6 +1013,61 @@ export function getUtciLayoutReuseSignatureDiagnosticsForTest(): {
 	};
 }
 
+export function resetUtciLayoutFrameCachesForTest(): void {
+	utciLayoutFrameCache = new WeakMap();
+	structuralUtciLayoutFrameCache.clear();
+	positionsSourceSignatureCache = new WeakMap();
+}
+
+export function getUtciLayoutFrameCacheDiagnosticsForTest(): {
+	structuralFrameCacheSize: number;
+	structuralFrameCacheLimit: number;
+} {
+	return {
+		structuralFrameCacheSize: structuralUtciLayoutFrameCache.size,
+		structuralFrameCacheLimit: STRUCTURAL_FRAME_CACHE_LIMIT
+	};
+}
+
+export function deriveUtciLayoutFrameForTest(analysis: Analysis): DerivedUtciLayoutFrame {
+	return deriveUtciLayoutFrame(analysis);
+}
+
+function getStructuralFrameCachePreKey(params: {
+	analysis: Analysis;
+	layoutSourceSignature: string;
+	gridSize: number;
+	pointCount: number;
+	coordinateSystem: string;
+	normalizationSignature: SelectedHourRenderLayoutNormalizationSignature;
+}): string {
+	return [
+		params.layoutSourceSignature,
+		params.gridSize,
+		params.pointCount,
+		params.coordinateSystem,
+		serializeNormalizationSignature(params.normalizationSignature)
+	].join('|');
+}
+
+function isDerivedUtciLayoutFrameCompatibleWithBaseParams(
+	frame: DerivedUtciLayoutFrame,
+	params: {
+		gridSize: number;
+		coordinateSystem: string;
+		pointCount: number;
+		normalizationSignature: SelectedHourRenderLayoutNormalizationSignature;
+	}
+): boolean {
+	return (
+		frame.gridSize === params.gridSize &&
+		frame.coordinateSystem === params.coordinateSystem &&
+		frame.pointCount === params.pointCount &&
+		serializeNormalizationSignature(frame.normalizationSignature) ===
+			serializeNormalizationSignature(params.normalizationSignature)
+	);
+}
+
 function deriveCachedUtciLayoutFrame(
 	analysis: Analysis,
 	diagnostics?: UtciLayoutReuseKeyDiagnostics
@@ -966,29 +1076,77 @@ function deriveCachedUtciLayoutFrame(
 	layoutSourceSignature: string;
 } {
 	const keyBuildStartedAt = performance.now();
-	const layoutSourceSignature = getLayoutSourceSignature(analysis);
-	const cached = utciLayoutFrameCache.get(analysis);
-	if (cached && cached.layoutSourceSignature === layoutSourceSignature) {
+	const layoutSourceSignature = getLayoutSourceSignature(analysis, diagnostics);
+	const lookupStartedAt = performance.now();
+	const objectCached = utciLayoutFrameCache.get(analysis);
+	if (objectCached && objectCached.layoutSourceSignature === layoutSourceSignature) {
 		if (diagnostics) {
 			diagnostics.frameCacheHit = true;
+			diagnostics.frameCacheKind = 'analysis-object';
+			diagnostics.frameCacheLookupMs = performance.now() - lookupStartedAt;
 			diagnostics.frameDerivationMs = 0;
 			diagnostics.keyBuildMs = performance.now() - keyBuildStartedAt;
 		}
 		return {
-			frame: cached.frame,
+			frame: objectCached.frame,
 			layoutSourceSignature
 		};
+	}
+
+	const { gridSize, coordinateSystem, numPositions, normalizationOffset } =
+		resolveUtciLayoutBaseParams(analysis);
+	const normalizationSignature = createNormalizationSignature({
+		enabled: isNormalizationEnabled(),
+		offset: normalizationOffset
+	});
+	const structuralPreKey = getStructuralFrameCachePreKey({
+		analysis,
+		layoutSourceSignature,
+		gridSize,
+		pointCount: numPositions,
+		coordinateSystem,
+		normalizationSignature
+	});
+
+	const structuralCached = structuralUtciLayoutFrameCache.get(structuralPreKey);
+	if (structuralCached && structuralCached.layoutSourceSignature === layoutSourceSignature) {
+		if (
+			isDerivedUtciLayoutFrameCompatibleWithBaseParams(structuralCached.frame, {
+				gridSize,
+				coordinateSystem,
+				pointCount: numPositions,
+				normalizationSignature
+			})
+		) {
+			utciLayoutFrameCache.set(analysis, structuralCached);
+			if (diagnostics) {
+				diagnostics.frameCacheHit = true;
+				diagnostics.frameCacheKind = 'structural';
+				diagnostics.frameCacheLookupMs = performance.now() - lookupStartedAt;
+				diagnostics.frameDerivationMs = 0;
+				diagnostics.keyBuildMs = performance.now() - keyBuildStartedAt;
+			}
+			return {
+				frame: structuralCached.frame,
+				layoutSourceSignature
+			};
+		}
+		structuralUtciLayoutFrameCache.delete(structuralPreKey);
 	}
 
 	const frameStartedAt = performance.now();
 	const frame = deriveUtciLayoutFrame(analysis);
 	const frameDerivationMs = performance.now() - frameStartedAt;
-	utciLayoutFrameCache.set(analysis, {
+	const entry = {
 		layoutSourceSignature,
 		frame
-	});
+	};
+	utciLayoutFrameCache.set(analysis, entry);
+	rememberStructuralUtciLayoutFrame(structuralPreKey, entry);
 	if (diagnostics) {
 		diagnostics.frameCacheHit = false;
+		diagnostics.frameCacheKind = 'miss';
+		diagnostics.frameCacheLookupMs = performance.now() - lookupStartedAt;
 		diagnostics.frameDerivationMs = frameDerivationMs;
 		diagnostics.keyBuildMs = performance.now() - keyBuildStartedAt;
 	}

@@ -356,6 +356,7 @@
 		sceneSyncAttemptToken: number;
 		sceneSurfaceReceivedAtMs: number;
 		publicationEffectStartedAtMs: number;
+		sceneSurfacePendingStorageInitAtMs: number | undefined;
 		renderTimings: SelectedHourRenderTimingSubsteps;
 		meshAction: 'created' | 'reused';
 		layout: ReturnType<typeof extractUtciLayout>;
@@ -371,6 +372,7 @@
 			sceneSyncAttemptToken,
 			sceneSurfaceReceivedAtMs,
 			publicationEffectStartedAtMs,
+			sceneSurfacePendingStorageInitAtMs,
 			renderTimings,
 			meshAction,
 			layout,
@@ -440,6 +442,12 @@
 		});
 		lastRenderTargetByteLength.value = targetBuffer.size;
 		const renderStorageReadyAtMs = performance.now();
+		const renderStorageWaitStartedAtMs =
+			waitTrace?.waitStartedAtMs ?? renderStorageReadyAtMs;
+		const renderStoragePreWaitMs =
+			typeof renderStorageWaitStartedAtMs === 'number'
+				? Math.max(0, renderStorageWaitStartedAtMs - sceneSyncAttemptStartedAtMs)
+				: undefined;
 		renderTimings.renderStorageInitWaitMs = waitMs;
 		if (isSuperseded()) {
 			return acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
@@ -491,6 +499,15 @@
 					sceneSyncAttemptToken,
 					sceneSurfaceReceivedAtMs,
 					publicationEffectStartedAtMs,
+					sceneLayoutKeyStartedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.sceneLayoutKeyStartedAtMs,
+					sceneLayoutKeyCompletedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.sceneLayoutKeyCompletedAtMs,
+					scenePublicationPlanReadyAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.scenePublicationPlanReadyAtMs,
 					renderLayoutBuildTrace:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutBuildTrace,
@@ -509,12 +526,27 @@
 					renderLayoutReuseKeyMs:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseKeyMs,
+					renderLayoutReuseSourceSignatureMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseSourceSignatureMs,
+					renderLayoutReusePositionsSignatureMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReusePositionsSignatureMs,
+					renderLayoutReusePositionsSignatureCacheHit:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReusePositionsSignatureCacheHit,
+					renderLayoutReuseFrameCacheLookupMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseFrameCacheLookupMs,
 					renderLayoutReuseFrameDerivationMs:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseFrameDerivationMs,
 					renderLayoutReuseFrameCacheHit:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseFrameCacheHit,
+					renderLayoutReuseFrameCacheKind:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseFrameCacheKind,
 					renderLayoutReuseKeyMatch:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseKeyMatch,
@@ -536,6 +568,9 @@
 					renderSurfaceMeshTrace:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderSurfaceMeshTrace,
+					sceneSurfacePendingStorageInitAtMs,
+					renderStorageWaitStartedAtMs,
+					renderStoragePreWaitMs,
 				renderStorageReadyAtMs,
 				renderStorageWaitTrace: waitTrace,
 				sceneSyncCompletedAtMs,
@@ -591,6 +626,7 @@
 			const previousProof = activeUtciLayoutReuseState?.proof ?? null;
 			const previousKey = activeUtciLayoutReuseState?.key ?? null;
 			const layoutReuseKeyDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+			const sceneLayoutKeyStartedAtMs = performance.now();
 			const layoutReuseDecisionStartedAt = performance.now();
 			const currentKey = createUtciLayoutReuseKeyForAnalysis({
 				analysis: activeAnalysis,
@@ -598,6 +634,7 @@
 				rendererBackend: 'webgpu',
 				diagnostics: layoutReuseKeyDiagnostics
 			});
+			const sceneLayoutKeyCompletedAtMs = performance.now();
 			const publicationPhase =
 				selectedHourRenderContext?.publicationPhase ??
 				(previousReuseState != null ? 'scrub' : 'initial');
@@ -648,11 +685,12 @@
 								previousLayout != null
 									? (runtimeLayoutCompatibility.compatible ?? null)
 									: null,
-							canonicalPointCompatibility:
+						canonicalPointCompatibility:
 								previousLayout != null
 									? runtimeLayoutCompatibility.pointCompatibility
 									: null
 						});
+			const scenePublicationPlanReadyAtMs = performance.now();
 			let meshAction: 'created' | 'reused' = 'reused';
 			let renderSurfaceMeshTrace: SelectedHourRenderSurfaceMeshTrace | undefined;
 			const lastRenderTargetByteLength: { value: number | undefined } = {
@@ -757,11 +795,12 @@
 
 			const pendingStorageStartedAt = performance.now();
 			setComputeBufferSurfacePendingStorageInit(utciSurface);
+			const sceneSurfacePendingStorageInitAtMs = performance.now();
 			if (renderSurfaceMeshTrace) {
 				addSurfaceTraceTiming(
 					renderSurfaceMeshTrace,
 					'setPostSurfacePendingStorageInitMs',
-					performance.now() - pendingStorageStartedAt
+					sceneSurfacePendingStorageInitAtMs - pendingStorageStartedAt
 				);
 				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
 				renderSurfaceMeshTrace.totalMs = renderTimings.renderSurfaceMeshMs;
@@ -770,6 +809,9 @@
 					renderPublicationPhase: publicationPhase,
 					renderPublicationMeshAction: meshAction,
 					renderPublicationTimeline: {
+						sceneLayoutKeyStartedAtMs,
+						sceneLayoutKeyCompletedAtMs,
+						scenePublicationPlanReadyAtMs,
 						renderLayoutBuildTrace: layoutBuildTrace,
 						renderLayoutReuseProofTrace: layoutReuseProofTrace,
 						renderLayoutReuseAction:
@@ -780,10 +822,20 @@
 						renderLayoutReuseDecisionMs,
 						renderLayoutReuseKeyMs:
 							layoutReuseKeyDiagnostics.keyBuildMs,
+						renderLayoutReuseSourceSignatureMs:
+							layoutReuseKeyDiagnostics.layoutSourceSignatureMs,
+						renderLayoutReusePositionsSignatureMs:
+							layoutReuseKeyDiagnostics.positionsSourceSignatureMs,
+						renderLayoutReusePositionsSignatureCacheHit:
+							layoutReuseKeyDiagnostics.positionsSourceSignatureCacheHit,
+						renderLayoutReuseFrameCacheLookupMs:
+							layoutReuseKeyDiagnostics.frameCacheLookupMs,
 						renderLayoutReuseFrameDerivationMs:
 							layoutReuseKeyDiagnostics.frameDerivationMs,
 						renderLayoutReuseFrameCacheHit:
 							layoutReuseKeyDiagnostics.frameCacheHit,
+						renderLayoutReuseFrameCacheKind:
+							layoutReuseKeyDiagnostics.frameCacheKind,
 						renderLayoutReuseKeyMatch: layoutPublicationPlan.keyMatch,
 						renderLayoutReuseProofSource:
 							layoutPublicationPlan.action === 'reuse-existing'
@@ -801,7 +853,8 @@
 								? previousReuseState?.selectionKey ?? null
 								: null,
 						activeLayoutCandidateCount: pendingReuseState ? 1 : 0,
-						renderSurfaceMeshTrace
+						renderSurfaceMeshTrace,
+						sceneSurfacePendingStorageInitAtMs
 					}
 				});
 			}
@@ -815,6 +868,7 @@
 				sceneSyncAttemptToken,
 				sceneSurfaceReceivedAtMs,
 				publicationEffectStartedAtMs,
+				sceneSurfacePendingStorageInitAtMs,
 				renderTimings,
 				meshAction,
 				layout,

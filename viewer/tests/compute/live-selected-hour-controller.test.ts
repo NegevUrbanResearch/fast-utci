@@ -1676,6 +1676,131 @@ describe('liveSelectedHourController', () => {
 		]);
 	});
 
+	it('stamps selected-hour publication start and visible acknowledgment into render publication timeline', async () => {
+		const gpu = createGpuResidentOutput(62, 14);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 62,
+					timeIndex: 14,
+					analysis: createSelectionAnalysis('gpu-publication-window-split', [15, 17]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 6200
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(62));
+
+		expect(
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline
+		).toMatchObject({
+			selectedHourValuePublicationStartedAtMs: 6200,
+			controllerAcceptedAtMs: expect.any(Number)
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					sceneSurfaceReceivedAtMs: 6210,
+					sceneSyncCompletedAtMs: 6220
+				}
+			})
+		});
+
+		const timeline =
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline;
+		expect(timeline?.selectedHourValuePublicationStartedAtMs).toBe(6200);
+		expect(timeline?.controllerVisibleAcknowledgedAtMs).toEqual(expect.any(Number));
+		expect(
+			timeline?.controllerVisibleAcknowledgedAtMs ?? 0
+		).toBeGreaterThanOrEqual(timeline?.controllerAcceptedAtMs ?? 0);
+	});
+
+	it('does not advance controllerVisibleAcknowledgedAtMs on later CPU fallback visibility without a renderPublication payload', async () => {
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
+			.mockReturnValueOnce(103)
+			.mockReturnValueOnce(107)
+			.mockReturnValueOnce(150)
+			.mockReturnValueOnce(220);
+		const gpu = createGpuResidentOutput(63, 15);
+		const fallbackAnalysis = createSelectionAnalysis('gpu-then-cpu-visible-ack-fallback', [
+			15,
+			17
+		]);
+		const loadCpuFallback = vi.fn(async () => ({
+			analysis: fallbackAnalysis,
+			cpuFallbackValues: new Float32Array([15, 17])
+		}));
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 63,
+					timeIndex: 15,
+					analysis: null,
+					gpuResidentOutput: gpu.accepted,
+					loadCpuFallback,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 6300
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(63));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'failed', 'copy failed'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					sceneSurfaceReceivedAtMs: 6310,
+					sceneSyncCompletedAtMs: 6320
+				}
+			})
+		});
+
+		expect(loadCpuFallback).toHaveBeenCalledTimes(1);
+		expect(controller.getState().renderTransport).toBe('cpu-uploaded-selected-hour');
+		const beforeCpuVisible =
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline?.controllerVisibleAcknowledgedAtMs;
+		expect(beforeCpuVisible).toBeUndefined();
+
+		await controller.handleRenderSurfaceDiagnostics(
+			createCurrentCpuSurfaceDiagnostics(controller, {
+				selectedHourTransferCount: 1
+			})
+		);
+
+		expect(controller.getState().acceptedVisibleSurface).toMatchObject({
+			requestId: getCurrentSurfaceRequestId(controller),
+			selectionKey: '1:0:15:15',
+			visibleAtMs: expect.any(Number)
+		});
+		expect(controller.getState().visibleSelectedHourReadbackCount).toBe(1);
+		const timeline =
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline;
+		expect(timeline?.controllerVisibleAcknowledgedAtMs).toBeUndefined();
+		nowSpy.mockRestore();
+	});
+
 	it('does not treat changed layout-reuse timeline diagnostics as an idempotent diagnostics update', async () => {
 		const gpu = createGpuResidentOutput(40, 40);
 		const sessionMock = createSessionMock([
@@ -1745,8 +1870,13 @@ describe('liveSelectedHourController', () => {
 					renderLayoutReuseReason: 'layout-key-mismatch',
 					renderLayoutReuseDecisionMs: 0.5,
 					renderLayoutReuseKeyMs: 0.75,
+					renderLayoutReuseSourceSignatureMs: 0.2,
+					renderLayoutReusePositionsSignatureMs: 0.15,
+					renderLayoutReusePositionsSignatureCacheHit: false,
+					renderLayoutReuseFrameCacheLookupMs: 0.1,
 					renderLayoutReuseFrameDerivationMs: 0.25,
 					renderLayoutReuseFrameCacheHit: false,
+					renderLayoutReuseFrameCacheKind: 'structural',
 					renderLayoutReuseKeyMatch: false,
 					renderLayoutReuseProofSource: 'fresh-build-proof',
 					renderLayoutReusePreviousKey: 'analysis|old-key',
@@ -1811,8 +1941,13 @@ describe('liveSelectedHourController', () => {
 					renderLayoutReuseReason: 'layout-key-mismatch',
 					renderLayoutReuseDecisionMs: 0.5,
 					renderLayoutReuseKeyMs: 1.25,
+					renderLayoutReuseSourceSignatureMs: 0.21,
+					renderLayoutReusePositionsSignatureMs: 0.05,
+					renderLayoutReusePositionsSignatureCacheHit: true,
+					renderLayoutReuseFrameCacheLookupMs: 0.08,
 					renderLayoutReuseFrameDerivationMs: 0,
 					renderLayoutReuseFrameCacheHit: true,
+					renderLayoutReuseFrameCacheKind: 'structural',
 					renderLayoutReuseKeyMatch: false,
 					renderLayoutReuseProofSource: 'previous-publication-proof',
 					renderLayoutReusePreviousKey: 'analysis|new-key',
@@ -1830,8 +1965,13 @@ describe('liveSelectedHourController', () => {
 		).toMatchObject({
 			renderLayoutReuseDecisionMs: 0.5,
 			renderLayoutReuseKeyMs: 1.25,
+			renderLayoutReuseSourceSignatureMs: 0.21,
+			renderLayoutReusePositionsSignatureMs: 0.05,
+			renderLayoutReusePositionsSignatureCacheHit: true,
+			renderLayoutReuseFrameCacheLookupMs: 0.08,
 			renderLayoutReuseFrameDerivationMs: 0,
 			renderLayoutReuseFrameCacheHit: true,
+			renderLayoutReuseFrameCacheKind: 'structural',
 			renderLayoutReuseProofSource: 'previous-publication-proof',
 			renderLayoutReusePreviousKey: 'analysis|new-key',
 			renderLayoutReusePreviousRequestId: 40,
@@ -1849,6 +1989,10 @@ describe('liveSelectedHourController', () => {
 			controller.getState().runtimeDiagnostics?.timings.renderPublication?.renderPublicationTimeline
 		).toMatchObject({
 			renderLayoutReuseKeyMs: 1.25,
+			renderLayoutReuseSourceSignatureMs: 0.21,
+			renderLayoutReusePositionsSignatureMs: 0.05,
+			renderLayoutReusePositionsSignatureCacheHit: true,
+			renderLayoutReuseFrameCacheLookupMs: 0.08,
 			renderLayoutReuseFrameDerivationMs: 0,
 			renderLayoutReuseFrameCacheHit: true,
 			renderLayoutReuseProofSource: 'previous-publication-proof',

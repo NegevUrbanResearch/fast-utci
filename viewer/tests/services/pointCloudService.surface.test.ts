@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	buildUtciGridLayoutReuseProofDiagnostics,
 	buildUtciGridLayout,
@@ -8,11 +8,15 @@ import {
 	createUtciLayoutReuseKey,
 	createColors,
 	createUtciSurfaceMesh,
+	deriveUtciLayoutFrameForTest,
+	getUtciLayoutFrameCacheDiagnosticsForTest,
 	getUtciLayoutReuseSignatureDiagnosticsForTest,
 	isUtciLayoutReuseProofSafe,
 	planUtciLayoutPublication,
 	planUtciLayoutReuseCandidate,
+	resetUtciLayoutFrameCachesForTest,
 	resolveUtciLayoutReusePublicationStateAfterSync,
+	type UtciLayoutReuseKeyDiagnostics,
 	type UtciSurfaceMeshOptions,
 	updateUtciSurfaceMesh
 } from '$lib/services/pointCloudService';
@@ -25,7 +29,8 @@ import {
 	isComputeBufferUtciSurfaceLayoutCompatible,
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
-import type { Analysis } from '$lib/types/analysis';
+import type { SelectedHourRenderLayoutNormalizationSignature } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import type { Analysis, SingleHourData } from '$lib/types/analysis';
 
 function createAnalysis(params?: {
 	positions?: number[];
@@ -86,6 +91,35 @@ function createPublicationReuseKey(analysis: Analysis) {
 	});
 }
 
+function cloneAnalysisWithSelectedHourValues(
+	analysis: Analysis,
+	values: number[]
+): Analysis {
+	return {
+		...analysis,
+		data: {
+			...analysis.data,
+			positions: analysis.data.positions,
+			utciValues: new Float32Array(values)
+		} as SingleHourData,
+		metadata: {
+			...analysis.metadata
+		}
+	};
+}
+
+function serializeExpectedNormalizationSignature(
+	signature: SelectedHourRenderLayoutNormalizationSignature
+): string {
+	return [
+		signature.enabled ? '1' : '0',
+		signature.provenance,
+		signature.offset.x,
+		signature.offset.y,
+		signature.offset.z
+	].join('|');
+}
+
 function getGpuNativeColorArray(mesh: THREE.Mesh): Float32Array {
 	return (
 		mesh.userData.gpuNativeUtciSurfaceState.colorStorageAttribute.array as Float32Array
@@ -97,6 +131,10 @@ function toLinearColor(r: number, g: number, b: number): THREE.Color {
 }
 
 describe('pointCloudService UTCI surface seam', () => {
+	beforeEach(() => {
+		resetUtciLayoutFrameCachesForTest();
+	});
+
 	it('paints the same logical cells across DataTexture and gpuNative backends', () => {
 		const analysis = createAnalysis();
 		const colors = createColors(analysis, 0, 'normalized', 'utci');
@@ -736,16 +774,8 @@ describe('pointCloudService UTCI surface seam', () => {
 		const analysis = createAnalysis({
 			sourceAnalysisId: 'Ben-Gurion/base'
 		});
-		const firstDiagnostics: {
-			keyBuildMs?: number;
-			frameDerivationMs?: number;
-			frameCacheHit?: boolean;
-		} = {};
-		const secondDiagnostics: {
-			keyBuildMs?: number;
-			frameDerivationMs?: number;
-			frameCacheHit?: boolean;
-		} = {};
+		const firstDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+		const secondDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
 
 		const firstKey = createUtciLayoutReuseKeyForAnalysis({
 			analysis,
@@ -762,11 +792,161 @@ describe('pointCloudService UTCI surface seam', () => {
 
 		expect(secondKey).toEqual(firstKey);
 		expect(firstDiagnostics.keyBuildMs).toEqual(expect.any(Number));
+		expect(firstDiagnostics.layoutSourceSignatureMs).toEqual(expect.any(Number));
+		expect(firstDiagnostics.positionsSourceSignatureMs).toEqual(expect.any(Number));
+		expect(firstDiagnostics.positionsSourceSignatureCacheHit).toBe(false);
+		expect(firstDiagnostics.frameCacheLookupMs).toEqual(expect.any(Number));
 		expect(firstDiagnostics.frameDerivationMs).toEqual(expect.any(Number));
 		expect(firstDiagnostics.frameCacheHit).toBe(false);
 		expect(secondDiagnostics.keyBuildMs).toEqual(expect.any(Number));
+		expect(secondDiagnostics.layoutSourceSignatureMs).toEqual(expect.any(Number));
+		expect(secondDiagnostics.positionsSourceSignatureMs).toEqual(expect.any(Number));
+		expect(secondDiagnostics.positionsSourceSignatureCacheHit).toBe(true);
+		expect(secondDiagnostics.frameCacheLookupMs).toEqual(expect.any(Number));
 		expect(secondDiagnostics.frameDerivationMs).toBe(0);
 		expect(secondDiagnostics.frameCacheHit).toBe(true);
+	});
+
+	it('reuses derived layout frames across structurally equivalent selected-hour analyses', () => {
+		const base = createAnalysis({
+			gridSize: 0.5,
+			bounds: { x_min: 0, x_max: 0.5, y_min: 0, y_max: 0.5, z: 0 },
+			positionsArray: new Float32Array([0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0.5, 0, 0.5])
+		});
+		const first = cloneAnalysisWithSelectedHourValues(base, [20, 21, 22, 23]);
+		const second = cloneAnalysisWithSelectedHourValues(base, [24, 25, 26, 27]);
+		const firstDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+		const secondDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+
+		const firstKey = createUtciLayoutReuseKeyForAnalysis({
+			analysis: first,
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu',
+			diagnostics: firstDiagnostics
+		});
+		const secondKey = createUtciLayoutReuseKeyForAnalysis({
+			analysis: second,
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu',
+			diagnostics: secondDiagnostics
+		});
+
+		expect(firstKey).toEqual(secondKey);
+		expect(firstDiagnostics.frameCacheHit).toBe(false);
+		expect(secondDiagnostics.frameCacheHit).toBe(true);
+		expect(secondDiagnostics.frameDerivationMs ?? 0).toBe(0);
+		const freshFrame = deriveUtciLayoutFrameForTest(second);
+		expect(secondKey).toMatchObject({
+			gridSize: freshFrame.gridSize,
+			pointCount: freshFrame.pointCount,
+			coordinateSystem: freshFrame.coordinateSystem,
+			normalizationSignature: serializeExpectedNormalizationSignature(
+				freshFrame.normalizationSignature
+			),
+			constructionMode: freshFrame.constructionMode,
+			width: freshFrame.width,
+			height: freshFrame.height,
+			centerX: freshFrame.centerX,
+			centerZ: freshFrame.centerZ,
+			baseY: freshFrame.baseY
+		});
+	});
+
+	it.each([
+		[
+			'grid size',
+			(analysis: Analysis): Analysis => ({
+				...analysis,
+				metadata: { ...analysis.metadata, grid_size: 1 }
+			})
+		],
+		[
+			'coordinate system',
+			(analysis: Analysis): Analysis => ({
+				...analysis,
+				metadata: { ...analysis.metadata, coordinate_system: 'xy_ground' }
+			})
+		],
+		[
+			'bounds placement',
+			(analysis: Analysis): Analysis => ({
+				...analysis,
+				metadata: {
+					...analysis.metadata,
+					bounds: {
+						...analysis.metadata.bounds!,
+						x_min: analysis.metadata.bounds!.x_min + 1,
+						x_max: analysis.metadata.bounds!.x_max + 1
+					}
+				}
+			})
+		]
+	])('does not reuse structural frame cache when %s differs', (_label, mutate) => {
+		const base = createAnalysis({
+			sourceAnalysisId: `structural-mismatch/${_label}`,
+			gridSize: 0.5,
+			bounds: { x_min: 0, x_max: 0.5, y_min: 0, y_max: 0.5, z: 0 },
+			positionsArray: new Float32Array([0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0.5, 0, 0.5])
+		});
+		const seededMissDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+		const seededHitDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+		const mismatchDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+
+		createUtciLayoutReuseKeyForAnalysis({
+			analysis: cloneAnalysisWithSelectedHourValues(base, [20, 21, 22, 23]),
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu',
+			diagnostics: seededMissDiagnostics
+		});
+
+		createUtciLayoutReuseKeyForAnalysis({
+			analysis: cloneAnalysisWithSelectedHourValues(base, [24, 25, 26, 27]),
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu',
+			diagnostics: seededHitDiagnostics
+		});
+		createUtciLayoutReuseKeyForAnalysis({
+			analysis: mutate(cloneAnalysisWithSelectedHourValues(base, [28, 29, 30, 31])),
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu',
+			diagnostics: mismatchDiagnostics
+		});
+
+		expect(seededMissDiagnostics.frameCacheHit).toBe(false);
+		expect(seededHitDiagnostics.frameCacheHit).toBe(true);
+		expect(mismatchDiagnostics.frameCacheHit).toBe(false);
+	});
+
+	it('keeps the structural frame cache bounded', () => {
+		for (let index = 0; index < 12; index += 1) {
+			createUtciLayoutReuseKeyForAnalysis({
+				analysis: createAnalysis({
+					sourceAnalysisId: `structural-cache/${index}`,
+					bounds: { x_min: index, x_max: index + 1, y_min: 0, y_max: 1, z: 0 },
+					positionsArray: new Float32Array([
+						index,
+						0,
+						0,
+						index + 1,
+						0,
+						0,
+						index,
+						0,
+						1,
+						index + 1,
+						0,
+						1
+					])
+				}),
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				rendererBackend: 'webgpu'
+			});
+		}
+
+		const diagnostics = getUtciLayoutFrameCacheDiagnosticsForTest();
+		expect(diagnostics.structuralFrameCacheSize).toBeLessThanOrEqual(
+			diagnostics.structuralFrameCacheLimit
+		);
 	});
 
 	it('returns reuse-existing for safe scrub publications with the same stable layout key', () => {

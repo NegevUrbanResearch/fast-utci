@@ -150,6 +150,15 @@ describe('utciSurfaceSync', () => {
 				sceneSyncAttemptStartedAtMs: 102.5,
 				sceneSyncAttemptToken: 8,
 				sceneSurfaceReceivedAtMs: 103,
+				sceneLayoutKeyStartedAtMs: 102.75,
+				sceneLayoutKeyCompletedAtMs: 103.25,
+				scenePublicationPlanReadyAtMs: 104,
+				renderLayoutReuseSourceSignatureMs: 0.2,
+				renderLayoutReusePositionsSignatureMs: 0.1,
+				renderLayoutReusePositionsSignatureCacheHit: true,
+				renderLayoutReuseFrameCacheLookupMs: 0.05,
+				renderStorageWaitStartedAtMs: 105,
+				renderStoragePreWaitMs: 2.5,
 				sceneSyncCompletedAtMs: 107,
 				sceneSyncActiveWindowResetHistory: [
 					{
@@ -190,6 +199,15 @@ describe('utciSurfaceSync', () => {
 				sceneSyncAttemptStartedAtMs: 102.5,
 				sceneSyncAttemptToken: 8,
 				sceneSurfaceReceivedAtMs: 103,
+				sceneLayoutKeyStartedAtMs: 102.75,
+				sceneLayoutKeyCompletedAtMs: 103.25,
+				scenePublicationPlanReadyAtMs: 104,
+				renderLayoutReuseSourceSignatureMs: 0.2,
+				renderLayoutReusePositionsSignatureMs: 0.1,
+				renderLayoutReusePositionsSignatureCacheHit: true,
+				renderLayoutReuseFrameCacheLookupMs: 0.05,
+				renderStorageWaitStartedAtMs: 105,
+				renderStoragePreWaitMs: 2.5,
 				sceneSyncCompletedAtMs: 107,
 				sceneSyncActiveWindowResetHistory: [
 					{

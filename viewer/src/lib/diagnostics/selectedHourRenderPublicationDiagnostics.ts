@@ -107,6 +107,7 @@ export type SelectedHourRenderPublicationSceneSyncResetEvent = {
 
 export type SelectedHourRenderPublicationTimeline = {
 	computeCompletedAtMs?: number;
+	selectedHourValuePublicationStartedAtMs?: number;
 	controllerAcceptedAtMs?: number;
 	routePendingSurfaceExposedAtMs?: number;
 	routePublishedAtMs?: number;
@@ -115,15 +116,24 @@ export type SelectedHourRenderPublicationTimeline = {
 	sceneSyncAttemptStartedAtMs?: number;
 	sceneSyncAttemptToken?: number;
 	sceneSurfaceReceivedAtMs?: number;
+	controllerVisibleAcknowledgedAtMs?: number;
 	publicationEffectStartedAtMs?: number;
+	sceneLayoutKeyStartedAtMs?: number;
+	sceneLayoutKeyCompletedAtMs?: number;
+	scenePublicationPlanReadyAtMs?: number;
 	renderLayoutBuildTrace?: SelectedHourRenderLayoutBuildTrace | null;
 	renderLayoutReuseProofTrace?: SelectedHourRenderLayoutReuseProofTrace;
 	renderLayoutReuseAction?: SelectedHourRenderLayoutReuseAction;
 	renderLayoutReuseReason?: string;
 	renderLayoutReuseDecisionMs?: number;
 	renderLayoutReuseKeyMs?: number;
+	renderLayoutReuseSourceSignatureMs?: number;
+	renderLayoutReusePositionsSignatureMs?: number;
+	renderLayoutReusePositionsSignatureCacheHit?: boolean;
+	renderLayoutReuseFrameCacheLookupMs?: number;
 	renderLayoutReuseFrameDerivationMs?: number;
 	renderLayoutReuseFrameCacheHit?: boolean;
+	renderLayoutReuseFrameCacheKind?: 'analysis-object' | 'structural' | 'miss';
 	renderLayoutReuseKeyMatch?: boolean;
 	renderLayoutReuseProofSource?: SelectedHourRenderLayoutReuseProofSource;
 	renderLayoutReusePreviousKey?: string | null;
@@ -131,6 +141,9 @@ export type SelectedHourRenderPublicationTimeline = {
 	renderLayoutReusePreviousSelectionKey?: string | null;
 	activeLayoutCandidateCount?: number;
 	renderSurfaceMeshTrace?: SelectedHourRenderSurfaceMeshTrace;
+	sceneSurfacePendingStorageInitAtMs?: number;
+	renderStorageWaitStartedAtMs?: number;
+	renderStoragePreWaitMs?: number;
 	renderStorageReadyAtMs?: number;
 	renderStorageWaitTrace?: RenderStorageWaitDiagnostics;
 	sceneSyncCompletedAtMs?: number;
@@ -190,10 +203,20 @@ export function copyRenderPublicationTimeline(
 				renderLayoutReuseReason: timeline.renderLayoutReuseReason,
 				renderLayoutReuseDecisionMs: timeline.renderLayoutReuseDecisionMs,
 				renderLayoutReuseKeyMs: timeline.renderLayoutReuseKeyMs,
+				renderLayoutReuseSourceSignatureMs:
+					timeline.renderLayoutReuseSourceSignatureMs,
+				renderLayoutReusePositionsSignatureMs:
+					timeline.renderLayoutReusePositionsSignatureMs,
+				renderLayoutReusePositionsSignatureCacheHit:
+					timeline.renderLayoutReusePositionsSignatureCacheHit,
+				renderLayoutReuseFrameCacheLookupMs:
+					timeline.renderLayoutReuseFrameCacheLookupMs,
 				renderLayoutReuseFrameDerivationMs:
 					timeline.renderLayoutReuseFrameDerivationMs,
 				renderLayoutReuseFrameCacheHit:
 					timeline.renderLayoutReuseFrameCacheHit,
+				renderLayoutReuseFrameCacheKind:
+					timeline.renderLayoutReuseFrameCacheKind,
 				renderLayoutReuseKeyMatch: timeline.renderLayoutReuseKeyMatch,
 				renderLayoutReuseProofSource: timeline.renderLayoutReuseProofSource,
 				renderLayoutReusePreviousKey: timeline.renderLayoutReusePreviousKey,
@@ -212,6 +235,10 @@ export function copyRenderPublicationTimeline(
 								: timeline.renderSurfaceMeshTrace.recreateDecision
 						}
 					: timeline.renderSurfaceMeshTrace,
+				sceneSurfacePendingStorageInitAtMs:
+					timeline.sceneSurfacePendingStorageInitAtMs,
+				renderStorageWaitStartedAtMs: timeline.renderStorageWaitStartedAtMs,
+				renderStoragePreWaitMs: timeline.renderStoragePreWaitMs,
 				renderStorageWaitTrace: timeline.renderStorageWaitTrace
 					? {
 							...timeline.renderStorageWaitTrace,
