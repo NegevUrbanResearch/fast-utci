@@ -19,6 +19,7 @@ describe('liveSelectedHourRenderContext', () => {
 			hourIndex: 12,
 			timeIndex: 180,
 			selectionKey: 'Ben-Gurion/base|7|12|180',
+			publicationPhase: 'scrub',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: { utciMin: 17, utciMax: 42 }

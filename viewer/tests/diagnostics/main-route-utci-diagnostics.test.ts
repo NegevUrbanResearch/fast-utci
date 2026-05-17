@@ -232,6 +232,57 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
 				publicationEffectStartedAtMs: 127,
+				renderLayoutBuildTrace: {
+					totalMs: 5,
+					arrayAllocationMs: 0.5,
+					transformBoundsPassMs: 2,
+					coordinateAssignmentMs: 1,
+					indexToTexelFillMs: 0.5,
+					cellToPointIndexBuildMs: 0.75,
+					colorBufferAllocationMs: 0.25
+				},
+				renderLayoutReuseProofTrace: {
+					decision: 'reuse-safe',
+					hoverCellLookupProofStatus: 'same-point-confirmed',
+					previousLayoutPresent: true,
+					canonicalRuntimeCompatibilityWouldReuse: true,
+					proofMatchesCanonicalRuntimeCompatibility: true,
+					positionsReferenceMatch: true,
+					pointCountMatch: true,
+					gridSizeMatch: true,
+					coordinateSystemMatch: true,
+					normalizationSignature: {
+						enabled: true,
+						offset: { x: 0.5, y: 0, z: -0.5 },
+						provenance: 'anchor-offset-minus-origin'
+					},
+					previousNormalizationSignature: {
+						enabled: true,
+						offset: { x: 0.5, y: 0, z: -0.5 },
+						provenance: 'anchor-offset-minus-origin'
+					},
+					normalizationSignatureMatch: true,
+					constructionMode: 'world-positions',
+					previousConstructionMode: 'world-positions',
+					constructionModeMatch: true,
+					dimensionsMatch: true,
+					placementMatch: true,
+					cellToPointMappingMatch: true,
+					proofCostMs: 1.25,
+					estimatedRetainedCpuLayoutBytes: 32687044
+				},
+				renderLayoutReuseAction: 'reuse-candidate',
+				renderLayoutReuseReason: 'reuse-safe',
+				renderLayoutReuseDecisionMs: 0.5,
+				renderLayoutReuseKeyMs: 0.75,
+				renderLayoutReuseFrameDerivationMs: 0.25,
+				renderLayoutReuseFrameCacheHit: false,
+				renderLayoutReuseKeyMatch: true,
+				renderLayoutReuseProofSource: 'fresh-build-proof',
+				renderLayoutReusePreviousKey: null,
+				renderLayoutReusePreviousRequestId: null,
+				renderLayoutReusePreviousSelectionKey: null,
+				activeLayoutCandidateCount: 1,
 				renderSurfaceMeshTrace: {
 					action: 'updated',
 					totalMs: 9,
@@ -338,6 +389,28 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		renderPublication.renderPublicationPhase = 'unknown';
 		renderPublication.renderPublicationPointCount = 12;
 		renderPublication.renderPublicationTimeline!.sceneSyncCompletedAtMs = 999;
+		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.totalMs = 999;
+		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.arrayAllocationMs = 999;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseProofTrace!.decision =
+			'rebuild-required';
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseProofTrace!.hoverCellLookupProofStatus =
+			'not-compatible';
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseProofTrace!.proofCostMs = 999;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseAction = 'build-required';
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseReason =
+			'layout-key-mismatch';
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseDecisionMs = 777;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseKeyMs = 888;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseFrameDerivationMs =
+			999;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseFrameCacheHit = true;
+		renderPublication.renderPublicationTimeline!.renderLayoutReuseKeyMatch = false;
+		renderPublication.renderPublicationTimeline!.renderLayoutReusePreviousKey =
+			'mutated-key';
+		renderPublication.renderPublicationTimeline!.renderLayoutReusePreviousRequestId = 99;
+		renderPublication.renderPublicationTimeline!.renderLayoutReusePreviousSelectionKey =
+			'mutated-selection';
+		renderPublication.renderPublicationTimeline!.activeLayoutCandidateCount = 9;
 		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.totalMs = 999;
 		renderPublication.renderPublicationTimeline!.renderSurfaceMeshTrace!.recreateDecision!.layoutCompatible =
 			false;
@@ -368,6 +441,57 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneSyncAttemptToken: 7,
 				sceneSurfaceReceivedAtMs: 113,
 				publicationEffectStartedAtMs: 127,
+				renderLayoutBuildTrace: {
+					totalMs: 5,
+					arrayAllocationMs: 0.5,
+					transformBoundsPassMs: 2,
+					coordinateAssignmentMs: 1,
+					indexToTexelFillMs: 0.5,
+					cellToPointIndexBuildMs: 0.75,
+					colorBufferAllocationMs: 0.25
+				},
+				renderLayoutReuseProofTrace: {
+					decision: 'reuse-safe',
+					hoverCellLookupProofStatus: 'same-point-confirmed',
+					previousLayoutPresent: true,
+					canonicalRuntimeCompatibilityWouldReuse: true,
+					proofMatchesCanonicalRuntimeCompatibility: true,
+					positionsReferenceMatch: true,
+					pointCountMatch: true,
+					gridSizeMatch: true,
+					coordinateSystemMatch: true,
+					normalizationSignature: {
+						enabled: true,
+						offset: { x: 0.5, y: 0, z: -0.5 },
+						provenance: 'anchor-offset-minus-origin'
+					},
+					previousNormalizationSignature: {
+						enabled: true,
+						offset: { x: 0.5, y: 0, z: -0.5 },
+						provenance: 'anchor-offset-minus-origin'
+					},
+					normalizationSignatureMatch: true,
+					constructionMode: 'world-positions',
+					previousConstructionMode: 'world-positions',
+					constructionModeMatch: true,
+					dimensionsMatch: true,
+					placementMatch: true,
+					cellToPointMappingMatch: true,
+					proofCostMs: 1.25,
+					estimatedRetainedCpuLayoutBytes: 32687044
+				},
+				renderLayoutReuseAction: 'reuse-candidate',
+				renderLayoutReuseReason: 'reuse-safe',
+				renderLayoutReuseDecisionMs: 0.5,
+				renderLayoutReuseKeyMs: 0.75,
+				renderLayoutReuseFrameDerivationMs: 0.25,
+				renderLayoutReuseFrameCacheHit: false,
+				renderLayoutReuseKeyMatch: true,
+				renderLayoutReuseProofSource: 'fresh-build-proof',
+				renderLayoutReusePreviousKey: null,
+				renderLayoutReusePreviousRequestId: null,
+				renderLayoutReusePreviousSelectionKey: null,
+				activeLayoutCandidateCount: 1,
 				renderSurfaceMeshTrace: {
 					action: 'updated',
 					totalMs: 9,
@@ -448,6 +572,32 @@ describe('buildMainRouteUtciDiagnostics', () => {
 
 		if (diagnostics?.timings?.renderPublication?.renderPublicationTimeline) {
 			diagnostics.timings.renderPublication.renderPublicationTimeline.routeProjectedAtMs = 777;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutBuildTrace!.totalMs =
+				555;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseProofTrace!.proofCostMs =
+				222;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseAction =
+				'build-required';
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseReason =
+				'canonical-mismatch';
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseDecisionMs =
+				333;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseKeyMs =
+				444;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseFrameDerivationMs =
+				555;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseFrameCacheHit =
+				true;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReuseKeyMatch =
+				false;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReusePreviousKey =
+				'output-mutated-key';
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReusePreviousRequestId =
+				123;
+			diagnostics.timings.renderPublication.renderPublicationTimeline.renderLayoutReusePreviousSelectionKey =
+				'output-mutated-selection';
+			diagnostics.timings.renderPublication.renderPublicationTimeline.activeLayoutCandidateCount =
+				5;
 			diagnostics.timings.renderPublication.renderPublicationTimeline.sceneSyncResetHistory![0].resetReason =
 				'output-mutated';
 			diagnostics.timings.renderPublication.renderPublicationTimeline.sceneSyncActiveWindowResetHistory![0].resetReason =
@@ -455,6 +605,57 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		}
 		expect(diagnostics?.timings?.renderPublication?.renderPublicationTimeline).toMatchObject({
 			routeProjectedAtMs: 777,
+			renderLayoutBuildTrace: {
+				totalMs: 555,
+				arrayAllocationMs: 0.5,
+				transformBoundsPassMs: 2,
+				coordinateAssignmentMs: 1,
+				indexToTexelFillMs: 0.5,
+				cellToPointIndexBuildMs: 0.75,
+				colorBufferAllocationMs: 0.25
+			},
+			renderLayoutReuseProofTrace: {
+				decision: 'reuse-safe',
+				hoverCellLookupProofStatus: 'same-point-confirmed',
+				previousLayoutPresent: true,
+				canonicalRuntimeCompatibilityWouldReuse: true,
+				proofMatchesCanonicalRuntimeCompatibility: true,
+				positionsReferenceMatch: true,
+				pointCountMatch: true,
+				gridSizeMatch: true,
+				coordinateSystemMatch: true,
+				normalizationSignature: {
+					enabled: true,
+					offset: { x: 0.5, y: 0, z: -0.5 },
+					provenance: 'anchor-offset-minus-origin'
+				},
+				previousNormalizationSignature: {
+					enabled: true,
+					offset: { x: 0.5, y: 0, z: -0.5 },
+					provenance: 'anchor-offset-minus-origin'
+				},
+				normalizationSignatureMatch: true,
+				constructionMode: 'world-positions',
+				previousConstructionMode: 'world-positions',
+				constructionModeMatch: true,
+				dimensionsMatch: true,
+				placementMatch: true,
+				cellToPointMappingMatch: true,
+				proofCostMs: 222,
+				estimatedRetainedCpuLayoutBytes: 32687044
+			},
+			renderLayoutReuseAction: 'build-required',
+			renderLayoutReuseReason: 'canonical-mismatch',
+			renderLayoutReuseDecisionMs: 333,
+			renderLayoutReuseKeyMs: 444,
+			renderLayoutReuseFrameDerivationMs: 555,
+			renderLayoutReuseFrameCacheHit: true,
+			renderLayoutReuseKeyMatch: false,
+			renderLayoutReuseProofSource: 'fresh-build-proof',
+			renderLayoutReusePreviousKey: 'output-mutated-key',
+			renderLayoutReusePreviousRequestId: 123,
+			renderLayoutReusePreviousSelectionKey: 'output-mutated-selection',
+			activeLayoutCandidateCount: 5,
 			sceneSyncResetHistory: [
 				{
 					resetReason: 'output-mutated'

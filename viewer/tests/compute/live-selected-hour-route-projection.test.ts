@@ -152,6 +152,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 12,
 			timeIndex: 180,
 			selectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|12',
+			publicationPhase: 'initial',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
@@ -208,6 +209,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 9,
 			timeIndex: 42,
 			selectionKey: 'winter|1|9',
+			publicationPhase: 'initial',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
@@ -251,6 +253,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 15,
 			timeIndex: 183,
 			selectionKey: 'base-cpu|7|15',
+			publicationPhase: 'initial',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
@@ -297,6 +300,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 9,
 			timeIndex: 42,
 			selectionKey: 'winter-cpu|1|9',
+			publicationPhase: 'initial',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
@@ -340,6 +344,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 14,
 			timeIndex: 182,
 			selectionKey: 'base|7|14',
+			publicationPhase: 'scrub',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null
@@ -408,6 +413,7 @@ describe('projectMainRouteLiveSceneState', () => {
 			hourIndex: 1,
 			timeIndex: 181,
 			selectionKey: 'base|7|1',
+			publicationPhase: 'scrub',
 			colorMode: 'discrete',
 			metricType: 'utci',
 			rangeOverride: null

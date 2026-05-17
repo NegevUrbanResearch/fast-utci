@@ -430,6 +430,22 @@ function resolveRenderPublicationPhase(requestId: number): 'initial' | 'scrub' {
 	return requestId <= 1 ? 'initial' : 'scrub';
 }
 
+function resolveRequestedPublicationPhase(params: {
+	hasSurfaceIdentity: boolean;
+	hasAcceptedVisibleSurface: boolean;
+	hasRequestedRenderContext: boolean;
+	hasRouteVisibleSurface: boolean;
+	hasRoutePendingSurface: boolean;
+}): 'initial' | 'scrub' {
+	return params.hasSurfaceIdentity ||
+		params.hasAcceptedVisibleSurface ||
+		params.hasRequestedRenderContext ||
+		params.hasRouteVisibleSurface ||
+		params.hasRoutePendingSurface
+		? 'scrub'
+		: 'initial';
+}
+
 export function createLiveSelectedHourRouteHost(
 	deps: LiveSelectedHourRouteHostDeps = {}
 ): LiveSelectedHourRouteHost {
@@ -1059,6 +1075,10 @@ export function createLiveSelectedHourRouteHost(
 			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
+		const hadPriorBaseRouteSurface =
+			state.baseHasVisibleLiveSurface ||
+			state.baseSceneSurfaceIdentity != null ||
+			basePublishedSurface != null;
 		if (baseControllerIdentity !== controllerIdentity) {
 			if (baseControllerIdentity !== null) {
 				replaceController('base');
@@ -1089,6 +1109,16 @@ export function createLiveSelectedHourRouteHost(
 			hourIndex: inputs.selection.hourIndex,
 			timeIndex: inputs.selection.timeIndex,
 			selectionKey: inputs.selection.selectionKey,
+			publicationPhase: resolveRequestedPublicationPhase({
+				hasSurfaceIdentity: baseControllerState.surfaceIdentity != null,
+				hasAcceptedVisibleSurface:
+					baseControllerState.acceptedVisibleSurface != null,
+				hasRequestedRenderContext: baseRequestedRenderContext != null,
+				hasRouteVisibleSurface:
+					state.baseHasVisibleLiveSurface || hadPriorBaseRouteSurface,
+				hasRoutePendingSurface:
+					state.baseSceneSurfaceIdentity != null || hadPriorBaseRouteSurface
+			}),
 			colorMode: inputs.colorMode
 		});
 		const requestResult = await requestControllerSelection(baseController, {
@@ -1157,6 +1187,10 @@ export function createLiveSelectedHourRouteHost(
 			gridResolutionMeters: inputs.gridResolutionMeters
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
+		const hadPriorComparisonRouteSurface =
+			state.comparisonHasVisibleLiveSurface ||
+			state.comparisonSceneSurfaceIdentity != null ||
+			comparisonPublishedSurface != null;
 		if (comparisonControllerIdentity !== controllerIdentity) {
 			if (comparisonControllerIdentity !== null) {
 				replaceController('comparison');
@@ -1190,6 +1224,18 @@ export function createLiveSelectedHourRouteHost(
 			hourIndex: inputs.selection.hourIndex,
 			timeIndex: inputs.selection.timeIndex,
 			selectionKey: inputs.selection.selectionKey,
+			publicationPhase: resolveRequestedPublicationPhase({
+				hasSurfaceIdentity: comparisonControllerState.surfaceIdentity != null,
+				hasAcceptedVisibleSurface:
+					comparisonControllerState.acceptedVisibleSurface != null,
+				hasRequestedRenderContext: comparisonRequestedRenderContext != null,
+				hasRouteVisibleSurface:
+					state.comparisonHasVisibleLiveSurface ||
+					hadPriorComparisonRouteSurface,
+				hasRoutePendingSurface:
+					state.comparisonSceneSurfaceIdentity != null ||
+					hadPriorComparisonRouteSurface
+			}),
 			colorMode: inputs.colorMode
 		});
 		const requestResult = await requestControllerSelection(comparisonController, {

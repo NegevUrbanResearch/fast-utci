@@ -625,6 +625,7 @@ describe('liveSelectedHourRouteHost', () => {
 
 		const firstRequest = factory.records[0].requests[0];
 		expect(firstRequest?.sessionConfig.gridResolution).toBe(2);
+		expect(host.getState().baseRenderContext?.publicationPhase).toBe('initial');
 
 		host.setRouteInputs(
 			makeBaseInputs({
@@ -639,6 +640,7 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(factory.records[0].dispose).toHaveBeenCalledTimes(1);
 		expect(replacementRequest?.sessionConfig.gridResolution).toBe(0.5);
 		expect(replacementRequest?.sessionKey).not.toBe(firstRequest?.sessionKey);
+		expect(host.getState().baseRenderContext?.publicationPhase).toBe('scrub');
 	});
 
 	it('forwards visible-readback instrumentation to route state', async () => {

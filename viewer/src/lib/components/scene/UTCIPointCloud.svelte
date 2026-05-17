@@ -10,16 +10,28 @@
 	} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
 	import {
 		applySurfaceMeshState,
+		buildUtciGridLayoutReuseProofDiagnostics,
 		buildUtciGridLayout,
+		createUtciLayoutReusePublicationState,
+		createUtciLayoutReuseKeyForAnalysis,
 		createUtciSurfaceMesh,
 		disposeUtciSurfaceMesh,
+		getUtciLayoutIdentity,
+		planUtciLayoutPublication,
+		resolveUtciLayoutReusePublicationStateAfterSync,
+		type UtciGridLayout,
+		type UtciGridLayoutReuseProofDiagnostics,
+		type UtciLayoutReuseKey,
+		type UtciLayoutReuseKeyDiagnostics,
+		type UtciLayoutReusePublicationState,
 		type UtciSurfaceBackendType,
 		updateUtciSurfaceMesh
 	} from '$lib/services/pointCloudService';
 	import {
 		createComputeBufferUtciSurfaceMesh,
+		evaluateComputeBufferUtciSurfaceLayoutCompatibility,
+		getComputeBufferUtciSurfaceLayoutCompatibilityState,
 		getComputeBufferUtciStorageAttribute,
-		isComputeBufferUtciSurfaceLayoutCompatible,
 		updateComputeBufferUtciSurfaceMesh
 	} from '$lib/services/gpuUtciRenderBridge';
 	import { viewerStore } from '$lib/stores/viewerStore';
@@ -31,6 +43,8 @@
 	} from '$lib/compute/on-demand/onDemandDiagnostics';
 	import {
 		createRenderPublicationDiagnostics,
+		type SelectedHourRenderLayoutBuildTrace,
+		type SelectedHourRenderLayoutReuseProofTrace,
 		type SelectedHourRenderSurfaceMeshTrace
 	} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 	import {
@@ -47,7 +61,8 @@
 	} from '$lib/components/scene/acceptedGpuResidentOutputRelease';
 	import {
 		createAcceptedGpuResidentSurfaceSync,
-		type AcceptedGpuResidentSurfaceSyncRun
+		type AcceptedGpuResidentSurfaceSyncRun,
+		type AcceptedGpuResidentSurfaceSyncTerminalResult
 	} from '$lib/components/scene/acceptedGpuResidentSurfaceSync';
 	import {
 		copyComputeBufferToRenderStorage,
@@ -80,6 +95,7 @@
 	let gpuResidentCopyError: string | undefined = undefined;
 	let gpuResidentCopyRequestId: number | undefined = undefined;
 	let gpuResidentRenderTimings: SelectedHourRenderTimingSubsteps | undefined = undefined;
+	let activeUtciLayoutReuseState: UtciLayoutReusePublicationState | null = null;
 	// Observation is per sync key; attempt timing/token below are per startSync retry.
 	let lastObservedPendingSurface: {
 		syncRunKey: string;
@@ -124,6 +140,7 @@
 			disposeUtciSurfaceMesh(utciSurface);
 			utciSurface = null;
 		}
+		activeUtciLayoutReuseState = null;
 		lastAnalysis = null;
 		lastBackend = null;
 		invokeUtciSurfaceDiagnostics({ renderOwnedSelectedHourBytes: 0 });
@@ -225,8 +242,13 @@
 		publishUtciSurfaceDiagnostics();
 	}
 
-	function extractUtciLayout(activeAnalysis: Analysis) {
-		const layout = buildUtciGridLayout(activeAnalysis);
+	function extractUtciLayout(
+		activeAnalysis: Analysis,
+		layoutBuildTrace?: SelectedHourRenderLayoutBuildTrace
+	) {
+		const layout = buildUtciGridLayout(activeAnalysis, {
+			diagnostics: layoutBuildTrace
+		});
 		if (!layout) {
 			throw new Error('UTCI surface layout was unavailable for compute-buffer rendering.');
 		}
@@ -338,7 +360,7 @@
 		meshAction: 'created' | 'reused';
 		layout: ReturnType<typeof extractUtciLayout>;
 		lastRenderTargetByteLength: { value: number | undefined };
-	}): Promise<void> {
+	}): Promise<AcceptedGpuResidentSurfaceSyncTerminalResult> {
 		const {
 			mesh,
 			acceptedOutput,
@@ -420,8 +442,7 @@
 		const renderStorageReadyAtMs = performance.now();
 		renderTimings.renderStorageInitWaitMs = waitMs;
 		if (isSuperseded()) {
-			acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
-			return;
+			return acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
 		}
 
 		const copyTimings = await copyComputeBufferToRenderStorage({
@@ -436,8 +457,7 @@
 		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
 		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
 		if (isSuperseded()) {
-			acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
-			return;
+			return acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
 		}
 
 		mesh.userData.utciSurfaceSource = 'compute-buffer-selected-hour';
@@ -449,9 +469,12 @@
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
 		const sceneSyncCompletedAtMs = performance.now();
-		renderTimings.renderPublication = createRenderPublicationDiagnostics({
+			const currentPublicationPhase =
+				selectedHourRenderContext?.publicationPhase ??
+				(activeUtciLayoutReuseState != null ? 'scrub' : 'initial');
+			renderTimings.renderPublication = createRenderPublicationDiagnostics({
 			renderPublicationPath: 'compute-buffer-selected-hour',
-			renderPublicationPhase: acceptedOutput.requestId <= 1 ? 'initial' : 'scrub',
+			renderPublicationPhase: currentPublicationPhase,
 			renderPublicationMeshAction: meshAction,
 			renderPublicationPointCount: layout.numPositions,
 			renderPublicationVertexCount: layout.width * layout.height * 6,
@@ -462,15 +485,57 @@
 			renderPublicationTargetByteLength: lastRenderTargetByteLength.value,
 			renderPublicationRenderOwnedBytes:
 				mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
-			renderPublicationTimeline: {
-				scenePendingSurfaceObservedAtMs,
-				sceneSyncAttemptStartedAtMs,
-				sceneSyncAttemptToken,
-				sceneSurfaceReceivedAtMs,
-				publicationEffectStartedAtMs,
-				renderSurfaceMeshTrace:
-					renderTimings.renderPublication?.renderPublicationTimeline
-						?.renderSurfaceMeshTrace,
+				renderPublicationTimeline: {
+					scenePendingSurfaceObservedAtMs,
+					sceneSyncAttemptStartedAtMs,
+					sceneSyncAttemptToken,
+					sceneSurfaceReceivedAtMs,
+					publicationEffectStartedAtMs,
+					renderLayoutBuildTrace:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutBuildTrace,
+					renderLayoutReuseProofTrace:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseProofTrace,
+					renderLayoutReuseAction:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseAction,
+					renderLayoutReuseReason:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseReason,
+					renderLayoutReuseDecisionMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseDecisionMs,
+					renderLayoutReuseKeyMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseKeyMs,
+					renderLayoutReuseFrameDerivationMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseFrameDerivationMs,
+					renderLayoutReuseFrameCacheHit:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseFrameCacheHit,
+					renderLayoutReuseKeyMatch:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseKeyMatch,
+					renderLayoutReuseProofSource:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseProofSource,
+					renderLayoutReusePreviousKey:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReusePreviousKey,
+					renderLayoutReusePreviousRequestId:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReusePreviousRequestId,
+					renderLayoutReusePreviousSelectionKey:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReusePreviousSelectionKey,
+					activeLayoutCandidateCount:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.activeLayoutCandidateCount,
+					renderSurfaceMeshTrace:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderSurfaceMeshTrace,
 				renderStorageReadyAtMs,
 				renderStorageWaitTrace: waitTrace,
 				sceneSyncCompletedAtMs,
@@ -483,15 +548,15 @@
 					})
 			}
 		});
-		if (
-			acceptedGpuResidentSurfaceSync.completeSync(activeSyncRun, {
-				...getCurrentGpuResidentSyncLiveState(),
-				renderTimings
-			}) !== 'complete'
-		) {
-			return;
+		const syncResult = acceptedGpuResidentSurfaceSync.completeSync(activeSyncRun, {
+			...getCurrentGpuResidentSyncLiveState(),
+			renderTimings
+		});
+		if (syncResult !== 'complete') {
+			return syncResult;
 		}
 		invalidate();
+		return syncResult;
 	}
 
 	async function syncAcceptedGpuResidentSurface(
@@ -521,8 +586,73 @@
 					syncStartedAt - pendingRenderUpdateStartedAt
 				);
 			}
+			const previousLayout = (utciSurface?.userData.utciLayout as UtciGridLayout | undefined) ?? null;
+			const previousReuseState = activeUtciLayoutReuseState;
+			const previousProof = activeUtciLayoutReuseState?.proof ?? null;
+			const previousKey = activeUtciLayoutReuseState?.key ?? null;
+			const layoutReuseKeyDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+			const layoutReuseDecisionStartedAt = performance.now();
+			const currentKey = createUtciLayoutReuseKeyForAnalysis({
+				analysis: activeAnalysis,
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				rendererBackend: 'webgpu',
+				diagnostics: layoutReuseKeyDiagnostics
+			});
+			const publicationPhase =
+				selectedHourRenderContext?.publicationPhase ??
+				(previousReuseState != null ? 'scrub' : 'initial');
+			const layoutPublicationPlan = planUtciLayoutPublication({
+				previousLayout,
+				previousProof,
+				previousKey,
+				currentKey,
+				currentSurfaceSource:
+					(utciSurface?.userData.utciSurfaceSource as string | undefined) ?? null,
+				currentRendererBackend: 'webgpu',
+				publicationPhase
+			});
+			const renderLayoutReuseDecisionMs =
+				performance.now() - layoutReuseDecisionStartedAt;
 			const layoutStartedAt = performance.now();
-			const layout = extractUtciLayout(activeAnalysis);
+			let layoutBuildTrace: SelectedHourRenderLayoutBuildTrace | null =
+				layoutPublicationPlan.action === 'reuse-existing' ? null : { totalMs: 0 };
+			const layout =
+				layoutPublicationPlan.action === 'reuse-existing'
+					? layoutPublicationPlan.layout
+					: extractUtciLayout(
+							activeAnalysis,
+							layoutBuildTrace ?? undefined
+						);
+			const runtimeLayoutCompatibility = evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+				state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
+				previousLayout,
+				nextLayout: layout,
+				allowExpensiveMappingComparison: true
+			});
+			const layoutReuseProofTrace: SelectedHourRenderLayoutReuseProofTrace =
+				layoutPublicationPlan.action === 'reuse-existing'
+					? layoutPublicationPlan.layout === previousLayout && previousProof
+						? previousProof
+						: buildUtciGridLayoutReuseProofDiagnostics({
+								previousLayout,
+								nextLayout: layout,
+								canonicalRuntimeCompatibilityWouldReuse:
+									runtimeLayoutCompatibility.compatible ?? false,
+								canonicalPointCompatibility:
+									runtimeLayoutCompatibility.pointCompatibility
+							})
+					: buildUtciGridLayoutReuseProofDiagnostics({
+							previousLayout,
+							nextLayout: layout,
+							canonicalRuntimeCompatibilityWouldReuse:
+								previousLayout != null
+									? (runtimeLayoutCompatibility.compatible ?? null)
+									: null,
+							canonicalPointCompatibility:
+								previousLayout != null
+									? runtimeLayoutCompatibility.pointCompatibility
+									: null
+						});
 			let meshAction: 'created' | 'reused' = 'reused';
 			let renderSurfaceMeshTrace: SelectedHourRenderSurfaceMeshTrace | undefined;
 			const lastRenderTargetByteLength: { value: number | undefined } = {
@@ -533,10 +663,7 @@
 			const missingSurface = !utciSurface;
 			const notComputeBufferSurface = !missingSurface && !isComputeBufferUtciSurface(utciSurface);
 			const analysisIdentityChanged = activeAnalysis !== lastAnalysis;
-			const layoutCompatible = isComputeBufferUtciSurfaceLayoutCompatible(
-				utciSurface,
-				layout
-			);
+			const layoutCompatible = runtimeLayoutCompatibility.compatible ?? false;
 			const recreateDecision = {
 				missingSurface,
 				notComputeBufferSurface,
@@ -577,7 +704,8 @@
 				const updated = updateComputeBufferUtciSurfaceMesh(existingSurface, {
 					layout,
 					utciBuffer: sourceBuffer,
-					utciRange: acceptedOutput.utciRange
+					utciRange: acceptedOutput.utciRange,
+					compatibilityEvaluation: runtimeLayoutCompatibility
 				});
 				addSurfaceTraceTiming(
 					renderSurfaceMeshTrace,
@@ -620,6 +748,12 @@
 			if (!utciSurface) {
 				throw new Error('Compute-buffer UTCI surface was not created.');
 			}
+			const pendingReuseState = createUtciLayoutReusePublicationState({
+				proof: layoutReuseProofTrace,
+				key: currentKey,
+				requestId: acceptedOutput.requestId,
+				selectionKey: liveSelectedHourSurfaceIdentity?.selectionKey ?? null
+			});
 
 			const pendingStorageStartedAt = performance.now();
 			setComputeBufferSurfacePendingStorageInit(utciSurface);
@@ -633,14 +767,45 @@
 				renderSurfaceMeshTrace.totalMs = renderTimings.renderSurfaceMeshMs;
 				renderTimings.renderPublication = createRenderPublicationDiagnostics({
 					renderPublicationPath: 'compute-buffer-selected-hour',
-					renderPublicationPhase: acceptedOutput.requestId <= 1 ? 'initial' : 'scrub',
+					renderPublicationPhase: publicationPhase,
 					renderPublicationMeshAction: meshAction,
 					renderPublicationTimeline: {
+						renderLayoutBuildTrace: layoutBuildTrace,
+						renderLayoutReuseProofTrace: layoutReuseProofTrace,
+						renderLayoutReuseAction:
+							layoutPublicationPlan.action === 'reuse-existing'
+								? 'reused'
+								: 'build-required',
+						renderLayoutReuseReason: layoutPublicationPlan.reason,
+						renderLayoutReuseDecisionMs,
+						renderLayoutReuseKeyMs:
+							layoutReuseKeyDiagnostics.keyBuildMs,
+						renderLayoutReuseFrameDerivationMs:
+							layoutReuseKeyDiagnostics.frameDerivationMs,
+						renderLayoutReuseFrameCacheHit:
+							layoutReuseKeyDiagnostics.frameCacheHit,
+						renderLayoutReuseKeyMatch: layoutPublicationPlan.keyMatch,
+						renderLayoutReuseProofSource:
+							layoutPublicationPlan.action === 'reuse-existing'
+								? 'previous-publication-proof'
+								: 'fresh-build-proof',
+						renderLayoutReusePreviousKey:
+							previousReuseState?.layoutIdentity ??
+							(previousKey ? getUtciLayoutIdentity(previousKey) : null),
+						renderLayoutReusePreviousRequestId:
+							layoutPublicationPlan.action === 'reuse-existing'
+								? previousReuseState?.requestId ?? null
+								: null,
+						renderLayoutReusePreviousSelectionKey:
+							layoutPublicationPlan.action === 'reuse-existing'
+								? previousReuseState?.selectionKey ?? null
+								: null,
+						activeLayoutCandidateCount: pendingReuseState ? 1 : 0,
 						renderSurfaceMeshTrace
 					}
 				});
 			}
-			await copyComputeBufferIntoRenderOwnedStorage({
+			const syncResult = await copyComputeBufferIntoRenderOwnedStorage({
 				mesh: utciSurface,
 				acceptedOutput,
 				activeSyncRun,
@@ -654,6 +819,11 @@
 				meshAction,
 				layout,
 				lastRenderTargetByteLength
+			});
+			activeUtciLayoutReuseState = resolveUtciLayoutReusePublicationStateAfterSync({
+				currentState: previousReuseState,
+				pendingState: pendingReuseState,
+				syncResult
 			});
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

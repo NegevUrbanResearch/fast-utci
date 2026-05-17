@@ -16,6 +16,64 @@ export type SelectedHourRenderSurfaceMeshTraceAction =
 	| 'updated'
 	| 'update-failed-created';
 
+export type SelectedHourRenderLayoutBuildTrace = {
+	totalMs: number;
+	arrayAllocationMs?: number;
+	transformBoundsPassMs?: number;
+	coordinateAssignmentMs?: number;
+	indexToTexelFillMs?: number;
+	cellToPointIndexBuildMs?: number;
+	colorBufferAllocationMs?: number;
+};
+
+export type SelectedHourRenderLayoutNormalizationSignature = {
+	enabled: boolean;
+	offset: {
+		x: number;
+		y: number;
+		z: number;
+	};
+	provenance: 'normalization-disabled' | 'anchor-offset-minus-origin';
+};
+
+export type SelectedHourRenderLayoutConstructionMode =
+	| 'world-positions'
+	| 'metadata-bounds-fallback';
+
+export type SelectedHourRenderLayoutReuseProofTrace = {
+	decision: 'reuse-safe' | 'rebuild-required' | 'proof-inconclusive';
+	hoverCellLookupProofStatus:
+		| 'same-point-confirmed'
+		| 'not-compatible'
+		| 'proof-inconclusive';
+	previousLayoutPresent: boolean;
+	canonicalRuntimeCompatibilityWouldReuse: boolean | null;
+	proofMatchesCanonicalRuntimeCompatibility: boolean | null;
+	positionsReferenceMatch: boolean | null;
+	pointCountMatch: boolean | null;
+	gridSizeMatch: boolean | null;
+	coordinateSystemMatch: boolean | null;
+	normalizationSignature: SelectedHourRenderLayoutNormalizationSignature;
+	previousNormalizationSignature: SelectedHourRenderLayoutNormalizationSignature | null;
+	normalizationSignatureMatch: boolean | null;
+	constructionMode: SelectedHourRenderLayoutConstructionMode;
+	previousConstructionMode: SelectedHourRenderLayoutConstructionMode | null;
+	constructionModeMatch: boolean | null;
+	dimensionsMatch: boolean | null;
+	placementMatch: boolean | null;
+	cellToPointMappingMatch: boolean | null;
+	proofCostMs: number | null;
+	estimatedRetainedCpuLayoutBytes: number | null;
+};
+
+export type SelectedHourRenderLayoutReuseAction =
+	| 'reuse-candidate'
+	| 'build-required'
+	| 'reused';
+export type SelectedHourRenderLayoutReuseProofSource =
+	| 'fresh-build-proof'
+	| 'previous-publication-proof';
+
 export type SelectedHourRenderSurfaceMeshRecreateDecision = {
 	missingSurface: boolean;
 	notComputeBufferSurface: boolean;
@@ -58,6 +116,20 @@ export type SelectedHourRenderPublicationTimeline = {
 	sceneSyncAttemptToken?: number;
 	sceneSurfaceReceivedAtMs?: number;
 	publicationEffectStartedAtMs?: number;
+	renderLayoutBuildTrace?: SelectedHourRenderLayoutBuildTrace | null;
+	renderLayoutReuseProofTrace?: SelectedHourRenderLayoutReuseProofTrace;
+	renderLayoutReuseAction?: SelectedHourRenderLayoutReuseAction;
+	renderLayoutReuseReason?: string;
+	renderLayoutReuseDecisionMs?: number;
+	renderLayoutReuseKeyMs?: number;
+	renderLayoutReuseFrameDerivationMs?: number;
+	renderLayoutReuseFrameCacheHit?: boolean;
+	renderLayoutReuseKeyMatch?: boolean;
+	renderLayoutReuseProofSource?: SelectedHourRenderLayoutReuseProofSource;
+	renderLayoutReusePreviousKey?: string | null;
+	renderLayoutReusePreviousRequestId?: number | null;
+	renderLayoutReusePreviousSelectionKey?: string | null;
+	activeLayoutCandidateCount?: number;
 	renderSurfaceMeshTrace?: SelectedHourRenderSurfaceMeshTrace;
 	renderStorageReadyAtMs?: number;
 	renderStorageWaitTrace?: RenderStorageWaitDiagnostics;
@@ -88,6 +160,48 @@ export function copyRenderPublicationTimeline(
 	return timeline
 		? {
 				...timeline,
+				renderLayoutBuildTrace: timeline.renderLayoutBuildTrace
+					? {
+							...timeline.renderLayoutBuildTrace
+						}
+					: timeline.renderLayoutBuildTrace,
+				renderLayoutReuseProofTrace: timeline.renderLayoutReuseProofTrace
+					? {
+							...timeline.renderLayoutReuseProofTrace,
+							normalizationSignature: {
+								...timeline.renderLayoutReuseProofTrace.normalizationSignature,
+								offset: {
+									...timeline.renderLayoutReuseProofTrace.normalizationSignature.offset
+								}
+							},
+							previousNormalizationSignature:
+								timeline.renderLayoutReuseProofTrace.previousNormalizationSignature
+									? {
+											...timeline.renderLayoutReuseProofTrace.previousNormalizationSignature,
+											offset: {
+												...timeline.renderLayoutReuseProofTrace
+													.previousNormalizationSignature.offset
+											}
+										}
+									: timeline.renderLayoutReuseProofTrace.previousNormalizationSignature
+						}
+					: timeline.renderLayoutReuseProofTrace,
+				renderLayoutReuseAction: timeline.renderLayoutReuseAction,
+				renderLayoutReuseReason: timeline.renderLayoutReuseReason,
+				renderLayoutReuseDecisionMs: timeline.renderLayoutReuseDecisionMs,
+				renderLayoutReuseKeyMs: timeline.renderLayoutReuseKeyMs,
+				renderLayoutReuseFrameDerivationMs:
+					timeline.renderLayoutReuseFrameDerivationMs,
+				renderLayoutReuseFrameCacheHit:
+					timeline.renderLayoutReuseFrameCacheHit,
+				renderLayoutReuseKeyMatch: timeline.renderLayoutReuseKeyMatch,
+				renderLayoutReuseProofSource: timeline.renderLayoutReuseProofSource,
+				renderLayoutReusePreviousKey: timeline.renderLayoutReusePreviousKey,
+				renderLayoutReusePreviousRequestId:
+					timeline.renderLayoutReusePreviousRequestId,
+				renderLayoutReusePreviousSelectionKey:
+					timeline.renderLayoutReusePreviousSelectionKey,
+				activeLayoutCandidateCount: timeline.activeLayoutCandidateCount,
 				renderSurfaceMeshTrace: timeline.renderSurfaceMeshTrace
 					? {
 							...timeline.renderSurfaceMeshTrace,

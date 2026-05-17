@@ -12,10 +12,12 @@ const RESET_PROOF_ARTIFACT_PATH = resolve(
 	RESULTS_DIR,
 	RESET_PROOF_ARTIFACT_FILENAME
 );
-const COLLECTED_ON = '2026-05-16';
+const COLLECTED_ON = '2026-05-17';
 const SOURCE_ROUTE = '/';
 const TARGET_GRID_RESOLUTION_METERS = 0.5;
-const SCRUB_HOUR_INDEX = 1;
+const WARMUP_SCRUB_HOUR_INDEX = 1;
+const SCRUB_HOUR_INDEX = 2;
+const REPEATED_SCRUB_HOUR_INDICES = [SCRUB_HOUR_INDEX, 3, 4] as const;
 
 type ColorMode = 'normalized' | 'discrete';
 type CollectionPhase = 'initial' | 'scrub';
@@ -62,12 +64,73 @@ type RenderPublicationTimelineTiming = {
 	sceneSyncAttemptToken: number | null;
 	sceneSurfaceReceivedAtMs: number | null;
 	publicationEffectStartedAtMs: number | null;
+	renderLayoutBuildTrace: RenderLayoutBuildTrace | null;
+	renderLayoutReuseProofTrace: RenderLayoutReuseProofTrace | null;
+	renderLayoutReuseAction: 'reuse-candidate' | 'build-required' | 'reused' | null;
+	renderLayoutReuseReason: string | null;
+	renderLayoutReuseDecisionMs: number | null;
+	renderLayoutReuseKeyMatch: boolean | null;
+	renderLayoutReuseProofSource:
+		| 'fresh-build-proof'
+		| 'previous-publication-proof'
+		| null;
+	renderLayoutReusePreviousKey: string | null;
+	renderLayoutReusePreviousRequestId: number | null;
+	renderLayoutReusePreviousSelectionKey: string | null;
+	activeLayoutCandidateCount: number | null;
 	renderSurfaceMeshTrace: RenderSurfaceMeshTrace | null;
 	renderStorageReadyAtMs: number | null;
 	renderStorageWaitTrace: RenderStorageWaitTrace | null;
 	sceneSyncCompletedAtMs: number | null;
 	sceneSyncResetHistory: RenderPublicationSceneSyncResetEvent[];
 	sceneSyncActiveWindowResetHistory: RenderPublicationSceneSyncResetEvent[] | null;
+};
+
+type RenderLayoutBuildTrace = {
+	totalMs: number | null;
+	arrayAllocationMs: number | null;
+	transformBoundsPassMs: number | null;
+	coordinateAssignmentMs: number | null;
+	indexToTexelFillMs: number | null;
+	cellToPointIndexBuildMs: number | null;
+	colorBufferAllocationMs: number | null;
+};
+
+type RenderLayoutNormalizationSignature = {
+	enabled: boolean | null;
+	offset: {
+		x: number | null;
+		y: number | null;
+		z: number | null;
+	} | null;
+	provenance: string | null;
+};
+
+type RenderLayoutReuseProofTrace = {
+	decision: 'reuse-safe' | 'rebuild-required' | 'proof-inconclusive' | null;
+	hoverCellLookupProofStatus:
+		| 'same-point-confirmed'
+		| 'not-compatible'
+		| 'proof-inconclusive'
+		| null;
+	previousLayoutPresent: boolean | null;
+	canonicalRuntimeCompatibilityWouldReuse: boolean | null;
+	proofMatchesCanonicalRuntimeCompatibility: boolean | null;
+	positionsReferenceMatch: boolean | null;
+	pointCountMatch: boolean | null;
+	gridSizeMatch: boolean | null;
+	coordinateSystemMatch: boolean | null;
+	normalizationSignature: RenderLayoutNormalizationSignature | null;
+	previousNormalizationSignature: RenderLayoutNormalizationSignature | null;
+	normalizationSignatureMatch: boolean | null;
+	constructionMode: string | null;
+	previousConstructionMode: string | null;
+	constructionModeMatch: boolean | null;
+	dimensionsMatch: boolean | null;
+	placementMatch: boolean | null;
+	cellToPointMappingMatch: boolean | null;
+	proofCostMs: number | null;
+	estimatedRetainedCpuLayoutBytes: number | null;
 };
 
 type RenderSurfaceMeshTrace = {
@@ -130,6 +193,12 @@ type RenderPublicationSceneSyncResetEvent = {
 type RenderPublicationTimelineNumberKey = Exclude<
 	keyof RenderPublicationTimelineTiming,
 	| 'renderStorageWaitTrace'
+	| 'renderLayoutBuildTrace'
+	| 'renderLayoutReuseProofTrace'
+	| 'renderLayoutReuseAction'
+	| 'renderLayoutReuseReason'
+	| 'renderLayoutReuseKeyMatch'
+	| 'renderLayoutReuseProofSource'
 	| 'renderSurfaceMeshTrace'
 	| 'sceneSyncResetHistory'
 	| 'sceneSyncActiveWindowResetHistory'
@@ -264,6 +333,61 @@ type CollectedCase = {
 	};
 };
 
+type RepeatedScrubSoakSample = {
+	hourIndex: number;
+	selectionKey: string | null;
+	surfaceRequestId: number | null;
+	renderLayoutReuseAction: RenderPublicationTimelineTiming['renderLayoutReuseAction'];
+	renderLayoutReuseReason: string | null;
+	activeLayoutCandidateCount: number | null;
+	reusedLayoutIdentity: string | null;
+	retainedCpuLayoutBytes: number | null;
+	ownedGpuMemoryBytes: number;
+	renderOwnedSelectedHourBytes: number;
+	renderOwnedSelectedHourBytesHighWatermark: number;
+	hoverCellLookupProofStatus: RenderLayoutReuseProofTrace['hoverCellLookupProofStatus'];
+	hoverProbe: {
+		positionIndex: number;
+		value: number;
+		position: { x: number; y: number; z: number };
+	};
+};
+
+type RepeatedScrubSoakResult = {
+	projectLabel: string;
+	analysisId: string;
+	colorMode: ColorMode;
+	query: string;
+	warmupHourIndex: number;
+	reusedSamples: RepeatedScrubSoakSample[];
+	plateauRetainedCpuLayoutBytes: number | null;
+	plateauOwnedGpuMemoryBytes: number;
+	plateauRenderOwnedSelectedHourBytes: number;
+	plateauRenderOwnedSelectedHourBytesHighWatermark: number;
+	stableReusedLayoutIdentity: string | null;
+	rebuildReplacement: {
+		hourIndex: number;
+		selectionKey: string | null;
+		surfaceRequestId: number | null;
+		renderLayoutReuseAction: RenderPublicationTimelineTiming['renderLayoutReuseAction'];
+		renderLayoutReuseReason: string | null;
+		activeLayoutCandidateCount: number | null;
+		releasedPreviousLayout: string | null;
+		ownedGpuMemoryBytes: number;
+		renderOwnedSelectedHourBytes: number;
+		renderOwnedSelectedHourBytesHighWatermark: number;
+	};
+};
+
+type MainRouteTooltipProbe = {
+	clientX: number;
+	clientY: number;
+	positionIndex: number;
+	value: number;
+	position: { x: number; y: number; z: number };
+	tooltipHourIndex: number;
+};
+
 const CASES: AnalysisCase[] = [
 	{
 		projectLabel: 'Ben-Gurion',
@@ -298,12 +422,159 @@ async function readUtciRenderDiagnostics(page: Page) {
 	return page.evaluate(() => (window as any).__utciRenderDiagnostics__ ?? null);
 }
 
+async function readMainRouteTooltipProbe(page: Page): Promise<MainRouteTooltipProbe | null> {
+	return page.evaluate(() => {
+		return (window as Window & {
+			__mainRouteTooltipProbe__?: (() => MainRouteTooltipProbe | null) | undefined;
+		}).__mainRouteTooltipProbe__?.() ?? null;
+	});
+}
+
+async function readMainRouteTooltipAt(
+	page: Page,
+	clientX: number,
+	clientY: number
+): Promise<MainRouteTooltipProbe | null> {
+	return page.evaluate(
+		([x, y]) => {
+			return (window as Window & {
+				__mainRouteTooltipAt__?:
+					| ((clientX: number, clientY: number) => MainRouteTooltipProbe | null)
+					| undefined;
+			}).__mainRouteTooltipAt__?.(x, y) ?? null;
+		},
+		[clientX, clientY] as const
+	);
+}
+
+async function readMainRouteLastTooltip(
+	page: Page
+): Promise<MainRouteTooltipProbe | null> {
+	return page.evaluate(() => {
+		return (window as Window & {
+			__mainRouteLastTooltip__?: MainRouteTooltipProbe | null | undefined;
+		}).__mainRouteLastTooltip__ ?? null;
+	});
+}
+
+async function clearMainRouteLastTooltip(page: Page) {
+	await page.evaluate(() => {
+		(window as Window & {
+			__mainRouteLastTooltip__?: MainRouteTooltipProbe | null | undefined;
+		}).__mainRouteLastTooltip__ = null;
+	});
+}
+
+async function requestDiagnosticsGridResolutionChange(
+	page: Page,
+	resolutionMeters: number
+) {
+	const armed = await page.evaluate((resolution) => {
+		return (
+			(window as Window & {
+				__mainRouteDiagnosticsSetGridResolution?: (
+					resolutionMeters: number
+				) => boolean;
+			}).__mainRouteDiagnosticsSetGridResolution?.(resolution) ?? false
+		);
+	}, resolutionMeters);
+	expect(
+		armed,
+		'diagnostics-only grid change hook should preserve the active base surface candidate'
+	).toBe(true);
+}
+
+function formatTooltipPosition(position: { x: number; y: number; z: number }): string {
+	return `X ${position.x.toFixed(3)} / Y ${position.y.toFixed(3)} / Z ${position.z.toFixed(3)}`;
+}
+
+async function hoverMainRouteProbe(page: Page): Promise<{
+	probe: MainRouteTooltipProbe;
+	oracle: MainRouteTooltipProbe;
+	liveTooltip: MainRouteTooltipProbe;
+}> {
+	for (const [dx, dy] of [
+		[0, 0],
+		[2, 0],
+		[0, 2],
+		[-2, 0],
+		[0, -2]
+	] as const) {
+		const probe = await readMainRouteTooltipProbe(page);
+		if (!probe) {
+			throw new Error('Main route never exposed a concrete tooltip probe point.');
+		}
+
+		await clearMainRouteLastTooltip(page);
+		await page.waitForTimeout(20);
+		await page.mouse.move(probe.clientX + dx, probe.clientY + dy);
+		await expect(page.getByRole('tooltip')).toBeVisible({ timeout: 5_000 });
+		const liveTooltipHandle = await page.waitForFunction(
+			() => {
+				const tooltip = (window as Window & {
+					__mainRouteLastTooltip__?: MainRouteTooltipProbe | null | undefined;
+				}).__mainRouteLastTooltip__;
+				return tooltip ?? null;
+			},
+			undefined,
+			{ timeout: 5_000 }
+		).catch(() => null);
+		const liveTooltip =
+			(await liveTooltipHandle?.jsonValue().catch(() => null)) ??
+			(await readMainRouteLastTooltip(page));
+		if (liveTooltip) {
+			const oracle = await readMainRouteTooltipAt(
+				page,
+				liveTooltip.clientX,
+				liveTooltip.clientY
+			);
+			if (!oracle) {
+				continue;
+			}
+			return { probe, oracle, liveTooltip };
+		}
+	}
+
+	throw new Error('Expected a visible main-route tooltip hit, but no live tooltip payload was recorded.');
+}
+
+async function expectTooltipProbeMatch(
+	page: Page,
+	label: string
+): Promise<{
+	probe: MainRouteTooltipProbe;
+	oracle: MainRouteTooltipProbe;
+	liveTooltip: MainRouteTooltipProbe;
+}> {
+	const hovered = await hoverMainRouteProbe(page);
+	expect(hovered.liveTooltip.positionIndex, `${label} hovered point index`).toBe(
+		hovered.oracle.positionIndex
+	);
+	expect(hovered.liveTooltip.value, `${label} hovered UTCI value`).toBeCloseTo(
+		hovered.oracle.value,
+		6
+	);
+	expect(hovered.liveTooltip.position, `${label} hovered position`).toEqual(
+		hovered.oracle.position
+	);
+	await expect(
+		page.locator('[role="tooltip"] .tooltip-value'),
+		`${label} tooltip value`
+	).toHaveText(hovered.oracle.value.toFixed(1));
+	await expect(
+		page.locator('[role="tooltip"] .tooltip-position'),
+		`${label} tooltip position`
+	).toHaveText(formatTooltipPosition(hovered.oracle.position));
+	return hovered;
+}
+
 async function waitForSelectedHourPublication(
 	page: Page,
 	params: {
 		expectedSelectionKey: string;
 		colorMode: ColorMode;
 		minSurfaceRequestId?: number;
+		expectedGridResolution?: number;
 	}
 ) {
 	const diagnostics = await page.waitForFunction(
@@ -336,7 +607,8 @@ async function waitForSelectedHourPublication(
 		},
 		{
 			selectionKey: params.expectedSelectionKey,
-			gridResolution: TARGET_GRID_RESOLUTION_METERS,
+			gridResolution:
+				params.expectedGridResolution ?? TARGET_GRID_RESOLUTION_METERS,
 			colorMode: params.colorMode,
 			minSurfaceRequestId: params.minSurfaceRequestId ?? 0
 		},
@@ -458,6 +730,32 @@ function extractRenderPublicationTimeline(
 		sceneSyncAttemptToken: numberOrNull(payload.sceneSyncAttemptToken),
 		sceneSurfaceReceivedAtMs: numberOrNull(payload.sceneSurfaceReceivedAtMs),
 		publicationEffectStartedAtMs: numberOrNull(payload.publicationEffectStartedAtMs),
+		renderLayoutBuildTrace: extractRenderLayoutBuildTrace(
+			payload.renderLayoutBuildTrace
+		),
+		renderLayoutReuseProofTrace: extractRenderLayoutReuseProofTrace(
+			payload.renderLayoutReuseProofTrace
+		),
+		renderLayoutReuseAction: stringFromSetOrNull(payload.renderLayoutReuseAction, [
+			'reuse-candidate',
+			'build-required',
+			'reused'
+		]),
+		renderLayoutReuseReason: stringOrNull(payload.renderLayoutReuseReason),
+		renderLayoutReuseDecisionMs: numberOrNull(payload.renderLayoutReuseDecisionMs),
+		renderLayoutReuseKeyMatch: booleanOrNull(payload.renderLayoutReuseKeyMatch),
+		renderLayoutReuseProofSource: stringFromSetOrNull(
+			payload.renderLayoutReuseProofSource,
+			['fresh-build-proof', 'previous-publication-proof']
+		),
+		renderLayoutReusePreviousKey: stringOrNull(payload.renderLayoutReusePreviousKey),
+		renderLayoutReusePreviousRequestId: numberOrNull(
+			payload.renderLayoutReusePreviousRequestId
+		),
+		renderLayoutReusePreviousSelectionKey: stringOrNull(
+			payload.renderLayoutReusePreviousSelectionKey
+		),
+		activeLayoutCandidateCount: numberOrNull(payload.activeLayoutCandidateCount),
 		renderSurfaceMeshTrace: extractRenderSurfaceMeshTrace(
 			payload.renderSurfaceMeshTrace
 		),
@@ -471,6 +769,95 @@ function extractRenderPublicationTimeline(
 		),
 		sceneSyncActiveWindowResetHistory: extractPresentSceneSyncResetHistory(
 			payload.sceneSyncActiveWindowResetHistory
+		)
+	};
+}
+
+function extractRenderLayoutBuildTrace(value: unknown): RenderLayoutBuildTrace | null {
+	if (typeof value !== 'object' || value == null) {
+		return null;
+	}
+
+	const payload = value as Record<string, unknown>;
+	return {
+		totalMs: numberOrNull(payload.totalMs),
+		arrayAllocationMs: numberOrNull(payload.arrayAllocationMs),
+		transformBoundsPassMs: numberOrNull(payload.transformBoundsPassMs),
+		coordinateAssignmentMs: numberOrNull(payload.coordinateAssignmentMs),
+		indexToTexelFillMs: numberOrNull(payload.indexToTexelFillMs),
+		cellToPointIndexBuildMs: numberOrNull(payload.cellToPointIndexBuildMs),
+		colorBufferAllocationMs: numberOrNull(payload.colorBufferAllocationMs)
+	};
+}
+
+function extractRenderLayoutNormalizationSignature(
+	value: unknown
+): RenderLayoutNormalizationSignature | null {
+	if (typeof value !== 'object' || value == null) {
+		return null;
+	}
+
+	const payload = value as Record<string, unknown>;
+	return {
+		enabled: booleanOrNull(payload.enabled),
+		offset:
+			typeof payload.offset === 'object' && payload.offset != null
+				? {
+						x: numberOrNull((payload.offset as Record<string, unknown>).x),
+						y: numberOrNull((payload.offset as Record<string, unknown>).y),
+						z: numberOrNull((payload.offset as Record<string, unknown>).z)
+					}
+				: null,
+		provenance: stringOrNull(payload.provenance)
+	};
+}
+
+function extractRenderLayoutReuseProofTrace(
+	value: unknown
+): RenderLayoutReuseProofTrace | null {
+	if (typeof value !== 'object' || value == null) {
+		return null;
+	}
+
+	const payload = value as Record<string, unknown>;
+	return {
+		decision: stringFromSetOrNull(payload.decision, [
+			'reuse-safe',
+			'rebuild-required',
+			'proof-inconclusive'
+		]),
+		hoverCellLookupProofStatus: stringFromSetOrNull(payload.hoverCellLookupProofStatus, [
+			'same-point-confirmed',
+			'not-compatible',
+			'proof-inconclusive'
+		]),
+		previousLayoutPresent: booleanOrNull(payload.previousLayoutPresent),
+		canonicalRuntimeCompatibilityWouldReuse: booleanOrNull(
+			payload.canonicalRuntimeCompatibilityWouldReuse
+		),
+		proofMatchesCanonicalRuntimeCompatibility: booleanOrNull(
+			payload.proofMatchesCanonicalRuntimeCompatibility
+		),
+		positionsReferenceMatch: booleanOrNull(payload.positionsReferenceMatch),
+		pointCountMatch: booleanOrNull(payload.pointCountMatch),
+		gridSizeMatch: booleanOrNull(payload.gridSizeMatch),
+		coordinateSystemMatch: booleanOrNull(payload.coordinateSystemMatch),
+		normalizationSignature: extractRenderLayoutNormalizationSignature(
+			payload.normalizationSignature
+		),
+		previousNormalizationSignature: extractRenderLayoutNormalizationSignature(
+			payload.previousNormalizationSignature
+		),
+		normalizationSignatureMatch: booleanOrNull(payload.normalizationSignatureMatch),
+		constructionMode: stringOrNull(payload.constructionMode),
+		previousConstructionMode: stringOrNull(payload.previousConstructionMode),
+		constructionModeMatch: booleanOrNull(payload.constructionModeMatch),
+		dimensionsMatch: booleanOrNull(payload.dimensionsMatch),
+		placementMatch: booleanOrNull(payload.placementMatch),
+		cellToPointMappingMatch: booleanOrNull(payload.cellToPointMappingMatch),
+		proofCostMs: numberOrNull(payload.proofCostMs),
+		estimatedRetainedCpuLayoutBytes: numberOrNull(
+			payload.estimatedRetainedCpuLayoutBytes
 		)
 	};
 }
@@ -634,6 +1021,14 @@ function extractTimings(timings: DiagnosticsTimingsInput | undefined) {
 	};
 }
 
+function deriveReusedLayoutIdentity(
+	timeline: RenderPublicationTimelineTiming | null | undefined
+): string | null {
+	return timeline?.renderLayoutReuseAction === 'reused'
+		? timeline.renderLayoutReusePreviousKey
+		: null;
+}
+
 function expectValidRenderPublication(
 	sample: CollectedSample,
 	label: string
@@ -727,7 +1122,7 @@ function expectTimelineOrder(
 				previousValue
 			);
 		}
-		previousValue = value ?? undefined;
+		previousValue = typeof value === 'number' ? value : undefined;
 	}
 }
 
@@ -775,6 +1170,130 @@ function expectValidRenderPublicationTimeline(
 		'routePublishedAtMs',
 		label
 	);
+	expect(
+		timeline.renderLayoutReuseProofTrace,
+		`${label} renderLayoutReuseProofTrace`
+	).not.toBeNull();
+	expect(
+		timeline.renderLayoutReuseProofTrace?.decision,
+		`${label} renderLayoutReuseProofTrace.decision`
+	).toMatch(/^(reuse-safe|rebuild-required|proof-inconclusive)$/);
+	expect(
+		timeline.renderLayoutReuseProofTrace?.hoverCellLookupProofStatus,
+		`${label} renderLayoutReuseProofTrace.hoverCellLookupProofStatus`
+	).toMatch(/^(same-point-confirmed|not-compatible|proof-inconclusive)$/);
+	expect(
+		timeline.renderLayoutReuseProofTrace?.constructionMode,
+		`${label} renderLayoutReuseProofTrace.constructionMode`
+	).toMatch(/^(world-positions|metadata-bounds-fallback)$/);
+	expect(
+		timeline.renderLayoutReuseProofTrace?.normalizationSignature?.provenance,
+		`${label} renderLayoutReuseProofTrace.normalizationSignature.provenance`
+	).toMatch(/^(normalization-disabled|anchor-offset-minus-origin)$/);
+	expect(
+		timeline.renderLayoutReuseProofTrace?.normalizationSignature?.enabled,
+		`${label} renderLayoutReuseProofTrace.normalizationSignature.enabled`
+	).toEqual(expect.any(Boolean));
+	expect(
+		timeline.renderLayoutReuseProofTrace?.normalizationSignature?.offset,
+		`${label} renderLayoutReuseProofTrace.normalizationSignature.offset`
+	).toEqual({
+		x: expect.any(Number),
+		y: expect.any(Number),
+		z: expect.any(Number)
+	});
+	for (const key of [
+		'canonicalRuntimeCompatibilityWouldReuse',
+		'hoverCellLookupProofStatus',
+		'proofMatchesCanonicalRuntimeCompatibility',
+		'normalizationSignatureMatch',
+		'placementMatch',
+		'cellToPointMappingMatch',
+		'previousLayoutPresent'
+	] as const) {
+		expect(
+			timeline.renderLayoutReuseProofTrace,
+			`${label} renderLayoutReuseProofTrace.${key} should be present`
+		).toHaveProperty(key);
+	}
+	expect(
+		timeline.renderLayoutReuseProofTrace?.proofCostMs,
+		`${label} renderLayoutReuseProofTrace.proofCostMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReuseProofTrace?.estimatedRetainedCpuLayoutBytes,
+		`${label} renderLayoutReuseProofTrace.estimatedRetainedCpuLayoutBytes`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReuseAction,
+		`${label} renderLayoutReuseAction`
+	).toMatch(/^(reuse-candidate|build-required|reused)$/);
+	expect(
+		timeline.renderLayoutReuseReason,
+		`${label} renderLayoutReuseReason`
+	).toEqual(expect.any(String));
+	expect(
+		timeline.renderLayoutReuseDecisionMs,
+		`${label} renderLayoutReuseDecisionMs`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.renderLayoutReuseKeyMatch,
+		`${label} renderLayoutReuseKeyMatch`
+	).toEqual(expect.any(Boolean));
+	expect(
+		timeline.activeLayoutCandidateCount,
+		`${label} activeLayoutCandidateCount`
+	).toEqual(expect.any(Number));
+	expect(
+		timeline.activeLayoutCandidateCount ?? -1,
+		`${label} activeLayoutCandidateCount should be nonnegative`
+	).toBeGreaterThanOrEqual(0);
+	if (timeline.renderLayoutReuseAction === 'reused') {
+		expect(timeline.renderLayoutBuildTrace, `${label} renderLayoutBuildTrace`).toBeNull();
+		expect(
+			timeline.renderLayoutReuseProofSource,
+			`${label} renderLayoutReuseProofSource`
+		).toBe('previous-publication-proof');
+		expect(
+			timeline.renderLayoutReusePreviousKey,
+			`${label} renderLayoutReusePreviousKey`
+		).toEqual(expect.any(String));
+		expect(
+			timeline.renderLayoutReusePreviousRequestId,
+			`${label} renderLayoutReusePreviousRequestId`
+		).toEqual(expect.any(Number));
+		expect(
+			timeline.renderLayoutReusePreviousSelectionKey,
+			`${label} renderLayoutReusePreviousSelectionKey`
+		).toEqual(expect.any(String));
+	} else {
+		expect(timeline.renderLayoutBuildTrace, `${label} renderLayoutBuildTrace`).not.toBeNull();
+		expect(timeline.renderLayoutBuildTrace).toEqual({
+			totalMs: expect.any(Number),
+			arrayAllocationMs: expect.any(Number),
+			transformBoundsPassMs: expect.any(Number),
+			coordinateAssignmentMs: expect.any(Number),
+			indexToTexelFillMs: expect.any(Number),
+			cellToPointIndexBuildMs: expect.any(Number),
+			colorBufferAllocationMs: expect.any(Number)
+		});
+		expect(
+			timeline.renderLayoutReuseProofSource,
+			`${label} renderLayoutReuseProofSource`
+		).toBe('fresh-build-proof');
+		expect(
+			timeline.renderLayoutReusePreviousKey,
+			`${label} renderLayoutReusePreviousKey`
+		).toBeNull();
+		expect(
+			timeline.renderLayoutReusePreviousRequestId,
+			`${label} renderLayoutReusePreviousRequestId`
+		).toBeNull();
+		expect(
+			timeline.renderLayoutReusePreviousSelectionKey,
+			`${label} renderLayoutReusePreviousSelectionKey`
+		).toBeNull();
+	}
 	const routeProjectedAtMs = requireTimelineNumber(
 		timeline,
 		'routeProjectedAtMs',
@@ -1146,10 +1665,51 @@ function expectResetProofTimeline(sample: CollectedSample, label: string) {
 function expectRenderPublicationForAllSamples(collectedCase: CollectedCase) {
 	for (const colorMode of ['normalized', 'discrete'] as const) {
 		for (const phase of ['initial', 'scrub'] as const) {
-			expectValidRenderPublication(
-				collectedCase.modes[colorMode][phase],
-				`${collectedCase.projectLabel} ${colorMode}.${phase}`
-			);
+			const sample = collectedCase.modes[colorMode][phase];
+			const label = `${collectedCase.projectLabel} ${colorMode}.${phase}`;
+			expectValidRenderPublication(sample, label);
+			if (phase === 'scrub') {
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseAction,
+					`${label} scrub action should report actual layout reuse`
+				).toBe('reused');
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseReason,
+					`${label} scrub reuse reason`
+				).toBe('reuse-safe');
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutBuildTrace,
+					`${label} scrub should skip layout rebuild`
+				).toBeNull();
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReuseProofSource,
+					`${label} scrub should reuse previous publication proof`
+				).toBe('previous-publication-proof');
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReusePreviousKey,
+					`${label} scrub previous key linkage`
+				).toEqual(expect.any(String));
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReusePreviousRequestId,
+					`${label} scrub previous request linkage`
+				).toEqual(expect.any(Number));
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.renderLayoutReusePreviousSelectionKey,
+					`${label} scrub previous selection linkage`
+				).toEqual(expect.any(String));
+				expect(
+					sample.timings.renderPublication?.renderPublicationTimeline
+						?.activeLayoutCandidateCount,
+					`${label} scrub active layout candidate count`
+				).toBe(1);
+			}
 		}
 	}
 }
@@ -1255,10 +1815,17 @@ async function collectMode(page: Page, caseConfig: AnalysisCase, colorMode: Colo
 
 	const initialRequestId = initialDiagnostics.baseSurfaceRequestId ?? 0;
 	await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
+	const warmupScrubDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(caseConfig, WARMUP_SCRUB_HOUR_INDEX),
+		colorMode,
+		minSurfaceRequestId: initialRequestId
+	});
+	const warmupRequestId = warmupScrubDiagnostics.baseSurfaceRequestId ?? initialRequestId;
+	await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
 	const scrubDiagnostics = await waitForSelectedHourPublication(page, {
 		expectedSelectionKey: expectedSelectionKey(caseConfig, SCRUB_HOUR_INDEX),
 		colorMode,
-		minSurfaceRequestId: initialRequestId
+		minSurfaceRequestId: warmupRequestId
 	});
 	expectTimingFields(scrubDiagnostics);
 	expect(scrubDiagnostics.baseSelectedMonthIndex).toBe(7);
@@ -1286,7 +1853,7 @@ async function collectMode(page: Page, caseConfig: AnalysisCase, colorMode: Colo
 				phase: 'scrub',
 				colorMode,
 				collectionMethod:
-					'App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.',
+					'App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 2, with hour 1 as the in-session warmup scrub that establishes previous-publication proof; no debug route, parity, or .bin path.',
 				sourceUrl
 			})
 		}
@@ -1351,6 +1918,311 @@ async function collectCase(
 	return collectedCase;
 }
 
+async function verifyRouteReuseAndRebuildHoverTruth(page: Page) {
+	const bgCase = CASES.find((entry) => entry.projectLabel === 'Ben-Gurion');
+	if (!bgCase) {
+		throw new Error('Expected the Ben-Gurion collector case.');
+	}
+
+	const bgUrl = `/?analysis=${encodeURIComponent(bgCase.analysisId)}&gridResolution=${TARGET_GRID_RESOLUTION_METERS}&utciRender=auto&utciRenderDiagnostics=1`;
+	await page.goto(bgUrl);
+	const bgInitialDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(bgCase, 0),
+		colorMode: 'normalized'
+	});
+	const bgInitialRenderPublication = extractTimings(bgInitialDiagnostics.timings).renderPublication;
+	expect(
+		bgInitialRenderPublication?.renderPublicationTimeline?.renderLayoutReuseAction,
+		'BG initial should build a fresh layout'
+	).toBe('build-required');
+	const bgInitialRequestId = bgInitialDiagnostics.baseSurfaceRequestId ?? 0;
+	await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
+	const bgWarmupDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(bgCase, WARMUP_SCRUB_HOUR_INDEX),
+		colorMode: 'normalized',
+		minSurfaceRequestId: bgInitialRequestId
+	});
+	const bgWarmupTimeline =
+		extractTimings(bgWarmupDiagnostics.timings).renderPublication?.renderPublicationTimeline;
+	expect(
+		bgWarmupTimeline?.renderLayoutReuseAction,
+		'BG warmup scrub should build while establishing prior proof'
+	).toBe('build-required');
+	const bgWarmupRequestId = bgWarmupDiagnostics.baseSurfaceRequestId ?? bgInitialRequestId;
+	await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
+	const bgScrubDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(bgCase, SCRUB_HOUR_INDEX),
+		colorMode: 'normalized',
+		minSurfaceRequestId: bgWarmupRequestId
+	});
+	const bgScrubTimeline = extractTimings(bgScrubDiagnostics.timings).renderPublication
+		?.renderPublicationTimeline;
+	expect(bgScrubTimeline?.renderLayoutReuseAction, 'BG scrub should reuse layout').toBe(
+		'reused'
+	);
+	expect(bgScrubTimeline?.renderLayoutReuseReason, 'BG scrub reuse reason').toBe(
+		'reuse-safe'
+	);
+	expect(bgScrubTimeline?.renderLayoutBuildTrace, 'BG scrub build trace').toBeNull();
+	expect(
+		bgScrubTimeline?.renderLayoutReuseProofSource,
+		'BG scrub proof source'
+	).toBe('previous-publication-proof');
+	expect(bgScrubTimeline?.renderLayoutReusePreviousKey).toEqual(expect.any(String));
+	expect(bgScrubTimeline?.renderLayoutReusePreviousRequestId).toEqual(expect.any(Number));
+	expect(bgScrubTimeline?.renderLayoutReusePreviousSelectionKey).toEqual(
+		expect.any(String)
+	);
+	expect(bgScrubTimeline?.activeLayoutCandidateCount).toBe(1);
+	const bgHover = await expectTooltipProbeMatch(page, 'BG scrub reused publication');
+
+	await requestDiagnosticsGridResolutionChange(page, 2);
+	const rebuiltDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(bgCase, SCRUB_HOUR_INDEX),
+		colorMode: 'normalized',
+		expectedGridResolution: 2
+	});
+	const rebuiltTimeline = extractTimings(rebuiltDiagnostics.timings).renderPublication
+		?.renderPublicationTimeline;
+	expect(
+		rebuiltTimeline?.renderLayoutReuseAction,
+		'BG in-session grid change should rebuild with prior active layout state present'
+	).toBe('build-required');
+	expect(
+		rebuiltTimeline?.renderLayoutBuildTrace,
+		'BG in-session grid change should include a fresh build trace'
+	).not.toBeNull();
+	expect(
+		rebuiltTimeline?.renderLayoutReuseReason,
+		'BG in-session grid change should fail reuse on key mismatch'
+	).toBe('layout-key-mismatch');
+	expect(
+		rebuiltTimeline?.renderLayoutReuseKeyMatch,
+		'BG in-session grid change should report the layout key mismatch explicitly'
+	).toBe(false);
+	expect(
+		rebuiltTimeline?.renderLayoutReuseProofTrace?.previousLayoutPresent,
+		'BG in-session grid change should compare against the prior active layout'
+	).toBe(true);
+	expect(
+		rebuiltTimeline?.renderLayoutReuseProofTrace?.gridSizeMatch,
+		'BG in-session grid change should prove the grid size changed'
+	).toBe(false);
+	expect(
+		rebuiltTimeline?.renderLayoutReusePreviousKey,
+		'BG in-session grid change should retain previous layout candidate linkage'
+	).toEqual(expect.any(String));
+	expect(
+		rebuiltTimeline?.activeLayoutCandidateCount,
+		'BG in-session grid change active layout candidate count'
+	).toBe(1);
+	expect(
+		rebuiltTimeline?.renderLayoutReuseProofSource,
+		'BG in-session grid change proof source'
+	).toBe('fresh-build-proof');
+	const rebuiltHover = await expectTooltipProbeMatch(
+		page,
+		'BG rebuilt publication after in-session grid change'
+	);
+
+	expect(
+		rebuiltDiagnostics.baseSelectionKey,
+		'grid change should keep the selected hour while rebuilding the surface'
+	).toBe(bgScrubDiagnostics.baseSelectionKey);
+	expect(
+		rebuiltDiagnostics.baseMetadataGridSize,
+		'grid change should publish the requested grid resolution'
+	).toBe(2);
+	expect(
+		`${rebuiltHover.liveTooltip.positionIndex}|${rebuiltHover.liveTooltip.value.toFixed(3)}|${formatTooltipPosition(rebuiltHover.liveTooltip.position)}`,
+		'in-session grid change should alter hover truth'
+	).not.toBe(
+		`${bgHover.liveTooltip.positionIndex}|${bgHover.liveTooltip.value.toFixed(3)}|${formatTooltipPosition(bgHover.liveTooltip.position)}`
+	);
+}
+
+function buildRepeatedScrubSoakSample(
+	diagnostics: DiagnosticsSnapshot,
+	hoverProbe: MainRouteTooltipProbe
+): RepeatedScrubSoakSample {
+	const timeline = extractTimings(diagnostics.timings).renderPublication?.renderPublicationTimeline;
+	return {
+		hourIndex: diagnostics.baseSelectedHourIndex,
+		selectionKey: diagnostics.baseSelectionKey ?? null,
+		surfaceRequestId: diagnostics.baseSurfaceRequestId ?? null,
+		renderLayoutReuseAction: timeline?.renderLayoutReuseAction ?? null,
+		renderLayoutReuseReason: timeline?.renderLayoutReuseReason ?? null,
+		activeLayoutCandidateCount: timeline?.activeLayoutCandidateCount ?? null,
+		reusedLayoutIdentity: deriveReusedLayoutIdentity(timeline),
+		retainedCpuLayoutBytes:
+			timeline?.renderLayoutReuseProofTrace?.estimatedRetainedCpuLayoutBytes ?? null,
+		ownedGpuMemoryBytes:
+			diagnostics.trackedGpuAllocationBytes.persistentExposureBytes +
+			diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes +
+			diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
+		renderOwnedSelectedHourBytes:
+			diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
+		renderOwnedSelectedHourBytesHighWatermark:
+			diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytesHighWatermark,
+		hoverCellLookupProofStatus:
+			timeline?.renderLayoutReuseProofTrace?.hoverCellLookupProofStatus ?? null,
+		hoverProbe: {
+			positionIndex: hoverProbe.positionIndex,
+			value: hoverProbe.value,
+			position: hoverProbe.position
+		}
+	};
+}
+
+async function collectRepeatedScrubSoak(
+	page: Page,
+	caseConfig: AnalysisCase
+): Promise<RepeatedScrubSoakResult> {
+	const sourceUrl = `/?analysis=${encodeURIComponent(caseConfig.analysisId)}&gridResolution=${TARGET_GRID_RESOLUTION_METERS}&utciRender=auto&utciRenderDiagnostics=1`;
+	await page.goto(sourceUrl);
+
+	const initialDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(caseConfig, 0),
+		colorMode: 'normalized'
+	});
+	const initialRequestId = initialDiagnostics.baseSurfaceRequestId ?? 0;
+	await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
+	const warmupDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(caseConfig, WARMUP_SCRUB_HOUR_INDEX),
+		colorMode: 'normalized',
+		minSurfaceRequestId: initialRequestId
+	});
+	const warmupTimeline =
+		extractTimings(warmupDiagnostics.timings).renderPublication?.renderPublicationTimeline;
+	expect(warmupTimeline?.renderLayoutReuseAction, 'Repeated scrub warmup should build').toBe(
+		'build-required'
+	);
+	let previousRequestId = warmupDiagnostics.baseSurfaceRequestId ?? initialRequestId;
+
+	const reusedSamples: RepeatedScrubSoakSample[] = [];
+	for (const hourIndex of REPEATED_SCRUB_HOUR_INDICES) {
+		await page.getByRole('slider', { name: 'Select analysis hour' }).press('ArrowRight');
+		const diagnostics = await waitForSelectedHourPublication(page, {
+			expectedSelectionKey: expectedSelectionKey(caseConfig, hourIndex),
+			colorMode: 'normalized',
+			minSurfaceRequestId: previousRequestId
+		});
+		const timeline =
+			extractTimings(diagnostics.timings).renderPublication?.renderPublicationTimeline;
+		expect(
+			timeline?.renderLayoutReuseAction,
+			`Repeated scrub hour ${hourIndex} should reuse layout`
+		).toBe('reused');
+		expect(
+			timeline?.renderLayoutReuseReason,
+			`Repeated scrub hour ${hourIndex} reuse reason`
+		).toBe('reuse-safe');
+		expect(
+			timeline?.activeLayoutCandidateCount,
+			`Repeated scrub hour ${hourIndex} active layout count`
+		).toBe(1);
+		expect(
+			timeline?.renderLayoutReuseProofTrace?.hoverCellLookupProofStatus,
+			`Repeated scrub hour ${hourIndex} hover/cell proof`
+		).toBe('same-point-confirmed');
+		expect(
+			deriveReusedLayoutIdentity(timeline),
+			`Repeated scrub hour ${hourIndex} reused layout identity`
+		).toEqual(expect.any(String));
+		const hovered = await expectTooltipProbeMatch(
+			page,
+			`Repeated scrub hour ${hourIndex} reused publication`
+		);
+		reusedSamples.push(buildRepeatedScrubSoakSample(diagnostics, hovered.liveTooltip));
+		previousRequestId = diagnostics.baseSurfaceRequestId ?? previousRequestId;
+	}
+
+	const stableReusedLayoutIdentity = reusedSamples[0]?.reusedLayoutIdentity ?? null;
+	for (const sample of reusedSamples) {
+		expect(sample.reusedLayoutIdentity, 'Repeated scrub reused layout identity should plateau').toBe(
+			stableReusedLayoutIdentity
+		);
+		expect(sample.retainedCpuLayoutBytes, 'Repeated scrub retained bytes should plateau').toBe(
+			reusedSamples[0]?.retainedCpuLayoutBytes ?? null
+		);
+		expect(sample.ownedGpuMemoryBytes, 'Repeated scrub app-owned bytes should plateau').toBe(
+			reusedSamples[0]?.ownedGpuMemoryBytes ?? 0
+		);
+		expect(
+			sample.renderOwnedSelectedHourBytes,
+			'Repeated scrub render-owned selected-hour bytes should plateau'
+		).toBe(reusedSamples[0]?.renderOwnedSelectedHourBytes ?? 0);
+		expect(
+			sample.renderOwnedSelectedHourBytesHighWatermark,
+			'Repeated scrub render-owned selected-hour high-watermark should plateau'
+		).toBe(reusedSamples[0]?.renderOwnedSelectedHourBytesHighWatermark ?? 0);
+	}
+
+	await requestDiagnosticsGridResolutionChange(page, 2);
+	const rebuildDiagnostics = await waitForSelectedHourPublication(page, {
+		expectedSelectionKey: expectedSelectionKey(
+			caseConfig,
+			REPEATED_SCRUB_HOUR_INDICES[REPEATED_SCRUB_HOUR_INDICES.length - 1]
+		),
+		colorMode: 'normalized',
+		expectedGridResolution: 2
+	});
+	const rebuildTimeline =
+		extractTimings(rebuildDiagnostics.timings).renderPublication?.renderPublicationTimeline;
+	expect(
+		rebuildTimeline?.renderLayoutReuseAction,
+		'Repeated scrub rebuild replacement should rebuild layout'
+	).toBe('build-required');
+	expect(
+		rebuildTimeline?.renderLayoutReuseReason,
+		'Repeated scrub rebuild replacement should report key mismatch'
+	).toBe('layout-key-mismatch');
+	expect(
+		rebuildTimeline?.activeLayoutCandidateCount,
+		'Repeated scrub rebuild replacement active layout count'
+	).toBe(1);
+	expect(
+		rebuildTimeline?.renderLayoutReusePreviousKey,
+		'Repeated scrub rebuild replacement should stamp the released previous layout'
+	).toBe(stableReusedLayoutIdentity);
+
+	await page.goto('about:blank');
+
+	return {
+		projectLabel: caseConfig.projectLabel,
+		analysisId: caseConfig.analysisId,
+		colorMode: 'normalized',
+		query: 'gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1',
+		warmupHourIndex: WARMUP_SCRUB_HOUR_INDEX,
+		reusedSamples,
+		plateauRetainedCpuLayoutBytes: reusedSamples[0]?.retainedCpuLayoutBytes ?? null,
+		plateauOwnedGpuMemoryBytes: reusedSamples[0]?.ownedGpuMemoryBytes ?? 0,
+		plateauRenderOwnedSelectedHourBytes:
+			reusedSamples[0]?.renderOwnedSelectedHourBytes ?? 0,
+		plateauRenderOwnedSelectedHourBytesHighWatermark:
+			reusedSamples[0]?.renderOwnedSelectedHourBytesHighWatermark ?? 0,
+		stableReusedLayoutIdentity,
+		rebuildReplacement: {
+			hourIndex: rebuildDiagnostics.baseSelectedHourIndex,
+			selectionKey: rebuildDiagnostics.baseSelectionKey ?? null,
+			surfaceRequestId: rebuildDiagnostics.baseSurfaceRequestId ?? null,
+			renderLayoutReuseAction: rebuildTimeline?.renderLayoutReuseAction ?? null,
+			renderLayoutReuseReason: rebuildTimeline?.renderLayoutReuseReason ?? null,
+			activeLayoutCandidateCount: rebuildTimeline?.activeLayoutCandidateCount ?? null,
+			releasedPreviousLayout: rebuildTimeline?.renderLayoutReusePreviousKey ?? null,
+			ownedGpuMemoryBytes:
+				rebuildDiagnostics.trackedGpuAllocationBytes.persistentExposureBytes +
+				rebuildDiagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes +
+				rebuildDiagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
+			renderOwnedSelectedHourBytes:
+				rebuildDiagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
+			renderOwnedSelectedHourBytesHighWatermark:
+				rebuildDiagnostics.trackedGpuAllocationBytes
+					.renderOwnedSelectedHourBytesHighWatermark
+		}
+	};
+}
+
 test.describe('main route 0.5m performance collector', () => {
 	test.afterEach(async ({ page }) => {
 		await page.goto('about:blank').catch(() => undefined);
@@ -1365,6 +2237,12 @@ test.describe('main route 0.5m performance collector', () => {
 		for (const caseConfig of CASES) {
 			cases.push(await collectCase(page, caseConfig));
 		}
+		await verifyRouteReuseAndRebuildHoverTruth(page);
+		const nessTzionaCase = CASES.find((entry) => entry.projectLabel === 'Ness-Tziona');
+		if (!nessTzionaCase) {
+			throw new Error('Expected the Ness Tziona collector case.');
+		}
+		const repeatedScrubSoak = await collectRepeatedScrubSoak(page, nessTzionaCase);
 
 		const artifact = {
 			collectedOn: COLLECTED_ON,
@@ -1375,7 +2253,8 @@ test.describe('main route 0.5m performance collector', () => {
 				'This 0.5m stress pass intentionally excludes other Ben-Gurion variants and uses only the BG base case plus Ness Tziona base/exploded model.',
 			collectionMethod:
 				'Main route only: / with gridResolution=0.5&utciRenderDiagnostics=1, app-visible color-mode buttons and hour slider scrub, no debug route and no parity/.bin comparison.',
-			cases
+			cases,
+			repeatedScrubSoak
 		};
 
 		if (!existsSync(RESULTS_DIR)) {

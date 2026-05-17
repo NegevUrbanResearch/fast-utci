@@ -244,6 +244,38 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.sceneSurfaceReceivedAtMs &&
 		left.renderPublicationTimeline?.publicationEffectStartedAtMs ===
 			right.renderPublicationTimeline?.publicationEffectStartedAtMs &&
+		areRenderLayoutBuildTracesEqual(
+			left.renderPublicationTimeline?.renderLayoutBuildTrace,
+			right.renderPublicationTimeline?.renderLayoutBuildTrace
+		) &&
+		areRenderLayoutReuseProofTracesEqual(
+			left.renderPublicationTimeline?.renderLayoutReuseProofTrace,
+			right.renderPublicationTimeline?.renderLayoutReuseProofTrace
+		) &&
+		left.renderPublicationTimeline?.renderLayoutReuseAction ===
+			right.renderPublicationTimeline?.renderLayoutReuseAction &&
+		left.renderPublicationTimeline?.renderLayoutReuseReason ===
+			right.renderPublicationTimeline?.renderLayoutReuseReason &&
+		left.renderPublicationTimeline?.renderLayoutReuseDecisionMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseDecisionMs &&
+		left.renderPublicationTimeline?.renderLayoutReuseKeyMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseKeyMs &&
+		left.renderPublicationTimeline?.renderLayoutReuseFrameDerivationMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseFrameDerivationMs &&
+		left.renderPublicationTimeline?.renderLayoutReuseFrameCacheHit ===
+			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheHit &&
+		left.renderPublicationTimeline?.renderLayoutReuseKeyMatch ===
+			right.renderPublicationTimeline?.renderLayoutReuseKeyMatch &&
+		left.renderPublicationTimeline?.renderLayoutReuseProofSource ===
+			right.renderPublicationTimeline?.renderLayoutReuseProofSource &&
+		left.renderPublicationTimeline?.renderLayoutReusePreviousKey ===
+			right.renderPublicationTimeline?.renderLayoutReusePreviousKey &&
+		left.renderPublicationTimeline?.renderLayoutReusePreviousRequestId ===
+			right.renderPublicationTimeline?.renderLayoutReusePreviousRequestId &&
+		left.renderPublicationTimeline?.renderLayoutReusePreviousSelectionKey ===
+			right.renderPublicationTimeline?.renderLayoutReusePreviousSelectionKey &&
+		left.renderPublicationTimeline?.activeLayoutCandidateCount ===
+			right.renderPublicationTimeline?.activeLayoutCandidateCount &&
 		areRenderSurfaceMeshTracesEqual(
 			left.renderPublicationTimeline?.renderSurfaceMeshTrace,
 			right.renderPublicationTimeline?.renderSurfaceMeshTrace
@@ -264,6 +296,94 @@ function areRenderPublicationEqual(
 			left.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory,
 			right.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory
 		)
+	);
+}
+
+function areRenderLayoutBuildTracesEqual(
+	left:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderLayoutBuildTrace']
+		| undefined,
+	right:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderLayoutBuildTrace']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.totalMs === right.totalMs &&
+		left.arrayAllocationMs === right.arrayAllocationMs &&
+		left.transformBoundsPassMs === right.transformBoundsPassMs &&
+		left.coordinateAssignmentMs === right.coordinateAssignmentMs &&
+		left.indexToTexelFillMs === right.indexToTexelFillMs &&
+		left.cellToPointIndexBuildMs === right.cellToPointIndexBuildMs &&
+		left.colorBufferAllocationMs === right.colorBufferAllocationMs
+	);
+}
+
+function areRenderLayoutReuseProofTracesEqual(
+	left:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderLayoutReuseProofTrace']
+		| undefined,
+	right:
+		| NonNullable<
+				NonNullable<
+					LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+				>['renderPublicationTimeline']
+		  >['renderLayoutReuseProofTrace']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.decision === right.decision &&
+		left.hoverCellLookupProofStatus === right.hoverCellLookupProofStatus &&
+		left.previousLayoutPresent === right.previousLayoutPresent &&
+		left.canonicalRuntimeCompatibilityWouldReuse ===
+			right.canonicalRuntimeCompatibilityWouldReuse &&
+		left.proofMatchesCanonicalRuntimeCompatibility ===
+			right.proofMatchesCanonicalRuntimeCompatibility &&
+		left.positionsReferenceMatch === right.positionsReferenceMatch &&
+		left.pointCountMatch === right.pointCountMatch &&
+		left.gridSizeMatch === right.gridSizeMatch &&
+		left.coordinateSystemMatch === right.coordinateSystemMatch &&
+		left.normalizationSignature.enabled === right.normalizationSignature.enabled &&
+		left.normalizationSignature.offset.x === right.normalizationSignature.offset.x &&
+		left.normalizationSignature.offset.y === right.normalizationSignature.offset.y &&
+		left.normalizationSignature.offset.z === right.normalizationSignature.offset.z &&
+		left.normalizationSignature.provenance ===
+			right.normalizationSignature.provenance &&
+		left.previousNormalizationSignature?.enabled ===
+			right.previousNormalizationSignature?.enabled &&
+		left.previousNormalizationSignature?.offset.x ===
+			right.previousNormalizationSignature?.offset.x &&
+		left.previousNormalizationSignature?.offset.y ===
+			right.previousNormalizationSignature?.offset.y &&
+		left.previousNormalizationSignature?.offset.z ===
+			right.previousNormalizationSignature?.offset.z &&
+		left.previousNormalizationSignature?.provenance ===
+			right.previousNormalizationSignature?.provenance &&
+		left.normalizationSignatureMatch === right.normalizationSignatureMatch &&
+		left.constructionMode === right.constructionMode &&
+		left.previousConstructionMode === right.previousConstructionMode &&
+		left.constructionModeMatch === right.constructionModeMatch &&
+		left.dimensionsMatch === right.dimensionsMatch &&
+		left.placementMatch === right.placementMatch &&
+		left.cellToPointMappingMatch === right.cellToPointMappingMatch &&
+		left.proofCostMs === right.proofCostMs &&
+		left.estimatedRetainedCpuLayoutBytes ===
+			right.estimatedRetainedCpuLayoutBytes
 	);
 }
 

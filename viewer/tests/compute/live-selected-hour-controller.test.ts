@@ -1676,6 +1676,186 @@ describe('liveSelectedHourController', () => {
 		]);
 	});
 
+	it('does not treat changed layout-reuse timeline diagnostics as an idempotent diagnostics update', async () => {
+		const gpu = createGpuResidentOutput(40, 40);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 40,
+					timeIndex: 40,
+					analysis: createSelectionAnalysis('gpu-layout-reuse-telemetry-change', [18, 20]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 4000
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(40));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					renderLayoutBuildTrace: {
+						totalMs: 5,
+						arrayAllocationMs: 0.5,
+						transformBoundsPassMs: 2,
+						coordinateAssignmentMs: 1,
+						indexToTexelFillMs: 0.5,
+						cellToPointIndexBuildMs: 0.75,
+						colorBufferAllocationMs: 0.25
+					},
+					renderLayoutReuseProofTrace: {
+						decision: 'reuse-safe',
+						hoverCellLookupProofStatus: 'same-point-confirmed',
+						previousLayoutPresent: true,
+						canonicalRuntimeCompatibilityWouldReuse: true,
+						proofMatchesCanonicalRuntimeCompatibility: true,
+						positionsReferenceMatch: true,
+						pointCountMatch: true,
+						gridSizeMatch: true,
+						coordinateSystemMatch: true,
+						normalizationSignature: {
+							enabled: true,
+							offset: { x: 0.5, y: 0, z: -0.5 },
+							provenance: 'anchor-offset-minus-origin'
+						},
+						previousNormalizationSignature: {
+							enabled: true,
+							offset: { x: 0.5, y: 0, z: -0.5 },
+							provenance: 'anchor-offset-minus-origin'
+						},
+						normalizationSignatureMatch: true,
+						constructionMode: 'world-positions',
+						previousConstructionMode: 'world-positions',
+						constructionModeMatch: true,
+						dimensionsMatch: true,
+						placementMatch: true,
+						cellToPointMappingMatch: true,
+						proofCostMs: 1.25,
+						estimatedRetainedCpuLayoutBytes: 32687044
+					},
+					renderLayoutReuseAction: 'build-required',
+					renderLayoutReuseReason: 'layout-key-mismatch',
+					renderLayoutReuseDecisionMs: 0.5,
+					renderLayoutReuseKeyMs: 0.75,
+					renderLayoutReuseFrameDerivationMs: 0.25,
+					renderLayoutReuseFrameCacheHit: false,
+					renderLayoutReuseKeyMatch: false,
+					renderLayoutReuseProofSource: 'fresh-build-proof',
+					renderLayoutReusePreviousKey: 'analysis|old-key',
+					renderLayoutReusePreviousRequestId: 39,
+					renderLayoutReusePreviousSelectionKey: 'old-selection',
+					activeLayoutCandidateCount: 1
+				}
+			})
+		});
+
+		const emittedStates: LiveSelectedHourControllerSurfaceDiagnostics[] = [];
+		const unsubscribe = controller.subscribe((state) => {
+			emittedStates.push(state.renderSurfaceDiagnostics);
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					renderLayoutBuildTrace: {
+						totalMs: 5,
+						arrayAllocationMs: 0.5,
+						transformBoundsPassMs: 2,
+						coordinateAssignmentMs: 1,
+						indexToTexelFillMs: 0.5,
+						cellToPointIndexBuildMs: 0.75,
+						colorBufferAllocationMs: 0.25
+					},
+					renderLayoutReuseProofTrace: {
+						decision: 'reuse-safe',
+						hoverCellLookupProofStatus: 'same-point-confirmed',
+						previousLayoutPresent: true,
+						canonicalRuntimeCompatibilityWouldReuse: true,
+						proofMatchesCanonicalRuntimeCompatibility: true,
+						positionsReferenceMatch: true,
+						pointCountMatch: true,
+						gridSizeMatch: true,
+						coordinateSystemMatch: true,
+						normalizationSignature: {
+							enabled: true,
+							offset: { x: 0.5, y: 0, z: -0.5 },
+							provenance: 'anchor-offset-minus-origin'
+						},
+						previousNormalizationSignature: {
+							enabled: true,
+							offset: { x: 0.5, y: 0, z: -0.5 },
+							provenance: 'anchor-offset-minus-origin'
+						},
+						normalizationSignatureMatch: true,
+						constructionMode: 'world-positions',
+						previousConstructionMode: 'world-positions',
+						constructionModeMatch: true,
+						dimensionsMatch: true,
+						placementMatch: true,
+						cellToPointMappingMatch: true,
+						proofCostMs: 1.25,
+						estimatedRetainedCpuLayoutBytes: 32687044
+					},
+					renderLayoutReuseAction: 'build-required',
+					renderLayoutReuseReason: 'layout-key-mismatch',
+					renderLayoutReuseDecisionMs: 0.5,
+					renderLayoutReuseKeyMs: 1.25,
+					renderLayoutReuseFrameDerivationMs: 0,
+					renderLayoutReuseFrameCacheHit: true,
+					renderLayoutReuseKeyMatch: false,
+					renderLayoutReuseProofSource: 'previous-publication-proof',
+					renderLayoutReusePreviousKey: 'analysis|new-key',
+					renderLayoutReusePreviousRequestId: 40,
+					renderLayoutReusePreviousSelectionKey: 'new-selection',
+					activeLayoutCandidateCount: 2
+				}
+			})
+		});
+
+		unsubscribe();
+		expect(emittedStates).toHaveLength(1);
+		expect(
+			controller.getState().renderSurfaceDiagnostics.renderPublication?.renderPublicationTimeline
+		).toMatchObject({
+			renderLayoutReuseDecisionMs: 0.5,
+			renderLayoutReuseKeyMs: 1.25,
+			renderLayoutReuseFrameDerivationMs: 0,
+			renderLayoutReuseFrameCacheHit: true,
+			renderLayoutReuseProofSource: 'previous-publication-proof',
+			renderLayoutReusePreviousKey: 'analysis|new-key',
+			renderLayoutReusePreviousRequestId: 40,
+			renderLayoutReusePreviousSelectionKey: 'new-selection',
+			activeLayoutCandidateCount: 2,
+			renderLayoutBuildTrace: {
+				totalMs: 5
+			},
+			renderLayoutReuseProofTrace: {
+				decision: 'reuse-safe',
+				proofCostMs: 1.25
+			}
+		});
+		expect(
+			controller.getState().runtimeDiagnostics?.timings.renderPublication?.renderPublicationTimeline
+		).toMatchObject({
+			renderLayoutReuseKeyMs: 1.25,
+			renderLayoutReuseFrameDerivationMs: 0,
+			renderLayoutReuseFrameCacheHit: true,
+			renderLayoutReuseProofSource: 'previous-publication-proof',
+			activeLayoutCandidateCount: 2
+		});
+	});
+
 	it('does not accept compute-buffer transport without same-device proof', async () => {
 		const gpu = createGpuResidentOutput(61, 13);
 		const sessionMock = createSessionMock([

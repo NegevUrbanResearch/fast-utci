@@ -91,6 +91,16 @@
 	import MainRouteTooltipLayer from "./main/MainRouteTooltipLayer.svelte";
 	import MainRouteViewport from "./main/MainRouteViewport.svelte";
 
+	const MAIN_ROUTE_DIAGNOSTICS_GRID_RESOLUTIONS = new Set<number>([
+		10,
+		8,
+		6,
+		4,
+		2,
+		1,
+		0.5,
+	]);
+
 	const getDataBasePath = () => {
 		const basePath = base || "";
 		return basePath.replace(/\/viewer\/build$/, "");
@@ -128,6 +138,19 @@
 		$page.url.searchParams.get("utciRenderDiagnostics") === "1";
 
 	type MainRouteUtciSurfaceDiagnostics = LiveSelectedHourControllerSurfaceDiagnostics;
+	type MainRouteDiagnosticsPreservedBaseSceneSurface = {
+		analysis: Analysis;
+		renderContext: LiveSelectedHourPublishedRenderContext;
+		surfaceIdentity: LiveSelectedHourSurfaceIdentity;
+		gpuResidentOutput: SelectedHourGpuResidentOutput;
+		pendingRenderUpdateStartedAt: number | undefined;
+		requestId: number;
+	};
+	type MainRouteDiagnosticsWindow = MainRouteWindow & {
+		__mainRouteDiagnosticsSetGridResolution?:
+			| ((resolutionMeters: number) => boolean)
+			| undefined;
+	};
 
 	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
 	let rendererDeviceLimits: WebgpuLargeBufferDeviceLimits | undefined = undefined;
@@ -163,6 +186,16 @@
 	let comparisonPendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	let basePendingRenderUpdateStartedAt: number | undefined = undefined;
 	let comparisonPendingRenderUpdateStartedAt: number | undefined = undefined;
+	let diagnosticsPreservedBaseSceneSurface:
+		| MainRouteDiagnosticsPreservedBaseSceneSurface
+		| null = null;
+	let viewportBaseSceneAnalysis: Analysis | null = null;
+	let viewportBaseSceneRenderContext:
+		| LiveSelectedHourPublishedRenderContext
+		| null = null;
+	let viewportBaseSceneSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
+	let viewportBasePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
+	let viewportBasePendingRenderUpdateStartedAt: number | undefined = undefined;
 	let showMainRouteOverlay = false;
 	let showMainRouteComparisonOverlay = false;
 	let tooltipHoverSampleCount = 0;
@@ -224,6 +257,50 @@
 
 	function handleGridResolutionChange(value: MainRouteGridResolution): void {
 		selectedGridResolutionMeters = value;
+	}
+
+	function captureDiagnosticsBaseSceneSurface():
+		| MainRouteDiagnosticsPreservedBaseSceneSurface
+		| null {
+		if (
+			!baseHasVisibleLiveSurface ||
+			baseSceneAnalysis == null ||
+			baseSceneRenderContext == null ||
+			baseSceneSurfaceIdentity == null ||
+			basePendingGpuResidentOutput == null
+		) {
+			return null;
+		}
+
+		return {
+			analysis: baseSceneAnalysis,
+			renderContext: baseSceneRenderContext,
+			surfaceIdentity: baseSceneSurfaceIdentity,
+			gpuResidentOutput: basePendingGpuResidentOutput,
+			pendingRenderUpdateStartedAt: basePendingRenderUpdateStartedAt,
+			requestId: basePendingGpuResidentOutput.requestId,
+		};
+	}
+
+	function handleDiagnosticsGridResolutionChange(
+		resolutionMeters: number,
+	): boolean {
+		if (
+			!utciRenderDiagnosticsEnabled ||
+			!MAIN_ROUTE_DIAGNOSTICS_GRID_RESOLUTIONS.has(resolutionMeters) ||
+			resolutionMeters === selectedGridResolutionMeters
+		) {
+			return false;
+		}
+
+		const preservedSurface = captureDiagnosticsBaseSceneSurface();
+		if (!preservedSurface) {
+			return false;
+		}
+
+		diagnosticsPreservedBaseSceneSurface = preservedSurface;
+		selectedGridResolutionMeters = resolutionMeters as MainRouteGridResolution;
+		return true;
 	}
 
 	function handleMainRouteModelLoaded(event: CustomEvent<Group>): void {
@@ -346,6 +423,39 @@
 		comparisonHasVisibleLiveSurface,
 	}));
 
+	$: if (!utciRenderDiagnosticsEnabled) {
+		diagnosticsPreservedBaseSceneSurface = null;
+	}
+
+	$: if (
+		diagnosticsPreservedBaseSceneSurface != null &&
+		basePendingGpuResidentOutput != null &&
+		basePendingGpuResidentOutput.requestId !==
+			diagnosticsPreservedBaseSceneSurface.requestId
+	) {
+		diagnosticsPreservedBaseSceneSurface = null;
+	}
+
+	$: {
+		const preservedSurface =
+			utciRenderDiagnosticsEnabled &&
+			diagnosticsPreservedBaseSceneSurface != null &&
+			basePendingGpuResidentOutput == null
+				? diagnosticsPreservedBaseSceneSurface
+				: null;
+		viewportBaseSceneAnalysis =
+			preservedSurface?.analysis ?? baseSceneAnalysis;
+		viewportBaseSceneRenderContext =
+			preservedSurface?.renderContext ?? baseSceneRenderContext;
+		viewportBaseSceneSurfaceIdentity =
+			preservedSurface?.surfaceIdentity ?? baseSceneSurfaceIdentity;
+		viewportBasePendingGpuResidentOutput =
+			preservedSurface?.gpuResidentOutput ?? basePendingGpuResidentOutput;
+		viewportBasePendingRenderUpdateStartedAt =
+			preservedSurface?.pendingRenderUpdateStartedAt ??
+			basePendingRenderUpdateStartedAt;
+	}
+
 	// Reactive scenario name for comparison curtain label
 	// Watch comparisonAnalysisId to trigger updates when scenarios change
 	$: comparisonScenarioName =
@@ -431,6 +541,10 @@
 	}
 
 	$: if (typeof window !== "undefined") {
+		(window as MainRouteDiagnosticsWindow).__mainRouteDiagnosticsSetGridResolution =
+			utciRenderDiagnosticsEnabled
+				? handleDiagnosticsGridResolutionChange
+				: undefined;
 		updateUtciRenderDiagnostics({
 			enabled: utciRenderDiagnosticsEnabled,
 			utciOnDemand: utciOnDemandMode,
@@ -492,7 +606,9 @@
 
 	onDestroy(() => {
 		if (typeof window !== "undefined") {
-			(window as MainRouteWindow).__utciRenderDiagnostics__ = undefined;
+			const win = window as MainRouteDiagnosticsWindow;
+			win.__utciRenderDiagnostics__ = undefined;
+			win.__mainRouteDiagnosticsSetGridResolution = undefined;
 		}
 		performanceStore.set(EMPTY_PERFORMANCE_SNAPSHOT);
 
@@ -589,6 +705,7 @@
 			viewerCurrentHour={$viewerStore.currentHour}
 			metricType={$viewerStore.metricType}
 			utciVisible={$viewerStore.utciVisible}
+			diagnosticsEnabled={utciRenderDiagnosticsEnabled}
 		/>
 	</svelte:fragment>
 
@@ -626,15 +743,15 @@
 			{gridVisible}
 			{model}
 			{isComparing}
-			{baseSceneAnalysis}
+			baseSceneAnalysis={viewportBaseSceneAnalysis}
 			{comparisonSceneAnalysis}
-			{basePendingGpuResidentOutput}
+			basePendingGpuResidentOutput={viewportBasePendingGpuResidentOutput}
 			{comparisonPendingGpuResidentOutput}
-			{baseSceneRenderContext}
+			baseSceneRenderContext={viewportBaseSceneRenderContext}
 			{comparisonSceneRenderContext}
-			{baseSceneSurfaceIdentity}
+			baseSceneSurfaceIdentity={viewportBaseSceneSurfaceIdentity}
 			{comparisonSceneSurfaceIdentity}
-			{basePendingRenderUpdateStartedAt}
+			basePendingRenderUpdateStartedAt={viewportBasePendingRenderUpdateStartedAt}
 			{comparisonPendingRenderUpdateStartedAt}
 			{resolvedUtciSurfaceBackend}
 			onRendererDiagnostics={handleRendererDiagnostics}

@@ -12,6 +12,7 @@ export type LiveSelectedHourPublishedRenderContext = {
 	hourIndex: number;
 	timeIndex: number;
 	selectionKey: string;
+	publicationPhase: 'initial' | 'scrub';
 	colorMode: 'normalized' | 'discrete';
 	metricType: 'utci';
 	rangeOverride: LiveSelectedHourRangeOverride | null;
@@ -39,6 +40,7 @@ export function createLiveSelectedHourPublishedRenderContext(params: {
 	hourIndex: number;
 	timeIndex: number;
 	selectionKey: string;
+	publicationPhase: 'initial' | 'scrub';
 	colorMode: 'normalized' | 'discrete';
 	rangeOverride?: LiveSelectedHourRangeOverride | null;
 }): LiveSelectedHourPublishedRenderContext {
@@ -48,6 +50,7 @@ export function createLiveSelectedHourPublishedRenderContext(params: {
 		hourIndex: params.hourIndex,
 		timeIndex: params.timeIndex,
 		selectionKey: params.selectionKey,
+		publicationPhase: params.publicationPhase,
 		colorMode: params.colorMode,
 		metricType: 'utci',
 		rangeOverride: params.rangeOverride ?? null

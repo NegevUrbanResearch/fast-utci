@@ -12,10 +12,19 @@ import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
+import type {
+	SelectedHourRenderLayoutBuildTrace,
+	SelectedHourRenderLayoutConstructionMode,
+	SelectedHourRenderLayoutNormalizationSignature,
+	SelectedHourRenderLayoutReuseProofTrace
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import {
 	createGpuNativeUtciSurfaceMesh,
 	disposeGpuNativeUtciSurfaceMesh,
+	evaluateComputeBufferUtciSurfaceLayoutCompatibility,
+	evaluateUtciGridLayoutsPointCompatibility,
 	getGpuNativeUtciSurfaceSource,
+	type UtciGridLayoutPointCompatibilityEvaluation,
 	updateGpuNativeUtciSurfaceMesh
 } from './gpuUtciRenderBridge';
 
@@ -46,7 +55,91 @@ export interface UtciGridLayout {
 	cellToPointIndex?: Int32Array;
 	indexToTexel: Uint32Array;
 	colorBuffer: Uint8Array;
+	positionsIdentityId?: number;
+	constructionMode?: SelectedHourRenderLayoutConstructionMode;
+	normalizationSignature?: SelectedHourRenderLayoutNormalizationSignature;
 	texture?: THREE.DataTexture;
+}
+
+export type UtciGridLayoutBuildDiagnostics = Partial<SelectedHourRenderLayoutBuildTrace>;
+export type UtciGridLayoutReuseProofDiagnostics = SelectedHourRenderLayoutReuseProofTrace;
+export type UtciLayoutReuseKey = {
+	analysisId: string;
+	layoutSourceSignature: string;
+	gridSize: number;
+	pointCount: number;
+	coordinateSystem: string;
+	normalizationSignature: string;
+	constructionMode: 'world-positions' | 'metadata-bounds-fallback' | 'invalid';
+	width: number;
+	height: number;
+	centerX: number;
+	centerZ: number;
+	baseY: number;
+	utciSurfaceSource: 'compute-buffer-selected-hour';
+	rendererBackend: 'webgpu';
+};
+export type UtciLayoutReuseKeyDiagnostics = {
+	keyBuildMs?: number;
+	frameDerivationMs?: number;
+	frameCacheHit?: boolean;
+};
+export type UtciLayoutReusePublicationState = {
+	proof: UtciGridLayoutReuseProofDiagnostics;
+	key: UtciLayoutReuseKey;
+	layoutIdentity: string;
+	requestId: number | null;
+	selectionKey: string | null;
+};
+export type UtciLayoutReuseDecisionReason =
+	| 'reuse-safe'
+	| 'missing-previous-layout'
+	| 'proof-not-safe'
+	| 'canonical-mismatch'
+	| 'mapping-unsafe'
+	| 'hover-proof-missing'
+	| 'backend-or-source-mismatch'
+	| 'layout-key-mismatch'
+	| 'diagnostics-missing';
+export type UtciLayoutReuseDecision = {
+	action: 'reuse-candidate' | 'build-required';
+	reason: UtciLayoutReuseDecisionReason;
+	keyMatch: boolean;
+};
+export type UtciLayoutPublicationPlan =
+	| {
+			action: 'reuse-existing';
+			layout: UtciGridLayout;
+			reason: 'reuse-safe';
+			keyMatch: true;
+	  }
+	| {
+			action: 'build-new';
+			reason:
+				| UtciLayoutReuseDecisionReason
+				| 'initial-publication';
+			keyMatch: boolean;
+	  };
+const positionsIdentityIds = new WeakMap<Float32Array, number>();
+const positionsSourceSignatureCache = new WeakMap<Float32Array, string>();
+const utciLayoutFrameCache = new WeakMap<
+	Analysis,
+	{
+		layoutSourceSignature: string;
+		frame: DerivedUtciLayoutFrame;
+	}
+>();
+let nextPositionsIdentityId = 1;
+let positionsSourceSignatureComputationCount = 0;
+
+function getPositionsIdentityId(positions: Float32Array): number {
+	const existing = positionsIdentityIds.get(positions);
+	if (existing !== undefined) {
+		return existing;
+	}
+	const created = nextPositionsIdentityId++;
+	positionsIdentityIds.set(positions, created);
+	return created;
 }
 
 export type UtciSurfaceBackendType = 'dataTexture' | 'gpuNative';
@@ -568,12 +661,731 @@ function disposeSurfaceMeshAssets(mesh: THREE.Mesh): void {
 	mesh.geometry.dispose();
 }
 
-export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
+function createNormalizationSignature(params: {
+	enabled: boolean;
+	offset: THREE.Vector3;
+}): SelectedHourRenderLayoutNormalizationSignature {
+	return {
+		enabled: params.enabled,
+		offset: {
+			x: params.offset.x,
+			y: params.offset.y,
+			z: params.offset.z
+		},
+		provenance: params.enabled ? 'anchor-offset-minus-origin' : 'normalization-disabled'
+	};
+}
+
+function getLayoutNormalizationSignature(
+	layout: UtciGridLayout
+): SelectedHourRenderLayoutNormalizationSignature {
+	return (
+		layout.normalizationSignature ?? {
+			enabled: false,
+			offset: { x: 0, y: 0, z: 0 },
+			provenance: 'normalization-disabled'
+		}
+	);
+}
+
+function normalizationSignaturesMatch(
+	left: SelectedHourRenderLayoutNormalizationSignature,
+	right: SelectedHourRenderLayoutNormalizationSignature
+): boolean {
+	return (
+		left.enabled === right.enabled &&
+		left.provenance === right.provenance &&
+		left.offset.x === right.offset.x &&
+		left.offset.y === right.offset.y &&
+		left.offset.z === right.offset.z
+	);
+}
+
+function estimateRetainedCpuLayoutBytes(layout: UtciGridLayout): number {
+	return (
+		layout.indexToRow.byteLength +
+		layout.indexToColumn.byteLength +
+		(layout.cellToPointIndex?.byteLength ?? 0) +
+		layout.indexToTexel.byteLength +
+		layout.colorBuffer.byteLength
+	);
+}
+
+function appendHashNumber(hash: number, value: number): number {
+	const normalized = Number.isFinite(value) ? Object.is(value, -0) ? 0 : value : 0;
+	const encoded = Number.isInteger(normalized)
+		? (normalized >>> 0)
+		: new Uint32Array(new Float64Array([normalized]).buffer)[0] ?? 0;
+	return Math.imul(hash ^ encoded, 16777619) >>> 0;
+}
+
+function appendHashString(hash: number, value: string): number {
+	let nextHash = hash;
+	for (let index = 0; index < value.length; index += 1) {
+		nextHash = Math.imul(nextHash ^ value.charCodeAt(index), 16777619) >>> 0;
+	}
+	return nextHash;
+}
+
+function appendHashUint32Array(hash: number, values: Uint32Array): number {
+	let nextHash = hash;
+	for (let index = 0; index < values.length; index += 1) {
+		nextHash = Math.imul(nextHash ^ values[index], 16777619) >>> 0;
+	}
+	return nextHash;
+}
+
+function appendHashFloat32Array(hash: number, values: Float32Array): number {
+	return appendHashUint32Array(hash, new Uint32Array(values.buffer, values.byteOffset, values.length));
+}
+
+function appendHashInt32Array(hash: number, values: Int32Array): number {
+	let nextHash = hash;
+	for (let index = 0; index < values.length; index += 1) {
+		nextHash = Math.imul(nextHash ^ (values[index] >>> 0), 16777619) >>> 0;
+	}
+	return nextHash;
+}
+
+type DerivedUtciLayoutFrame = {
+	gridSize: number;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+	pointCount: number;
+	width: number;
+	height: number;
+	minX: number;
+	minZ: number;
+	minY: number;
+	maxY: number;
+	centerX: number;
+	centerZ: number;
+	baseY: number;
+	constructionMode: 'world-positions' | 'metadata-bounds-fallback';
+	normalizationSignature: SelectedHourRenderLayoutNormalizationSignature;
+};
+
+type UtciLayoutBaseParams = {
+	gridSize: number;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+	numPositions: number;
+	normalizationOffset: THREE.Vector3;
+};
+
+function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
+	const coordinateSystem = analysis.metadata.coordinate_system || 'xy_ground';
+	const gridSize = analysis.metadata.grid_size || 1;
+	const numPositions = analysis.data.numPositions;
+	const normalizationEnabled = isNormalizationEnabled();
+	let normalizationOffset = new THREE.Vector3(0, 0, 0);
+
+	if (normalizationEnabled) {
+		const scenarioOrigin = calculateScenarioOrigin(analysis.metadata as any);
+		const anchorOffset = getAnchorOffset();
+
+		let transformedOrigin: THREE.Vector3;
+		if (coordinateSystem === 'xy_ground') {
+			transformedOrigin = new THREE.Vector3(
+				scenarioOrigin.x,
+				scenarioOrigin.z,
+				-scenarioOrigin.y
+			);
+		} else {
+			transformedOrigin = scenarioOrigin.clone();
+		}
+
+		normalizationOffset = anchorOffset.clone().sub(transformedOrigin);
+		if (normalizationOffset.lengthSq() <= 0.001) {
+			normalizationOffset.set(0, 0, 0);
+		}
+	}
+
+	return {
+		gridSize,
+		coordinateSystem,
+		numPositions,
+		normalizationOffset
+	};
+}
+
+function deriveUtciLayoutFrame(analysis: Analysis): DerivedUtciLayoutFrame {
+	const { data, metadata } = analysis;
+	const { gridSize, coordinateSystem, numPositions, normalizationOffset } =
+		resolveUtciLayoutBaseParams(analysis);
+	const transformed = new THREE.Vector3();
+
+	let minX = Infinity;
+	let minZ = Infinity;
+	let maxX = -Infinity;
+	let maxZ = -Infinity;
+	let minY = Infinity;
+	let maxY = -Infinity;
+
+	for (let i = 0; i < numPositions; i += 1) {
+		const x = data.positions[i * 3];
+		const y = data.positions[i * 3 + 1];
+		const z = data.positions[i * 3 + 2];
+
+		transformToWorld(x, y, z, coordinateSystem, transformed);
+		transformed.add(normalizationOffset);
+
+		if (transformed.x < minX) minX = transformed.x;
+		if (transformed.x > maxX) maxX = transformed.x;
+		if (transformed.z < minZ) minZ = transformed.z;
+		if (transformed.z > maxZ) maxZ = transformed.z;
+		if (transformed.y < minY) minY = transformed.y;
+		if (transformed.y > maxY) maxY = transformed.y;
+	}
+
+	let width = 1;
+	let height = 1;
+	let usingBoundsFallback = false;
+	let layoutValid =
+		Number.isFinite(minX) &&
+		Number.isFinite(maxX) &&
+		Number.isFinite(minZ) &&
+		Number.isFinite(maxZ) &&
+		Number.isFinite(minY) &&
+		Number.isFinite(maxY);
+
+	const bounds = metadata.bounds as
+		| { x_min: number; x_max: number; y_min: number; y_max: number; z?: number }
+		| undefined;
+	if (!layoutValid && bounds && (analysis as { __source?: string }).__source === 'webgpu') {
+		usingBoundsFallback = true;
+		if (coordinateSystem === 'xy_ground') {
+			minX = bounds.x_min;
+			maxX = bounds.x_max;
+			minZ = -bounds.y_max;
+			maxZ = -bounds.y_min;
+			minY = maxY = bounds.z ?? 0;
+		} else {
+			minX = bounds.x_min;
+			maxX = bounds.x_max;
+			minZ = bounds.y_min;
+			maxZ = bounds.y_max;
+			minY = maxY = bounds.z ?? 0;
+		}
+		const spanX = maxX - minX;
+		const spanZ = maxZ - minZ;
+		width = Math.max(1, Math.round(spanX / gridSize) + 1);
+		height = Math.max(1, Math.round(spanZ / gridSize) + 1);
+		layoutValid = true;
+	} else if (layoutValid) {
+		for (let i = 0; i < numPositions; i += 1) {
+			const x = data.positions[i * 3];
+			const y = data.positions[i * 3 + 1];
+			const z = data.positions[i * 3 + 2];
+
+			transformToWorld(x, y, z, coordinateSystem, transformed);
+			transformed.add(normalizationOffset);
+
+			const col = Math.round((transformed.x - minX) / gridSize);
+			const row = Math.round((transformed.z - minZ) / gridSize);
+			if (col + 1 > width) width = col + 1;
+			if (row + 1 > height) height = row + 1;
+		}
+	}
+
+	const centerX = layoutValid ? minX + ((width - 1) * gridSize) / 2 : 0;
+	const centerZ = layoutValid ? minZ + ((height - 1) * gridSize) / 2 : 0;
+	const baseY = layoutValid ? minY + VISUAL_LAYER_OFFSET : 0;
+
+	return {
+		gridSize,
+		coordinateSystem,
+		pointCount: numPositions,
+		width,
+		height,
+		minX,
+		minZ,
+		minY,
+		maxY,
+		centerX,
+		centerZ,
+		baseY,
+		constructionMode: usingBoundsFallback
+			? 'metadata-bounds-fallback'
+			: 'world-positions',
+		normalizationSignature: createNormalizationSignature({
+			enabled: isNormalizationEnabled(),
+			offset: normalizationOffset
+		})
+	};
+}
+
+function getAnalysisIdentity(analysis: Analysis): string {
+	return (
+		analysis.metadata.source_analysis_id ??
+		analysis.metadata.model_file ??
+		'unknown-analysis'
+	);
+}
+
+function getPositionsSourceSignature(positions: Float32Array): string {
+	const cached = positionsSourceSignatureCache.get(positions);
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	positionsSourceSignatureComputationCount += 1;
+	const hash = appendHashFloat32Array(2166136261, positions);
+	const signature = `pos:${hash.toString(16)}`;
+	positionsSourceSignatureCache.set(positions, signature);
+	return signature;
+}
+
+function getLayoutSourceSignature(analysis: Analysis): string {
+	let hash = 2166136261;
+	hash = appendHashString(hash, (analysis as { __source?: string }).__source ?? 'loaded');
+	hash = appendHashString(hash, getAnalysisIdentity(analysis));
+	hash = appendHashString(hash, getPositionsSourceSignature(analysis.data.positions));
+	const bounds = analysis.metadata.bounds;
+	if (bounds) {
+		hash = appendHashNumber(hash, bounds.x_min);
+		hash = appendHashNumber(hash, bounds.x_max);
+		hash = appendHashNumber(hash, bounds.y_min);
+		hash = appendHashNumber(hash, bounds.y_max);
+		hash = appendHashNumber(hash, bounds.z ?? 0);
+	}
+	return `v1:${hash.toString(16)}`;
+}
+
+export function getUtciLayoutReuseSignatureDiagnosticsForTest(): {
+	positionsSourceSignatureComputationCount: number;
+} {
+	return {
+		positionsSourceSignatureComputationCount
+	};
+}
+
+function deriveCachedUtciLayoutFrame(
+	analysis: Analysis,
+	diagnostics?: UtciLayoutReuseKeyDiagnostics
+): {
+	frame: DerivedUtciLayoutFrame;
+	layoutSourceSignature: string;
+} {
+	const keyBuildStartedAt = performance.now();
+	const layoutSourceSignature = getLayoutSourceSignature(analysis);
+	const cached = utciLayoutFrameCache.get(analysis);
+	if (cached && cached.layoutSourceSignature === layoutSourceSignature) {
+		if (diagnostics) {
+			diagnostics.frameCacheHit = true;
+			diagnostics.frameDerivationMs = 0;
+			diagnostics.keyBuildMs = performance.now() - keyBuildStartedAt;
+		}
+		return {
+			frame: cached.frame,
+			layoutSourceSignature
+		};
+	}
+
+	const frameStartedAt = performance.now();
+	const frame = deriveUtciLayoutFrame(analysis);
+	const frameDerivationMs = performance.now() - frameStartedAt;
+	utciLayoutFrameCache.set(analysis, {
+		layoutSourceSignature,
+		frame
+	});
+	if (diagnostics) {
+		diagnostics.frameCacheHit = false;
+		diagnostics.frameDerivationMs = frameDerivationMs;
+		diagnostics.keyBuildMs = performance.now() - keyBuildStartedAt;
+	}
+	return {
+		frame,
+		layoutSourceSignature
+	};
+}
+
+function serializeNormalizationSignature(
+	signature: SelectedHourRenderLayoutNormalizationSignature
+): string {
+	return [
+		signature.enabled ? '1' : '0',
+		signature.provenance,
+		signature.offset.x,
+		signature.offset.y,
+		signature.offset.z
+	].join('|');
+}
+
+export function areUtciLayoutReuseKeysEqual(
+	left: UtciLayoutReuseKey,
+	right: UtciLayoutReuseKey
+): boolean {
+	return (
+		left.analysisId === right.analysisId &&
+		left.layoutSourceSignature === right.layoutSourceSignature &&
+		left.gridSize === right.gridSize &&
+		left.pointCount === right.pointCount &&
+		left.coordinateSystem === right.coordinateSystem &&
+		left.normalizationSignature === right.normalizationSignature &&
+		left.constructionMode === right.constructionMode &&
+		left.width === right.width &&
+		left.height === right.height &&
+		left.centerX === right.centerX &&
+		left.centerZ === right.centerZ &&
+		left.baseY === right.baseY &&
+		left.utciSurfaceSource === right.utciSurfaceSource &&
+		left.rendererBackend === right.rendererBackend
+	);
+}
+
+export function createUtciLayoutReuseKey(params: {
+	analysis: Analysis;
+	layout: UtciGridLayout;
+	utciSurfaceSource: 'compute-buffer-selected-hour';
+	rendererBackend: 'webgpu';
+}): UtciLayoutReuseKey {
+	const constructionMode = params.layout.constructionMode ?? 'invalid';
+	return {
+		analysisId: getAnalysisIdentity(params.analysis),
+		layoutSourceSignature: getLayoutSourceSignature(params.analysis),
+		gridSize: params.layout.gridSize,
+		pointCount: params.layout.numPositions,
+		coordinateSystem: params.layout.coordinateSystem,
+		normalizationSignature: serializeNormalizationSignature(
+			getLayoutNormalizationSignature(params.layout)
+		),
+		constructionMode,
+		width: params.layout.width,
+		height: params.layout.height,
+		centerX: params.layout.centerX,
+		centerZ: params.layout.centerZ,
+		baseY: params.layout.baseY,
+		utciSurfaceSource: params.utciSurfaceSource,
+		rendererBackend: params.rendererBackend
+	};
+}
+
+export function createUtciLayoutReuseKeyForAnalysis(params: {
+	analysis: Analysis;
+	utciSurfaceSource: 'compute-buffer-selected-hour';
+	rendererBackend: 'webgpu';
+	diagnostics?: UtciLayoutReuseKeyDiagnostics;
+}): UtciLayoutReuseKey {
+	const { frame, layoutSourceSignature } = deriveCachedUtciLayoutFrame(
+		params.analysis,
+		params.diagnostics
+	);
+	return {
+		analysisId: getAnalysisIdentity(params.analysis),
+		layoutSourceSignature,
+		gridSize: frame.gridSize,
+		pointCount: frame.pointCount,
+		coordinateSystem: frame.coordinateSystem,
+		normalizationSignature: serializeNormalizationSignature(
+			frame.normalizationSignature
+		),
+		constructionMode: frame.constructionMode,
+		width: frame.width,
+		height: frame.height,
+		centerX: frame.centerX,
+		centerZ: frame.centerZ,
+		baseY: frame.baseY,
+		utciSurfaceSource: params.utciSurfaceSource,
+		rendererBackend: params.rendererBackend
+	};
+}
+
+export function getUtciLayoutIdentity(key: UtciLayoutReuseKey): string {
+	return [
+		key.analysisId,
+		key.layoutSourceSignature,
+		key.width,
+		key.height,
+		key.centerX,
+		key.centerZ,
+		key.baseY
+	].join('|');
+}
+
+export function createUtciLayoutReusePublicationState(params: {
+	proof: UtciGridLayoutReuseProofDiagnostics;
+	key: UtciLayoutReuseKey;
+	requestId: number | null;
+	selectionKey: string | null;
+}): UtciLayoutReusePublicationState {
+	return {
+		proof: params.proof,
+		key: params.key,
+		layoutIdentity: getUtciLayoutIdentity(params.key),
+		requestId: params.requestId,
+		selectionKey: params.selectionKey
+	};
+}
+
+export function resolveUtciLayoutReusePublicationStateAfterSync(params: {
+	currentState: UtciLayoutReusePublicationState | null;
+	pendingState: UtciLayoutReusePublicationState;
+	syncResult: 'complete' | 'failed' | 'superseded' | 'already-released';
+}): UtciLayoutReusePublicationState | null {
+	return params.syncResult === 'complete'
+		? params.pendingState
+		: params.currentState;
+}
+
+export function isUtciLayoutReuseProofSafe(
+	proof: UtciGridLayoutReuseProofDiagnostics | null | undefined
+): boolean {
+	return (
+		proof?.decision === 'reuse-safe' &&
+		proof.canonicalRuntimeCompatibilityWouldReuse === true &&
+		proof.proofMatchesCanonicalRuntimeCompatibility === true &&
+		proof.constructionModeMatch === true &&
+		proof.dimensionsMatch === true &&
+		proof.placementMatch === true &&
+		proof.cellToPointMappingMatch === true &&
+		proof.hoverCellLookupProofStatus === 'same-point-confirmed'
+	);
+}
+
+export function planUtciLayoutReuseCandidate(params: {
+	previousLayout: UtciGridLayout | null;
+	proof: UtciGridLayoutReuseProofDiagnostics | null;
+	previousKey: UtciLayoutReuseKey | null;
+	currentKey: UtciLayoutReuseKey;
+}): UtciLayoutReuseDecision {
+	if (!params.previousLayout) {
+		return { action: 'build-required', reason: 'missing-previous-layout', keyMatch: false };
+	}
+	if (!params.proof || !params.previousKey) {
+		return { action: 'build-required', reason: 'diagnostics-missing', keyMatch: false };
+	}
+	if (
+		params.previousKey.utciSurfaceSource !== params.currentKey.utciSurfaceSource ||
+		params.previousKey.rendererBackend !== params.currentKey.rendererBackend
+	) {
+		return { action: 'build-required', reason: 'backend-or-source-mismatch', keyMatch: false };
+	}
+	const keyMatch = areUtciLayoutReuseKeysEqual(params.previousKey, params.currentKey);
+	if (!keyMatch) {
+		return { action: 'build-required', reason: 'layout-key-mismatch', keyMatch };
+	}
+	if (
+		params.proof.canonicalRuntimeCompatibilityWouldReuse !== true ||
+		params.proof.proofMatchesCanonicalRuntimeCompatibility !== true
+	) {
+		return { action: 'build-required', reason: 'canonical-mismatch', keyMatch };
+	}
+	if (params.proof.cellToPointMappingMatch !== true) {
+		return { action: 'build-required', reason: 'mapping-unsafe', keyMatch };
+	}
+	if (params.proof.hoverCellLookupProofStatus !== 'same-point-confirmed') {
+		return { action: 'build-required', reason: 'hover-proof-missing', keyMatch };
+	}
+	if (!isUtciLayoutReuseProofSafe(params.proof)) {
+		return { action: 'build-required', reason: 'proof-not-safe', keyMatch };
+	}
+	return { action: 'reuse-candidate', reason: 'reuse-safe', keyMatch };
+}
+
+export function planUtciLayoutPublication(params: {
+	previousLayout: UtciGridLayout | null;
+	previousProof: UtciGridLayoutReuseProofDiagnostics | null;
+	previousKey: UtciLayoutReuseKey | null;
+	currentKey: UtciLayoutReuseKey;
+	currentSurfaceSource: string | null;
+	currentRendererBackend: string | null;
+	publicationPhase: 'initial' | 'scrub';
+}): UtciLayoutPublicationPlan {
+	if (params.publicationPhase !== 'scrub') {
+		return {
+			action: 'build-new',
+			reason: 'initial-publication',
+			keyMatch: false
+		};
+	}
+	if (
+		params.currentSurfaceSource !== 'compute-buffer-selected-hour' ||
+		params.currentRendererBackend !== 'webgpu'
+	) {
+		return {
+			action: 'build-new',
+			reason: 'backend-or-source-mismatch',
+			keyMatch: false
+		};
+	}
+
+	const candidate = planUtciLayoutReuseCandidate({
+		previousLayout: params.previousLayout,
+		proof: params.previousProof,
+		previousKey: params.previousKey,
+		currentKey: params.currentKey
+	});
+	if (candidate.action !== 'reuse-candidate' || !params.previousLayout) {
+		return {
+			action: 'build-new',
+			reason: candidate.reason,
+			keyMatch: candidate.keyMatch
+		};
+	}
+
+	return {
+		action: 'reuse-existing',
+		layout: params.previousLayout,
+		reason: 'reuse-safe',
+		keyMatch: true
+	};
+}
+
+export function buildUtciGridLayoutReuseProofDiagnostics(params: {
+	previousLayout?: UtciGridLayout | null;
+	nextLayout: UtciGridLayout;
+	skipExpensiveMappingComparison?: boolean;
+	canonicalRuntimeCompatibilityWouldReuse?: boolean | null;
+	canonicalPointCompatibility?: UtciGridLayoutPointCompatibilityEvaluation | null;
+}): UtciGridLayoutReuseProofDiagnostics {
+	const startedAt = performance.now();
+	const previousLayout = params.previousLayout ?? null;
+	const nextNormalizationSignature = getLayoutNormalizationSignature(params.nextLayout);
+	const nextConstructionMode =
+		params.nextLayout.constructionMode ?? 'world-positions';
+	const proof: UtciGridLayoutReuseProofDiagnostics = {
+		decision: 'rebuild-required',
+		hoverCellLookupProofStatus: 'proof-inconclusive',
+		previousLayoutPresent: previousLayout != null,
+		canonicalRuntimeCompatibilityWouldReuse: null,
+		proofMatchesCanonicalRuntimeCompatibility: null,
+		positionsReferenceMatch: null,
+		pointCountMatch: null,
+		gridSizeMatch: null,
+		coordinateSystemMatch: null,
+		normalizationSignature: nextNormalizationSignature,
+		previousNormalizationSignature: previousLayout
+			? getLayoutNormalizationSignature(previousLayout)
+			: null,
+		normalizationSignatureMatch: null,
+		constructionMode: nextConstructionMode,
+		previousConstructionMode: previousLayout?.constructionMode ?? null,
+		constructionModeMatch: null,
+		dimensionsMatch: null,
+		placementMatch: null,
+		cellToPointMappingMatch: null,
+		proofCostMs: null,
+		estimatedRetainedCpuLayoutBytes: estimateRetainedCpuLayoutBytes(params.nextLayout)
+	};
+
+	if (!previousLayout) {
+		proof.proofCostMs = performance.now() - startedAt;
+		return proof;
+	}
+
+	const positionsReferenceMatch =
+		previousLayout.positionsIdentityId != null &&
+		params.nextLayout.positionsIdentityId != null
+			? previousLayout.positionsIdentityId === params.nextLayout.positionsIdentityId
+			: null;
+	const pointCountMatch = previousLayout.numPositions === params.nextLayout.numPositions;
+	const gridSizeMatch = previousLayout.gridSize === params.nextLayout.gridSize;
+	const coordinateSystemMatch =
+		previousLayout.coordinateSystem === params.nextLayout.coordinateSystem;
+	const normalizationSignatureMatch = normalizationSignaturesMatch(
+		getLayoutNormalizationSignature(previousLayout),
+		nextNormalizationSignature
+	);
+	const constructionModeMatch =
+		(previousLayout.constructionMode ?? 'world-positions') === nextConstructionMode;
+	const dimensionsMatch =
+		previousLayout.width === params.nextLayout.width &&
+		previousLayout.height === params.nextLayout.height;
+	const placementMatch =
+		previousLayout.centerX === params.nextLayout.centerX &&
+		previousLayout.centerZ === params.nextLayout.centerZ &&
+		previousLayout.baseY === params.nextLayout.baseY;
+	const layoutPointCompatibility =
+		params.canonicalPointCompatibility ??
+		evaluateUtciGridLayoutsPointCompatibility(previousLayout, params.nextLayout, {
+			allowExpensiveMappingComparison: !params.skipExpensiveMappingComparison
+		});
+	const runtimeCompatibilityWouldReuse =
+		params.canonicalRuntimeCompatibilityWouldReuse ?? null;
+	const cellToPointMappingMatch = layoutPointCompatibility.cellToPointMappingMatch;
+
+	proof.positionsReferenceMatch = positionsReferenceMatch;
+	proof.pointCountMatch = pointCountMatch;
+	proof.gridSizeMatch = gridSizeMatch;
+	proof.coordinateSystemMatch = coordinateSystemMatch;
+	proof.normalizationSignatureMatch = normalizationSignatureMatch;
+	proof.constructionModeMatch = constructionModeMatch;
+	proof.dimensionsMatch = dimensionsMatch;
+	proof.placementMatch = placementMatch;
+	proof.cellToPointMappingMatch = cellToPointMappingMatch;
+	proof.canonicalRuntimeCompatibilityWouldReuse =
+		runtimeCompatibilityWouldReuse;
+
+	const proofWouldReuse =
+		pointCountMatch &&
+		gridSizeMatch &&
+		coordinateSystemMatch &&
+		normalizationSignatureMatch &&
+		constructionModeMatch &&
+		dimensionsMatch &&
+		placementMatch &&
+		cellToPointMappingMatch === true;
+	const proofDefinitelyRejects =
+		pointCountMatch === false ||
+		gridSizeMatch === false ||
+		coordinateSystemMatch === false ||
+		normalizationSignatureMatch === false ||
+		constructionModeMatch === false ||
+		dimensionsMatch === false ||
+		placementMatch === false ||
+		cellToPointMappingMatch === false;
+
+	if (
+		typeof runtimeCompatibilityWouldReuse === 'boolean' &&
+		typeof proofWouldReuse === 'boolean'
+	) {
+		proof.proofMatchesCanonicalRuntimeCompatibility =
+			proofWouldReuse === runtimeCompatibilityWouldReuse;
+	}
+
+	if (proofWouldReuse && runtimeCompatibilityWouldReuse === true) {
+		proof.decision = 'reuse-safe';
+	} else if (
+		proofDefinitelyRejects ||
+		runtimeCompatibilityWouldReuse === false
+	) {
+		proof.decision = 'rebuild-required';
+	} else {
+		proof.decision = 'proof-inconclusive';
+	}
+
+	if (
+		proof.decision === 'reuse-safe' &&
+		proof.proofMatchesCanonicalRuntimeCompatibility === false
+	) {
+		proof.decision = 'proof-inconclusive';
+	}
+
+	proof.hoverCellLookupProofStatus =
+		proof.decision === 'reuse-safe'
+			? 'same-point-confirmed'
+			: proof.decision === 'rebuild-required'
+				? 'not-compatible'
+				: 'proof-inconclusive';
+
+	proof.proofCostMs = performance.now() - startedAt;
+	return proof;
+}
+
+export function buildUtciGridLayout(
+	analysis: Analysis,
+	options?: {
+		diagnostics?: UtciGridLayoutBuildDiagnostics;
+	}
+): UtciGridLayout {
 	const { data, metadata } = analysis;
 	const coordinateSystem = metadata.coordinate_system || 'xy_ground';
 	const gridSize = metadata.grid_size || 1;
 	const numPositions = data.numPositions;
+	const diagnostics = options?.diagnostics;
+	const startedAt = diagnostics ? performance.now() : undefined;
+	const normalizationEnabled = isNormalizationEnabled();
 
+	const allocationStartedAt = diagnostics ? performance.now() : undefined;
 	const xs = new Float32Array(numPositions);
 	const ys = new Float32Array(numPositions);
 	const zs = new Float32Array(numPositions);
@@ -581,6 +1393,9 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	const indexToTexel = new Uint32Array(numPositions);
 	const rows = new Uint32Array(numPositions);
 	const cols = new Uint32Array(numPositions);
+	if (diagnostics && allocationStartedAt !== undefined) {
+		diagnostics.arrayAllocationMs = performance.now() - allocationStartedAt;
+	}
 
 	let minX = Infinity;
 	let minZ = Infinity;
@@ -593,7 +1408,7 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 
 	// Calculate normalization offset if enabled
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
-	if (isNormalizationEnabled()) {
+	if (normalizationEnabled) {
 		const scenarioOrigin = calculateScenarioOrigin(metadata as any);
 		const anchorOffset = getAnchorOffset();
 		
@@ -617,6 +1432,7 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		}
 	}
 
+	const transformBoundsStartedAt = diagnostics ? performance.now() : undefined;
 	for (let i = 0; i < numPositions; i++) {
 		const x = data.positions[i * 3];
 		const y = data.positions[i * 3 + 1];
@@ -637,6 +1453,9 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		if (transformed.z > maxZ) maxZ = transformed.z;
 		if (transformed.y < minY) minY = transformed.y;
 		if (transformed.y > maxY) maxY = transformed.y;
+	}
+	if (diagnostics && transformBoundsStartedAt !== undefined) {
+		diagnostics.transformBoundsPassMs = performance.now() - transformBoundsStartedAt;
 	}
 
 	let width = 1;
@@ -686,6 +1505,7 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 	}
 
 	if (layoutValid) {
+		const coordinateAssignmentStartedAt = diagnostics ? performance.now() : undefined;
 		if (usingBoundsFallback) {
 			assignFallbackGridCoordinates(rows, cols, numPositions, width, height);
 		} else {
@@ -702,14 +1522,27 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 			width = dimensions.width;
 			height = dimensions.height;
 		}
+		if (diagnostics && coordinateAssignmentStartedAt !== undefined) {
+			diagnostics.coordinateAssignmentMs =
+				performance.now() - coordinateAssignmentStartedAt;
+		}
 	}
+	const normalizationSignature = createNormalizationSignature({
+		enabled: normalizationEnabled,
+		offset: normalizationOffset
+	});
 
+	const indexToTexelStartedAt = diagnostics ? performance.now() : undefined;
 	for (let i = 0; i < numPositions; i++) {
 		const flippedRow = height - 1 - rows[i];
 		const texelIndex = flippedRow * width + cols[i];
 		indexToTexel[i] = texelIndex;
 	}
+	if (diagnostics && indexToTexelStartedAt !== undefined) {
+		diagnostics.indexToTexelFillMs = performance.now() - indexToTexelStartedAt;
+	}
 
+	const cellToPointIndexStartedAt = diagnostics ? performance.now() : undefined;
 	const cellToPointIndex = createCellToPointIndex({
 		rows,
 		cols,
@@ -718,7 +1551,20 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		height,
 		layoutValid
 	});
+	if (diagnostics && cellToPointIndexStartedAt !== undefined) {
+		diagnostics.cellToPointIndexBuildMs = performance.now() - cellToPointIndexStartedAt;
+	}
+	const colorBufferAllocationStartedAt = diagnostics ? performance.now() : undefined;
 	const colorBuffer = new Uint8Array(width * height * 4);
+	if (
+		diagnostics &&
+		colorBufferAllocationStartedAt !== undefined &&
+		startedAt !== undefined
+	) {
+		diagnostics.colorBufferAllocationMs =
+			performance.now() - colorBufferAllocationStartedAt;
+		diagnostics.totalMs = performance.now() - startedAt;
+	}
 	// centerX/Z and baseY are in viewer space: we already applied transformToWorld(analysis)+normalizationOffset above to get min/max.
 	const centerX = layoutValid ? minX + ((width - 1) * gridSize) / 2 : 0;
 	const centerZ = layoutValid ? minZ + ((height - 1) * gridSize) / 2 : 0;
@@ -741,7 +1587,12 @@ export function buildUtciGridLayout(analysis: Analysis): UtciGridLayout {
 		indexToColumn: cols,
 		cellToPointIndex,
 		indexToTexel,
-		colorBuffer
+		colorBuffer,
+		positionsIdentityId: getPositionsIdentityId(data.positions),
+		constructionMode: usingBoundsFallback
+			? 'metadata-bounds-fallback'
+			: 'world-positions',
+		normalizationSignature
 	};
 }
 

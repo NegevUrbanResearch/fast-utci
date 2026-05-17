@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { buildUtciGridLayout } from '$lib/services/pointCloudService';
+import {
+	buildUtciGridLayout,
+	buildUtciGridLayoutReuseProofDiagnostics
+} from '$lib/services/pointCloudService';
 import { createVertexToPointIndexArray } from '$lib/services/gpuUtciRenderBridge';
 import {
 	TOOLTIP_SLOW_BUDGET_MS,
@@ -132,6 +135,54 @@ describe('gpu-native ambiguous cell mapping', () => {
 
 		expect(Array.from(layout.cellToPointIndex ?? [])).toEqual([-2]);
 		expect(Array.from(createVertexToPointIndexArray(layout))).toEqual([1, 1, 1, 1, 1, 1]);
+	});
+});
+
+describe('layout reuse hover lookup proof', () => {
+	it('resolves representative lookup coordinates to the same point when proof says layouts are compatible', () => {
+		const analysis = createGridAnalysis();
+		const previousLayout = buildUtciGridLayout(analysis);
+		const nextLayout = buildUtciGridLayout(analysis);
+		const previousMesh = createSurfaceTestMesh(previousLayout);
+		const nextMesh = createSurfaceTestMesh(nextLayout);
+		const proof = buildUtciGridLayoutReuseProofDiagnostics({
+			previousLayout,
+			nextLayout,
+			canonicalRuntimeCompatibilityWouldReuse: true
+		});
+
+		expect(proof.decision).toBe('reuse-safe');
+
+		const previousIndex = resolvePositionIndexFromIntersection(
+			createIntersection(previousMesh, 1, previousLayout.baseY, 1),
+			previousLayout,
+			analysis
+		);
+		const nextIndex = resolvePositionIndexFromIntersection(
+			createIntersection(nextMesh, 1, nextLayout.baseY, 1),
+			nextLayout,
+			analysis
+		);
+
+		expect(previousIndex).toBe(3);
+		expect(nextIndex).toBe(previousIndex);
+	});
+
+	it('does not claim lookup safety for ambiguous same-count layouts with different mapping', () => {
+		const analysis = createAmbiguousCellAnalysis();
+		const previousLayout = buildUtciGridLayout(analysis);
+		const nextLayout = {
+			...buildUtciGridLayout(analysis),
+			indexToColumn: new Uint32Array([0, 1])
+		};
+		const proof = buildUtciGridLayoutReuseProofDiagnostics({
+			previousLayout,
+			nextLayout,
+			canonicalRuntimeCompatibilityWouldReuse: false
+		});
+
+		expect(proof.decision).toBe('rebuild-required');
+		expect(proof.cellToPointMappingMatch).toBe(false);
 	});
 });
 

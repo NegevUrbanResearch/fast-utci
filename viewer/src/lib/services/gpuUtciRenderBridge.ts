@@ -29,6 +29,7 @@ export interface ComputeBufferUtciSurfaceMeshOptions {
 	utciBuffer: GPUBuffer;
 	utciRange: { min: number; max: number };
 	opacity?: number;
+	compatibilityEvaluation?: ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation;
 }
 
 interface GpuNativeUtciSurfaceState {
@@ -266,7 +267,15 @@ export function updateComputeBufferUtciSurfaceMesh(
 	mesh: THREE.Mesh,
 	options: ComputeBufferUtciSurfaceMeshOptions
 ): boolean {
-	if (!isComputeBufferUtciSurfaceLayoutCompatible(mesh, options.layout)) {
+	const compatibilityEvaluation =
+		options.compatibilityEvaluation ??
+		evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+			state: getComputeBufferUtciSurfaceLayoutCompatibilityState(mesh),
+			previousLayout: mesh?.userData.utciLayout as UtciGridLayout | undefined,
+			nextLayout: options.layout,
+			allowExpensiveMappingComparison: true
+		});
+	if ((compatibilityEvaluation.compatible ?? false) !== true) {
 		return false;
 	}
 	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as ComputeBufferUtciSurfaceState;
@@ -288,36 +297,160 @@ export function isComputeBufferUtciSurfaceLayoutCompatible(
 	mesh: THREE.Mesh | null | undefined,
 	layout: UtciGridLayout
 ): boolean {
+	const previousLayout = mesh?.userData.utciLayout as UtciGridLayout | undefined;
+	return (
+		evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+			state: getComputeBufferUtciSurfaceLayoutCompatibilityState(mesh),
+			previousLayout,
+			nextLayout: layout,
+			allowExpensiveMappingComparison: true
+		}).compatible ?? false
+	);
+}
+
+export type UtciGridLayoutPointCompatibilityEvaluation = {
+	compatible: boolean | null;
+	cellToPointMappingMatch: boolean | null;
+	requiredExpensiveMappingComparison: boolean;
+	performedExpensiveMappingComparison: boolean;
+};
+
+export type ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot = {
+	source: GpuNativeUtciSurfaceSource;
+	width: number;
+	height: number;
+	gridSize: number;
+	vertexCount: number;
+	storageCount: number;
+};
+
+export type ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation = {
+	compatible: boolean | null;
+	missingState: boolean;
+	wrongSource: boolean;
+	widthMatch: boolean | null;
+	heightMatch: boolean | null;
+	gridSizeMatch: boolean | null;
+	vertexCountMatch: boolean | null;
+	storageCountMatch: boolean | null;
+	pointCompatibility: UtciGridLayoutPointCompatibilityEvaluation | null;
+};
+
+export function getComputeBufferUtciSurfaceLayoutCompatibilityState(
+	mesh: THREE.Mesh | null | undefined
+): ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot | null {
 	const state = mesh?.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
 		| ComputeBufferUtciSurfaceState
 		| undefined;
-	if (!state || state.source !== 'compute-buffer-selected-hour') {
-		return false;
+	if (!state) {
+		return null;
 	}
 
-	const expectedVertexCount = layout.width * layout.height * SURFACE_VERTICES_PER_CELL;
-	if (
-		state.width !== layout.width ||
-		state.height !== layout.height ||
-		state.gridSize !== layout.gridSize ||
-		state.vertexCount !== expectedVertexCount ||
-		state.utciStorageAttribute.count !== layout.numPositions
-	) {
-		return false;
-	}
-
-	const previousLayout = mesh?.userData.utciLayout as UtciGridLayout | undefined;
-	if (!previousLayout) {
-		return false;
-	}
-
-	return areUtciGridLayoutsPointCompatible(previousLayout, layout);
+	return {
+		source: state.source,
+		width: state.width,
+		height: state.height,
+		gridSize: state.gridSize,
+		vertexCount: state.vertexCount,
+		storageCount: state.utciStorageAttribute.count
+	};
 }
 
-function areUtciGridLayoutsPointCompatible(
+export function evaluateComputeBufferUtciSurfaceLayoutCompatibility(params: {
+	state: ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot | null | undefined;
+	previousLayout: UtciGridLayout | null | undefined;
+	nextLayout: UtciGridLayout;
+	allowExpensiveMappingComparison?: boolean;
+}): ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation {
+	const state = params.state ?? null;
+	if (!state) {
+		return {
+			compatible: false,
+			missingState: true,
+			wrongSource: false,
+			widthMatch: null,
+			heightMatch: null,
+			gridSizeMatch: null,
+			vertexCountMatch: null,
+			storageCountMatch: null,
+			pointCompatibility: null
+		};
+	}
+
+	if (state.source !== 'compute-buffer-selected-hour') {
+		return {
+			compatible: false,
+			missingState: false,
+			wrongSource: true,
+			widthMatch: null,
+			heightMatch: null,
+			gridSizeMatch: null,
+			vertexCountMatch: null,
+			storageCountMatch: null,
+			pointCompatibility: null
+		};
+	}
+
+	const expectedVertexCount =
+		params.nextLayout.width * params.nextLayout.height * SURFACE_VERTICES_PER_CELL;
+	const widthMatch = state.width === params.nextLayout.width;
+	const heightMatch = state.height === params.nextLayout.height;
+	const gridSizeMatch = state.gridSize === params.nextLayout.gridSize;
+	const vertexCountMatch = state.vertexCount === expectedVertexCount;
+	const storageCountMatch = state.storageCount === params.nextLayout.numPositions;
+
+	if (!params.previousLayout) {
+		return {
+			compatible: false,
+			missingState: false,
+			wrongSource: false,
+			widthMatch,
+			heightMatch,
+			gridSizeMatch,
+			vertexCountMatch,
+			storageCountMatch,
+			pointCompatibility: null
+		};
+	}
+
+	const pointCompatibility = evaluateUtciGridLayoutsPointCompatibility(
+		params.previousLayout,
+		params.nextLayout,
+		{
+			allowExpensiveMappingComparison: params.allowExpensiveMappingComparison
+		}
+	);
+
+	return {
+		compatible:
+			widthMatch &&
+			heightMatch &&
+			gridSizeMatch &&
+			vertexCountMatch &&
+			storageCountMatch
+				? pointCompatibility.compatible
+				: false,
+		missingState: false,
+		wrongSource: false,
+		widthMatch,
+		heightMatch,
+		gridSizeMatch,
+		vertexCountMatch,
+		storageCountMatch,
+		pointCompatibility
+	};
+}
+
+export function evaluateUtciGridLayoutsPointCompatibility(
 	previousLayout: UtciGridLayout,
-	nextLayout: UtciGridLayout
-): boolean {
+	nextLayout: UtciGridLayout,
+	options?: {
+		allowExpensiveMappingComparison?: boolean;
+	}
+): UtciGridLayoutPointCompatibilityEvaluation {
+	const allowExpensiveMappingComparison =
+		options?.allowExpensiveMappingComparison ?? true;
+
 	if (
 		previousLayout.numPositions !== nextLayout.numPositions ||
 		previousLayout.coordinateSystem !== nextLayout.coordinateSystem ||
@@ -325,7 +458,12 @@ function areUtciGridLayoutsPointCompatible(
 		previousLayout.minZ !== nextLayout.minZ ||
 		previousLayout.baseY !== nextLayout.baseY
 	) {
-		return false;
+		return {
+			compatible: false,
+			cellToPointMappingMatch: null,
+			requiredExpensiveMappingComparison: false,
+			performedExpensiveMappingComparison: false
+		};
 	}
 
 	if (
@@ -338,27 +476,77 @@ function areUtciGridLayoutsPointCompatible(
 			previousLayout.cellToPointIndex.length !== cellCount ||
 			nextLayout.cellToPointIndex.length !== cellCount
 		) {
-			return false;
+			return {
+				compatible: false,
+				cellToPointMappingMatch: false,
+				requiredExpensiveMappingComparison: false,
+				performedExpensiveMappingComparison: false
+			};
 		}
 		if (
 			hasAmbiguousCellEntries(previousLayout.cellToPointIndex) ||
 			hasAmbiguousCellEntries(nextLayout.cellToPointIndex)
 		) {
-			return uint32ArraysEqual(
+			if (!allowExpensiveMappingComparison) {
+				return {
+					compatible: null,
+					cellToPointMappingMatch: null,
+					requiredExpensiveMappingComparison: true,
+					performedExpensiveMappingComparison: false
+				};
+			}
+
+			const mappingMatch = uint32ArraysEqual(
 				createCellToPointIndexArray(previousLayout),
 				createCellToPointIndexArray(nextLayout)
 			);
+			return {
+				compatible: mappingMatch,
+				cellToPointMappingMatch: mappingMatch,
+				requiredExpensiveMappingComparison: true,
+				performedExpensiveMappingComparison: true
+			};
 		}
 
-		return int32ArraysEqual(previousLayout.cellToPointIndex, nextLayout.cellToPointIndex);
+		const mappingMatch = int32ArraysEqual(
+			previousLayout.cellToPointIndex,
+			nextLayout.cellToPointIndex
+		);
+		return {
+			compatible: mappingMatch,
+			cellToPointMappingMatch: mappingMatch,
+			requiredExpensiveMappingComparison: false,
+			performedExpensiveMappingComparison: false
+		};
 	}
 	if (previousLayout.cellToPointIndex || nextLayout.cellToPointIndex) {
-		return false;
+		return {
+			compatible: false,
+			cellToPointMappingMatch: false,
+			requiredExpensiveMappingComparison: false,
+			performedExpensiveMappingComparison: false
+		};
 	}
 
-	return (
+	const mappingMatch =
 		uint32ArraysEqual(previousLayout.indexToRow, nextLayout.indexToRow) &&
-		uint32ArraysEqual(previousLayout.indexToColumn, nextLayout.indexToColumn)
+		uint32ArraysEqual(previousLayout.indexToColumn, nextLayout.indexToColumn);
+	return {
+		compatible: mappingMatch,
+		cellToPointMappingMatch: mappingMatch,
+		requiredExpensiveMappingComparison: false,
+		performedExpensiveMappingComparison: false
+	};
+}
+
+export function areUtciGridLayoutsPointCompatible(
+	previousLayout: UtciGridLayout,
+	nextLayout: UtciGridLayout
+): boolean {
+	return (
+		evaluateUtciGridLayoutsPointCompatibility(previousLayout, nextLayout, {
+			allowExpensiveMappingComparison: true
+		}).compatible ?? false
 	);
 }
 
