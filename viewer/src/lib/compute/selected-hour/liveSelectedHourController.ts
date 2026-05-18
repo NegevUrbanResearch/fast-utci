@@ -226,6 +226,68 @@ function areRenderPublicationEqual(
 			right.renderPublicationRenderOwnedBytes &&
 		left.renderPublicationTimeline?.computeCompletedAtMs ===
 			right.renderPublicationTimeline?.computeCompletedAtMs &&
+		left.renderPublicationTimeline?.controllerSessionRunStartedAtMs ===
+			right.renderPublicationTimeline?.controllerSessionRunStartedAtMs &&
+		left.renderPublicationTimeline?.controllerSessionRunCompletedAtMs ===
+			right.renderPublicationTimeline?.controllerSessionRunCompletedAtMs &&
+		left.renderPublicationTimeline?.controllerAcceptStartedAtMs ===
+			right.renderPublicationTimeline?.controllerAcceptStartedAtMs &&
+		left.renderPublicationTimeline?.controllerDiagnosticsMergedAtMs ===
+			right.renderPublicationTimeline?.controllerDiagnosticsMergedAtMs &&
+		left.renderPublicationTimeline?.controllerStatePublishedAtMs ===
+			right.renderPublicationTimeline?.controllerStatePublishedAtMs &&
+		left.renderPublicationTimeline?.sessionComputeOutputReturnedAtMs ===
+			right.renderPublicationTimeline?.sessionComputeOutputReturnedAtMs &&
+		left.renderPublicationTimeline?.sessionDiagnosticsAppliedAtMs ===
+			right.renderPublicationTimeline?.sessionDiagnosticsAppliedAtMs &&
+		left.renderPublicationTimeline?.sessionGpuOutputHandleReadyAtMs ===
+			right.renderPublicationTimeline?.sessionGpuOutputHandleReadyAtMs &&
+		left.renderPublicationTimeline?.sessionPreferGpuResidentResolvedAtMs ===
+			right.renderPublicationTimeline?.sessionPreferGpuResidentResolvedAtMs &&
+		left.renderPublicationTimeline?.sessionDebugReadbackStartedAtMs ===
+			right.renderPublicationTimeline?.sessionDebugReadbackStartedAtMs &&
+		left.renderPublicationTimeline?.sessionDebugReadbackCompletedAtMs ===
+			right.renderPublicationTimeline?.sessionDebugReadbackCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionSelectedHourRangeScanStartedAtMs ===
+			right.renderPublicationTimeline?.sessionSelectedHourRangeScanStartedAtMs &&
+		left.renderPublicationTimeline?.sessionSelectedHourRangeScanCompletedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionSelectedHourRangeScanCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionSelectedHourAnalysisBuildStartedAtMs ===
+			right.renderPublicationTimeline?.sessionSelectedHourAnalysisBuildStartedAtMs &&
+		left.renderPublicationTimeline?.sessionSelectedHourAnalysisBuildCompletedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionSelectedHourAnalysisBuildCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionRangeResolveStartedAtMs ===
+			right.renderPublicationTimeline?.sessionRangeResolveStartedAtMs &&
+		left.renderPublicationTimeline?.sessionRangeResolveCompletedAtMs ===
+			right.renderPublicationTimeline?.sessionRangeResolveCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionCpuFallbackSetupStartedAtMs ===
+			right.renderPublicationTimeline?.sessionCpuFallbackSetupStartedAtMs &&
+		left.renderPublicationTimeline?.sessionCpuFallbackSetupCompletedAtMs ===
+			right.renderPublicationTimeline?.sessionCpuFallbackSetupCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionGpuResidentRangeResolveStartedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionGpuResidentRangeResolveStartedAtMs &&
+		left.renderPublicationTimeline?.sessionGpuResidentRangeResolveCompletedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionGpuResidentRangeResolveCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionTooltipValuesHandoffStartedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionTooltipValuesHandoffStartedAtMs &&
+		left.renderPublicationTimeline?.sessionTooltipValuesHandoffCompletedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionTooltipValuesHandoffCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionGpuResidentResultAssemblyStartedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionGpuResidentResultAssemblyStartedAtMs &&
+		left.renderPublicationTimeline?.sessionGpuResidentResultAssemblyCompletedAtMs ===
+			right.renderPublicationTimeline
+				?.sessionGpuResidentResultAssemblyCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionResultReadyAtMs ===
+			right.renderPublicationTimeline?.sessionResultReadyAtMs &&
+		left.renderPublicationTimeline?.sessionResultReturnedAtMs ===
+			right.renderPublicationTimeline?.sessionResultReturnedAtMs &&
 		left.renderPublicationTimeline?.selectedHourValuePublicationStartedAtMs ===
 			right.renderPublicationTimeline?.selectedHourValuePublicationStartedAtMs &&
 		left.renderPublicationTimeline?.controllerAcceptedAtMs ===
@@ -236,8 +298,24 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.routePublishedAtMs &&
 		left.renderPublicationTimeline?.routeProjectedAtMs ===
 			right.renderPublicationTimeline?.routeProjectedAtMs &&
+		left.renderPublicationTimeline?.routeProjectionEvaluationStartedAtMs ===
+			right.renderPublicationTimeline?.routeProjectionEvaluationStartedAtMs &&
+		left.renderPublicationTimeline?.routeProjectionEvaluationCompletedAtMs ===
+			right.renderPublicationTimeline?.routeProjectionEvaluationCompletedAtMs &&
 		left.renderPublicationTimeline?.scenePendingSurfaceObservedAtMs ===
 			right.renderPublicationTimeline?.scenePendingSurfaceObservedAtMs &&
+		left.renderPublicationTimeline?.sceneReactiveBlockEnteredAtMs ===
+			right.renderPublicationTimeline?.sceneReactiveBlockEnteredAtMs &&
+		left.renderPublicationTimeline?.sceneRenderStateResolvedAtMs ===
+			right.renderPublicationTimeline?.sceneRenderStateResolvedAtMs &&
+		left.renderPublicationTimeline?.sceneAcceptedKeyResolvedAtMs ===
+			right.renderPublicationTimeline?.sceneAcceptedKeyResolvedAtMs &&
+		left.renderPublicationTimeline?.sceneSyncInvocationQueuedAtMs ===
+			right.renderPublicationTimeline?.sceneSyncInvocationQueuedAtMs &&
+		left.renderPublicationTimeline?.sceneStartSyncEnteredAtMs ===
+			right.renderPublicationTimeline?.sceneStartSyncEnteredAtMs &&
+		left.renderPublicationTimeline?.sceneStartSyncReturnedAtMs ===
+			right.renderPublicationTimeline?.sceneStartSyncReturnedAtMs &&
 		left.renderPublicationTimeline?.sceneSyncAttemptStartedAtMs ===
 			right.renderPublicationTimeline?.sceneSyncAttemptStartedAtMs &&
 		left.renderPublicationTimeline?.sceneSyncAttemptToken ===
@@ -284,6 +362,20 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheHit &&
 		left.renderPublicationTimeline?.renderLayoutReuseFrameCacheKind ===
 			right.renderPublicationTimeline?.renderLayoutReuseFrameCacheKind &&
+		left.renderPublicationTimeline?.renderLayoutPublicationPlanMs ===
+			right.renderPublicationTimeline?.renderLayoutPublicationPlanMs &&
+		left.renderPublicationTimeline?.renderLayoutCompatibilityMs ===
+			right.renderPublicationTimeline?.renderLayoutCompatibilityMs &&
+		left.renderPublicationTimeline
+			?.renderLayoutCompatibilityRequiredExpensiveMappingComparison ===
+			right.renderPublicationTimeline
+				?.renderLayoutCompatibilityRequiredExpensiveMappingComparison &&
+		left.renderPublicationTimeline
+			?.renderLayoutCompatibilityPerformedExpensiveMappingComparison ===
+			right.renderPublicationTimeline
+				?.renderLayoutCompatibilityPerformedExpensiveMappingComparison &&
+		left.renderPublicationTimeline?.renderLayoutReuseProofMs ===
+			right.renderPublicationTimeline?.renderLayoutReuseProofMs &&
 		left.renderPublicationTimeline?.renderLayoutReuseKeyMatch ===
 			right.renderPublicationTimeline?.renderLayoutReuseKeyMatch &&
 		left.renderPublicationTimeline?.renderLayoutReuseProofSource ===
@@ -312,6 +404,12 @@ function areRenderPublicationEqual(
 			left.renderPublicationTimeline?.renderStorageWaitTrace,
 			right.renderPublicationTimeline?.renderStorageWaitTrace
 		) &&
+		left.renderPublicationTimeline?.renderBufferCopyEncoderCreateMs ===
+			right.renderPublicationTimeline?.renderBufferCopyEncoderCreateMs &&
+		left.renderPublicationTimeline?.renderBufferCopyCommandRecordMs ===
+			right.renderPublicationTimeline?.renderBufferCopyCommandRecordMs &&
+		left.renderPublicationTimeline?.renderBufferCopySubmitMs ===
+			right.renderPublicationTimeline?.renderBufferCopySubmitMs &&
 		left.renderPublicationTimeline?.sceneSyncCompletedAtMs ===
 			right.renderPublicationTimeline?.sceneSyncCompletedAtMs &&
 		areSceneSyncResetHistoriesEqual(
@@ -444,6 +542,14 @@ function areRenderSurfaceMeshTracesEqual(
 		left.disposeResetMeshRemovalMs === right.disposeResetMeshRemovalMs &&
 		left.createComputeBufferSurfaceMeshMs === right.createComputeBufferSurfaceMeshMs &&
 		left.updateComputeBufferSurfaceMeshMs === right.updateComputeBufferSurfaceMeshMs &&
+		left.updateComputeBufferSurfaceRangeUniformMs ===
+			right.updateComputeBufferSurfaceRangeUniformMs &&
+		left.updateComputeBufferSurfacePendingSourceMs ===
+			right.updateComputeBufferSurfacePendingSourceMs &&
+		left.updateComputeBufferSurfaceLayoutUserDataMs ===
+			right.updateComputeBufferSurfaceLayoutUserDataMs &&
+		left.updateComputeBufferSurfaceByteAccountingMs ===
+			right.updateComputeBufferSurfaceByteAccountingMs &&
 		left.fallbackDecisionMs === right.fallbackDecisionMs &&
 		left.applySurfaceMeshStateMs === right.applySurfaceMeshStateMs &&
 		left.setCreatedSurfacePendingStorageInitMs ===
@@ -1137,8 +1243,33 @@ export function createLiveSelectedHourController(
 				releasable: false
 			};
 		}
+		const runtimeDiagnostics =
+			patch.runtimeDiagnostics && patch.renderTransport
+				? copyRuntimeDiagnostics({
+						...patch.runtimeDiagnostics,
+						timings: {
+							...patch.runtimeDiagnostics.timings,
+							renderPublication: stampRenderPublicationTimeline({
+								current: patch.runtimeDiagnostics.timings.renderPublication,
+								timeline: {
+									controllerStatePublishedAtMs: performance.now()
+								},
+								fallback: {
+									renderPublicationPath: resolveRenderPublicationPath(
+										patch.renderTransport
+									),
+									renderPublicationPhase: resolveRenderPublicationPhase(
+										patch.surfaceIdentity?.requestId ?? 0
+									),
+									renderPublicationMeshAction: 'skipped'
+								}
+							})
+						}
+					})
+				: patch.runtimeDiagnostics;
 		setState({
 			...patch,
+			runtimeDiagnostics,
 			acceptedGpuResidentOutput: acceptedGpuResidentOutputEntry?.value ?? null
 		});
 	}
@@ -1243,6 +1374,7 @@ export function createLiveSelectedHourController(
 					};
 				}
 
+				const controllerSessionRunStartedAtMs = performance.now();
 				const result = await session.runSelectedHour({
 					monthIndex: request.monthIndex,
 					hourIndex: request.hourIndex,
@@ -1262,6 +1394,8 @@ export function createLiveSelectedHourController(
 				}
 
 				const computeCompletedAtMs = performance.now();
+				const controllerSessionRunCompletedAtMs = computeCompletedAtMs;
+				const controllerAcceptStartedAtMs = computeCompletedAtMs;
 				const controllerRequestId = requestToken;
 				const acceptedGpuResidentOutput = withControllerRequestId(
 					result.gpuResidentOutput,
@@ -1295,30 +1429,45 @@ export function createLiveSelectedHourController(
 								selectionKey: acceptedSelectionKey
 							}
 						: null;
-				const acceptedRuntimeDiagnostics = copyRuntimeDiagnostics({
+				const controllerAcceptedAtMs = performance.now();
+				const acceptedRuntimeDiagnosticsBeforeMergeStamp = copyRuntimeDiagnostics({
 					...result.diagnostics,
 					timings: {
 						...result.diagnostics.timings,
 						renderPublication: stampRenderPublicationTimeline({
-							current: stampRenderPublicationTimeline({
-								current: result.diagnostics.timings.renderPublication,
-								timeline: {
-									computeCompletedAtMs,
-									selectedHourValuePublicationStartedAtMs:
-										result.pendingRenderUpdateStartedAt
-								},
-								fallback: {
-									renderPublicationPath: resolveRenderPublicationPath(
-										result.renderTransport
-									),
-									renderPublicationPhase: resolveRenderPublicationPhase(
-										controllerRequestId
-									),
-									renderPublicationMeshAction: 'skipped'
-								}
-							}),
+							current: result.diagnostics.timings.renderPublication,
 							timeline: {
-								controllerAcceptedAtMs: performance.now()
+								controllerSessionRunStartedAtMs,
+								controllerSessionRunCompletedAtMs,
+								controllerAcceptStartedAtMs,
+								computeCompletedAtMs,
+								selectedHourValuePublicationStartedAtMs:
+									result.pendingRenderUpdateStartedAt,
+								controllerAcceptedAtMs
+							},
+							fallback: {
+								renderPublicationPath: resolveRenderPublicationPath(
+									result.renderTransport
+								),
+								renderPublicationPhase: resolveRenderPublicationPhase(
+									controllerRequestId
+								),
+								renderPublicationMeshAction: 'skipped'
+							}
+						})
+					}
+				});
+				const controllerDiagnosticsMergedAtMs = performance.now();
+				const acceptedRuntimeDiagnostics = copyRuntimeDiagnostics({
+					...acceptedRuntimeDiagnosticsBeforeMergeStamp,
+					timings: {
+						...acceptedRuntimeDiagnosticsBeforeMergeStamp.timings,
+						renderPublication: stampRenderPublicationTimeline({
+							current:
+								acceptedRuntimeDiagnosticsBeforeMergeStamp.timings
+									.renderPublication,
+							timeline: {
+								controllerDiagnosticsMergedAtMs
 							},
 							fallback: {
 								renderPublicationPath: resolveRenderPublicationPath(

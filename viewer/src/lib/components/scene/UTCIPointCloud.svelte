@@ -356,6 +356,14 @@
 		sceneSyncAttemptToken: number;
 		sceneSurfaceReceivedAtMs: number;
 		publicationEffectStartedAtMs: number;
+		reactiveTiming?: {
+			sceneReactiveBlockEnteredAtMs?: number;
+			sceneRenderStateResolvedAtMs?: number;
+			sceneAcceptedKeyResolvedAtMs?: number;
+			sceneSyncInvocationQueuedAtMs?: number;
+			sceneStartSyncEnteredAtMs?: number;
+			sceneStartSyncReturnedAtMs?: number;
+		};
 		sceneSurfacePendingStorageInitAtMs: number | undefined;
 		renderTimings: SelectedHourRenderTimingSubsteps;
 		meshAction: 'created' | 'reused';
@@ -372,6 +380,7 @@
 			sceneSyncAttemptToken,
 			sceneSurfaceReceivedAtMs,
 			publicationEffectStartedAtMs,
+			reactiveTiming,
 			sceneSurfacePendingStorageInitAtMs,
 			renderTimings,
 			meshAction,
@@ -495,6 +504,18 @@
 				mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
 				renderPublicationTimeline: {
 					scenePendingSurfaceObservedAtMs,
+					sceneReactiveBlockEnteredAtMs:
+						reactiveTiming?.sceneReactiveBlockEnteredAtMs,
+					sceneRenderStateResolvedAtMs:
+						reactiveTiming?.sceneRenderStateResolvedAtMs,
+					sceneAcceptedKeyResolvedAtMs:
+						reactiveTiming?.sceneAcceptedKeyResolvedAtMs,
+					sceneSyncInvocationQueuedAtMs:
+						reactiveTiming?.sceneSyncInvocationQueuedAtMs,
+					sceneStartSyncEnteredAtMs:
+						reactiveTiming?.sceneStartSyncEnteredAtMs,
+					sceneStartSyncReturnedAtMs:
+						reactiveTiming?.sceneStartSyncReturnedAtMs,
 					sceneSyncAttemptStartedAtMs,
 					sceneSyncAttemptToken,
 					sceneSurfaceReceivedAtMs,
@@ -547,6 +568,21 @@
 					renderLayoutReuseFrameCacheKind:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseFrameCacheKind,
+					renderLayoutPublicationPlanMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutPublicationPlanMs,
+					renderLayoutCompatibilityMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutCompatibilityMs,
+					renderLayoutCompatibilityRequiredExpensiveMappingComparison:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutCompatibilityRequiredExpensiveMappingComparison,
+					renderLayoutCompatibilityPerformedExpensiveMappingComparison:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutCompatibilityPerformedExpensiveMappingComparison,
+					renderLayoutReuseProofMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderLayoutReuseProofMs,
 					renderLayoutReuseKeyMatch:
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderLayoutReuseKeyMatch,
@@ -571,9 +607,12 @@
 					sceneSurfacePendingStorageInitAtMs,
 					renderStorageWaitStartedAtMs,
 					renderStoragePreWaitMs,
-				renderStorageReadyAtMs,
-				renderStorageWaitTrace: waitTrace,
-				sceneSyncCompletedAtMs,
+					renderStorageReadyAtMs,
+					renderStorageWaitTrace: waitTrace,
+					renderBufferCopyEncoderCreateMs: copyTimings.copyEncoderCreateMs,
+					renderBufferCopyCommandRecordMs: copyTimings.copyCommandRecordMs,
+					renderBufferCopySubmitMs: copyTimings.copySubmitMs,
+					sceneSyncCompletedAtMs,
 				sceneSyncResetHistory:
 					acceptedGpuResidentSurfaceSync.getResetHistory(),
 				sceneSyncActiveWindowResetHistory:
@@ -598,13 +637,21 @@
 		activeAnalysis: Analysis,
 		acceptedOutput: SelectedHourGpuResidentOutput,
 		sceneSurfaceReceivedAtMs: number,
-		scenePendingSurfaceObservedAtMs?: number
+		scenePendingSurfaceObservedAtMs?: number,
+		reactiveTiming?: {
+			sceneReactiveBlockEnteredAtMs?: number;
+			sceneRenderStateResolvedAtMs?: number;
+			sceneAcceptedKeyResolvedAtMs?: number;
+			sceneSyncInvocationQueuedAtMs?: number;
+		}
 	): Promise<void> {
+		const sceneStartSyncEnteredAtMs = performance.now();
 		const activeSyncRun =
 			acceptedGpuResidentSurfaceSync.startSync({
 				acceptedOutput,
 				liveSelectedHourSurfaceIdentity
 			});
+		const sceneStartSyncReturnedAtMs = performance.now();
 		if (!activeSyncRun) {
 			return;
 		}
@@ -638,6 +685,7 @@
 			const publicationPhase =
 				selectedHourRenderContext?.publicationPhase ??
 				(previousReuseState != null ? 'scrub' : 'initial');
+			const layoutPublicationPlanStartedAt = performance.now();
 			const layoutPublicationPlan = planUtciLayoutPublication({
 				previousLayout,
 				previousProof,
@@ -648,6 +696,8 @@
 				currentRendererBackend: 'webgpu',
 				publicationPhase
 			});
+			const renderLayoutPublicationPlanMs =
+				performance.now() - layoutPublicationPlanStartedAt;
 			const renderLayoutReuseDecisionMs =
 				performance.now() - layoutReuseDecisionStartedAt;
 			const layoutStartedAt = performance.now();
@@ -660,12 +710,16 @@
 							activeAnalysis,
 							layoutBuildTrace ?? undefined
 						);
+			const layoutCompatibilityStartedAt = performance.now();
 			const runtimeLayoutCompatibility = evaluateComputeBufferUtciSurfaceLayoutCompatibility({
 				state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
 				previousLayout,
 				nextLayout: layout,
 				allowExpensiveMappingComparison: true
 			});
+			const renderLayoutCompatibilityMs =
+				performance.now() - layoutCompatibilityStartedAt;
+			const layoutReuseProofStartedAt = performance.now();
 			const layoutReuseProofTrace: SelectedHourRenderLayoutReuseProofTrace =
 				layoutPublicationPlan.action === 'reuse-existing'
 					? layoutPublicationPlan.layout === previousLayout && previousProof
@@ -688,8 +742,10 @@
 						canonicalPointCompatibility:
 								previousLayout != null
 									? runtimeLayoutCompatibility.pointCompatibility
-									: null
+								: null
 						});
+			const renderLayoutReuseProofMs =
+				performance.now() - layoutReuseProofStartedAt;
 			const scenePublicationPlanReadyAtMs = performance.now();
 			let meshAction: 'created' | 'reused' = 'reused';
 			let renderSurfaceMeshTrace: SelectedHourRenderSurfaceMeshTrace | undefined;
@@ -743,7 +799,8 @@
 					layout,
 					utciBuffer: sourceBuffer,
 					utciRange: acceptedOutput.utciRange,
-					compatibilityEvaluation: runtimeLayoutCompatibility
+					compatibilityEvaluation: runtimeLayoutCompatibility,
+					trace: renderSurfaceMeshTrace
 				});
 				addSurfaceTraceTiming(
 					renderSurfaceMeshTrace,
@@ -836,6 +893,15 @@
 							layoutReuseKeyDiagnostics.frameCacheHit,
 						renderLayoutReuseFrameCacheKind:
 							layoutReuseKeyDiagnostics.frameCacheKind,
+						renderLayoutPublicationPlanMs,
+						renderLayoutCompatibilityMs,
+						renderLayoutCompatibilityRequiredExpensiveMappingComparison:
+							runtimeLayoutCompatibility.pointCompatibility
+								?.requiredExpensiveMappingComparison,
+						renderLayoutCompatibilityPerformedExpensiveMappingComparison:
+							runtimeLayoutCompatibility.pointCompatibility
+								?.performedExpensiveMappingComparison,
+						renderLayoutReuseProofMs,
 						renderLayoutReuseKeyMatch: layoutPublicationPlan.keyMatch,
 						renderLayoutReuseProofSource:
 							layoutPublicationPlan.action === 'reuse-existing'
@@ -868,6 +934,11 @@
 				sceneSyncAttemptToken,
 				sceneSurfaceReceivedAtMs,
 				publicationEffectStartedAtMs,
+				reactiveTiming: {
+					...reactiveTiming,
+					sceneStartSyncEnteredAtMs,
+					sceneStartSyncReturnedAtMs
+				},
 				sceneSurfacePendingStorageInitAtMs,
 				renderTimings,
 				meshAction,
@@ -943,6 +1014,7 @@
 	}
 
 	$: {
+		const sceneReactiveBlockEnteredAtMs = performance.now();
 		const viewerState = $viewerStore;
 		const currentUnifiedRange =
 			rangeOverride !== undefined ? rangeOverride : $unifiedUtciRange;
@@ -952,6 +1024,7 @@
 			publishedRenderContext: selectedHourRenderContext,
 			rangeOverride: currentUnifiedRange
 		});
+		const sceneRenderStateResolvedAtMs = performance.now();
 		const acceptedKey =
 			renderState?.analysis && utciSurfaceBackend === 'gpuNative'
 				? getAcceptedGpuResidentKey(acceptedGpuResidentOutput)
@@ -963,6 +1036,7 @@
 						liveSelectedHourSurfaceIdentity
 					})
 				: null;
+		const sceneAcceptedKeyResolvedAtMs = performance.now();
 		const useGpuResidentComputeSurface =
 			Boolean(renderState?.analysis) &&
 			utciSurfaceBackend === 'gpuNative' &&
@@ -985,17 +1059,24 @@
 				renderState.analysis !== lastAnalysis ||
 				!isComputeBufferUtciSurface(utciSurface)
 			) {
+				const sceneSyncInvocationQueuedAtMs = performance.now();
 				if (lastObservedPendingSurface?.syncRunKey !== acceptedSyncRunKey) {
 					lastObservedPendingSurface = {
 						syncRunKey: acceptedSyncRunKey,
-						observedAtMs: performance.now()
+						observedAtMs: sceneSyncInvocationQueuedAtMs
 					};
 				}
 				void syncAcceptedGpuResidentSurface(
 					renderState.analysis,
 					acceptedGpuResidentOutput,
 					performance.now(),
-					lastObservedPendingSurface?.observedAtMs
+					lastObservedPendingSurface?.observedAtMs,
+					{
+						sceneReactiveBlockEnteredAtMs,
+						sceneRenderStateResolvedAtMs,
+						sceneAcceptedKeyResolvedAtMs,
+						sceneSyncInvocationQueuedAtMs
+					}
 				);
 			}
 		} else {

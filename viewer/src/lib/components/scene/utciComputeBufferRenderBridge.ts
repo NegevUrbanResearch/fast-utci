@@ -163,14 +163,27 @@ export interface CopyComputeBufferToRenderStorageParams {
 
 export async function copyComputeBufferToRenderStorage(
 	params: CopyComputeBufferToRenderStorageParams
-): Promise<{ bufferCopyMs: number; queueDrainMs: number }> {
+): Promise<{
+	bufferCopyMs: number;
+	queueDrainMs: number;
+	copyEncoderCreateMs: number;
+	copyCommandRecordMs: number;
+	copySubmitMs: number;
+}> {
 	if (params.targetBuffer.size !== undefined && params.targetBuffer.size < params.byteLength) {
 		throw new Error('Three storage buffer is smaller than the accepted compute output buffer.');
 	}
 	const copyStartedAt = params.now();
+	const encoderStartedAt = params.now();
 	const encoder = params.device.createCommandEncoder();
+	const copyEncoderCreateMs = params.now() - encoderStartedAt;
+	const commandRecordStartedAt = params.now();
 	encoder.copyBufferToBuffer(params.sourceBuffer, 0, params.targetBuffer, 0, params.byteLength);
-	params.queue.submit([encoder.finish()]);
+	const commandBuffer = encoder.finish();
+	const copyCommandRecordMs = params.now() - commandRecordStartedAt;
+	const submitStartedAt = params.now();
+	params.queue.submit([commandBuffer]);
+	const copySubmitMs = params.now() - submitStartedAt;
 	const bufferCopyMs = params.now() - copyStartedAt;
 	const queueDrainStartedAt = params.now();
 	await params.queue.onSubmittedWorkDone();
@@ -179,6 +192,9 @@ export async function copyComputeBufferToRenderStorage(
 	}
 	return {
 		bufferCopyMs,
-		queueDrainMs: params.now() - queueDrainStartedAt
+		queueDrainMs: params.now() - queueDrainStartedAt,
+		copyEncoderCreateMs,
+		copyCommandRecordMs,
+		copySubmitMs
 	};
 }

@@ -2556,7 +2556,9 @@ describe('liveSelectedHourController', () => {
 			.spyOn(performance, 'now')
 			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(103)
-			.mockReturnValueOnce(107);
+			.mockReturnValueOnce(107)
+			.mockReturnValueOnce(109)
+			.mockReturnValueOnce(111);
 		const gpu = createGpuResidentOutput(98, 98);
 		const diagnostics = createEmptyOnDemandDiagnostics();
 		const sessionMock = createSessionMock([
@@ -2583,8 +2585,11 @@ describe('liveSelectedHourController', () => {
 			renderPublicationPhase: 'initial',
 			renderPublicationMeshAction: 'skipped',
 			renderPublicationTimeline: {
-				computeCompletedAtMs: 101,
-				controllerAcceptedAtMs: 103
+				controllerSessionRunStartedAtMs: 101,
+				computeCompletedAtMs: 103,
+				controllerAcceptedAtMs: 107,
+				controllerDiagnosticsMergedAtMs: 109,
+				controllerStatePublishedAtMs: 111
 			}
 		});
 
@@ -2626,8 +2631,10 @@ describe('liveSelectedHourController', () => {
 			renderPublicationPointCount: 8171761,
 			renderPublicationTargetByteLength: 32687044,
 			renderPublicationTimeline: {
-				computeCompletedAtMs: 101,
-				controllerAcceptedAtMs: 103,
+				computeCompletedAtMs: 103,
+				controllerAcceptedAtMs: 107,
+				controllerDiagnosticsMergedAtMs: 109,
+				controllerStatePublishedAtMs: 111,
 				scenePendingSurfaceObservedAtMs: 205,
 				sceneSyncAttemptStartedAtMs: 209,
 				sceneSyncAttemptToken: 17,

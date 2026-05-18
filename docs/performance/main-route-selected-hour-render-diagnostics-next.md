@@ -245,6 +245,185 @@ Result: `2 passed (33.5s)` on 2026-05-18. The dense-route probe keeps the proof 
 
 The interaction fix is intentionally scoped: the UTCI overlay stays visible, tooltip picking is suppressed longer during camera motion, and the per-frame camera sampler only runs when `utciRenderDiagnostics=1`.
 
+## 2026-05-18 Post-Key Scene/Update Split
+
+Collector command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-performance-0_5m.spec.ts --project=chromium --workers=1 --reporter=list --grep "collects BG and Ness Tziona 0.5m main-route timing, memory, color-mode, and scrub samples"
+```
+
+Result: `1 passed (2.2m)` on 2026-05-18. This diagnostics-only pass refreshed [data/performance-results/main-route-selected-hour-render-diagnostics-next.json](../../data/performance-results/main-route-selected-hour-render-diagnostics-next.json) with a split for scene reactive entry, post-key layout publication planning, compute-buffer surface update substeps, and copy encode/submit versus queue drain.
+
+| Project | Mode | Visible ms | Render update ms | Pre-scene-sync delay ms | Scene sync ms | Compatibility ms | Mesh update ms | Storage wait ms | Copy encode/submit ms | Queue ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ben-Gurion | normalized | 68.9 | 61.1 | 34.1 | 26.8 | 22.0 | 0.0 | 0.2 | 0.0 | 4.1 |
+| Ben-Gurion | discrete | 78.5 | 69.1 | 58.4 | 10.6 | 6.8 | 0.1 | 0.2 | 0.0 | 3.1 |
+| Ness-Tziona | normalized | 185.8 | 170.7 | 133.6 | 36.8 | 33.2 | 0.0 | 0.2 | 0.1 | 3.0 |
+| Ness-Tziona | discrete | 325.1 | 313.2 | 274.3 | 38.7 | 34.1 | 0.1 | 0.1 | 0.0 | 3.9 |
+
+All four scrub samples kept the protected proof boundary: `rendererBackend=webgpu`, `utciRenderResolved=gpuNative`, `utciSurfaceSource=compute-buffer-selected-hour`, `baseRenderTransport=compute-buffer-selected-hour`, `dataTextureBuildCount=0`, `visibleSelectedHourReadbackCount=0`, `renderLayoutReuseAction='reused'`, `renderLayoutReuseReason='reuse-safe'`, `renderLayoutBuildTrace=null`, `renderLayoutReuseFrameCacheKind='structural'`, and `activeLayoutCandidateCount=1`.
+
+### Split Diagnosis
+
+The remaining scene-side work after the frame/layout key is cheap is now mostly explained:
+
+- Scene reactive entry, render-state resolution, accepted-key resolution, sync invocation, and `startSync()` are all effectively `0.0-0.1 ms` in the collected warm scrubs.
+- The post-key scene-side bucket is dominated by runtime layout compatibility, not material/uniform/storage binding update. Ness Tziona spends `33.2-34.1 ms` there. The expensive mapping flags are `false`, so this is the non-expensive compatibility path, not a recreated cell-map comparison.
+- Compute-buffer surface update bookkeeping is tiny: mesh update is `0.0-0.1 ms`; range/uniform, pending source handoff, layout user-data, and byte accounting are individually `0.0 ms` in this pass.
+- Storage wait and copy encode/submit are effectively gone: storage wait is `0.1-0.2 ms`, copy encode/submit is `0.0-0.1 ms`, and queue drain is `3.0-3.9 ms`.
+- The dominant remaining window is not post-key scene work. It is the pre-scene-sync delay, measured as `renderSceneSyncStartDelayMs`: Ness Tziona `133.6 ms` normalized and `274.3 ms` discrete.
+
+### Next Action
+
+The next target should be more instrumentation, not a scene/material optimization yet. The highest-value split is the pre-scene-sync delay before `UTCIPointCloud` begins the accepted-output sync. That likely lives in the selected-hour value publication, controller/route host projection, Svelte propagation, or color-mode/range publication path before scene receipt. Cold-start/init should still stay separate until this pre-scene-sync warm-scrub delay is explained.
+
+## 2026-05-18 Selected-Hour Handoff Split
+
+Collector command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-performance-0_5m.spec.ts --project=chromium --workers=1 --reporter=list --grep "collects BG and Ness Tziona 0.5m main-route timing, memory, color-mode, and scrub samples"
+```
+
+Result: `1 passed (2.3m)` on 2026-05-18. This diagnostics-only pass refreshed [data/performance-results/main-route-selected-hour-render-diagnostics-next.json](../../data/performance-results/main-route-selected-hour-render-diagnostics-next.json) with session, controller, route-projection, scene-entry, and compute-buffer surface-update substep stamps.
+
+Manual diagnostics command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-manual-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --grep "publishes selected-hour diagnostics|Ness Tziona 0.5m camera"
+```
+
+Result: `2 passed (44.9s)` on 2026-05-18.
+
+### Warm Scrub Split
+
+| Project | Mode | Render update ms | Controller session ms | Debug readback ms | Readback -> range-start ms | Session result -> controller complete ms | Controller/route publish ms | Scene sync ms | Compatibility ms | Mesh update ms | Queue ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ben-Gurion | normalized | 62.0 | 45.1 | 9.8 | 24.2 | 0.0 | 0.6 | 26.7 | 22.7 | 0.1 | 3.2 |
+| Ben-Gurion | discrete | 95.0 | 84.2 | 13.0 | 27.5 | 32.3 | 1.0 | 19.5 | 11.1 | 0.0 | 7.2 |
+| Ness-Tziona | normalized | 178.6 | 156.4 | 36.9 | 103.0 | 0.0 | 0.5 | 37.4 | 33.7 | 0.0 | 3.2 |
+| Ness-Tziona | discrete | 325.6 | 292.3 | 44.6 | 111.3 | 124.9 | 0.6 | 43.2 | 37.4 | 0.0 | 4.7 |
+
+The repeated-scrub soak still shows stable reuse ownership: Ness Tziona normalized hours `2`, `3`, and `4` all reuse the same layout identity, retained CPU layout bytes plateau at `163,435,220`, app-owned UTCI/WebGPU bytes plateau at `1,013,299,388`, and the forced `gridResolution=2` replacement stamps the released previous layout identity.
+
+### Diagnosis
+
+The remaining Ness Tziona warm-scrub window is no longer primarily a scene/material/storage update problem:
+
+- Controller/route publication is tiny: controller state publication to pending route exposure is `0.5-0.6 ms`, route projection is about `0.0-0.1 ms`, and scene reactive entry follows pending exposure within `0.2-0.3 ms`.
+- Scene sync is bounded and much smaller than the full render update: `37.4 ms` normalized and `43.2 ms` discrete. Most of that is the runtime layout compatibility check (`33.7-37.4 ms`).
+- Compute-buffer surface update remains negligible. Mesh update, range uniform, pending source handoff, layout user-data, and byte accounting are all `0.0-0.4 ms`; storage wait is `0.0-0.1 ms`; queue drain is `3.2-4.7 ms`.
+- The dominant bucket is selected-hour session work after the GPU output is returned and before the scene receives the accepted surface. Ness Tziona spends `156.4 ms` normalized and `292.3 ms` discrete in the controller session.
+- Inside that session, the largest named CPU-side bucket is after the selected-hour debug/tooltip readback and before range resolution starts: `103.0 ms` normalized and `111.3 ms` discrete. This is the selected-hour value materialization/handoff area, not layout rebuild, storage wait, or route acknowledgement.
+- The discrete sample also has a `124.9 ms` session-result-to-controller-complete tail, which needs a narrower promise/controller-return stamp before treating it as unavoidable scheduling.
+
+### Next Action
+
+The next action should be one more narrow instrumentation pass around selected-hour value materialization after `readOnDemandUtciForDebug()`:
+
+- split `buildSelectedHourLiveAnalysis(...)`, `loadCpuFallback` closure setup, tooltip value handoff, and GPU-resident result object assembly
+- split the session return/promise resolution tail that appears in the Ness Tziona discrete scrub
+- keep the scene/material/storage path unchanged for now, because the new evidence says it is not dominant
+
+Optimization should wait for that selected-hour value handoff split. Cold-start/init should still stay separate.
+
+## 2026-05-18 Selected-Hour Value Materialization Split
+
+Collector command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-performance-0_5m.spec.ts --project=chromium --workers=1 --reporter=list --grep "collects BG and Ness Tziona 0.5m main-route timing, memory, color-mode, and scrub samples"
+```
+
+Result: `1 passed (2.4m)` on 2026-05-18. This diagnostics-only pass refreshed [data/performance-results/main-route-selected-hour-render-diagnostics-next.json](../../data/performance-results/main-route-selected-hour-render-diagnostics-next.json) with the selected-hour CPU value materialization split requested after the previous handoff evidence.
+
+Manual diagnostics command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-manual-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --grep "publishes selected-hour diagnostics|Ness Tziona 0.5m camera"
+```
+
+Result: `2 passed (44.4s)` on 2026-05-18.
+
+### Warm Scrub Session Split
+
+| Project | Mode | Render update ms | Controller session ms | Debug readback ms | `buildSelectedHourLiveAnalysis` ms | Selected-day range ms | GPU-resident range ms | CPU fallback setup ms | Tooltip handoff ms | Result assembly ms | Returned -> controller complete ms | Scene sync ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ben-Gurion | normalized | 64.6 | 44.6 | 10.2 | 25.9 | 0.1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 27.1 |
+| Ben-Gurion | discrete | 73.6 | 68.8 | 10.5 | 29.0 | 0.0 | 21.9 | 0.0 | 0.0 | 21.9 | 0.1 | 10.6 |
+| Ness-Tziona | normalized | 182.5 | 155.5 | 41.7 | 102.7 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 36.6 |
+| Ness-Tziona | discrete | 448.5 | 414.3 | 42.9 | 199.5 | 0.1 | 156.1 | 0.0 | 0.0 | 156.2 | 0.1 | 47.7 |
+
+The protected proof boundary stayed intact in the collected warm scrubs: `rendererBackend=webgpu`, `utciRenderResolved=gpuNative`, `utciSurfaceSource=compute-buffer-selected-hour`, `baseRenderTransport=compute-buffer-selected-hour`, `dataTextureBuildCount=0`, `visibleSelectedHourReadbackCount=0`, `renderLayoutReuseAction='reused'`, `renderLayoutReuseReason='reuse-safe'`, `renderLayoutBuildTrace=null`, and `activeLayoutCandidateCount=1`.
+
+### Diagnosis
+
+This pass explains the selected-hour session bucket:
+
+- The large CPU-side value cost is `buildSelectedHourLiveAnalysis(...)`, not route publication, scene storage, mesh update, or tooltip/fallback closure setup. Ness Tziona spends `102.7 ms` normalized and `199.5 ms` discrete building the CPU selected-hour analysis.
+- Discrete mode also pays a second full selected-hour value scan in final GPU-resident range resolution: `156.1 ms` for Ness Tziona discrete. That accounts for the previously unexplained session-result/controller tail; after moving the result-ready stamp past object assembly, returned -> controller complete is only `0.1 ms`.
+- CPU fallback closure setup and tooltip value handoff are effectively free in this pass (`0.0 ms`). They are not the warm-scrub bottleneck by themselves.
+- Normalized mode does not pay the final selected-hour range scan because the selected-day range is already available; its dominant CPU value cost is the selected-hour analysis build after the debug/tooltip readback.
+- The scene path remains bounded: Ness Tziona scene sync is `36.6-47.7 ms`, with runtime compatibility still the main scene-side sub-bucket.
+
+### Next Action
+
+The next action can now be an optimization design, with a tight scope: remove or defer full CPU selected-hour analysis/range materialization from the warm GPU-native render path.
+
+The likely safe direction is:
+
+- keep `compute-buffer-selected-hour` as the visible render transport
+- do not build a full CPU `selectedHourAnalysis` on every warm scrub unless a CPU fallback or CPU-rendered surface actually needs it
+- avoid scanning the full selected-hour `Float32Array` again for discrete GPU-resident range if the selected-hour readback range can be computed during the already-required analysis/value pass or avoided by using selected-day/range metadata
+- keep tooltip behavior supported, but with a smaller/lazier value path rather than treating full CPU analysis construction as part of every visible GPU render
+
+The first optimization proof should be narrow and reversible: prove that warm GPU-native scrubs can publish the visible surface without eager CPU `Analysis` construction while preserving tooltip values, fallback correctness, color range correctness, and the existing GPU-native proof counters.
+
+## 2026-05-18 Selected-Hour Range Reuse Optimization Recollection
+
+Collector command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-performance-0_5m.spec.ts --project=chromium --workers=1 --reporter=list --grep "collects BG and Ness Tziona 0.5m main-route timing, memory, color-mode, and scrub samples"
+```
+
+Result: `1 passed (2.2m)` on 2026-05-18. This pass refreshed [data/performance-results/main-route-selected-hour-render-diagnostics-next.json](../../data/performance-results/main-route-selected-hour-render-diagnostics-next.json) after the selected-hour range reuse optimization.
+
+Manual diagnostics command:
+
+```powershell
+cd viewer
+npx playwright test tests/e2e/main-route-manual-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --grep "publishes selected-hour diagnostics|Ness Tziona 0.5m camera"
+```
+
+Result: `2 passed (42.3s)` on 2026-05-18.
+
+| Project | Mode | Render update ms | Controller session ms | Eager analysis build ms | Selected-hour range scan ms | GPU-resident range ms | Scene sync ms | Queue ms | Proof status |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Ben-Gurion | normalized | 38.8 | 24.4 | 0.1 | 0.0 | 0.0 | 29.4 | 3.8 | intact |
+| Ben-Gurion | discrete | 55.7 | 51.0 | 0.1 | 28.1 | 0.0 | 12.0 | 3.3 | intact |
+| Ness-Tziona | normalized | 83.4 | 55.7 | 0.0 | 0.0 | 0.0 | 38.2 | 4.2 | intact |
+| Ness-Tziona | discrete | 187.8 | 158.7 | 0.0 | 108.8 | 0.0 | 38.4 | 3.2 | intact |
+
+### Diagnosis
+
+- Selected-hour analysis construction now receives a supplied display range and no longer scans the selected-hour values internally. The previous Ness Tziona `buildSelectedHourLiveAnalysis(...)` costs of `102.7 ms` normalized and `199.5 ms` discrete collapsed to `0.0 ms`.
+- Discrete GPU-resident range now reuses the precomputed selected-hour range instead of scanning the selected-hour values a second time. The previous Ness Tziona discrete GPU-resident range cost of `156.1 ms` collapsed to `0.0 ms`.
+- The remaining selected-hour CPU range pass is explicitly named as `sessionSelectedHourRangeScan*`. In this recollection it is `108.8 ms` for Ness Tziona discrete and `28.1 ms` for Ben-Gurion discrete; normalized mode uses the selected-day range path and records `0.0 ms` for this selected-hour scan.
+- `visibleSelectedHourReadbackCount=0` still means no visible-path selected-hour fallback/readback. It does not mean the app performs zero CPU readbacks; tooltip, range, and debug readbacks remain separately accounted for in readback reason counters.
+- Tooltip values, CPU fallback, GPU-native transport, and layout reuse proof boundaries remain intact. The protected scrub samples still assert `rendererBackend=webgpu`, `utciRenderResolved=gpuNative`, `utciSurfaceSource=compute-buffer-selected-hour`, `baseRenderTransport=compute-buffer-selected-hour`, `dataTextureBuildCount=0`, `visibleSelectedHourReadbackCount=0`, `renderLayoutReuseAction='reused'`, `renderLayoutReuseReason='reuse-safe'`, `renderLayoutBuildTrace=null`, `activeLayoutCandidateCount=1`, and `hoverCellLookupProofStatus='same-point-confirmed'`.
+
+### Next Action
+
+The large duplicate CPU scans are gone. The remaining Ness Tziona discrete warm-scrub cost is now honestly concentrated in the single selected-hour range scan plus the bounded scene compatibility/sync path. Any next optimization should target whether the discrete selected-hour display range can be derived without a full CPU scan while preserving color correctness and tooltip/range contracts.
+
 ## Historical Diagnostics
 
 Older pre-implementation diagnostics were split into [main-route-selected-hour-render-diagnostics-history.md](main-route-selected-hour-render-diagnostics-history.md) so this file stays focused on the current 2026-05-17 layout-reuse implementation recollection. Those historical sections preserve the earlier evidence trail but are superseded by the current measurements above.

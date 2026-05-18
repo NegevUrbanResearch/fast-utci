@@ -193,16 +193,16 @@ describe('selected-hour live session', () => {
 			preferredDevice: mockState.rendererDevice
 		});
 
-		await expect(
-			session.runSelectedHour({
-				monthIndex: 0,
-				hourIndex: 12,
-				timeIndex: 12,
-				colorMode: 'discrete',
-				preferGpuResident: true,
-				rendererDevice: mockState.rendererDevice
-			})
-		).resolves.toMatchObject({
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result).toMatchObject({
 			renderTransport: 'compute-buffer-selected-hour',
 			sameDeviceForComputeAndRender: true,
 			analysis: {
@@ -217,6 +217,42 @@ describe('selected-hour live session', () => {
 				tooltipUtciValues: new Float32Array([11, 29])
 			}
 		});
+		expect(result.loadCpuFallback).toEqual(expect.any(Function));
+		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+	});
+
+	it('records one selected-hour range scan and reuses it for discrete GPU-resident range', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		const timeline = result.diagnostics.timings.renderPublication?.renderPublicationTimeline;
+
+		expect(result.analysis?.metadata.utci_range).toEqual({ min: 11, max: 29 });
+		expect(result.gpuResidentOutput?.utciRange).toEqual({ min: 11, max: 29 });
+		expect(timeline).toMatchObject({
+			sessionSelectedHourRangeScanStartedAtMs: expect.any(Number),
+			sessionSelectedHourRangeScanCompletedAtMs: expect.any(Number),
+			sessionGpuResidentRangeResolveStartedAtMs: expect.any(Number),
+			sessionGpuResidentRangeResolveCompletedAtMs: expect.any(Number)
+		});
+		expect(
+			(timeline?.sessionGpuResidentRangeResolveCompletedAtMs ?? 0) -
+				(timeline?.sessionGpuResidentRangeResolveStartedAtMs ?? 0)
+		).toBeGreaterThanOrEqual(0);
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
 	});
 
@@ -558,7 +594,7 @@ describe('selected-hour live session', () => {
 		expect(secondDestroy).not.toHaveBeenCalled();
 	});
 
-	it('uses the selected month WebGPU day range for normalized GPU-resident coloring', async () => {
+	it('uses selected-day range for normalized analysis and GPU-resident range', async () => {
 		const readbacks = [
 			new Float32Array([100, 120]),
 			...Array.from({ length: 24 }, (_, hour) => new Float32Array([hour, hour + 20])).filter(
@@ -587,6 +623,7 @@ describe('selected-hour live session', () => {
 			rendererDevice: mockState.rendererDevice
 		});
 
+		expect(first.analysis?.metadata.utci_range).toEqual({ min: 0, max: 120 });
 		expect(first.gpuResidentOutput?.utciRange).toEqual({ min: 0, max: 120 });
 		expect(first.diagnostics.selectedHourReadbackReasons).toContain('range');
 		expect(first.diagnostics.selectedHourReadbackReasonCounts?.range).toBeGreaterThan(0);
@@ -627,6 +664,19 @@ describe('selected-hour live session', () => {
 		expect(result.renderTransport).toBe('compute-buffer-selected-hour');
 		expect(result.diagnostics.selectedHourReadbackReasons).toContain('comparison');
 		expect(result.diagnostics.selectedHourReadbackReasonCounts?.comparison).toBeGreaterThan(0);
+		expect(result.diagnostics.timings.renderPublication?.renderPublicationTimeline).toMatchObject({
+			sessionSelectedHourAnalysisBuildStartedAtMs: expect.any(Number),
+			sessionSelectedHourAnalysisBuildCompletedAtMs: expect.any(Number),
+			sessionCpuFallbackSetupStartedAtMs: expect.any(Number),
+			sessionCpuFallbackSetupCompletedAtMs: expect.any(Number),
+			sessionGpuResidentRangeResolveStartedAtMs: expect.any(Number),
+			sessionGpuResidentRangeResolveCompletedAtMs: expect.any(Number),
+			sessionTooltipValuesHandoffStartedAtMs: expect.any(Number),
+			sessionTooltipValuesHandoffCompletedAtMs: expect.any(Number),
+			sessionGpuResidentResultAssemblyStartedAtMs: expect.any(Number),
+			sessionGpuResidentResultAssemblyCompletedAtMs: expect.any(Number),
+			sessionResultReadyAtMs: expect.any(Number)
+		});
 	});
 
 	it('records visible fallback CPU readbacks when GPU-resident rendering is unavailable', async () => {
@@ -649,6 +699,9 @@ describe('selected-hour live session', () => {
 		});
 
 		expect(result.renderTransport).toBe('cpu-uploaded-selected-hour');
+		expect(result.diagnostics.timings.renderPublication?.renderPublicationPath).toBe(
+			'cpu-uploaded-selected-hour'
+		);
 		expect(result.diagnostics.selectedHourReadbackReasons).toContain('visible-fallback');
 		expect(result.diagnostics.selectedHourReadbackReasonCounts?.['visible-fallback']).toBeGreaterThan(0);
 	});

@@ -170,6 +170,14 @@ describe('projectMainRouteLiveSceneState', () => {
 		expect(projected.basePendingGpuResidentOutput).toBe(acceptedGpuResidentOutput);
 		expect(projected.baseSceneSurfaceIdentity?.requestId).toBe(7);
 		expect(projected.baseSceneRenderContext?.timeIndex).toBe(180);
+		expect(projected.baseDisplayedAnalysis).toBe(bootstrapAnalysis);
+		expect(projected.baseSceneRenderContext?.analysis).toBe(bootstrapAnalysis);
+		expect(projected.baseSceneAnalysis?.metadata.grid_size).toBe(
+			bootstrapAnalysis.metadata.grid_size
+		);
+		expect(projected.baseSceneAnalysis?.data.numPositions).toBe(
+			bootstrapAnalysis.data.numPositions
+		);
 	});
 
 	it('passes bootstrap GPU selected-hour props to the comparison scene before visible publication', () => {

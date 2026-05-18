@@ -3,7 +3,9 @@ import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
 import { createLiveUtciAnalysisFromCompute } from '$lib/compute/selected-hour/liveUtciAnalysis';
 import {
 	buildSelectedHourLiveAnalysis,
-	resolveAcceptedGpuResidentUtciRange
+	resolveAcceptedGpuResidentUtciRange,
+	resolveLiveGpuResidentUtciRange,
+	resolveLiveSelectedHourTimeIndex
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
 import type { AnalysisMetadata } from '$lib/types/analysis';
 import {
@@ -315,6 +317,65 @@ describe('liveUtciAnalysis adapter', () => {
 });
 
 describe('selected-hour live UTCI helpers', () => {
+	it('builds selected-hour live analysis with a supplied UTCI range without deriving a different one', () => {
+		const base = createBaseAnalysisFixture();
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues: new Float32Array([11, 29]),
+			utciRange: { min: 14, max: 32 },
+			monthIndex: 7,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 7, hourIndex: 12 })
+		});
+
+		expect(analysis.metadata.utci_range).toEqual({ min: 14, max: 32 });
+		expect(isSingleHourData(analysis.data)).toBe(true);
+		if (!isSingleHourData(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose single-hour utciValues');
+		}
+		expect(analysis.data.utciValues).toEqual(new Float32Array([11, 29]));
+		expect(hasDecodedUtciByHour(analysis.data)).toBe(true);
+		if (!hasDecodedUtciByHour(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose utciByHour');
+		}
+		expect(analysis.data.utciByHour).toEqual([new Float32Array([11, 29])]);
+	});
+
+	it.each([
+		['NaN minimum', { min: Number.NaN, max: 32 }],
+		['infinite maximum', { min: 14, max: Number.POSITIVE_INFINITY }],
+		['reversed bounds', { min: 32, max: 14 }]
+	])('derives selected-hour live analysis range when supplied UTCI range has %s', (_, utciRange) => {
+		const base = createBaseAnalysisFixture();
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues: new Float32Array([11, 29]),
+			utciRange,
+			monthIndex: 7,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 7, hourIndex: 12 })
+		});
+
+		expect(analysis.metadata.utci_range).toEqual({ min: 11, max: 29 });
+	});
+
+	it('uses a precomputed selected-hour range for discrete GPU-resident display', () => {
+		const range = resolveLiveGpuResidentUtciRange({
+			colorMode: 'discrete',
+			selectedHourUtciRange: { min: 14, max: 32 }
+		});
+
+		expect(range).toEqual({ min: 14, max: 32 });
+	});
+
+	it('falls back to selected-hour values when a supplied selected-hour range is invalid', () => {
+		const range = resolveLiveGpuResidentUtciRange({
+			colorMode: 'discrete',
+			selectedHourUtciRange: { min: 32, max: 14 },
+			selectedHourUtci: new Float32Array([11, 29])
+		});
+
+		expect(range).toEqual({ min: 11, max: 29 });
+	});
+
 	it('builds a single-hour analysis and resolves display ranges for selected-hour rendering', () => {
 		const base = createBaseAnalysisFixture();
 		const utciValues = new Float32Array([12.5, 18.25, 5.75]);

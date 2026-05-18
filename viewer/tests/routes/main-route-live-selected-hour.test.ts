@@ -176,8 +176,11 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(602);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -230,8 +233,12 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(777)
+			.mockReturnValueOnce(877);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -301,8 +308,13 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(602)
+			.mockReturnValueOnce(103)
+			.mockReturnValueOnce(603);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -371,8 +383,11 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(602);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -449,8 +464,12 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(777)
+			.mockReturnValueOnce(877);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -510,9 +529,15 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
 			.mockReturnValueOnce(777)
-			.mockReturnValueOnce(999);
+			.mockReturnValueOnce(877)
+			.mockReturnValueOnce(103)
+			.mockReturnValueOnce(999)
+			.mockReturnValueOnce(1099);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {
@@ -589,8 +614,15 @@ describe('main route live selected-hour helper', () => {
 		const tracker = createMainRouteRenderPublicationProjectionTracker();
 		const nowSpy = vi
 			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
 			.mockReturnValueOnce(501)
-			.mockReturnValueOnce(777);
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(102)
+			.mockReturnValueOnce(103)
+			.mockReturnValueOnce(104)
+			.mockReturnValueOnce(105)
+			.mockReturnValueOnce(777)
+			.mockReturnValueOnce(877);
 		const params = createDiagnosticsParams();
 		params.liveRouteState.base.runtimeDiagnostics = {
 			timings: {

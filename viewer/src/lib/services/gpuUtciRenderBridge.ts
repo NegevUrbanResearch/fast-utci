@@ -32,6 +32,13 @@ export interface ComputeBufferUtciSurfaceMeshOptions {
 	compatibilityEvaluation?: ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation;
 }
 
+type ComputeBufferUtciSurfaceUpdateTrace = {
+	updateComputeBufferSurfaceRangeUniformMs?: number;
+	updateComputeBufferSurfacePendingSourceMs?: number;
+	updateComputeBufferSurfaceLayoutUserDataMs?: number;
+	updateComputeBufferSurfaceByteAccountingMs?: number;
+};
+
 interface GpuNativeUtciSurfaceState {
 	colorStorageAttribute: StorageBufferAttribute;
 	width: number;
@@ -265,7 +272,10 @@ export function createComputeBufferUtciSurfaceMesh(
 
 export function updateComputeBufferUtciSurfaceMesh(
 	mesh: THREE.Mesh,
-	options: ComputeBufferUtciSurfaceMeshOptions
+	options: ComputeBufferUtciSurfaceMeshOptions & {
+		trace?: ComputeBufferUtciSurfaceUpdateTrace;
+		now?: () => number;
+	}
 ): boolean {
 	const compatibilityEvaluation =
 		options.compatibilityEvaluation ??
@@ -280,16 +290,37 @@ export function updateComputeBufferUtciSurfaceMesh(
 	}
 	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as ComputeBufferUtciSurfaceState;
 
+	const now = options.now ?? performance.now.bind(performance);
+	const rangeUniformStartedAt = now();
 	state.utciRange = { ...options.utciRange };
 	state.minUniform.value = options.utciRange.min;
 	state.maxUniform.value = options.utciRange.max;
+	if (options.trace) {
+		options.trace.updateComputeBufferSurfaceRangeUniformMs =
+			now() - rangeUniformStartedAt;
+	}
+	const pendingSourceStartedAt = now();
 	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
+	if (options.trace) {
+		options.trace.updateComputeBufferSurfacePendingSourceMs =
+			now() - pendingSourceStartedAt;
+	}
+	const layoutUserDataStartedAt = now();
 	mesh.userData.utciLayout = options.layout;
+	if (options.trace) {
+		options.trace.updateComputeBufferSurfaceLayoutUserDataMs =
+			now() - layoutUserDataStartedAt;
+	}
+	const byteAccountingStartedAt = now();
 	mesh.userData.renderOwnedSelectedHourBytes =
 		getGeometryGpuAttributeBytes(mesh.geometry) +
 		state.utciStorageAttribute.array.byteLength +
 		state.cellToPointStorageAttribute.array.byteLength +
 		UTCI_COLOR_LUT_BYTES;
+	if (options.trace) {
+		options.trace.updateComputeBufferSurfaceByteAccountingMs =
+			now() - byteAccountingStartedAt;
+	}
 	return true;
 }
 

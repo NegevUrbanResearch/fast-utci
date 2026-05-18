@@ -15,15 +15,28 @@ export function resolveLiveSelectedHourTimeIndex(params: {
 export function buildSelectedHourLiveAnalysis(params: {
 	base: Analysis;
 	utciValues: Float32Array;
+	utciRange?: { min: number; max: number } | null;
 	monthIndex: number;
 	timeIndex: number;
 }): Analysis {
-	let min = Number.POSITIVE_INFINITY;
-	let max = Number.NEGATIVE_INFINITY;
-	for (const value of params.utciValues) {
-		if (value < min) min = value;
-		if (value > max) max = value;
+	const suppliedRange =
+		params.utciRange &&
+		Number.isFinite(params.utciRange.min) &&
+		Number.isFinite(params.utciRange.max) &&
+		params.utciRange.max > params.utciRange.min
+			? params.utciRange
+			: null;
+	let derivedRange: { min: number; max: number } | null = null;
+	if (!suppliedRange) {
+		let min = Number.POSITIVE_INFINITY;
+		let max = Number.NEGATIVE_INFINITY;
+		for (const value of params.utciValues) {
+			if (value < min) min = value;
+			if (value > max) max = value;
+		}
+		derivedRange = Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
 	}
+	const range = suppliedRange ?? derivedRange ?? params.base.metadata.utci_range;
 
 	return {
 		metadata: {
@@ -31,10 +44,7 @@ export function buildSelectedHourLiveAnalysis(params: {
 			analysis_type: 'single_hour',
 			num_positions: params.utciValues.length,
 			num_months: 1,
-			utci_range:
-				Number.isFinite(min) && Number.isFinite(max)
-					? { min, max }
-					: params.base.metadata.utci_range
+			utci_range: range
 		},
 		data: {
 			numPositions: params.utciValues.length,
@@ -106,11 +116,21 @@ export function resolveAcceptedGpuResidentUtciRange(params: {
 
 export function resolveLiveGpuResidentUtciRange(params: {
 	selectedHourUtci?: Float32Array;
+	selectedHourUtciRange?: { min: number; max: number } | null;
 	selectedDayUtciRange?: { min: number; max: number } | null;
 	colorMode?: 'normalized' | 'discrete';
 }): { min: number; max: number } {
 	if (params.colorMode === 'normalized') {
 		return resolveFiniteRange(params.selectedDayUtciRange ?? null);
+	}
+
+	if (
+		params.selectedHourUtciRange &&
+		Number.isFinite(params.selectedHourUtciRange.min) &&
+		Number.isFinite(params.selectedHourUtciRange.max) &&
+		params.selectedHourUtciRange.max > params.selectedHourUtciRange.min
+	) {
+		return params.selectedHourUtciRange;
 	}
 
 	const selectedRange = getUtciValuesRange(params.selectedHourUtci);

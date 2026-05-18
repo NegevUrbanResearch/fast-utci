@@ -87,6 +87,7 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 			sceneRenderContextTimeIndex: number | undefined;
 			selectedTimeIndex: number;
 		}): MainRouteUtciDiagnosticsInputs['timings'] | undefined {
+			const routeProjectionEvaluationStartedAtMs = performance.now();
 			const timings = params.timings
 				? {
 						...params.timings,
@@ -152,14 +153,17 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 				shouldStamp && nextProjectedKey === pendingSurfaceProjectedKey
 					? routeProjectedAtMs
 					: undefined;
+			const routeProjectionEvaluationCompletedAtMs = performance.now();
 
 			return {
 				...timings,
 				renderPublication: stampRenderPublicationTimeline({
 					current: timings?.renderPublication,
 					timeline: {
+						routeProjectionEvaluationStartedAtMs,
 						routePendingSurfaceExposedAtMs,
-						routeProjectedAtMs: projectedAtMsForCurrentSurface
+						routeProjectedAtMs: projectedAtMsForCurrentSurface,
+						routeProjectionEvaluationCompletedAtMs
 					},
 					fallback: {
 						renderPublicationPath:

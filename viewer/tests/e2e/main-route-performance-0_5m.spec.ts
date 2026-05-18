@@ -54,13 +54,48 @@ type RenderPublicationTiming = {
 };
 
 type RenderPublicationTimelineTiming = {
+	controllerSessionRunStartedAtMs: number | null;
+	controllerSessionRunCompletedAtMs: number | null;
+	controllerAcceptStartedAtMs: number | null;
+	controllerDiagnosticsMergedAtMs: number | null;
+	controllerStatePublishedAtMs: number | null;
+	sessionComputeOutputReturnedAtMs: number | null;
+	sessionDiagnosticsAppliedAtMs: number | null;
+	sessionGpuOutputHandleReadyAtMs: number | null;
+	sessionPreferGpuResidentResolvedAtMs: number | null;
+	sessionDebugReadbackStartedAtMs: number | null;
+	sessionDebugReadbackCompletedAtMs: number | null;
+	sessionSelectedHourRangeScanStartedAtMs: number | null;
+	sessionSelectedHourRangeScanCompletedAtMs: number | null;
+	sessionSelectedHourAnalysisBuildStartedAtMs: number | null;
+	sessionSelectedHourAnalysisBuildCompletedAtMs: number | null;
+	sessionRangeResolveStartedAtMs: number | null;
+	sessionRangeResolveCompletedAtMs: number | null;
+	sessionCpuFallbackSetupStartedAtMs: number | null;
+	sessionCpuFallbackSetupCompletedAtMs: number | null;
+	sessionGpuResidentRangeResolveStartedAtMs: number | null;
+	sessionGpuResidentRangeResolveCompletedAtMs: number | null;
+	sessionTooltipValuesHandoffStartedAtMs: number | null;
+	sessionTooltipValuesHandoffCompletedAtMs: number | null;
+	sessionGpuResidentResultAssemblyStartedAtMs: number | null;
+	sessionGpuResidentResultAssemblyCompletedAtMs: number | null;
+	sessionResultReadyAtMs: number | null;
+	sessionResultReturnedAtMs: number | null;
 	computeCompletedAtMs: number | null;
 	selectedHourValuePublicationStartedAtMs: number | null;
 	controllerAcceptedAtMs: number | null;
 	routePendingSurfaceExposedAtMs: number | null;
 	routePublishedAtMs: number | null;
 	routeProjectedAtMs: number | null;
+	routeProjectionEvaluationStartedAtMs: number | null;
+	routeProjectionEvaluationCompletedAtMs: number | null;
 	scenePendingSurfaceObservedAtMs: number | null;
+	sceneReactiveBlockEnteredAtMs: number | null;
+	sceneRenderStateResolvedAtMs: number | null;
+	sceneAcceptedKeyResolvedAtMs: number | null;
+	sceneSyncInvocationQueuedAtMs: number | null;
+	sceneStartSyncEnteredAtMs: number | null;
+	sceneStartSyncReturnedAtMs: number | null;
 	sceneSyncAttemptStartedAtMs: number | null;
 	sceneSyncAttemptToken: number | null;
 	sceneSurfaceReceivedAtMs: number | null;
@@ -86,6 +121,11 @@ type RenderPublicationTimelineTiming = {
 		| 'structural'
 		| 'miss'
 		| null;
+	renderLayoutPublicationPlanMs: number | null;
+	renderLayoutCompatibilityMs: number | null;
+	renderLayoutCompatibilityRequiredExpensiveMappingComparison: boolean | null;
+	renderLayoutCompatibilityPerformedExpensiveMappingComparison: boolean | null;
+	renderLayoutReuseProofMs: number | null;
 	renderLayoutReuseKeyMatch: boolean | null;
 	renderLayoutReuseProofSource:
 		| 'fresh-build-proof'
@@ -101,6 +141,9 @@ type RenderPublicationTimelineTiming = {
 	renderStoragePreWaitMs: number | null;
 	renderStorageReadyAtMs: number | null;
 	renderStorageWaitTrace: RenderStorageWaitTrace | null;
+	renderBufferCopyEncoderCreateMs: number | null;
+	renderBufferCopyCommandRecordMs: number | null;
+	renderBufferCopySubmitMs: number | null;
 	sceneSyncCompletedAtMs: number | null;
 	sceneSyncResetHistory: RenderPublicationSceneSyncResetEvent[];
 	sceneSyncActiveWindowResetHistory: RenderPublicationSceneSyncResetEvent[] | null;
@@ -160,6 +203,10 @@ type RenderSurfaceMeshTrace = {
 	disposeResetMeshRemovalMs: number | null;
 	createComputeBufferSurfaceMeshMs: number | null;
 	updateComputeBufferSurfaceMeshMs: number | null;
+	updateComputeBufferSurfaceRangeUniformMs: number | null;
+	updateComputeBufferSurfacePendingSourceMs: number | null;
+	updateComputeBufferSurfaceLayoutUserDataMs: number | null;
+	updateComputeBufferSurfaceByteAccountingMs: number | null;
 	fallbackDecisionMs: number | null;
 	applySurfaceMeshStateMs: number | null;
 	setCreatedSurfacePendingStorageInitMs: number | null;
@@ -730,6 +777,77 @@ function extractRenderPublicationTimeline(
 
 	const payload = value as Record<string, unknown>;
 	return {
+		controllerSessionRunStartedAtMs: numberOrNull(
+			payload.controllerSessionRunStartedAtMs
+		),
+		controllerSessionRunCompletedAtMs: numberOrNull(
+			payload.controllerSessionRunCompletedAtMs
+		),
+		controllerAcceptStartedAtMs: numberOrNull(payload.controllerAcceptStartedAtMs),
+		controllerDiagnosticsMergedAtMs: numberOrNull(
+			payload.controllerDiagnosticsMergedAtMs
+		),
+		controllerStatePublishedAtMs: numberOrNull(payload.controllerStatePublishedAtMs),
+		sessionComputeOutputReturnedAtMs: numberOrNull(
+			payload.sessionComputeOutputReturnedAtMs
+		),
+		sessionDiagnosticsAppliedAtMs: numberOrNull(payload.sessionDiagnosticsAppliedAtMs),
+		sessionGpuOutputHandleReadyAtMs: numberOrNull(
+			payload.sessionGpuOutputHandleReadyAtMs
+		),
+		sessionPreferGpuResidentResolvedAtMs: numberOrNull(
+			payload.sessionPreferGpuResidentResolvedAtMs
+		),
+		sessionDebugReadbackStartedAtMs: numberOrNull(
+			payload.sessionDebugReadbackStartedAtMs
+		),
+		sessionDebugReadbackCompletedAtMs: numberOrNull(
+			payload.sessionDebugReadbackCompletedAtMs
+		),
+		sessionSelectedHourRangeScanStartedAtMs: numberOrNull(
+			payload.sessionSelectedHourRangeScanStartedAtMs
+		),
+		sessionSelectedHourRangeScanCompletedAtMs: numberOrNull(
+			payload.sessionSelectedHourRangeScanCompletedAtMs
+		),
+		sessionSelectedHourAnalysisBuildStartedAtMs: numberOrNull(
+			payload.sessionSelectedHourAnalysisBuildStartedAtMs
+		),
+		sessionSelectedHourAnalysisBuildCompletedAtMs: numberOrNull(
+			payload.sessionSelectedHourAnalysisBuildCompletedAtMs
+		),
+		sessionRangeResolveStartedAtMs: numberOrNull(
+			payload.sessionRangeResolveStartedAtMs
+		),
+		sessionRangeResolveCompletedAtMs: numberOrNull(
+			payload.sessionRangeResolveCompletedAtMs
+		),
+		sessionCpuFallbackSetupStartedAtMs: numberOrNull(
+			payload.sessionCpuFallbackSetupStartedAtMs
+		),
+		sessionCpuFallbackSetupCompletedAtMs: numberOrNull(
+			payload.sessionCpuFallbackSetupCompletedAtMs
+		),
+		sessionGpuResidentRangeResolveStartedAtMs: numberOrNull(
+			payload.sessionGpuResidentRangeResolveStartedAtMs
+		),
+		sessionGpuResidentRangeResolveCompletedAtMs: numberOrNull(
+			payload.sessionGpuResidentRangeResolveCompletedAtMs
+		),
+		sessionTooltipValuesHandoffStartedAtMs: numberOrNull(
+			payload.sessionTooltipValuesHandoffStartedAtMs
+		),
+		sessionTooltipValuesHandoffCompletedAtMs: numberOrNull(
+			payload.sessionTooltipValuesHandoffCompletedAtMs
+		),
+		sessionGpuResidentResultAssemblyStartedAtMs: numberOrNull(
+			payload.sessionGpuResidentResultAssemblyStartedAtMs
+		),
+		sessionGpuResidentResultAssemblyCompletedAtMs: numberOrNull(
+			payload.sessionGpuResidentResultAssemblyCompletedAtMs
+		),
+		sessionResultReadyAtMs: numberOrNull(payload.sessionResultReadyAtMs),
+		sessionResultReturnedAtMs: numberOrNull(payload.sessionResultReturnedAtMs),
 		computeCompletedAtMs: numberOrNull(payload.computeCompletedAtMs),
 		selectedHourValuePublicationStartedAtMs: numberOrNull(
 			payload.selectedHourValuePublicationStartedAtMs
@@ -740,9 +858,23 @@ function extractRenderPublicationTimeline(
 		),
 		routePublishedAtMs: numberOrNull(payload.routePublishedAtMs),
 		routeProjectedAtMs: numberOrNull(payload.routeProjectedAtMs),
+		routeProjectionEvaluationStartedAtMs: numberOrNull(
+			payload.routeProjectionEvaluationStartedAtMs
+		),
+		routeProjectionEvaluationCompletedAtMs: numberOrNull(
+			payload.routeProjectionEvaluationCompletedAtMs
+		),
 		scenePendingSurfaceObservedAtMs: numberOrNull(
 			payload.scenePendingSurfaceObservedAtMs
 		),
+		sceneReactiveBlockEnteredAtMs: numberOrNull(payload.sceneReactiveBlockEnteredAtMs),
+		sceneRenderStateResolvedAtMs: numberOrNull(payload.sceneRenderStateResolvedAtMs),
+		sceneAcceptedKeyResolvedAtMs: numberOrNull(payload.sceneAcceptedKeyResolvedAtMs),
+		sceneSyncInvocationQueuedAtMs: numberOrNull(
+			payload.sceneSyncInvocationQueuedAtMs
+		),
+		sceneStartSyncEnteredAtMs: numberOrNull(payload.sceneStartSyncEnteredAtMs),
+		sceneStartSyncReturnedAtMs: numberOrNull(payload.sceneStartSyncReturnedAtMs),
 		sceneSyncAttemptStartedAtMs: numberOrNull(payload.sceneSyncAttemptStartedAtMs),
 		sceneSyncAttemptToken: numberOrNull(payload.sceneSyncAttemptToken),
 		sceneSurfaceReceivedAtMs: numberOrNull(payload.sceneSurfaceReceivedAtMs),
@@ -789,6 +921,17 @@ function extractRenderPublicationTimeline(
 			payload.renderLayoutReuseFrameCacheKind,
 			['analysis-object', 'structural', 'miss']
 		),
+		renderLayoutPublicationPlanMs: numberOrNull(
+			payload.renderLayoutPublicationPlanMs
+		),
+		renderLayoutCompatibilityMs: numberOrNull(payload.renderLayoutCompatibilityMs),
+		renderLayoutCompatibilityRequiredExpensiveMappingComparison: booleanOrNull(
+			payload.renderLayoutCompatibilityRequiredExpensiveMappingComparison
+		),
+		renderLayoutCompatibilityPerformedExpensiveMappingComparison: booleanOrNull(
+			payload.renderLayoutCompatibilityPerformedExpensiveMappingComparison
+		),
+		renderLayoutReuseProofMs: numberOrNull(payload.renderLayoutReuseProofMs),
 		renderLayoutReuseKeyMatch: booleanOrNull(payload.renderLayoutReuseKeyMatch),
 		renderLayoutReuseProofSource: stringFromSetOrNull(
 			payload.renderLayoutReuseProofSource,
@@ -814,6 +957,13 @@ function extractRenderPublicationTimeline(
 		renderStorageWaitTrace: extractRenderStorageWaitTrace(
 			payload.renderStorageWaitTrace
 		),
+		renderBufferCopyEncoderCreateMs: numberOrNull(
+			payload.renderBufferCopyEncoderCreateMs
+		),
+		renderBufferCopyCommandRecordMs: numberOrNull(
+			payload.renderBufferCopyCommandRecordMs
+		),
+		renderBufferCopySubmitMs: numberOrNull(payload.renderBufferCopySubmitMs),
 		sceneSyncCompletedAtMs: numberOrNull(payload.sceneSyncCompletedAtMs),
 		sceneSyncResetHistory: extractSceneSyncResetHistory(
 			payload.sceneSyncResetHistory
@@ -935,6 +1085,18 @@ function extractRenderSurfaceMeshTrace(value: unknown): RenderSurfaceMeshTrace |
 		),
 		updateComputeBufferSurfaceMeshMs: numberOrNull(
 			payload.updateComputeBufferSurfaceMeshMs
+		),
+		updateComputeBufferSurfaceRangeUniformMs: numberOrNull(
+			payload.updateComputeBufferSurfaceRangeUniformMs
+		),
+		updateComputeBufferSurfacePendingSourceMs: numberOrNull(
+			payload.updateComputeBufferSurfacePendingSourceMs
+		),
+		updateComputeBufferSurfaceLayoutUserDataMs: numberOrNull(
+			payload.updateComputeBufferSurfaceLayoutUserDataMs
+		),
+		updateComputeBufferSurfaceByteAccountingMs: numberOrNull(
+			payload.updateComputeBufferSurfaceByteAccountingMs
 		),
 		fallbackDecisionMs: numberOrNull(payload.fallbackDecisionMs),
 		applySurfaceMeshStateMs: numberOrNull(payload.applySurfaceMeshStateMs),
@@ -1101,6 +1263,10 @@ function expectValidRenderPublication(
 		`${label} baseRenderTransport regressed before compute-buffer render-publication validation`
 	).toBe('compute-buffer-selected-hour');
 	expect(
+		sample.proof.dataTextureBuildCount,
+		`${label} dataTextureBuildCount regressed before compute-buffer render-publication validation`
+	).toBe(0);
+	expect(
 		sample.proof.baseSameDeviceForComputeAndRender,
 		`${label} same-device proof regressed before compute-buffer render-publication validation`
 	).toBe(true);
@@ -1243,20 +1409,309 @@ function expectValidRenderPublicationTimeline(
 		'controllerAcceptedAtMs',
 		label
 	);
+	const requireSessionTimeline =
+		renderPublication?.renderPublicationPhase === 'initial' ||
+		renderPublication?.renderPublicationPhase === 'scrub' ||
+		timeline.sessionSelectedHourRangeScanStartedAtMs != null ||
+		timeline.sessionSelectedHourAnalysisBuildStartedAtMs != null ||
+		timeline.sessionGpuResidentRangeResolveStartedAtMs != null;
 	const selectedHourValuePublicationStartedAtMs = requireTimelineNumber(
 		timeline,
 		'selectedHourValuePublicationStartedAtMs',
 		label
 	);
+	let controllerDiagnosticsMergedAtMs: number | null = null;
+	if (requireSessionTimeline) {
+		const sessionComputeOutputReturnedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionComputeOutputReturnedAtMs',
+			label
+		);
+		const sessionDiagnosticsAppliedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionDiagnosticsAppliedAtMs',
+			label
+		);
+		const sessionGpuOutputHandleReadyAtMs = requireTimelineNumber(
+			timeline,
+			'sessionGpuOutputHandleReadyAtMs',
+			label
+		);
+		const sessionPreferGpuResidentResolvedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionPreferGpuResidentResolvedAtMs',
+			label
+		);
+		const sessionDebugReadbackStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionDebugReadbackStartedAtMs',
+			label
+		);
+		const sessionDebugReadbackCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionDebugReadbackCompletedAtMs',
+			label
+		);
+		const sessionSelectedHourRangeScanStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionSelectedHourRangeScanStartedAtMs',
+			label
+		);
+		const sessionSelectedHourRangeScanCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionSelectedHourRangeScanCompletedAtMs',
+			label
+		);
+		const sessionRangeResolveStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionRangeResolveStartedAtMs',
+			label
+		);
+		const sessionRangeResolveCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionRangeResolveCompletedAtMs',
+			label
+		);
+		const sessionSelectedHourAnalysisBuildStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionSelectedHourAnalysisBuildStartedAtMs',
+			label
+		);
+		const sessionSelectedHourAnalysisBuildCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionSelectedHourAnalysisBuildCompletedAtMs',
+			label
+		);
+		const sessionCpuFallbackSetupStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionCpuFallbackSetupStartedAtMs',
+			label
+		);
+		const sessionCpuFallbackSetupCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionCpuFallbackSetupCompletedAtMs',
+			label
+		);
+		const sessionGpuResidentRangeResolveStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionGpuResidentRangeResolveStartedAtMs',
+			label
+		);
+		const sessionGpuResidentRangeResolveCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionGpuResidentRangeResolveCompletedAtMs',
+			label
+		);
+		const sessionTooltipValuesHandoffStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionTooltipValuesHandoffStartedAtMs',
+			label
+		);
+		const sessionTooltipValuesHandoffCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionTooltipValuesHandoffCompletedAtMs',
+			label
+		);
+		const sessionGpuResidentResultAssemblyStartedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionGpuResidentResultAssemblyStartedAtMs',
+			label
+		);
+		const sessionGpuResidentResultAssemblyCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionGpuResidentResultAssemblyCompletedAtMs',
+			label
+		);
+		const sessionResultReadyAtMs = requireTimelineNumber(
+			timeline,
+			'sessionResultReadyAtMs',
+			label
+		);
+		const sessionResultReturnedAtMs = requireTimelineNumber(
+			timeline,
+			'sessionResultReturnedAtMs',
+			label
+		);
+		expect(
+			sessionDiagnosticsAppliedAtMs,
+			`${label} sessionDiagnosticsAppliedAtMs should not precede sessionComputeOutputReturnedAtMs`
+		).toBeGreaterThanOrEqual(sessionComputeOutputReturnedAtMs);
+		expect(
+			sessionGpuOutputHandleReadyAtMs,
+			`${label} sessionGpuOutputHandleReadyAtMs should not precede sessionDiagnosticsAppliedAtMs`
+		).toBeGreaterThanOrEqual(sessionDiagnosticsAppliedAtMs);
+		expect(
+			sessionPreferGpuResidentResolvedAtMs,
+			`${label} sessionPreferGpuResidentResolvedAtMs should not precede sessionGpuOutputHandleReadyAtMs`
+		).toBeGreaterThanOrEqual(sessionGpuOutputHandleReadyAtMs);
+		expect(
+			sessionDebugReadbackStartedAtMs,
+			`${label} sessionDebugReadbackStartedAtMs should not precede sessionPreferGpuResidentResolvedAtMs`
+		).toBeGreaterThanOrEqual(sessionPreferGpuResidentResolvedAtMs);
+		expect(
+			sessionDebugReadbackCompletedAtMs,
+			`${label} sessionDebugReadbackCompletedAtMs should not precede sessionDebugReadbackStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionDebugReadbackStartedAtMs);
+		expect(
+			sessionSelectedHourRangeScanStartedAtMs,
+			`${label} sessionSelectedHourRangeScanStartedAtMs should not precede sessionDebugReadbackCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionDebugReadbackCompletedAtMs);
+		expect(
+			sessionSelectedHourRangeScanCompletedAtMs,
+			`${label} sessionSelectedHourRangeScanCompletedAtMs should not precede sessionSelectedHourRangeScanStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionSelectedHourRangeScanStartedAtMs);
+		expect(
+			sessionRangeResolveStartedAtMs,
+			`${label} sessionRangeResolveStartedAtMs should not precede sessionSelectedHourRangeScanCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionSelectedHourRangeScanCompletedAtMs);
+		expect(
+			sessionRangeResolveCompletedAtMs,
+			`${label} sessionRangeResolveCompletedAtMs should not precede sessionRangeResolveStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionRangeResolveStartedAtMs);
+		expect(
+			sessionSelectedHourAnalysisBuildStartedAtMs,
+			`${label} sessionSelectedHourAnalysisBuildStartedAtMs should not precede sessionRangeResolveCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionRangeResolveCompletedAtMs);
+		expect(
+			sessionSelectedHourAnalysisBuildCompletedAtMs,
+			`${label} sessionSelectedHourAnalysisBuildCompletedAtMs should not precede sessionSelectedHourAnalysisBuildStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionSelectedHourAnalysisBuildStartedAtMs);
+		expect(
+			sessionCpuFallbackSetupStartedAtMs,
+			`${label} sessionCpuFallbackSetupStartedAtMs should not precede sessionSelectedHourAnalysisBuildCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionSelectedHourAnalysisBuildCompletedAtMs);
+		expect(
+			sessionCpuFallbackSetupCompletedAtMs,
+			`${label} sessionCpuFallbackSetupCompletedAtMs should not precede sessionCpuFallbackSetupStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionCpuFallbackSetupStartedAtMs);
+		expect(
+			sessionGpuResidentResultAssemblyStartedAtMs,
+			`${label} sessionGpuResidentResultAssemblyStartedAtMs should not precede sessionCpuFallbackSetupCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionCpuFallbackSetupCompletedAtMs);
+		expect(
+			sessionGpuResidentRangeResolveStartedAtMs,
+			`${label} sessionGpuResidentRangeResolveStartedAtMs should not precede sessionGpuResidentResultAssemblyStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionGpuResidentResultAssemblyStartedAtMs);
+		expect(
+			sessionGpuResidentRangeResolveCompletedAtMs,
+			`${label} sessionGpuResidentRangeResolveCompletedAtMs should not precede sessionGpuResidentRangeResolveStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionGpuResidentRangeResolveStartedAtMs);
+		expect(
+			sessionTooltipValuesHandoffStartedAtMs,
+			`${label} sessionTooltipValuesHandoffStartedAtMs should not precede sessionGpuResidentRangeResolveCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionGpuResidentRangeResolveCompletedAtMs);
+		expect(
+			sessionTooltipValuesHandoffCompletedAtMs,
+			`${label} sessionTooltipValuesHandoffCompletedAtMs should not precede sessionTooltipValuesHandoffStartedAtMs`
+		).toBeGreaterThanOrEqual(sessionTooltipValuesHandoffStartedAtMs);
+		expect(
+			sessionGpuResidentResultAssemblyCompletedAtMs,
+			`${label} sessionGpuResidentResultAssemblyCompletedAtMs should not precede sessionTooltipValuesHandoffCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionTooltipValuesHandoffCompletedAtMs);
+		expect(
+			sessionResultReturnedAtMs,
+			`${label} sessionResultReturnedAtMs should not precede sessionResultReadyAtMs`
+		).toBeGreaterThanOrEqual(sessionResultReadyAtMs);
+		expect(
+			sessionResultReadyAtMs,
+			`${label} sessionResultReadyAtMs should not precede sessionGpuResidentResultAssemblyCompletedAtMs`
+		).toBeGreaterThanOrEqual(sessionGpuResidentResultAssemblyCompletedAtMs);
+		const controllerSessionRunStartedAtMs = requireTimelineNumber(
+			timeline,
+			'controllerSessionRunStartedAtMs',
+			label
+		);
+		const controllerSessionRunCompletedAtMs = requireTimelineNumber(
+			timeline,
+			'controllerSessionRunCompletedAtMs',
+			label
+		);
+		expect(
+			controllerSessionRunCompletedAtMs,
+			`${label} controllerSessionRunCompletedAtMs should not precede controllerSessionRunStartedAtMs`
+		).toBeGreaterThanOrEqual(controllerSessionRunStartedAtMs);
+		expect(
+			sessionResultReturnedAtMs,
+			`${label} sessionResultReturnedAtMs should not precede selectedHourValuePublicationStartedAtMs`
+		).toBeGreaterThanOrEqual(selectedHourValuePublicationStartedAtMs);
+		const controllerAcceptStartedAtMs = requireTimelineNumber(
+			timeline,
+			'controllerAcceptStartedAtMs',
+			label
+		);
+		controllerDiagnosticsMergedAtMs = requireTimelineNumber(
+			timeline,
+			'controllerDiagnosticsMergedAtMs',
+			label
+		);
+		expect(
+			controllerAcceptStartedAtMs,
+			`${label} controllerAcceptStartedAtMs should not precede sessionResultReturnedAtMs`
+		).toBeGreaterThanOrEqual(sessionResultReturnedAtMs);
+		expect(
+			controllerDiagnosticsMergedAtMs,
+			`${label} controllerDiagnosticsMergedAtMs should not precede controllerAcceptStartedAtMs`
+		).toBeGreaterThanOrEqual(controllerAcceptStartedAtMs);
+		const eagerAnalysisBuildMs =
+			sessionSelectedHourAnalysisBuildCompletedAtMs -
+			sessionSelectedHourAnalysisBuildStartedAtMs;
+		expect(
+			eagerAnalysisBuildMs,
+			`${label} eager selected-hour analysis build should be below 5ms after supplied range optimization`
+		).toBeLessThan(5);
+
+		const gpuResidentRangeResolveMs =
+			sessionGpuResidentRangeResolveCompletedAtMs -
+			sessionGpuResidentRangeResolveStartedAtMs;
+		expect(
+			gpuResidentRangeResolveMs,
+			`${label} GPU-resident range resolve should be below 5ms after range reuse`
+		).toBeLessThan(5);
+	}
 	expect(
 		selectedHourValuePublicationStartedAtMs,
 		`${label} selectedHourValuePublicationStartedAtMs should not follow controllerAcceptedAtMs`
 	).toBeLessThanOrEqual(controllerAcceptedAtMs);
+	if (controllerDiagnosticsMergedAtMs != null) {
+		expect(
+			controllerDiagnosticsMergedAtMs,
+			`${label} controllerDiagnosticsMergedAtMs should not precede controllerAcceptedAtMs`
+		).toBeGreaterThanOrEqual(controllerAcceptedAtMs);
+	}
+	const controllerStatePublishedAtMs = requireTimelineNumber(
+		timeline,
+		'controllerStatePublishedAtMs',
+		label
+	);
+	expect(
+		controllerStatePublishedAtMs,
+		`${label} controllerStatePublishedAtMs should not precede controllerAcceptedAtMs`
+	).toBeGreaterThanOrEqual(controllerAcceptedAtMs);
+	if (controllerDiagnosticsMergedAtMs != null) {
+		expect(
+			controllerStatePublishedAtMs,
+			`${label} controllerStatePublishedAtMs should not precede controllerDiagnosticsMergedAtMs`
+		).toBeGreaterThanOrEqual(controllerDiagnosticsMergedAtMs);
+	}
 	const routePendingSurfaceExposedAtMs = requireTimelineNumber(
 		timeline,
 		'routePendingSurfaceExposedAtMs',
 		label
 	);
+	const routeProjectionEvaluationStartedAtMs = requireTimelineNumber(
+		timeline,
+		'routeProjectionEvaluationStartedAtMs',
+		label
+	);
+	const routeProjectionEvaluationCompletedAtMs = requireTimelineNumber(
+		timeline,
+		'routeProjectionEvaluationCompletedAtMs',
+		label
+	);
+	expect(
+		routeProjectionEvaluationCompletedAtMs,
+		`${label} routeProjectionEvaluationCompletedAtMs should not precede routeProjectionEvaluationStartedAtMs`
+	).toBeGreaterThanOrEqual(routeProjectionEvaluationStartedAtMs);
 	const routePublishedAtMs = requireTimelineNumber(
 		timeline,
 		'routePublishedAtMs',
@@ -1419,6 +1874,31 @@ function expectValidRenderPublicationTimeline(
 		'routeProjectedAtMs',
 		label
 	);
+	const sceneReactiveBlockEnteredAtMs = requireTimelineNumber(
+		timeline,
+		'sceneReactiveBlockEnteredAtMs',
+		label
+	);
+	const sceneRenderStateResolvedAtMs = requireTimelineNumber(
+		timeline,
+		'sceneRenderStateResolvedAtMs',
+		label
+	);
+	const sceneAcceptedKeyResolvedAtMs = requireTimelineNumber(
+		timeline,
+		'sceneAcceptedKeyResolvedAtMs',
+		label
+	);
+	const sceneSyncInvocationQueuedAtMs = requireTimelineNumber(
+		timeline,
+		'sceneSyncInvocationQueuedAtMs',
+		label
+	);
+	const sceneStartSyncEnteredAtMs = requireTimelineNumber(
+		timeline,
+		'sceneStartSyncEnteredAtMs',
+		label
+	);
 	const sceneLayoutKeyStartedAtMs = requireTimelineNumber(
 		timeline,
 		'sceneLayoutKeyStartedAtMs',
@@ -1467,6 +1947,26 @@ function expectValidRenderPublicationTimeline(
 		sceneSurfaceReceivedAtMs,
 		`${label} sceneSurfaceReceivedAtMs should not precede controllerAcceptedAtMs`
 	).toBeGreaterThanOrEqual(controllerAcceptedAtMs);
+	expect(
+		sceneReactiveBlockEnteredAtMs,
+		`${label} sceneReactiveBlockEnteredAtMs should not precede controllerAcceptedAtMs`
+	).toBeGreaterThanOrEqual(controllerAcceptedAtMs);
+	expect(
+		sceneRenderStateResolvedAtMs,
+		`${label} sceneRenderStateResolvedAtMs should not precede sceneReactiveBlockEnteredAtMs`
+	).toBeGreaterThanOrEqual(sceneReactiveBlockEnteredAtMs);
+	expect(
+		sceneAcceptedKeyResolvedAtMs,
+		`${label} sceneAcceptedKeyResolvedAtMs should not precede sceneRenderStateResolvedAtMs`
+	).toBeGreaterThanOrEqual(sceneRenderStateResolvedAtMs);
+	expect(
+		sceneSyncInvocationQueuedAtMs,
+		`${label} sceneSyncInvocationQueuedAtMs should not precede sceneAcceptedKeyResolvedAtMs`
+	).toBeGreaterThanOrEqual(sceneAcceptedKeyResolvedAtMs);
+	expect(
+		sceneStartSyncEnteredAtMs,
+		`${label} sceneStartSyncEnteredAtMs should not precede sceneSyncInvocationQueuedAtMs`
+	).toBeGreaterThanOrEqual(sceneSyncInvocationQueuedAtMs);
 	if (scenePendingSurfaceObservedAtMs != null) {
 		expect(
 			scenePendingSurfaceObservedAtMs,
@@ -1510,6 +2010,46 @@ function expectValidRenderPublicationTimeline(
 		scenePublicationPlanReadyAtMs,
 		`${label} scenePublicationPlanReadyAtMs should not precede sceneLayoutKeyCompletedAtMs`
 	).toBeGreaterThanOrEqual(sceneLayoutKeyCompletedAtMs);
+	if (timeline.renderLayoutPublicationPlanMs != null) {
+		expect(
+			timeline.renderLayoutPublicationPlanMs,
+			`${label} renderLayoutPublicationPlanMs should be nonnegative`
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			timeline.renderLayoutCompatibilityMs,
+			`${label} renderLayoutCompatibilityMs`
+		).toEqual(expect.any(Number));
+		expect(
+			timeline.renderLayoutCompatibilityMs ?? -1,
+			`${label} renderLayoutCompatibilityMs should be nonnegative`
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			timeline.renderLayoutReuseProofMs,
+			`${label} renderLayoutReuseProofMs`
+		).toEqual(expect.any(Number));
+		expect(
+			timeline.renderLayoutReuseProofMs ?? -1,
+			`${label} renderLayoutReuseProofMs should be nonnegative`
+		).toBeGreaterThanOrEqual(0);
+		if (timeline.renderLayoutCompatibilityRequiredExpensiveMappingComparison != null) {
+			expect(
+				timeline.renderLayoutCompatibilityRequiredExpensiveMappingComparison,
+				`${label} renderLayoutCompatibilityRequiredExpensiveMappingComparison`
+			).toEqual(expect.any(Boolean));
+		}
+		if (timeline.renderLayoutCompatibilityPerformedExpensiveMappingComparison != null) {
+			expect(
+				timeline.renderLayoutCompatibilityPerformedExpensiveMappingComparison,
+				`${label} renderLayoutCompatibilityPerformedExpensiveMappingComparison`
+			).toEqual(expect.any(Boolean));
+		}
+		expect(
+			(timeline.renderLayoutPublicationPlanMs ?? 0) +
+				(timeline.renderLayoutCompatibilityMs ?? 0) +
+				(timeline.renderLayoutReuseProofMs ?? 0),
+			`${label} post-key planning split should fit within key-complete to plan-ready`
+		).toBeLessThanOrEqual(scenePublicationPlanReadyAtMs - sceneLayoutKeyCompletedAtMs + 1);
+	}
 	expect(
 		controllerVisibleAcknowledgedAtMs,
 		`${label} controllerVisibleAcknowledgedAtMs should not precede controllerAcceptedAtMs`
@@ -1725,6 +2265,10 @@ function expectResetProofRenderSurfaceMeshTrace(
 		'disposeResetMeshRemovalMs',
 		'createComputeBufferSurfaceMeshMs',
 		'updateComputeBufferSurfaceMeshMs',
+		'updateComputeBufferSurfaceRangeUniformMs',
+		'updateComputeBufferSurfacePendingSourceMs',
+		'updateComputeBufferSurfaceLayoutUserDataMs',
+		'updateComputeBufferSurfaceByteAccountingMs',
 		'fallbackDecisionMs',
 		'applySurfaceMeshStateMs',
 		'setCreatedSurfacePendingStorageInitMs',
@@ -1786,6 +2330,18 @@ function expectResetProofRenderSurfaceMeshTrace(
 		expect(trace.recreateDecision.notComputeBufferSurface).toBe(false);
 		expect(trace.recreateDecision.layoutCompatible).toBe(true);
 		expect(trace.updateComputeBufferSurfaceMeshMs).toEqual(expect.any(Number));
+		expect(trace.updateComputeBufferSurfaceRangeUniformMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfacePendingSourceMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfaceLayoutUserDataMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfaceByteAccountingMs).toEqual(
+			expect.any(Number)
+		);
 		expect(trace.setCreatedSurfacePendingStorageInitMs).toBeNull();
 		expect(trace.setPostSurfacePendingStorageInitMs).toEqual(expect.any(Number));
 	}
@@ -1795,6 +2351,18 @@ function expectResetProofRenderSurfaceMeshTrace(
 		expect(trace.recreateDecision.analysisIdentityChanged).toBe(false);
 		expect(trace.recreateDecision.layoutCompatible).toBe(false);
 		expect(trace.updateComputeBufferSurfaceMeshMs).toEqual(expect.any(Number));
+		expect(trace.updateComputeBufferSurfaceRangeUniformMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfacePendingSourceMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfaceLayoutUserDataMs).toEqual(
+			expect.any(Number)
+		);
+		expect(trace.updateComputeBufferSurfaceByteAccountingMs).toEqual(
+			expect.any(Number)
+		);
 		expect(trace.createComputeBufferSurfaceMeshMs).toEqual(expect.any(Number));
 		expect(trace.setCreatedSurfacePendingStorageInitMs).toEqual(
 			expect.any(Number)
@@ -1976,6 +2544,18 @@ function buildSample(params: {
 }): CollectedSample {
 	const { diagnostics, phase, colorMode, collectionMethod, sourceUrl } = params;
 	const trackedGpuAllocationBytes = diagnostics.trackedGpuAllocationBytes;
+	const dataTextureBuildCount = numberOrNull(diagnostics.dataTextureBuildCount);
+	expect(
+		dataTextureBuildCount,
+		`${phase} ${colorMode} dataTextureBuildCount diagnostic`
+	).toEqual(expect.any(Number));
+	expect(
+		dataTextureBuildCount,
+		`${phase} ${colorMode} dataTextureBuildCount regressed before sample build`
+	).toBe(0);
+	if (typeof dataTextureBuildCount !== 'number') {
+		throw new Error(`${phase} ${colorMode} missing dataTextureBuildCount diagnostic`);
+	}
 	return {
 		phase,
 		colorMode,
@@ -2011,7 +2591,7 @@ function buildSample(params: {
 			utciRenderResolved: diagnostics.utciRenderResolved,
 			utciSurfaceSource: diagnostics.utciSurfaceSource ?? null,
 			baseRenderTransport: diagnostics.baseRenderTransport,
-			dataTextureBuildCount: diagnostics.dataTextureBuildCount ?? 0,
+			dataTextureBuildCount,
 			selectedHourRuntimeContract: {
 				route: stringOrNull(diagnostics.selectedHourRuntimeContract?.route),
 				readbackInstrumentation: stringOrNull(
