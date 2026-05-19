@@ -20,12 +20,18 @@ export interface TooltipData {
 	positionIndex: number;
 }
 
+export type TooltipResolutionPath = 'none' | 'plane-cell' | 'mesh-raycast';
+
 export interface TooltipInteractionMeasurement {
 	hit: boolean;
 	raycastMs: number;
 	nearestPointMs: number;
 	totalMs: number;
 	overBudget: boolean;
+	resolutionPath?: TooltipResolutionPath;
+	directCellHit?: boolean;
+	nearestScanUsed?: boolean;
+	directCellMissCount?: number;
 }
 
 export interface TooltipInteractionDiagnostics {
@@ -46,6 +52,12 @@ export interface TooltipInteractionDiagnostics {
 	maxNearestPointMs: number;
 	lastTotalMs: number | null;
 	maxTotalMs: number;
+	lastResolutionPath: TooltipResolutionPath | null;
+	planeCellPathCount: number;
+	meshRaycastPathCount: number;
+	directCellHitCount: number;
+	directCellMissCount: number;
+	nearestScanFallbackCount: number;
 }
 
 type TooltipWorldTransformContext = {
@@ -84,7 +96,13 @@ export function createEmptyTooltipInteractionDiagnostics(
 		lastNearestPointMs: null,
 		maxNearestPointMs: 0,
 		lastTotalMs: null,
-		maxTotalMs: 0
+		maxTotalMs: 0,
+		lastResolutionPath: null,
+		planeCellPathCount: 0,
+		meshRaycastPathCount: 0,
+		directCellHitCount: 0,
+		directCellMissCount: 0,
+		nearestScanFallbackCount: 0
 	};
 }
 
@@ -92,6 +110,7 @@ export function recordTooltipInteractionMeasurement(
 	diagnostics: TooltipInteractionDiagnostics,
 	measurement: TooltipInteractionMeasurement
 ): TooltipInteractionDiagnostics {
+	const resolutionPath = measurement.resolutionPath ?? 'none';
 	return {
 		...diagnostics,
 		enabled: !diagnostics.disabledByQuery,
@@ -106,7 +125,18 @@ export function recordTooltipInteractionMeasurement(
 		lastNearestPointMs: measurement.nearestPointMs,
 		maxNearestPointMs: Math.max(diagnostics.maxNearestPointMs, measurement.nearestPointMs),
 		lastTotalMs: measurement.totalMs,
-		maxTotalMs: Math.max(diagnostics.maxTotalMs, measurement.totalMs)
+		maxTotalMs: Math.max(diagnostics.maxTotalMs, measurement.totalMs),
+		lastResolutionPath: resolutionPath,
+		planeCellPathCount:
+			diagnostics.planeCellPathCount + (resolutionPath === 'plane-cell' ? 1 : 0),
+		meshRaycastPathCount:
+			diagnostics.meshRaycastPathCount + (resolutionPath === 'mesh-raycast' ? 1 : 0),
+		directCellHitCount:
+			diagnostics.directCellHitCount + (measurement.directCellHit === true ? 1 : 0),
+		directCellMissCount:
+			diagnostics.directCellMissCount + (measurement.directCellMissCount ?? 0),
+		nearestScanFallbackCount:
+			diagnostics.nearestScanFallbackCount + (measurement.nearestScanUsed === true ? 1 : 0)
 	};
 }
 
@@ -399,14 +429,21 @@ function resolveTooltipPositionIndex(
 	analysis: Analysis,
 	diagnosticsEnabled: boolean,
 	options?: { enforceDistanceThreshold?: boolean }
-): { positionIndex: number | null; nearestPointMs: number } {
+): {
+	positionIndex: number | null;
+	nearestPointMs: number;
+	directCellHit: boolean;
+	nearestScanUsed: boolean;
+} {
 	const directResolution = getPositionIndexFromSurfaceCell(intersection, layout, analysis, {
 		enforceDistanceThreshold: options?.enforceDistanceThreshold
 	});
 	if (directResolution.positionIndex !== null) {
 		return {
 			positionIndex: directResolution.positionIndex,
-			nearestPointMs: diagnosticsEnabled ? directResolution.mappingMs : 0
+			nearestPointMs: diagnosticsEnabled ? directResolution.mappingMs : 0,
+			directCellHit: true,
+			nearestScanUsed: false
 		};
 	}
 
@@ -414,7 +451,9 @@ function resolveTooltipPositionIndex(
 	const positionIndex = getNearestPositionIndexFromIntersection(intersection, layout, analysis);
 	return {
 		positionIndex,
-		nearestPointMs: diagnosticsEnabled ? performance.now() - nearestPointStart : 0
+		nearestPointMs: diagnosticsEnabled ? performance.now() - nearestPointStart : 0,
+		directCellHit: false,
+		nearestScanUsed: true
 	};
 }
 
@@ -496,7 +535,11 @@ export function getTooltipData(
 	const emitMeasurement = (
 		hit: boolean,
 		raycastMs: number,
-		nearestPointMs: number
+		nearestPointMs: number,
+		resolutionPath: TooltipResolutionPath = 'none',
+		directCellHit = false,
+		nearestScanUsed = false,
+		directCellMissCount = 0
 	): void => {
 		if (!diagnosticsEnabled) return;
 		const totalMs = performance.now() - totalStart;
@@ -505,7 +548,11 @@ export function getTooltipData(
 			raycastMs,
 			nearestPointMs,
 			totalMs,
-			overBudget: totalMs > TOOLTIP_SLOW_BUDGET_MS
+			overBudget: totalMs > TOOLTIP_SLOW_BUDGET_MS,
+			resolutionPath,
+			directCellHit,
+			nearestScanUsed,
+			directCellMissCount
 		});
 	};
 
@@ -526,9 +573,14 @@ export function getTooltipData(
 	let nearestPointMs = 0;
 	let raycastMs = 0;
 	let positionIndex: number | null = null;
+	let resolutionPath: TooltipResolutionPath = 'none';
+	let directCellHit = false;
+	let nearestScanUsed = false;
+	let directCellMissCount = 0;
 
 	const planeIntersection = tryIntersectUtciSurfacePlane(raycaster, utciMesh, layout);
 	if (planeIntersection) {
+		resolutionPath = 'plane-cell';
 		const planeResolution = resolveTooltipPositionIndex(
 			planeIntersection,
 			layout,
@@ -538,14 +590,26 @@ export function getTooltipData(
 		);
 		positionIndex = planeResolution.positionIndex;
 		nearestPointMs += planeResolution.nearestPointMs;
+		directCellHit ||= planeResolution.directCellHit;
+		nearestScanUsed ||= planeResolution.nearestScanUsed;
+		directCellMissCount += planeResolution.directCellHit ? 0 : 1;
 	}
 
 	if (positionIndex === null) {
+		resolutionPath = 'mesh-raycast';
 		const raycastStart = diagnosticsEnabled ? performance.now() : 0;
 		const intersections = raycaster.intersectObject(utciMesh, false);
 		raycastMs = diagnosticsEnabled ? performance.now() - raycastStart : 0;
 		if (intersections.length === 0) {
-			emitMeasurement(false, raycastMs, nearestPointMs);
+			emitMeasurement(
+				false,
+				raycastMs,
+				nearestPointMs,
+				resolutionPath,
+				directCellHit,
+				nearestScanUsed,
+				directCellMissCount
+			);
 			return null;
 		}
 
@@ -558,26 +622,61 @@ export function getTooltipData(
 		);
 		positionIndex = meshResolution.positionIndex;
 		nearestPointMs += meshResolution.nearestPointMs;
+		directCellHit ||= meshResolution.directCellHit;
+		nearestScanUsed ||= meshResolution.nearestScanUsed;
+		directCellMissCount += meshResolution.directCellHit ? 0 : 1;
 	}
 
 	if (positionIndex === null || positionIndex < 0 || positionIndex >= analysis.data.numPositions) {
-		emitMeasurement(false, raycastMs, nearestPointMs);
+		emitMeasurement(
+			false,
+			raycastMs,
+			nearestPointMs,
+			resolutionPath,
+			directCellHit,
+			nearestScanUsed,
+			directCellMissCount
+		);
 		return null;
 	}
 
 	const value = getMetricValue(analysis, positionIndex, metricType, hourIndex);
 	if (value === null) {
-		emitMeasurement(false, raycastMs, nearestPointMs);
+		emitMeasurement(
+			false,
+			raycastMs,
+			nearestPointMs,
+			resolutionPath,
+			directCellHit,
+			nearestScanUsed,
+			directCellMissCount
+		);
 		return null;
 	}
 
 	const position = getPositionCoordinates(analysis, positionIndex);
 	if (!position) {
-		emitMeasurement(false, raycastMs, nearestPointMs);
+		emitMeasurement(
+			false,
+			raycastMs,
+			nearestPointMs,
+			resolutionPath,
+			directCellHit,
+			nearestScanUsed,
+			directCellMissCount
+		);
 		return null;
 	}
 
-	emitMeasurement(true, raycastMs, nearestPointMs);
+	emitMeasurement(
+		true,
+		raycastMs,
+		nearestPointMs,
+		resolutionPath,
+		directCellHit,
+		nearestScanUsed,
+		directCellMissCount
+	);
 	return {
 		value,
 		position,

@@ -119,7 +119,13 @@ function createDiagnosticsParams(): MainRouteLiveSelectedHourDiagnosticsParams {
 			lastNearestPointMs: 0,
 			maxNearestPointMs: 0,
 			lastTotalMs: 1,
-			maxTotalMs: 1
+			maxTotalMs: 1,
+			lastResolutionPath: 'plane-cell',
+			planeCellPathCount: 1,
+			meshRaycastPathCount: 0,
+			directCellHitCount: 1,
+			directCellMissCount: 0,
+			nearestScanFallbackCount: 0
 		},
 		cameraInteraction: {
 			slowThresholdMs: 20,
@@ -691,8 +697,8 @@ describe('main route live selected-hour helper', () => {
 		expect(tornDown?.renderPublication?.renderPublicationTimeline).toBeUndefined();
 		expect(noTimings).toBeUndefined();
 		expect(rebuilt?.renderPublication?.renderPublicationTimeline).toMatchObject({
-			routePendingSurfaceExposedAtMs: 777,
-			routeProjectedAtMs: 777
+			routePendingSurfaceExposedAtMs: 103,
+			routeProjectedAtMs: 103
 		});
 
 		nowSpy.mockRestore();

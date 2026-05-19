@@ -154,6 +154,43 @@ function getCameraFrameSampleCount(diagnostics: any): number {
 	return diagnostics?.cameraInteraction?.sampleCount ?? 0;
 }
 
+function expectBoundedCameraInteraction(diagnostics: any) {
+	const cameraInteraction = diagnostics?.cameraInteraction;
+	expect(cameraInteraction?.sampleCount ?? 0).toBeGreaterThan(0);
+	expect(cameraInteraction?.p95FrameMs ?? 0).toBeGreaterThan(0);
+	expect(cameraInteraction?.p95FrameMs ?? Infinity).toBeLessThanOrEqual(120);
+	expect(cameraInteraction?.maxFrameMs ?? Infinity).toBeLessThanOrEqual(500);
+	expect(cameraInteraction?.overBudgetCount ?? 0).toBeLessThanOrEqual(
+		cameraInteraction?.sampleCount ?? 0
+	);
+}
+
+function expectBoundedTooltipInteraction(
+	beforeDiagnostics: any,
+	afterDiagnostics: any,
+	options?: { expectPlaneCellFastPath?: boolean }
+) {
+	const beforeTooltip = beforeDiagnostics?.tooltipInteraction;
+	const afterTooltip = afterDiagnostics?.tooltipInteraction;
+	const sampleDelta =
+		(afterTooltip?.sampleCount ?? 0) - (beforeTooltip?.sampleCount ?? 0);
+	expect(sampleDelta).toBeGreaterThan(0);
+	expect(afterTooltip?.maxTotalMs ?? Infinity).toBeLessThanOrEqual(80);
+	expect(afterTooltip?.maxRaycastMs ?? Infinity).toBeLessThanOrEqual(20);
+	expect(afterTooltip?.overBudgetCount ?? 0).toBeLessThanOrEqual(1);
+	if (options?.expectPlaneCellFastPath) {
+		expect(
+			(afterTooltip?.directCellHitCount ?? 0) - (beforeTooltip?.directCellHitCount ?? 0)
+		).toBeGreaterThan(0);
+		expect(afterTooltip?.meshRaycastPathCount ?? 0).toBe(
+			beforeTooltip?.meshRaycastPathCount ?? 0
+		);
+		expect(afterTooltip?.nearestScanFallbackCount ?? 0).toBe(
+			beforeTooltip?.nearestScanFallbackCount ?? 0
+		);
+	}
+}
+
 async function exerciseMainRouteCanvasInteractions(page: Page) {
 	const canvas = page.locator('canvas').first();
 	await expect(canvas).toBeVisible();
@@ -528,7 +565,8 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(getCameraFrameSampleCount(afterInteraction)).toBeGreaterThan(
 			beforeInteraction.frameSampleCount
 		);
-		expect(afterInteraction?.cameraInteraction?.p95FrameMs ?? 0).toBeGreaterThan(0);
+		expectBoundedCameraInteraction(afterInteraction);
+		expectBoundedTooltipInteraction(value, afterInteraction);
 		expect(afterInteraction?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
 		expect(afterInteraction?.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(afterInteraction?.baseSameDeviceForComputeAndRender).toBe(true);
@@ -547,6 +585,14 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(value.baseMetadataGridSize).toBe(0.5);
 		expect(value.baseRenderTransport).toBe('compute-buffer-selected-hour');
 		expect(value.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(value.baseSameDeviceForComputeAndRender).toBe(true);
+		expect(value.selectedHourRuntimeContract).toMatchObject({
+			route: 'main',
+			readbackInstrumentation: 'instrumented',
+			visibleSelectedHourReadbackCount: 0,
+			visibleSelectedHourReadbackCountInstrumented: true,
+			strongVisibleGpuPath: true
+		});
 
 		const beforeInteraction = {
 			hoverSampleCount: getTooltipHoverSampleCount(value),
@@ -569,7 +615,10 @@ test.describe('main route manual diagnostics probe', () => {
 		expect(getCameraFrameSampleCount(afterInteraction)).toBeGreaterThan(
 			beforeInteraction.frameSampleCount
 		);
-		expect(afterInteraction?.cameraInteraction?.p95FrameMs ?? 0).toBeGreaterThan(0);
+		expectBoundedCameraInteraction(afterInteraction);
+		expectBoundedTooltipInteraction(value, afterInteraction, {
+			expectPlaneCellFastPath: true
+		});
 		expect(
 			afterInteraction?.tooltipInteraction?.suppressedHoverCount ?? 0
 		).toBeGreaterThanOrEqual(value?.tooltipInteraction?.suppressedHoverCount ?? 0);

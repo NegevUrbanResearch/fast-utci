@@ -196,6 +196,7 @@ describe('tooltip interaction diagnostics', () => {
 			target: new THREE.Vector3(1, layout.baseY, 1)
 		});
 		const intersectSpy = vi.spyOn(THREE.Raycaster.prototype, 'intersectObject');
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
 
 		const result = getTooltipData(
 			{ clientX: 50, clientY: 50 } as MouseEvent,
@@ -204,7 +205,10 @@ describe('tooltip interaction diagnostics', () => {
 			analysis,
 			'utci',
 			0,
-			createDomRect()
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
 		);
 
 		expect(result).toEqual({
@@ -213,6 +217,22 @@ describe('tooltip interaction diagnostics', () => {
 			positionIndex: 3
 		});
 		expect(intersectSpy).not.toHaveBeenCalled();
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			hit: true,
+			resolutionPath: 'plane-cell',
+			directCellHit: true,
+			nearestScanUsed: false,
+			directCellMissCount: 0
+		});
+		const diagnostics = recordTooltipInteractionMeasurement(
+			createEmptyTooltipInteractionDiagnostics(false),
+			samples[0]!
+		);
+		expect(diagnostics.planeCellPathCount).toBe(1);
+		expect(diagnostics.meshRaycastPathCount).toBe(0);
+		expect(diagnostics.directCellHitCount).toBe(1);
+		expect(diagnostics.nearestScanFallbackCount).toBe(0);
 
 		intersectSpy.mockRestore();
 	});
@@ -263,6 +283,12 @@ describe('tooltip interaction diagnostics', () => {
 		expect(diagnostics.maxNearestPointMs).toBe(0);
 		expect(diagnostics.lastTotalMs).toBeNull();
 		expect(diagnostics.maxTotalMs).toBe(0);
+		expect(diagnostics.lastResolutionPath).toBeNull();
+		expect(diagnostics.planeCellPathCount).toBe(0);
+		expect(diagnostics.meshRaycastPathCount).toBe(0);
+		expect(diagnostics.directCellHitCount).toBe(0);
+		expect(diagnostics.directCellMissCount).toBe(0);
+		expect(diagnostics.nearestScanFallbackCount).toBe(0);
 	});
 
 	it('aggregates hit, miss, max, and over-budget timing stats without storing histories', () => {
@@ -273,7 +299,11 @@ describe('tooltip interaction diagnostics', () => {
 				raycastMs: 1.5,
 				nearestPointMs: 2.5,
 				totalMs: 4,
-				overBudget: false
+				overBudget: false,
+				resolutionPath: 'plane-cell',
+				directCellHit: true,
+				nearestScanUsed: false,
+				directCellMissCount: 0
 			}
 		);
 		const second = recordTooltipInteractionMeasurement(first, {
@@ -281,7 +311,11 @@ describe('tooltip interaction diagnostics', () => {
 			raycastMs: 3,
 			nearestPointMs: 7,
 			totalMs: 10,
-			overBudget: true
+			overBudget: true,
+			resolutionPath: 'mesh-raycast',
+			directCellHit: false,
+			nearestScanUsed: true,
+			directCellMissCount: 1
 		});
 
 		expect(second.sampleCount).toBe(2);
@@ -296,6 +330,12 @@ describe('tooltip interaction diagnostics', () => {
 		expect(second.lastTotalMs).toBe(10);
 		expect(second.maxTotalMs).toBe(10);
 		expect(second.slowThresholdMs).toBe(TOOLTIP_SLOW_BUDGET_MS);
+		expect(second.lastResolutionPath).toBe('mesh-raycast');
+		expect(second.planeCellPathCount).toBe(1);
+		expect(second.meshRaycastPathCount).toBe(1);
+		expect(second.directCellHitCount).toBe(1);
+		expect(second.directCellMissCount).toBe(1);
+		expect(second.nearestScanFallbackCount).toBe(1);
 	});
 
 	it('records one miss sample when tooltip preconditions are missing', () => {
@@ -327,13 +367,7 @@ describe('tooltip interaction diagnostics', () => {
 	});
 
 	it('falls back to mesh raycasting when the plane fast path is not applicable', () => {
-		const samples: Array<{
-			hit: boolean;
-			raycastMs: number;
-			nearestPointMs: number;
-			totalMs: number;
-			overBudget: boolean;
-		}> = [];
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
 		const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
 		camera.position.set(0, 0, 5);
 		camera.lookAt(0, 0, 0);
@@ -383,7 +417,14 @@ describe('tooltip interaction diagnostics', () => {
 		expect(samples[0]?.raycastMs).toBeGreaterThanOrEqual(0);
 		expect(samples[0]?.nearestPointMs).toBeGreaterThanOrEqual(0);
 		expect(samples[0]?.totalMs).toBeGreaterThanOrEqual(0);
+		expect(samples[0]?.resolutionPath).toBe('mesh-raycast');
 		expect(intersectSpy).toHaveBeenCalledOnce();
+		const diagnostics = recordTooltipInteractionMeasurement(
+			createEmptyTooltipInteractionDiagnostics(false),
+			samples[0]!
+		);
+		expect(diagnostics.meshRaycastPathCount).toBe(1);
+		expect(diagnostics.planeCellPathCount).toBe(0);
 
 		intersectSpy.mockRestore();
 	});
@@ -542,6 +583,49 @@ describe('tooltip interaction diagnostics', () => {
 		expect(intersectSpy).not.toHaveBeenCalled();
 
 		intersectSpy.mockRestore();
+	});
+
+	it('records nearest-scan fallback diagnostics when direct cell mapping fails', () => {
+		const analysis = createGridAnalysis();
+		const layout = buildUtciGridLayout(analysis);
+		layout.cellToPointIndex!.fill(analysis.data.numPositions + 10);
+		(layout as any).indexToRow = new Uint32Array([]);
+		(layout as any).indexToColumn = new Uint32Array([]);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
+
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'utci',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
+		);
+
+		expect(result?.positionIndex).toBe(3);
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			hit: true,
+			resolutionPath: 'plane-cell',
+			directCellHit: false,
+			nearestScanUsed: true,
+			directCellMissCount: 1
+		});
+		const diagnostics = recordTooltipInteractionMeasurement(
+			createEmptyTooltipInteractionDiagnostics(false),
+			samples[0]!
+		);
+		expect(diagnostics.nearestScanFallbackCount).toBe(1);
+		expect(diagnostics.directCellMissCount).toBe(1);
 	});
 });
 

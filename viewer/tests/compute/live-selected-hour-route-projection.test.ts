@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Analysis } from '$lib/types/analysis';
 import type { LiveSelectedHourControllerState } from '$lib/compute/selected-hour/liveSelectedHourController';
 import type { LiveSelectedHourRouteState } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import { projectMainRouteLiveSceneState } from '$lib/compute/selected-hour/liveSelectedHourRouteProjection';
 import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+import { createMainRouteRenderPublicationProjectionTracker } from '../../src/routes/main/liveSelectedHour';
 
 function createFullDayAnalysis(label: string): Analysis {
 	return {
@@ -440,5 +441,67 @@ describe('projectMainRouteLiveSceneState', () => {
 		expect(projection.baseSceneSurfaceIdentity?.requestId).toBe(3);
 		expect(projection.basePendingGpuResidentOutput).toBe(pendingGpuResidentOutput);
 		expect(projection.baseSceneRenderContext).toBe(liveRouteState.baseRenderContext);
+	});
+
+	it('keeps repeated render-publication projections passive for unchanged route identities', () => {
+		const tracker = createMainRouteRenderPublicationProjectionTracker();
+		const surfaceIdentity = {
+			controllerIdentity: 'base-controller',
+			controllerInstanceId: 9,
+			requestId: 21,
+			monthIndex: 7,
+			hourIndex: 14,
+			timeIndex: 182,
+			selectionKey: 'base|7|14',
+			pendingRenderUpdateStartedAt: undefined,
+			acceptedGpuResidentOutput: null
+		};
+		const timings = {
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused'
+			}
+		} as const;
+		const nowSpy = vi
+			.spyOn(performance, 'now')
+			.mockReturnValueOnce(101)
+			.mockReturnValueOnce(501)
+			.mockReturnValueOnce(601)
+			.mockReturnValueOnce(701)
+			.mockReturnValueOnce(801)
+			.mockReturnValueOnce(901);
+
+		try {
+			const first = tracker.apply({
+				enabled: true,
+				timings,
+				projectedSceneSurfaceIdentity: surfaceIdentity,
+				publishedSurfaceIdentity: surfaceIdentity,
+				sceneRenderContextTimeIndex: 182,
+				selectedTimeIndex: 182
+			});
+			const second = tracker.apply({
+				enabled: true,
+				timings,
+				projectedSceneSurfaceIdentity: surfaceIdentity,
+				publishedSurfaceIdentity: surfaceIdentity,
+				sceneRenderContextTimeIndex: 182,
+				selectedTimeIndex: 182
+			});
+
+			expect(second).toBe(first);
+			expect(second?.renderPublication).toBe(first?.renderPublication);
+			expect(second?.renderPublication?.renderPublicationTimeline).toMatchObject({
+				routePendingSurfaceExposedAtMs: 501,
+				routeProjectedAtMs: 501,
+				routeProjectionEvaluationStartedAtMs: 101,
+				routeProjectionEvaluationCompletedAtMs: 601
+			});
+			expect(performance.now).toHaveBeenCalledTimes(3);
+		} finally {
+			nowSpy.mockRestore();
+		}
 	});
 });

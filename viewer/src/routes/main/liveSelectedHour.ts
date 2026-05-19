@@ -65,17 +65,41 @@ function resolveRenderPublicationPhase(requestId: number): 'initial' | 'scrub' {
 	return requestId <= 1 ? 'initial' : 'scrub';
 }
 
+function buildRenderPublicationSurfaceKey(
+	identity: LiveSelectedHourSurfaceIdentity | null
+): string | null {
+	if (
+		identity?.controllerIdentity === undefined ||
+		identity.controllerInstanceId === undefined ||
+		identity.requestId === undefined ||
+		identity.selectionKey === undefined
+	) {
+		return null;
+	}
+	return `${identity.controllerIdentity}|${identity.controllerInstanceId}|${identity.requestId}|${identity.selectionKey}`;
+}
+
 export function createMainRouteRenderPublicationProjectionTracker() {
 	let pendingSurfaceProjectedKey: string | null = null;
 	let routePendingSurfaceExposedAtMs: number | undefined;
 	let projectedKey: string | null = null;
 	let routeProjectedAtMs: number | undefined;
+	let cachedProjectionKey: string | null = null;
+	let cachedProjectionSourceTimings:
+		| MainRouteUtciDiagnosticsInputs['timings']
+		| undefined;
+	let cachedProjectionTimings:
+		| MainRouteUtciDiagnosticsInputs['timings']
+		| undefined;
 
 	function resetProjectionState(): void {
 		pendingSurfaceProjectedKey = null;
 		routePendingSurfaceExposedAtMs = undefined;
 		projectedKey = null;
 		routeProjectedAtMs = undefined;
+		cachedProjectionKey = null;
+		cachedProjectionSourceTimings = undefined;
+		cachedProjectionTimings = undefined;
 	}
 
 	return {
@@ -87,6 +111,42 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 			sceneRenderContextTimeIndex: number | undefined;
 			selectedTimeIndex: number;
 		}): MainRouteUtciDiagnosticsInputs['timings'] | undefined {
+			if (
+				!params.enabled ||
+				params.projectedSceneSurfaceIdentity == null ||
+				params.timings == null
+			) {
+				const timings = params.timings
+					? {
+							...params.timings,
+							renderPublication: copyRenderPublicationDiagnostics(
+								params.timings.renderPublication
+							)
+						}
+					: undefined;
+				resetProjectionState();
+				return timings;
+			}
+
+			const projectedSceneSurfaceKey = buildRenderPublicationSurfaceKey(
+				params.projectedSceneSurfaceIdentity
+			);
+			const publishedSurfaceKey = buildRenderPublicationSurfaceKey(
+				params.publishedSurfaceIdentity
+			);
+			const projectionKey = [
+				projectedSceneSurfaceKey ?? 'none',
+				publishedSurfaceKey ?? 'none',
+				params.sceneRenderContextTimeIndex ?? 'none',
+				params.selectedTimeIndex
+			].join('|');
+			if (
+				projectionKey === cachedProjectionKey &&
+				params.timings === cachedProjectionSourceTimings
+			) {
+				return cachedProjectionTimings;
+			}
+
 			const routeProjectionEvaluationStartedAtMs = performance.now();
 			const timings = params.timings
 				? {
@@ -96,28 +156,12 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 						)
 					}
 				: undefined;
-			if (!params.enabled || params.projectedSceneSurfaceIdentity == null || timings == null) {
-				resetProjectionState();
-				return timings;
-			}
-			const projectedSceneControllerIdentity =
-				params.projectedSceneSurfaceIdentity?.controllerIdentity;
-			const projectedSceneControllerInstanceId =
-				params.projectedSceneSurfaceIdentity?.controllerInstanceId;
 			const projectedSceneRequestId =
 				params.projectedSceneSurfaceIdentity?.requestId;
-			const projectedSceneSelectionKey =
-				params.projectedSceneSurfaceIdentity?.selectionKey;
 			let pendingSurfaceExposureStampedThisPass = false;
-			const shouldStampPendingSurfaceExposure =
-				projectedSceneControllerIdentity !== undefined &&
-				projectedSceneControllerInstanceId !== undefined &&
-				projectedSceneRequestId !== undefined &&
-				projectedSceneSelectionKey !== undefined;
-			if (shouldStampPendingSurfaceExposure) {
-				const nextPendingSurfaceProjectedKey = `${projectedSceneControllerIdentity}|${projectedSceneControllerInstanceId}|${projectedSceneRequestId}|${projectedSceneSelectionKey}`;
-				if (pendingSurfaceProjectedKey !== nextPendingSurfaceProjectedKey) {
-					pendingSurfaceProjectedKey = nextPendingSurfaceProjectedKey;
+			if (projectedSceneSurfaceKey !== null) {
+				if (pendingSurfaceProjectedKey !== projectedSceneSurfaceKey) {
+					pendingSurfaceProjectedKey = projectedSceneSurfaceKey;
 					routePendingSurfaceExposedAtMs = performance.now();
 					pendingSurfaceExposureStampedThisPass = true;
 				}
@@ -134,12 +178,15 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 				selectionKey !== undefined &&
 				params.sceneRenderContextTimeIndex === params.selectedTimeIndex;
 			if (!shouldStamp && routePendingSurfaceExposedAtMs === undefined) {
+				cachedProjectionKey = projectionKey;
+				cachedProjectionSourceTimings = params.timings;
+				cachedProjectionTimings = timings;
 				return timings;
 			}
 
 			let nextProjectedKey: string | null = null;
 			if (shouldStamp) {
-				nextProjectedKey = `${controllerIdentity}|${controllerInstanceId}|${requestId}|${selectionKey}`;
+				nextProjectedKey = publishedSurfaceKey;
 				if (projectedKey !== nextProjectedKey) {
 					projectedKey = nextProjectedKey;
 					routeProjectedAtMs =
@@ -155,7 +202,7 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 					: undefined;
 			const routeProjectionEvaluationCompletedAtMs = performance.now();
 
-			return {
+			const projectedTimings = {
 				...timings,
 				renderPublication: stampRenderPublicationTimeline({
 					current: timings?.renderPublication,
@@ -178,6 +225,10 @@ export function createMainRouteRenderPublicationProjectionTracker() {
 					}
 				})
 			};
+			cachedProjectionKey = projectionKey;
+			cachedProjectionSourceTimings = params.timings;
+			cachedProjectionTimings = projectedTimings;
+			return projectedTimings;
 		}
 	};
 }
