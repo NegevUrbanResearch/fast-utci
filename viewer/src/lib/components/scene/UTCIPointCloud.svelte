@@ -297,7 +297,9 @@
 		utciSurface = createComputeBufferUtciSurfaceMesh({
 			layout,
 			utciBuffer: sourceBuffer,
-			utciRange: acceptedOutput.utciRange
+			utciRange: acceptedOutput.utciRange,
+			trace,
+			now: performance.now.bind(performance)
 		});
 		if (trace) {
 			addSurfaceTraceTiming(

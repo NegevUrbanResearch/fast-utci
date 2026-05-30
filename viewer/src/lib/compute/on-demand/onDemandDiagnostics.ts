@@ -12,9 +12,23 @@ export interface OnDemandTimings {
 	payloadPrepareMs?: number;
 	workerBvhMs?: number;
 	pipelineUploadMs?: number;
+	staticUploadTrace?: StaticUploadTrace;
 	firstSelectedHourReadyMs?: number;
 	firstSelectedHourVisibleMs?: number;
 	exposurePrecomputeMs?: number;
+	exposureWeatherBufferEnsureMs?: number;
+	exposureCommandEncodeTotalMs?: number;
+	exposureSolarEncodeMs?: number;
+	exposureSkyEncodeMs?: number;
+	exposureQueueWaitMs?: number;
+	exposurePointCount?: number;
+	exposureTotalTimeSteps?: number;
+	exposureDaylightTimeSteps?: number;
+	exposurePointChunks?: number;
+	exposureSolarDispatchCount?: number;
+	exposureSkyDispatchCount?: number;
+	exposureSolarRayBudget?: number;
+	exposureSkyRayBudget?: number;
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
 	renderSceneSyncStartDelayMs?: number;
@@ -30,6 +44,48 @@ export interface OnDemandTimings {
 	selectedHourAnalysisBuildMs?: number;
 	cpuColorBuildMs?: number;
 	gpuSurfaceUpdateMs?: number;
+}
+
+export interface StaticUploadTrace {
+	totalMs: number;
+	weatherSnapshotMs?: number;
+	weatherTimeStepCount?: number;
+	solarExposureBufferCreateMs?: number;
+	solarZeroFillMs?: number;
+	solarZeroFillWriteCount?: number;
+	solarZeroFillBytes?: number;
+	skyExposureBufferCreateMs?: number;
+	skyZeroFillMs?: number;
+	skyZeroFillWriteCount?: number;
+	skyZeroFillBytes?: number;
+	gridBufferCreateMs?: number;
+	gridWriteMs?: number;
+	gridWriteBytes?: number;
+	sunBufferCreateMs?: number;
+	sunWriteMs?: number;
+	sunWriteBytes?: number;
+	sunAltitudeBufferCreateMs?: number;
+	sunAltitudeWriteMs?: number;
+	sunAltitudeWriteBytes?: number;
+	domeVectorBufferCreateMs?: number;
+	domeVectorWriteMs?: number;
+	domeVectorWriteBytes?: number;
+	domeWeightBufferCreateMs?: number;
+	domeWeightWriteMs?: number;
+	domeWeightWriteBytes?: number;
+	bvhSerializeMs?: number;
+	bvhNodeBufferCreateMs?: number;
+	bvhNodeWriteMs?: number;
+	bvhNodeWriteBytes?: number;
+	bvhIndexBufferCreateMs?: number;
+	bvhIndexWriteMs?: number;
+	bvhIndexWriteBytes?: number;
+	bvhVertexBufferCreateMs?: number;
+	bvhVertexWriteMs?: number;
+	bvhVertexWriteBytes?: number;
+	bvhParamBufferCreateMs?: number;
+	bvhParamWriteMs?: number;
+	bvhParamWriteBytes?: number;
 }
 
 export function invokeDiagnosticsCallbackSafely<T>(

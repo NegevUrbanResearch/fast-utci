@@ -9,7 +9,8 @@ import {
 	createEmptyOnDemandDiagnostics,
 	mergeTrackedGpuAllocationBytes,
 	recordOnDemandTiming,
-	type OnDemandRuntimeDiagnostics
+	type OnDemandRuntimeDiagnostics,
+	type StaticUploadTrace
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 import { serializeBvhForGpu } from '$lib/compute/gpu/bvhGpuUpload';
@@ -25,6 +26,17 @@ interface RunConfig {
 	numHours: number;
 	numMonths: number;
 }
+
+type ExposureEncodeTrace = {
+	commandEncodeTotalMs: number;
+	solarEncodeMs?: number;
+	skyEncodeMs?: number;
+	pointChunks: number;
+	solarDispatchCount: number;
+	skyDispatchCount: number;
+	solarRayBudget: number;
+	skyRayBudget: number;
+};
 
 const SOLAR_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSolarWgsl;
 const SKY_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSkyWgsl;
@@ -106,6 +118,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private onDemandParamsBuffer: GPUBuffer | null = null;
 	private onDemandReadbackBuffer: GPUBuffer | null = null;
 	private onDemandReadbackSerial: Promise<void> = Promise.resolve();
+	private lastDaylightTimeStepCount: number | null = null;
 
 	private solarStagingBuffer: GPUBuffer | null = null;
 	private skyStagingBuffer: GPUBuffer | null = null;
@@ -150,7 +163,12 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			...this.onDemandDiagnostics,
 			trackedGpuAllocationBytes: { ...this.onDemandDiagnostics.trackedGpuAllocationBytes },
 			timeIndices: [...this.onDemandDiagnostics.timeIndices],
-			timings: { ...this.onDemandDiagnostics.timings }
+			timings: {
+				...this.onDemandDiagnostics.timings,
+				staticUploadTrace: this.onDemandDiagnostics.timings.staticUploadTrace
+					? { ...this.onDemandDiagnostics.timings.staticUploadTrace }
+					: undefined
+			}
 		};
 	}
 
@@ -325,7 +343,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		mesh?: { geometry: import('three').BufferGeometry };
 		serializedBvh?: import('$lib/compute/gpu/gpu-pipeline').SerializedBvhForGpu;
 	}): Promise<void> {
+		const uploadStartedAt = performance.now();
+		const staticUploadTrace: StaticUploadTrace = { totalMs: 0 };
+		const weatherSnapshotStartedAt = performance.now();
 		this.weatherData = new Float32Array(params.weather);
+		staticUploadTrace.weatherSnapshotMs = performance.now() - weatherSnapshotStartedAt;
 		this.ranExposurePassesThisRun = false;
 
 		const numPoints = params.gridPoints.length / 3;
@@ -340,56 +362,101 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			);
 		}
 		const totalTimeSteps = this.weatherData.length / weatherStride;
+		staticUploadTrace.weatherTimeStepCount = totalTimeSteps;
+		let daylightTimeSteps = 0;
+		if (params.sunAltitudes?.length) {
+			for (const altitude of params.sunAltitudes) {
+				if (altitude > 0) daylightTimeSteps += 1;
+			}
+		} else {
+			for (let index = 0; index + 2 < params.sunVectors.length; index += 3) {
+				const x = params.sunVectors[index] ?? 0;
+				const y = params.sunVectors[index + 1] ?? 0;
+				const z = params.sunVectors[index + 2] ?? 0;
+				if (x !== 0 || y !== 0 || z !== 0) daylightTimeSteps += 1;
+			}
+		}
+		this.lastDaylightTimeStepCount = daylightTimeSteps;
 
 		// Bit-packed: 1 bit per (point, time_step), packed into u32 words.
 		const totalSolarBits = numPoints * totalTimeSteps;
 		const solarWords = Math.ceil(totalSolarBits / 32);
 		const solarBytes = solarWords * 4;
 		if (!this.solarExposureBuffer || this.solarExposureBuffer.size !== solarBytes) {
+			const solarBufferCreateStartedAt = performance.now();
 			this.solarExposureBuffer?.destroy();
 			this.solarExposureBuffer = this.device.createBuffer({
 				size: solarBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 			});
+			staticUploadTrace.solarExposureBufferCreateMs =
+				performance.now() - solarBufferCreateStartedAt;
 		}
 
 		const skyBytes = numPoints * 4;
 		if (!this.skyExposureBuffer || this.skyExposureBuffer.size !== skyBytes) {
+			const skyBufferCreateStartedAt = performance.now();
 			this.skyExposureBuffer?.destroy();
 			this.skyExposureBuffer = this.device.createBuffer({
 				size: skyBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 			});
+			staticUploadTrace.skyExposureBufferCreateMs =
+				performance.now() - skyBufferCreateStartedAt;
 		}
 
 		// Keep CPU allocations small by reusing tiny zero chunk writes.
 		const zeroChunk = new Float32Array(4096);
+		const solarZeroFillStartedAt = performance.now();
+		let solarZeroFillWriteCount = 0;
 		for (let offset = 0; offset < solarBytes; offset += zeroChunk.byteLength) {
 			this.queue.writeBuffer(this.solarExposureBuffer, offset, zeroChunk.buffer, 0, Math.min(zeroChunk.byteLength, solarBytes - offset));
+			solarZeroFillWriteCount += 1;
 		}
+		staticUploadTrace.solarZeroFillMs = performance.now() - solarZeroFillStartedAt;
+		staticUploadTrace.solarZeroFillWriteCount = solarZeroFillWriteCount;
+		staticUploadTrace.solarZeroFillBytes = solarBytes;
+		const skyZeroFillStartedAt = performance.now();
+		let skyZeroFillWriteCount = 0;
 		for (let offset = 0; offset < skyBytes; offset += zeroChunk.byteLength) {
 			this.queue.writeBuffer(this.skyExposureBuffer, offset, zeroChunk.buffer, 0, Math.min(zeroChunk.byteLength, skyBytes - offset));
+			skyZeroFillWriteCount += 1;
 		}
+		staticUploadTrace.skyZeroFillMs = performance.now() - skyZeroFillStartedAt;
+		staticUploadTrace.skyZeroFillWriteCount = skyZeroFillWriteCount;
+		staticUploadTrace.skyZeroFillBytes = skyBytes;
 
 		const gridBytes = params.gridPoints.byteLength;
 		if (!this.gridPointsBuffer || this.gridPointsBuffer.size !== gridBytes) {
+			const gridBufferCreateStartedAt = performance.now();
 			this.gridPointsBuffer?.destroy();
 			this.gridPointsBuffer = this.device.createBuffer({
 				size: gridBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.gridBufferCreateMs =
+				performance.now() - gridBufferCreateStartedAt;
 		}
+		const gridWriteStartedAt = performance.now();
 		this.queue.writeBuffer(this.gridPointsBuffer, 0, params.gridPoints.buffer, params.gridPoints.byteOffset, params.gridPoints.byteLength);
+		staticUploadTrace.gridWriteMs = performance.now() - gridWriteStartedAt;
+		staticUploadTrace.gridWriteBytes = gridBytes;
 
 		const sunBytes = params.sunVectors.byteLength;
 		if (!this.sunVectorsBuffer || this.sunVectorsBuffer.size !== sunBytes) {
+			const sunBufferCreateStartedAt = performance.now();
 			this.sunVectorsBuffer?.destroy();
 			this.sunVectorsBuffer = this.device.createBuffer({
 				size: sunBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.sunBufferCreateMs =
+				performance.now() - sunBufferCreateStartedAt;
 		}
+		const sunWriteStartedAt = performance.now();
 		this.queue.writeBuffer(this.sunVectorsBuffer, 0, params.sunVectors.buffer, params.sunVectors.byteOffset, params.sunVectors.byteLength);
+		staticUploadTrace.sunWriteMs = performance.now() - sunWriteStartedAt;
+		staticUploadTrace.sunWriteBytes = sunBytes;
 
 		// Store samples for debugging (hours 0, 12, 23) so we can verify sun vectors are non-zero and Y-up.
 		this.lastSunVectorSamples = [];
@@ -406,12 +473,16 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		if (params.sunAltitudes) {
 			const altBytes = totalTimeSteps * 4;
 			if (!this.sunAltitudesBuffer || this.sunAltitudesBuffer.size !== altBytes) {
+				const altitudeBufferCreateStartedAt = performance.now();
 				this.sunAltitudesBuffer?.destroy();
 				this.sunAltitudesBuffer = this.device.createBuffer({
 					size: altBytes,
 					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 				});
+				staticUploadTrace.sunAltitudeBufferCreateMs =
+					performance.now() - altitudeBufferCreateStartedAt;
 			}
+			const altitudeWriteStartedAt = performance.now();
 			this.queue.writeBuffer(
 				this.sunAltitudesBuffer,
 				0,
@@ -419,6 +490,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				params.sunAltitudes.byteOffset,
 				params.sunAltitudes.byteLength
 			);
+			staticUploadTrace.sunAltitudeWriteMs =
+				performance.now() - altitudeWriteStartedAt;
+			staticUploadTrace.sunAltitudeWriteBytes = params.sunAltitudes.byteLength;
 		} else {
 			this.clearSunAltitudeState();
 		}
@@ -426,23 +500,37 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		if (params.domeVectors && params.domeWeights) {
 			const domeVecBytes = params.domeVectors.byteLength;
 			if (!this.domeVectorsBuffer || this.domeVectorsBuffer.size !== domeVecBytes) {
+				const domeVectorBufferCreateStartedAt = performance.now();
 				this.domeVectorsBuffer?.destroy();
 				this.domeVectorsBuffer = this.device.createBuffer({
 					size: domeVecBytes,
 					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 				});
+				staticUploadTrace.domeVectorBufferCreateMs =
+					performance.now() - domeVectorBufferCreateStartedAt;
 			}
+			const domeVectorWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.domeVectorsBuffer, 0, params.domeVectors.buffer, params.domeVectors.byteOffset, params.domeVectors.byteLength);
+			staticUploadTrace.domeVectorWriteMs =
+				performance.now() - domeVectorWriteStartedAt;
+			staticUploadTrace.domeVectorWriteBytes = domeVecBytes;
 
 			const domeWeightBytes = params.domeWeights.byteLength;
 			if (!this.domeWeightsBuffer || this.domeWeightsBuffer.size !== domeWeightBytes) {
+				const domeWeightBufferCreateStartedAt = performance.now();
 				this.domeWeightsBuffer?.destroy();
 				this.domeWeightsBuffer = this.device.createBuffer({
 					size: domeWeightBytes,
 					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 				});
+				staticUploadTrace.domeWeightBufferCreateMs =
+					performance.now() - domeWeightBufferCreateStartedAt;
 			}
+			const domeWeightWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.domeWeightsBuffer, 0, params.domeWeights.buffer, params.domeWeights.byteOffset, params.domeWeights.byteLength);
+			staticUploadTrace.domeWeightWriteMs =
+				performance.now() - domeWeightWriteStartedAt;
+			staticUploadTrace.domeWeightWriteBytes = domeWeightBytes;
 		} else {
 			this.clearSkyDomeState();
 		}
@@ -451,9 +539,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			params.serializedBvh ??
 			(params.mesh?.geometry
 				? (() => {
+						const bvhSerializeStartedAt = performance.now();
 						const mesh = params.mesh as THREE.Mesh;
 						if (typeof mesh.updateMatrixWorld === 'function') mesh.updateMatrixWorld(true);
-						return serializeBvhForGpu(mesh.geometry as THREE.BufferGeometry);
+						const result = serializeBvhForGpu(mesh.geometry as THREE.BufferGeometry);
+						staticUploadTrace.bvhSerializeMs =
+							performance.now() - bvhSerializeStartedAt;
+						return result;
 					})()
 				: null);
 
@@ -463,24 +555,41 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			const numIndices = serialized.indexBuffer.length;
 
 			this.bvhNodeBuffer?.destroy();
+			const bvhNodeCreateStartedAt = performance.now();
 			this.bvhNodeBuffer = this.device.createBuffer({
 				size: serialized.bvhNodeBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.bvhNodeBufferCreateMs =
+				performance.now() - bvhNodeCreateStartedAt;
+			const bvhNodeWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.bvhNodeBuffer, 0, serialized.bvhNodeBuffer);
+			staticUploadTrace.bvhNodeWriteMs = performance.now() - bvhNodeWriteStartedAt;
+			staticUploadTrace.bvhNodeWriteBytes = serialized.bvhNodeBuffer.byteLength;
 
 			this.bvhIndexBuffer?.destroy();
+			const bvhIndexCreateStartedAt = performance.now();
 			this.bvhIndexBuffer = this.device.createBuffer({
 				size: serialized.bvhIndexBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.bvhIndexBufferCreateMs =
+				performance.now() - bvhIndexCreateStartedAt;
+			const bvhIndexWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.bvhIndexBuffer, 0, serialized.bvhIndexBuffer);
+			staticUploadTrace.bvhIndexWriteMs =
+				performance.now() - bvhIndexWriteStartedAt;
+			staticUploadTrace.bvhIndexWriteBytes = serialized.bvhIndexBuffer.byteLength;
 
 			this.bvhVertexBuffer?.destroy();
+			const bvhVertexCreateStartedAt = performance.now();
 			this.bvhVertexBuffer = this.device.createBuffer({
 				size: serialized.vertexBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.bvhVertexBufferCreateMs =
+				performance.now() - bvhVertexCreateStartedAt;
+			const bvhVertexWriteStartedAt = performance.now();
 			this.queue.writeBuffer(
 				this.bvhVertexBuffer,
 				0,
@@ -488,16 +597,31 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				serialized.vertexBuffer.byteOffset,
 				serialized.vertexBuffer.byteLength
 			);
+			staticUploadTrace.bvhVertexWriteMs =
+				performance.now() - bvhVertexWriteStartedAt;
+			staticUploadTrace.bvhVertexWriteBytes = serialized.vertexBuffer.byteLength;
 
 			this.bvhParamsBuffer?.destroy();
+			const bvhParamCreateStartedAt = performance.now();
 			this.bvhParamsBuffer = this.device.createBuffer({
 				size: 16,
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 			});
+			staticUploadTrace.bvhParamBufferCreateMs =
+				performance.now() - bvhParamCreateStartedAt;
+			const bvhParamWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.bvhParamsBuffer, 0, new Uint32Array([numNodes, numVertices, numIndices, 0]));
+			staticUploadTrace.bvhParamWriteMs = performance.now() - bvhParamWriteStartedAt;
+			staticUploadTrace.bvhParamWriteBytes = 16;
 		} else {
 			this.clearBvhState();
 		}
+		staticUploadTrace.totalMs = performance.now() - uploadStartedAt;
+		this.onDemandDiagnostics = recordOnDemandTiming(
+			this.onDemandDiagnostics,
+			'staticUploadTrace',
+			staticUploadTrace
+		);
 	}
 
 	private createBvhBindGroup(pipeline: GPUComputePipeline): GPUBindGroup {
@@ -545,13 +669,28 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		workgroupSize: number;
 		solarPipeline: GPUComputePipeline;
 		skyPipeline: GPUComputePipeline;
-	}): Promise<GPUBuffer[]> {
-		const { encoder, numPoints, totalTimeSteps, workgroupSize, solarPipeline, skyPipeline } = params;
+		daylightTimeSteps?: number;
+	}): Promise<{ transientUniformBuffers: GPUBuffer[]; trace: ExposureEncodeTrace }> {
+		const {
+			encoder,
+			numPoints,
+			totalTimeSteps,
+			workgroupSize,
+			solarPipeline,
+			skyPipeline,
+			daylightTimeSteps
+		} = params;
+		const commandEncodeStartedAt = performance.now();
 		const pointChunks = createPointDispatchChunks(numPoints, workgroupSize);
 		const transientUniformBuffers: GPUBuffer[] = [];
 		const hasBvh = this.bvhNodeBuffer && this.bvhIndexBuffer && this.bvhVertexBuffer && this.bvhParamsBuffer;
+		let solarEncodeMs: number | undefined;
+		let skyEncodeMs: number | undefined;
+		let solarDispatchCount = 0;
+		let skyDispatchCount = 0;
 
 		if (hasBvh && this.gridPointsBuffer && this.sunVectorsBuffer && this.solarExposureBuffer) {
+			const solarEncodeStartedAt = performance.now();
 			this.ranExposurePassesThisRun = true;
 			const solarPass = encoder.beginComputePass();
 			solarPass.setPipeline(solarPipeline);
@@ -572,12 +711,15 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				});
 				solarPass.setBindGroup(0, solarBindGroup0);
 				solarPass.dispatchWorkgroups(chunk.workgroupsX, totalTimeSteps, 1);
+				solarDispatchCount += 1;
 			}
 			solarPass.end();
+			solarEncodeMs = performance.now() - solarEncodeStartedAt;
 		}
 
 		const numPatches = 145;
 		if (hasBvh && this.gridPointsBuffer && this.domeVectorsBuffer && this.domeWeightsBuffer && this.skyExposureBuffer) {
+			const skyEncodeStartedAt = performance.now();
 			this.ranExposurePassesThisRun = true;
 			const skyPass = encoder.beginComputePass();
 			skyPass.setPipeline(skyPipeline);
@@ -599,10 +741,27 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				});
 				skyPass.setBindGroup(0, skyBindGroup0);
 				skyPass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+				skyDispatchCount += 1;
 			}
 			skyPass.end();
+			skyEncodeMs = performance.now() - skyEncodeStartedAt;
 		}
-		return transientUniformBuffers;
+		return {
+			transientUniformBuffers,
+			trace: {
+				commandEncodeTotalMs: performance.now() - commandEncodeStartedAt,
+				solarEncodeMs,
+				skyEncodeMs,
+				pointChunks: pointChunks.length,
+				solarDispatchCount,
+				skyDispatchCount,
+				solarRayBudget:
+					solarDispatchCount > 0
+						? numPoints * (daylightTimeSteps ?? totalTimeSteps)
+						: 0,
+				skyRayBudget: skyDispatchCount > 0 ? numPoints * numPatches : 0
+			}
+		};
 	}
 
 	async runAll(params: { numPoints: number; numHours: number; numMonths: number; workgroupSize?: number }): Promise<void> {
@@ -681,7 +840,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const workgroupsX = Math.ceil(numPoints / workgroupSize);
 		this.ranExposurePassesThisRun = false;
 		const encoder = this.device.createCommandEncoder();
-		const exposureUniformBuffers = await this.encodeExposurePasses({
+		const { transientUniformBuffers: exposureUniformBuffers } = await this.encodeExposurePasses({
 			encoder,
 			numPoints,
 			totalTimeSteps,
@@ -773,7 +932,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			this.ensureSolarPipeline(),
 			this.ensureSkyPipeline()
 		]);
+		const exposureWeatherBufferEnsureStartedAt = performance.now();
 		await this.ensureWeatherBuffer();
+		const exposureWeatherBufferEnsureMs =
+			performance.now() - exposureWeatherBufferEnsureStartedAt;
 
 		if (!this.paramsBuffer || this.paramsBuffer.size !== 16) {
 			this.paramsBuffer?.destroy();
@@ -786,22 +948,28 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		this.ranExposurePassesThisRun = false;
 		const encoder = this.device.createCommandEncoder();
-		const exposureUniformBuffers = await this.encodeExposurePasses({
+		const {
+			transientUniformBuffers: exposureUniformBuffers,
+			trace: exposureEncodeTrace
+		} = await this.encodeExposurePasses({
 			encoder,
 			numPoints,
 			totalTimeSteps,
 			workgroupSize: 64,
 			solarPipeline,
-			skyPipeline
+			skyPipeline,
+			daylightTimeSteps: this.lastDaylightTimeStepCount ?? undefined
 		});
 		const exposurePrecomputeStart = performance.now();
 		this.queue.submit([encoder.finish()]);
+		const exposureQueueWaitStartedAt = performance.now();
 		await this.queue.onSubmittedWorkDone();
+		const exposureQueueWaitMs = performance.now() - exposureQueueWaitStartedAt;
 		this.destroyTransientUniformBuffers(exposureUniformBuffers);
 		const solarExposureBytes = Math.ceil((numPoints * numHours * numMonths) / 32) * 4;
 		const skyExposureBytes = numPoints * 4;
-		this.onDemandDiagnostics = recordOnDemandTiming(
-			mergeTrackedGpuAllocationBytes(
+		this.onDemandDiagnostics = {
+			...mergeTrackedGpuAllocationBytes(
 				{
 					...this.onDemandDiagnostics,
 					path: 'exposure-only-f32',
@@ -817,9 +985,24 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					allHoursOutputBytes: 0
 				}
 			),
-			'exposurePrecomputeMs',
-			performance.now() - exposurePrecomputeStart
-		);
+			timings: {
+				...this.onDemandDiagnostics.timings,
+				exposurePrecomputeMs: performance.now() - exposurePrecomputeStart,
+				exposureWeatherBufferEnsureMs,
+				exposureCommandEncodeTotalMs: exposureEncodeTrace.commandEncodeTotalMs,
+				exposureSolarEncodeMs: exposureEncodeTrace.solarEncodeMs,
+				exposureSkyEncodeMs: exposureEncodeTrace.skyEncodeMs,
+				exposureQueueWaitMs,
+				exposurePointCount: numPoints,
+				exposureTotalTimeSteps: totalTimeSteps,
+				exposureDaylightTimeSteps: this.lastDaylightTimeStepCount ?? undefined,
+				exposurePointChunks: exposureEncodeTrace.pointChunks,
+				exposureSolarDispatchCount: exposureEncodeTrace.solarDispatchCount,
+				exposureSkyDispatchCount: exposureEncodeTrace.skyDispatchCount,
+				exposureSolarRayBudget: exposureEncodeTrace.solarRayBudget,
+				exposureSkyRayBudget: exposureEncodeTrace.skyRayBudget
+			}
+		};
 		this.lastConfig = { numPoints, numHours, numMonths };
 	}
 

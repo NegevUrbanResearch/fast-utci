@@ -13,6 +13,7 @@ import {
 } from 'three/tsl';
 import type { UtciGridLayout } from './pointCloudService';
 import { mapUTCIToColor } from '$lib/services/colorScale';
+import type { SelectedHourRenderSurfaceMeshTrace } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 export type SyntheticGpuUtciBridge = {
 	group: THREE.Group;
@@ -40,6 +41,8 @@ export interface ComputeBufferUtciSurfaceMeshOptions {
 	utciRange: { min: number; max: number };
 	opacity?: number;
 	compatibilityEvaluation?: ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation;
+	trace?: SelectedHourRenderSurfaceMeshTrace;
+	now?: () => number;
 }
 
 type ComputeBufferUtciSurfaceUpdateTrace = {
@@ -88,6 +91,18 @@ function getGeometryGpuAttributeBytes(geometry: THREE.BufferGeometry): number {
 	}
 	const indexArray = geometry.index?.array;
 	return total + (indexArray?.byteLength ?? 0);
+}
+
+function addCreateSurfaceTraceTiming(
+	trace: SelectedHourRenderSurfaceMeshTrace | undefined,
+	key: Exclude<
+		keyof SelectedHourRenderSurfaceMeshTrace,
+		'action' | 'totalMs' | 'recreateDecision'
+	>,
+	value: number
+): void {
+	if (!trace) return;
+	trace[key] = (trace[key] ?? 0) + value;
 }
 
 function createUtciColorLutTexture(): THREE.DataTexture {
@@ -225,15 +240,38 @@ export function createGpuNativeUtciSurfaceMesh(
 export function createComputeBufferUtciSurfaceMesh(
 	options: ComputeBufferUtciSurfaceMeshOptions
 ): THREE.Mesh {
-	const geometry = createIndexedGridSurfaceGeometry(options.layout);
+	const now = options.now ?? performance.now.bind(performance);
+	const geometry = createIndexedGridSurfaceGeometry(options.layout, {
+		trace: options.trace,
+		now
+	});
 	const vertexCount = geometry.getAttribute('position').count;
+	const utciArrayStartedAt = now();
 	const utciArray = new Float32Array(options.layout.numPositions);
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceUtciStorageAllocMs',
+		now() - utciArrayStartedAt
+	);
 	const utciStorageAttribute = new StorageBufferAttribute(utciArray, 1);
+	const cellToPointStartedAt = now();
 	const cellToPointArray = createCellToPointIndexArray(options.layout);
 	const cellToPointStorageAttribute = new StorageBufferAttribute(cellToPointArray, 1);
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceCellToPointAllocFillMs',
+		now() - cellToPointStartedAt
+	);
 	const minUniform = uniform(options.utciRange.min);
 	const maxUniform = uniform(options.utciRange.max);
+	const colorLutStartedAt = now();
 	const colorLutTexture = createUtciColorLutTexture();
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceColorLutSetupMs',
+		now() - colorLutStartedAt
+	);
+	const materialStartedAt = now();
 	const { colorNode, opacityNode } = createUtciColorNode(
 		options.layout,
 		utciStorageAttribute,
@@ -252,7 +290,13 @@ export function createComputeBufferUtciSurfaceMesh(
 	material.colorNode = colorNode;
 	material.opacityNode = opacityNode;
 	material.toneMapped = false;
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceMaterialSetupMs',
+		now() - materialStartedAt
+	);
 
+	const meshConstructStartedAt = now();
 	const mesh = new THREE.Mesh(geometry, material);
 	mesh.name = 'UTCI GPU Resident Surface Overlay';
 	mesh.renderOrder = 2;
@@ -272,11 +316,29 @@ export function createComputeBufferUtciSurfaceMesh(
 		maxUniform,
 		colorLutTexture
 	} satisfies ComputeBufferUtciSurfaceState;
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceMeshConstructMs',
+		now() - meshConstructStartedAt
+	);
+	const byteAccountingStartedAt = now();
+	const geometryBytes = getGeometryGpuAttributeBytes(geometry);
 	mesh.userData.renderOwnedSelectedHourBytes =
-		getGeometryGpuAttributeBytes(geometry) +
+		geometryBytes +
 		utciArray.byteLength +
 		cellToPointArray.byteLength +
 		UTCI_COLOR_LUT_BYTES;
+	addCreateSurfaceTraceTiming(
+		options.trace,
+		'createComputeBufferSurfaceByteAccountingMs',
+		now() - byteAccountingStartedAt
+	);
+	if (options.trace) {
+		options.trace.createComputeBufferSurfaceGeometryBytes = geometryBytes;
+		options.trace.createComputeBufferSurfaceUtciStorageBytes = utciArray.byteLength;
+		options.trace.createComputeBufferSurfaceCellToPointBytes = cellToPointArray.byteLength;
+		options.trace.createComputeBufferSurfaceColorLutBytes = UTCI_COLOR_LUT_BYTES;
+	}
 
 	return mesh;
 }
@@ -851,7 +913,14 @@ function getComputeBufferSurfaceVertexCount(layout: UtciGridLayout): number {
 	return (layout.width + 1) * (layout.height + 1);
 }
 
-function createIndexedGridSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeometry {
+function createIndexedGridSurfaceGeometry(
+	layout: UtciGridLayout,
+	options?: {
+		trace?: SelectedHourRenderSurfaceMeshTrace;
+		now?: () => number;
+	}
+): THREE.BufferGeometry {
+	const now = options?.now ?? performance.now.bind(performance);
 	const geometry = new THREE.BufferGeometry();
 	const planeWidth = layout.width * layout.gridSize;
 	const planeHeight = layout.height * layout.gridSize;
@@ -859,9 +928,22 @@ function createIndexedGridSurfaceGeometry(layout: UtciGridLayout): THREE.BufferG
 	const halfHeight = planeHeight / 2;
 	const vertexWidth = layout.width + 1;
 	const vertexHeight = layout.height + 1;
+	const positionAllocStartedAt = now();
 	const positions = new Float32Array(vertexWidth * vertexHeight * 3);
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfacePositionArrayAllocMs',
+		now() - positionAllocStartedAt
+	);
+	const indexAllocStartedAt = now();
 	const indices = new Uint32Array(layout.width * layout.height * SURFACE_VERTICES_PER_CELL);
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfaceIndexArrayAllocMs',
+		now() - indexAllocStartedAt
+	);
 
+	const positionFillStartedAt = now();
 	let positionOffset = 0;
 	for (let row = 0; row < vertexHeight; row += 1) {
 		const z = -halfHeight + row * layout.gridSize;
@@ -872,7 +954,13 @@ function createIndexedGridSurfaceGeometry(layout: UtciGridLayout): THREE.BufferG
 			positions[positionOffset++] = z;
 		}
 	}
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfacePositionArrayFillMs',
+		now() - positionFillStartedAt
+	);
 
+	const indexFillStartedAt = now();
 	let indexOffset = 0;
 	for (let row = 0; row < layout.height; row += 1) {
 		for (let col = 0; col < layout.width; col += 1) {
@@ -888,11 +976,28 @@ function createIndexedGridSurfaceGeometry(layout: UtciGridLayout): THREE.BufferG
 			indices[indexOffset++] = v00;
 		}
 	}
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfaceIndexArrayFillMs',
+		now() - indexFillStartedAt
+	);
 
+	const attributeStartedAt = now();
 	geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 	geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfaceGeometryAttributeAttachMs',
+		now() - attributeStartedAt
+	);
+	const boundsStartedAt = now();
 	geometry.computeBoundingBox();
 	geometry.computeBoundingSphere();
+	addCreateSurfaceTraceTiming(
+		options?.trace,
+		'createComputeBufferSurfaceBoundsMs',
+		now() - boundsStartedAt
+	);
 	return geometry;
 }
 

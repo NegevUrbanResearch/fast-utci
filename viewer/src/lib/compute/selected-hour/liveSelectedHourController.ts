@@ -544,6 +544,38 @@ function areRenderSurfaceMeshTracesEqual(
 			right.recreateDecision?.layoutCompatible &&
 		left.disposeResetMeshRemovalMs === right.disposeResetMeshRemovalMs &&
 		left.createComputeBufferSurfaceMeshMs === right.createComputeBufferSurfaceMeshMs &&
+		left.createComputeBufferSurfacePositionArrayAllocMs ===
+			right.createComputeBufferSurfacePositionArrayAllocMs &&
+		left.createComputeBufferSurfacePositionArrayFillMs ===
+			right.createComputeBufferSurfacePositionArrayFillMs &&
+		left.createComputeBufferSurfaceIndexArrayAllocMs ===
+			right.createComputeBufferSurfaceIndexArrayAllocMs &&
+		left.createComputeBufferSurfaceIndexArrayFillMs ===
+			right.createComputeBufferSurfaceIndexArrayFillMs &&
+		left.createComputeBufferSurfaceGeometryAttributeAttachMs ===
+			right.createComputeBufferSurfaceGeometryAttributeAttachMs &&
+		left.createComputeBufferSurfaceBoundsMs ===
+			right.createComputeBufferSurfaceBoundsMs &&
+		left.createComputeBufferSurfaceUtciStorageAllocMs ===
+			right.createComputeBufferSurfaceUtciStorageAllocMs &&
+		left.createComputeBufferSurfaceCellToPointAllocFillMs ===
+			right.createComputeBufferSurfaceCellToPointAllocFillMs &&
+		left.createComputeBufferSurfaceColorLutSetupMs ===
+			right.createComputeBufferSurfaceColorLutSetupMs &&
+		left.createComputeBufferSurfaceMaterialSetupMs ===
+			right.createComputeBufferSurfaceMaterialSetupMs &&
+		left.createComputeBufferSurfaceMeshConstructMs ===
+			right.createComputeBufferSurfaceMeshConstructMs &&
+		left.createComputeBufferSurfaceByteAccountingMs ===
+			right.createComputeBufferSurfaceByteAccountingMs &&
+		left.createComputeBufferSurfaceGeometryBytes ===
+			right.createComputeBufferSurfaceGeometryBytes &&
+		left.createComputeBufferSurfaceUtciStorageBytes ===
+			right.createComputeBufferSurfaceUtciStorageBytes &&
+		left.createComputeBufferSurfaceCellToPointBytes ===
+			right.createComputeBufferSurfaceCellToPointBytes &&
+		left.createComputeBufferSurfaceColorLutBytes ===
+			right.createComputeBufferSurfaceColorLutBytes &&
 		left.updateComputeBufferSurfaceMeshMs === right.updateComputeBufferSurfaceMeshMs &&
 		left.updateComputeBufferSurfaceRangeUniformMs ===
 			right.updateComputeBufferSurfaceRangeUniformMs &&
