@@ -1287,12 +1287,18 @@ describe('pointCloudService UTCI surface seam', () => {
 			backend: 'gpuNative'
 		});
 		const material = mesh.material as THREE.Material & { map?: THREE.Texture | null };
+		const layout = mesh.userData.utciLayout;
+		const expectedCpuSurfaceVertexCount = layout.width * layout.height * 6;
 
 		expect(mesh.userData.utciSurfaceBackend).toBe('gpuNative');
 		expect(mesh.userData.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
 		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('cpu-uploaded-selected-hour');
 		expect(getGpuNativeUtciSurfaceSource(mesh)).not.toBe('compute-buffer-selected-hour');
 		expect(material.map ?? null).toBeNull();
+		expect(mesh.geometry.getAttribute('position').count).toBe(expectedCpuSurfaceVertexCount);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.vertexCount).toBe(
+			expectedCpuSurfaceVertexCount
+		);
 	});
 
 	it('keeps CPU-uploaded gpuNative surfaces front-sided and normally frustum culled', () => {
@@ -1393,6 +1399,37 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1104);
 	});
 
+	it('uses indexed shared-grid geometry for compute-buffer surfaces', () => {
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: {
+				width: 2,
+				height: 1,
+				gridSize: 1,
+				numPositions: 2,
+				centerX: 1,
+				centerZ: 0.5,
+				minX: 0,
+				minZ: 0,
+				baseY: 0,
+				coordinateSystem: 'xy_ground' as const,
+				minY: 0,
+				maxY: 0,
+				indexToRow: new Uint32Array([0, 0]),
+				indexToColumn: new Uint32Array([0, 1]),
+				indexToTexel: new Uint32Array([0, 1]),
+				colorBuffer: new Uint8Array(8)
+			},
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(mesh.geometry.index?.array).toBeInstanceOf(Uint32Array);
+		expect(mesh.geometry.index?.count).toBe(12);
+		expect(mesh.geometry.getAttribute('position').count).toBe(6);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.vertexCount).toBe(6);
+		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1160);
+	});
+
 	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {
 		const layout = {
 			width: 2,
@@ -1436,7 +1473,68 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 5, max: 55 });
 		expect(mesh.userData.gpuNativeUtciSurfaceState.minUniform.value).toBe(5);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.maxUniform.value).toBe(55);
-		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1184);
+		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1160);
+	});
+
+	it('expects compute-buffer compatibility to use shared-grid position vertices', () => {
+		const layout = {
+			width: 2,
+			height: 1,
+			gridSize: 1,
+			numPositions: 2,
+			centerX: 1,
+			centerZ: 0.5,
+			minX: 0,
+			minZ: 0,
+			baseY: 0,
+			coordinateSystem: 'xy_ground' as const,
+			minY: 0,
+			maxY: 0,
+			indexToRow: new Uint32Array([0, 0]),
+			indexToColumn: new Uint32Array([0, 1]),
+			cellToPointIndex: new Int32Array([0, 1]),
+			indexToTexel: new Uint32Array([0, 1]),
+			colorBuffer: new Uint8Array(2 * 4)
+		};
+		const sharedGridVertexCount = (layout.width + 1) * (layout.height + 1);
+		const nonIndexedVertexCount = layout.width * layout.height * 6;
+
+		expect(
+			evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+				state: {
+					source: 'compute-buffer-selected-hour',
+					width: layout.width,
+					height: layout.height,
+					gridSize: layout.gridSize,
+					vertexCount: sharedGridVertexCount,
+					storageCount: layout.numPositions
+				},
+				previousLayout: layout,
+				nextLayout: layout,
+				allowExpensiveMappingComparison: true
+			})
+		).toMatchObject({
+			compatible: true,
+			vertexCountMatch: true
+		});
+		expect(
+			evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+				state: {
+					source: 'compute-buffer-selected-hour',
+					width: layout.width,
+					height: layout.height,
+					gridSize: layout.gridSize,
+					vertexCount: nonIndexedVertexCount,
+					storageCount: layout.numPositions
+				},
+				previousLayout: layout,
+				nextLayout: layout,
+				allowExpensiveMappingComparison: true
+			})
+		).toMatchObject({
+			compatible: false,
+			vertexCountMatch: false
+		});
 	});
 
 	it('respects a precomputed incompatible update result without recomputing the live predicate', () => {
@@ -1470,7 +1568,7 @@ describe('pointCloudService UTCI surface seam', () => {
 				width: layout.width,
 				height: layout.height + 1,
 				gridSize: layout.gridSize,
-				vertexCount: layout.width * layout.height * 6,
+				vertexCount: (layout.width + 1) * (layout.height + 1),
 				storageCount: layout.numPositions
 			},
 			previousLayout: layout,

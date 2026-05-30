@@ -12,7 +12,7 @@ describe('WebGPU on-demand source guards', () => {
 	const renderBridgeSource = readFileSync(
 		resolve(testDir, '../../src/lib/services/gpuUtciRenderBridge.ts'),
 		'utf8'
-	);
+	).replace(/\r\n/g, '\n');
 	const onDemandShaderSource = readFileSync(
 		resolve(testDir, '../../src/lib/compute/gpu/shaders/mrt_utci_on_demand.wgsl'),
 		'utf8'
@@ -24,6 +24,29 @@ describe('WebGPU on-demand source guards', () => {
 
 		const end = source.indexOf(endMarker, start);
 		return source.slice(start, end === -1 ? undefined : end);
+	}
+
+	function extractFunctionBody(sourceText: string, functionName: string): string {
+		const declarationStart = sourceText.indexOf(`function ${functionName}`);
+		expect(declarationStart).toBeGreaterThanOrEqual(0);
+
+		const bodyStart = sourceText.indexOf('{', declarationStart);
+		expect(bodyStart).toBeGreaterThanOrEqual(0);
+
+		let depth = 0;
+		for (let index = bodyStart; index < sourceText.length; index += 1) {
+			const character = sourceText[index];
+			if (character === '{') {
+				depth += 1;
+			} else if (character === '}') {
+				depth -= 1;
+				if (depth === 0) {
+					return sourceText.slice(bodyStart + 1, index);
+				}
+			}
+		}
+
+		throw new Error(`Unable to extract ${functionName} body`);
 	}
 
 	const exposureHelperSource = getSection('private async encodeExposurePasses', '\n\n\tasync runAll');
@@ -151,5 +174,27 @@ describe('WebGPU on-demand source guards', () => {
 		);
 		expect(renderBridgeSource.includes('pendingComputeBufferUtciSource')).toBe(true);
 		expect(renderBridgeSource.includes('createVertexToPointIndexArray')).toBe(true);
+	});
+
+	it('derives compute-buffer cell lookup from local surface coordinates', () => {
+		const colorNodeBody = extractFunctionBody(renderBridgeSource, 'createUtciColorNode');
+		expect(colorNodeBody).toContain('positionLocal.x');
+		expect(colorNodeBody).toContain('positionLocal.z');
+		expect(colorNodeBody).toContain('.floor()');
+		expect(colorNodeBody).toContain('clamp(');
+		expect(colorNodeBody).toContain('row.mul(uint(layout.width)).add(column)');
+		expect(colorNodeBody).toContain('cellToPointStorage.element(cellIndex)');
+		expect(colorNodeBody).toContain('utciStorage.element(pointIndex)');
+		expect(colorNodeBody).not.toContain(
+			'vertexIndex.div(uint(SURFACE_VERTICES_PER_CELL))'
+		);
+		expect(renderBridgeSource).toContain('createIndexedGridSurfaceGeometry');
+
+		const computeBufferBody = extractFunctionBody(
+			renderBridgeSource,
+			'createComputeBufferUtciSurfaceMesh'
+		);
+		expect(computeBufferBody).toContain('createUtciColorNode(');
+		expect(computeBufferBody).toMatch(/createUtciColorNode\(\s*options\.layout,/);
 	});
 });

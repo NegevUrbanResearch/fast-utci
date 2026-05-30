@@ -205,6 +205,8 @@ export type SelectedHourRenderPublicationDiagnostics = {
 	renderPublicationMeshAction: SelectedHourRenderPublicationMeshAction;
 	renderPublicationPointCount?: number;
 	renderPublicationVertexCount?: number;
+	renderPublicationIndexCount?: number;
+	renderPublicationDrawIndexCount?: number;
 	renderPublicationGridWidth?: number;
 	renderPublicationGridHeight?: number;
 	renderPublicationGridSize?: number;

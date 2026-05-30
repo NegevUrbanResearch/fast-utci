@@ -59,6 +59,9 @@ site/
 !data/analyses/*.bin
 !data/analyses/manifest.json
 data/batch-parity-results/*.json
+data/infrared-capture
+data/infrared-capture-aoi-check
+atlas-viewer/
 
 # WebGPU parity/debug generated artifacts
 data/analyses/**/*_webgpu_*.json

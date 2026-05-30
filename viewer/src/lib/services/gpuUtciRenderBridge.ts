@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import { MeshBasicNodeMaterial, StorageBufferAttribute } from 'three/webgpu';
-import { clamp, float, storage, texture, uint, uniform, vec2, vertexIndex } from 'three/tsl';
+import {
+	clamp,
+	float,
+	positionLocal,
+	storage,
+	texture,
+	uint,
+	uniform,
+	vec2,
+	vertexIndex
+} from 'three/tsl';
 import type { UtciGridLayout } from './pointCloudService';
 import { mapUTCIToColor } from '$lib/services/colorScale';
 
@@ -215,7 +225,7 @@ export function createGpuNativeUtciSurfaceMesh(
 export function createComputeBufferUtciSurfaceMesh(
 	options: ComputeBufferUtciSurfaceMeshOptions
 ): THREE.Mesh {
-	const geometry = createGpuNativeSurfaceGeometry(options.layout);
+	const geometry = createIndexedGridSurfaceGeometry(options.layout);
 	const vertexCount = geometry.getAttribute('position').count;
 	const utciArray = new Float32Array(options.layout.numPositions);
 	const utciStorageAttribute = new StorageBufferAttribute(utciArray, 1);
@@ -225,6 +235,7 @@ export function createComputeBufferUtciSurfaceMesh(
 	const maxUniform = uniform(options.utciRange.max);
 	const colorLutTexture = createUtciColorLutTexture();
 	const { colorNode, opacityNode } = createUtciColorNode(
+		options.layout,
 		utciStorageAttribute,
 		cellToPointStorageAttribute,
 		minUniform,
@@ -422,8 +433,7 @@ export function evaluateComputeBufferUtciSurfaceLayoutCompatibility(params: {
 		};
 	}
 
-	const expectedVertexCount =
-		params.nextLayout.width * params.nextLayout.height * SURFACE_VERTICES_PER_CELL;
+	const expectedVertexCount = getComputeBufferSurfaceVertexCount(params.nextLayout);
 	const widthMatch = state.width === params.nextLayout.width;
 	const heightMatch = state.height === params.nextLayout.height;
 	const gridSizeMatch = state.gridSize === params.nextLayout.gridSize;
@@ -690,6 +700,7 @@ export function getComputeBufferUtciStorageAttribute(
 }
 
 function createUtciColorNode(
+	layout: UtciGridLayout,
 	utciStorageAttribute: StorageBufferAttribute,
 	cellToPointStorageAttribute: StorageBufferAttribute,
 	minUniform: ReturnType<typeof uniform>,
@@ -702,7 +713,16 @@ function createUtciColorNode(
 		'uint',
 		cellToPointStorageAttribute.count
 	).toReadOnly();
-	const cellIndex = vertexIndex.div(uint(SURFACE_VERTICES_PER_CELL));
+	const halfWidth = float((layout.width * layout.gridSize) / 2);
+	const halfHeight = float((layout.height * layout.gridSize) / 2);
+	const gridSize = float(layout.gridSize);
+	const column = uint(
+		clamp(positionLocal.x.add(halfWidth).div(gridSize).floor(), 0, layout.width - 1)
+	);
+	const row = uint(
+		clamp(positionLocal.z.add(halfHeight).div(gridSize).floor(), 0, layout.height - 1)
+	);
+	const cellIndex = row.mul(uint(layout.width)).add(column);
 	const pointIndex = cellToPointStorage.element(cellIndex);
 	const value = utciStorage.element(pointIndex);
 	const t = clamp(
@@ -822,6 +842,55 @@ function createGpuNativeSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeo
 	}
 
 	geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+	geometry.computeBoundingBox();
+	geometry.computeBoundingSphere();
+	return geometry;
+}
+
+function getComputeBufferSurfaceVertexCount(layout: UtciGridLayout): number {
+	return (layout.width + 1) * (layout.height + 1);
+}
+
+function createIndexedGridSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeometry {
+	const geometry = new THREE.BufferGeometry();
+	const planeWidth = layout.width * layout.gridSize;
+	const planeHeight = layout.height * layout.gridSize;
+	const halfWidth = planeWidth / 2;
+	const halfHeight = planeHeight / 2;
+	const vertexWidth = layout.width + 1;
+	const vertexHeight = layout.height + 1;
+	const positions = new Float32Array(vertexWidth * vertexHeight * 3);
+	const indices = new Uint32Array(layout.width * layout.height * SURFACE_VERTICES_PER_CELL);
+
+	let positionOffset = 0;
+	for (let row = 0; row < vertexHeight; row += 1) {
+		const z = -halfHeight + row * layout.gridSize;
+		for (let col = 0; col < vertexWidth; col += 1) {
+			const x = -halfWidth + col * layout.gridSize;
+			positions[positionOffset++] = x;
+			positions[positionOffset++] = 0;
+			positions[positionOffset++] = z;
+		}
+	}
+
+	let indexOffset = 0;
+	for (let row = 0; row < layout.height; row += 1) {
+		for (let col = 0; col < layout.width; col += 1) {
+			const v00 = row * vertexWidth + col;
+			const v10 = v00 + 1;
+			const v01 = v00 + vertexWidth;
+			const v11 = v01 + 1;
+			indices[indexOffset++] = v01;
+			indices[indexOffset++] = v11;
+			indices[indexOffset++] = v00;
+			indices[indexOffset++] = v11;
+			indices[indexOffset++] = v10;
+			indices[indexOffset++] = v00;
+		}
+	}
+
+	geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+	geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 	geometry.computeBoundingBox();
 	geometry.computeBoundingSphere();
 	return geometry;

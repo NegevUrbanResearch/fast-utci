@@ -217,6 +217,9 @@ function areRenderPublicationEqual(
 		left.renderPublicationMeshAction === right.renderPublicationMeshAction &&
 		left.renderPublicationPointCount === right.renderPublicationPointCount &&
 		left.renderPublicationVertexCount === right.renderPublicationVertexCount &&
+		left.renderPublicationIndexCount === right.renderPublicationIndexCount &&
+		left.renderPublicationDrawIndexCount ===
+			right.renderPublicationDrawIndexCount &&
 		left.renderPublicationGridWidth === right.renderPublicationGridWidth &&
 		left.renderPublicationGridHeight === right.renderPublicationGridHeight &&
 		left.renderPublicationGridSize === right.renderPublicationGridSize &&

@@ -1601,6 +1601,110 @@ describe('liveSelectedHourController', () => {
 		});
 	});
 
+	it('does not treat changed render publication index counts as idempotent diagnostics updates', async () => {
+		const gpu = createGpuResidentOutput(40, 40);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 40,
+					timeIndex: 40,
+					analysis: createSelectionAnalysis('gpu-render-publication-index-change', [18, 20]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 4000
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(40));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationVertexCount: 8177472,
+				renderPublicationIndexCount: 49030566,
+				renderPublicationDrawIndexCount: 49030566,
+				renderPublicationGridWidth: 2861,
+				renderPublicationGridHeight: 2856,
+				renderPublicationGridSize: 0.5,
+				renderPublicationSourceByteLength: 32687044,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationRenderOwnedBytes: 32687044
+			}
+		});
+
+		const emittedStates: LiveSelectedHourControllerSurfaceDiagnostics[] = [];
+		const unsubscribe = controller.subscribe((state) => {
+			emittedStates.push(state.renderSurfaceDiagnostics);
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationVertexCount: 8177472,
+				renderPublicationIndexCount: 49030560,
+				renderPublicationDrawIndexCount: 49030566,
+				renderPublicationGridWidth: 2861,
+				renderPublicationGridHeight: 2856,
+				renderPublicationGridSize: 0.5,
+				renderPublicationSourceByteLength: 32687044,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationRenderOwnedBytes: 32687044
+			}
+		});
+
+		expect(emittedStates).toHaveLength(1);
+		expect(controller.getState().renderSurfaceDiagnostics.renderPublication).toMatchObject({
+			renderPublicationIndexCount: 49030560,
+			renderPublicationDrawIndexCount: 49030566
+		});
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationIndexCount: 49030560,
+			renderPublicationDrawIndexCount: 49030566
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: {
+				renderPublicationVersion: 1,
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationPointCount: 8171761,
+				renderPublicationVertexCount: 8177472,
+				renderPublicationIndexCount: 49030560,
+				renderPublicationDrawIndexCount: 49030554,
+				renderPublicationGridWidth: 2861,
+				renderPublicationGridHeight: 2856,
+				renderPublicationGridSize: 0.5,
+				renderPublicationSourceByteLength: 32687044,
+				renderPublicationTargetByteLength: 32687044,
+				renderPublicationRenderOwnedBytes: 32687044
+			}
+		});
+
+		unsubscribe();
+		expect(emittedStates).toHaveLength(2);
+		expect(controller.getState().renderSurfaceDiagnostics.renderPublication).toMatchObject({
+			renderPublicationIndexCount: 49030560,
+			renderPublicationDrawIndexCount: 49030554
+		});
+		expect(controller.getState().runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderPublicationIndexCount: 49030560,
+			renderPublicationDrawIndexCount: 49030554
+		});
+	});
+
 	it('does not treat changed active-window reset history as an idempotent diagnostics update', async () => {
 		const gpu = createGpuResidentOutput(39, 39);
 		const sessionMock = createSessionMock([

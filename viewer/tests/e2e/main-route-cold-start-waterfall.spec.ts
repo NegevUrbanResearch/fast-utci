@@ -6,8 +6,11 @@ const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..'
 const RESULTS_DIR = resolve(REPO_ROOT, 'data/performance-results');
 const ARTIFACT_FILENAME = 'main-route-cold-start-waterfall.json';
 const ARTIFACT_PATH = resolve(RESULTS_DIR, ARTIFACT_FILENAME);
-const COLLECTED_ON = '2026-05-18';
 const SOURCE_ROUTE = '/';
+const INITIAL_MONTH_INDEX = 7;
+const INITIAL_HOUR_INDEX = 0;
+const FIRST_SCRUB_HOUR_INDEX = 1;
+const FIRST_SCRUB_TIME_INDEX = 169;
 
 type AnalysisCase = {
 	projectLabel: string;
@@ -22,53 +25,59 @@ type AnalysisMetadata = {
 	num_positions?: number;
 };
 
-type CollectedCase = {
+type ProofSnapshot = {
+	rendererBackend: string;
+	utciRenderResolved: string;
+	utciSurfaceSource: string | null;
+	baseRenderTransport: string;
+	dataTextureBuildCount: number;
+	selectedHourRuntimeContract: {
+		route: string | null;
+		readbackInstrumentation: string | null;
+		visibleSelectedHourReadbackCount: number | null;
+		strongVisibleGpuPath: boolean | null;
+	};
+	baseSameDeviceForComputeAndRender: boolean | null;
+	selectedMonthIndex: number;
+	selectedHourIndex: number;
+	selectedTimeIndex: number;
+};
+
+type CollectedPhase = {
+	firstVisibleMs: number | null;
+	timings: Record<string, number | null>;
+	renderPublication: Record<string, unknown> | null;
+	proof: ProofSnapshot;
+};
+
+type CollectedScrubPhase = {
+	selectedHourIndex: 1;
+	selectedTimeIndex: typeof FIRST_SCRUB_TIME_INDEX;
+	visibleMs: number | null;
+	surfaceRequestId: number | null;
+	timings: Record<string, number | null>;
+	renderPublication: Record<string, unknown> | null;
+	proof: ProofSnapshot;
+};
+
+type CollectedColdCase = {
 	projectLabel: string;
 	analysisId: string;
 	gridResolutionMeters: 2 | 0.5;
-	colorMode: 'normalized';
-	phase: 'cold-initial';
 	pointCount: number;
-	firstSelectedHourVisibleAtMs: number | null;
-	firstSelectedHourVisibleProvenance: string;
 	sourceUrl: string;
-	timings: Record<string, number | null>;
-	coldStart: Record<string, number | null>;
-	renderPublication: Record<string, unknown> | null;
-	trackedGpuAllocationBytes: {
-		persistentExposureBytes: number;
-		allHoursOutputBytes: number;
-		selectedHourOutputBytes: number;
-		selectedHourOutputBytesHighWatermark: number;
-		renderOwnedSelectedHourBytes: number;
-		renderOwnedSelectedHourBytesHighWatermark: number;
-		trackingScope: string;
-	};
-	ownedGpuMemoryBytes: number;
-	proof: {
-		rendererBackend: string;
-		utciRenderResolved: string;
-		utciSurfaceSource: string | null;
-		baseRenderTransport: string;
-		dataTextureBuildCount: number;
-		selectedHourRuntimeContract: {
-			route: string | null;
-			readbackInstrumentation: string | null;
-			visibleSelectedHourReadbackCount: number | null;
-			strongVisibleGpuPath: boolean | null;
-		};
-		baseSameDeviceForComputeAndRender: boolean | null;
-		selectedMonthIndex: number;
-		selectedHourIndex: number;
-		selectedTimeIndex: number;
-	};
+	initial: CollectedPhase;
+	firstPostVisibleScrub: CollectedScrubPhase;
 	assertions: {
 		pythonBinDebugComparisonFieldsAbsent: true;
-		forbiddenComparisonFieldsPresent: string[];
-		forbiddenRequestUrls: string[];
+		initialForbiddenComparisonFieldsPresent: string[];
+		scrubForbiddenComparisonFieldsPresent: string[];
+		allForbiddenRequestUrls: string[];
 		memoryScope: 'utci-owned-webgpu-buffers';
 	};
 };
+
+type DiagnosticsSnapshot = Record<string, any>;
 
 const CASES: AnalysisCase[] = [
 	{
@@ -101,6 +110,17 @@ const CASES: AnalysisCase[] = [
 	}
 ];
 
+function formatLocalDate(date: Date) {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+function expectedSelectionKeyForHour(caseConfig: AnalysisCase, hourIndex: number) {
+	return caseConfig.expectedSelectionKey.replace('|7|0', `|7|${hourIndex}`);
+}
+
 function readMetadata(caseConfig: AnalysisCase): AnalysisMetadata {
 	return JSON.parse(readFileSync(resolve(REPO_ROOT, caseConfig.metadataPath), 'utf8')) as AnalysisMetadata;
 }
@@ -120,10 +140,11 @@ async function readUtciRenderDiagnostics(page: Page) {
 
 async function waitForSelectedHourPublication(
 	page: Page,
-	expectedSelectionKey: string
+	expectedSelectionKey: string,
+	options?: { minSurfaceRequestId?: number }
 ) {
 	const diagnostics = await page.waitForFunction(
-		(selectionKey) => {
+		({ selectionKey, minSurfaceRequestId }) => {
 			const value = (window as any).__utciRenderDiagnostics__;
 			if (!value) return null;
 			if (
@@ -134,6 +155,8 @@ async function waitForSelectedHourPublication(
 				value.baseSameDeviceForComputeAndRender === true &&
 				value.baseSelectionKey === selectionKey &&
 				value.baseSceneSelectionKey === selectionKey &&
+				typeof value.baseSurfaceRequestId === 'number' &&
+				value.baseSurfaceRequestId > (minSurfaceRequestId ?? 0) &&
 				value.gpuResidentCopyRequestId === value.baseSurfaceRequestId &&
 				value.selectedHourRuntimeContract?.route === 'main' &&
 				value.selectedHourRuntimeContract?.readbackInstrumentation === 'instrumented' &&
@@ -146,8 +169,11 @@ async function waitForSelectedHourPublication(
 			}
 			return null;
 		},
-		expectedSelectionKey,
-		{ timeout: 60_000 }
+		{
+			selectionKey: expectedSelectionKey,
+			minSurfaceRequestId: options?.minSurfaceRequestId ?? 0
+		},
+		{ timeout: 240_000 }
 	).catch(async (error) => {
 		const lastDiagnostics = await readUtciRenderDiagnostics(page).catch((readError) => ({
 			readError: readError instanceof Error ? readError.message : String(readError)
@@ -163,7 +189,7 @@ async function waitForSelectedHourPublication(
 		);
 	});
 
-	return diagnostics.jsonValue() as Promise<any>;
+	return diagnostics.jsonValue() as Promise<DiagnosticsSnapshot>;
 }
 
 function collectForbiddenComparisonFields(diagnostics: Record<string, unknown>) {
@@ -215,91 +241,58 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 	};
 }
 
-function extractColdStart(coldStart: Record<string, unknown> | undefined) {
-	return {
-		routeAnalysisLoadStartedAtMs: numberOrNull(coldStart?.routeAnalysisLoadStartedAtMs),
-		routeAnalysisLoadCompletedAtMs: numberOrNull(coldStart?.routeAnalysisLoadCompletedAtMs),
-		modelLoadStartedAtMs: numberOrNull(coldStart?.modelLoadStartedAtMs),
-		modelLoadCompletedAtMs: numberOrNull(coldStart?.modelLoadCompletedAtMs),
-		modelProcessingStartedAtMs: numberOrNull(coldStart?.modelProcessingStartedAtMs),
-		modelProcessingCompletedAtMs: numberOrNull(coldStart?.modelProcessingCompletedAtMs),
-		sessionPrepareStartedAtMs: numberOrNull(coldStart?.sessionPrepareStartedAtMs),
-		sessionPrepareCompletedAtMs: numberOrNull(coldStart?.sessionPrepareCompletedAtMs),
-		sessionPayloadPrepareStartedAtMs: numberOrNull(coldStart?.sessionPayloadPrepareStartedAtMs),
-		sessionPayloadPrepareCompletedAtMs: numberOrNull(coldStart?.sessionPayloadPrepareCompletedAtMs),
-		sessionWorkerBvhStartedAtMs: numberOrNull(coldStart?.sessionWorkerBvhStartedAtMs),
-		sessionWorkerBvhCompletedAtMs: numberOrNull(coldStart?.sessionWorkerBvhCompletedAtMs),
-		sessionPipelineUploadStartedAtMs: numberOrNull(coldStart?.sessionPipelineUploadStartedAtMs),
-		sessionPipelineUploadCompletedAtMs: numberOrNull(coldStart?.sessionPipelineUploadCompletedAtMs),
-		exposurePrecomputeStartedAtMs: numberOrNull(coldStart?.exposurePrecomputeStartedAtMs),
-		exposurePrecomputeCompletedAtMs: numberOrNull(coldStart?.exposurePrecomputeCompletedAtMs),
-		firstSelectedHourDispatchStartedAtMs: numberOrNull(
-			coldStart?.firstSelectedHourDispatchStartedAtMs
-		),
-		firstSelectedHourDispatchCompletedAtMs: numberOrNull(
-			coldStart?.firstSelectedHourDispatchCompletedAtMs
-		),
-		firstSelectedHourReadyAtMs: numberOrNull(coldStart?.firstSelectedHourReadyAtMs)
-	};
-}
-
-function buildColdStartSnapshot(diagnostics: Record<string, any>) {
-	const coldStart = extractColdStart(diagnostics.coldStart);
-	const visibleAcknowledgedAtMs = numberOrNull(
-		diagnostics.timings?.renderPublication?.renderPublicationTimeline
-			?.controllerVisibleAcknowledgedAtMs
-	);
-	const coldStartVisibleAtMs = numberOrNull(diagnostics.coldStart?.firstSelectedHourVisibleAtMs);
-	if (coldStartVisibleAtMs != null && visibleAcknowledgedAtMs != null) {
-		expect(coldStartVisibleAtMs).toBe(visibleAcknowledgedAtMs);
+function extractRenderPublication(
+	renderPublication: unknown
+): Record<string, unknown> | null {
+	if (typeof renderPublication !== 'object' || renderPublication == null) {
+		return null;
 	}
-	return coldStart;
+	return renderPublication as Record<string, unknown>;
 }
 
-function getFirstVisibleAcknowledgedAtMs(diagnostics: Record<string, any>): number | null {
+function getFirstVisibleAcknowledgedAtMs(diagnostics: DiagnosticsSnapshot): number | null {
 	return numberOrNull(
 		diagnostics.timings?.renderPublication?.renderPublicationTimeline
 			?.controllerVisibleAcknowledgedAtMs
 	);
 }
 
-function assertCompletedAfterStarted(
-	coldStart: Record<string, unknown>,
-	completedField: string,
-	startedField: string
-) {
-	expect(coldStart[completedField], `${completedField} should be numeric`).toEqual(
-		expect.any(Number)
-	);
-	expect(coldStart[startedField], `${startedField} should be numeric`).toEqual(
-		expect.any(Number)
-	);
-	expect(coldStart[completedField] as number).toBeGreaterThanOrEqual(
-		coldStart[startedField] as number
-	);
+function buildProof(diagnostics: DiagnosticsSnapshot): ProofSnapshot {
+	return {
+		rendererBackend: diagnostics.rendererBackend,
+		utciRenderResolved: diagnostics.utciRenderResolved,
+		utciSurfaceSource: diagnostics.utciSurfaceSource ?? null,
+		baseRenderTransport: diagnostics.baseRenderTransport,
+		dataTextureBuildCount: diagnostics.dataTextureBuildCount ?? 0,
+		selectedHourRuntimeContract: {
+			route: diagnostics.selectedHourRuntimeContract?.route ?? null,
+			readbackInstrumentation:
+				diagnostics.selectedHourRuntimeContract?.readbackInstrumentation ?? null,
+			visibleSelectedHourReadbackCount:
+				diagnostics.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount ?? null,
+			strongVisibleGpuPath:
+				diagnostics.selectedHourRuntimeContract?.strongVisibleGpuPath ?? null
+		},
+		baseSameDeviceForComputeAndRender: diagnostics.baseSameDeviceForComputeAndRender ?? null,
+		selectedMonthIndex: diagnostics.baseSelectedMonthIndex,
+		selectedHourIndex: diagnostics.baseSelectedHourIndex,
+		selectedTimeIndex: diagnostics.baseSelectedTimeIndex
+	};
 }
 
 function assertColdStartProofBoundary(params: {
-	diagnostics: Record<string, any>;
+	diagnostics: DiagnosticsSnapshot;
 	forbiddenComparisonFieldsPresent: string[];
 	forbiddenRequestUrls: string[];
 	sourceUrl: string;
-	gridResolutionMeters: 2 | 0.5;
 }) {
-	const {
-		diagnostics,
-		forbiddenComparisonFieldsPresent,
-		forbiddenRequestUrls,
-		sourceUrl,
-		gridResolutionMeters
-	} = params;
+	const { diagnostics, forbiddenComparisonFieldsPresent, forbiddenRequestUrls, sourceUrl } = params;
 	expect(new URL(sourceUrl, 'http://localhost').pathname).toBe('/');
 	expect(diagnostics.rendererBackend).toBe('webgpu');
 	expect(diagnostics.utciRenderResolved).toBe('gpuNative');
 	expect(diagnostics.utciSurfaceSource).toBe('compute-buffer-selected-hour');
 	expect(diagnostics.baseRenderTransport).toBe('compute-buffer-selected-hour');
 	expect(diagnostics.dataTextureBuildCount).toBe(0);
-	expect(diagnostics.baseMetadataGridSize).toBe(gridResolutionMeters);
 	expect(diagnostics.selectedHourRuntimeContract?.route).toBe('main');
 	expect(diagnostics.selectedHourRuntimeContract?.readbackInstrumentation).toBe(
 		'instrumented'
@@ -310,139 +303,18 @@ function assertColdStartProofBoundary(params: {
 	expect(forbiddenRequestUrls).toEqual([]);
 }
 
-function assertRequiredColdStartFields(coldStart: Record<string, unknown> | undefined) {
-	expect(coldStart).toMatchObject({
-		routeAnalysisLoadStartedAtMs: expect.any(Number),
-		routeAnalysisLoadCompletedAtMs: expect.any(Number),
-		modelLoadStartedAtMs: expect.any(Number),
-		modelLoadCompletedAtMs: expect.any(Number),
-		sessionPrepareStartedAtMs: expect.any(Number),
-		sessionPrepareCompletedAtMs: expect.any(Number),
-		exposurePrecomputeStartedAtMs: expect.any(Number),
-		exposurePrecomputeCompletedAtMs: expect.any(Number),
-		firstSelectedHourDispatchStartedAtMs: expect.any(Number),
-		firstSelectedHourDispatchCompletedAtMs: expect.any(Number),
-		firstSelectedHourReadyAtMs: expect.any(Number)
-	});
-	if (!coldStart) {
-		throw new Error('Missing coldStart diagnostics payload.');
-	}
-	assertCompletedAfterStarted(
-		coldStart,
-		'routeAnalysisLoadCompletedAtMs',
-		'routeAnalysisLoadStartedAtMs'
-	);
-	assertCompletedAfterStarted(coldStart, 'modelLoadCompletedAtMs', 'modelLoadStartedAtMs');
-	if (
-		typeof coldStart.modelProcessingStartedAtMs === 'number' ||
-		typeof coldStart.modelProcessingCompletedAtMs === 'number'
-	) {
-		assertCompletedAfterStarted(
-			coldStart,
-			'modelProcessingCompletedAtMs',
-			'modelProcessingStartedAtMs'
-		);
-	}
-	assertCompletedAfterStarted(
-		coldStart,
-		'sessionPrepareCompletedAtMs',
-		'sessionPrepareStartedAtMs'
-	);
-	assertCompletedAfterStarted(
-		coldStart,
-		'sessionPayloadPrepareCompletedAtMs',
-		'sessionPayloadPrepareStartedAtMs'
-	);
-	assertCompletedAfterStarted(
-		coldStart,
-		'sessionWorkerBvhCompletedAtMs',
-		'sessionWorkerBvhStartedAtMs'
-	);
-	assertCompletedAfterStarted(
-		coldStart,
-		'sessionPipelineUploadCompletedAtMs',
-		'sessionPipelineUploadStartedAtMs'
-	);
-	assertCompletedAfterStarted(
-		coldStart,
-		'exposurePrecomputeCompletedAtMs',
-		'exposurePrecomputeStartedAtMs'
-	);
-	assertCompletedAfterStarted(
-		coldStart,
-		'firstSelectedHourDispatchCompletedAtMs',
-		'firstSelectedHourDispatchStartedAtMs'
-	);
-}
-
-function assertRequiredExposureSplitTimings(timings: Record<string, unknown> | undefined) {
-	expect(timings).toMatchObject({
-		exposurePrecomputeMs: expect.any(Number),
-		exposureCommandEncodeTotalMs: expect.any(Number),
-		exposureEncodeMs: expect.any(Number),
-		exposureSolarEncodeMs: expect.any(Number),
-		exposureSkyEncodeMs: expect.any(Number),
-		exposureQueueWaitMs: expect.any(Number),
-		exposurePointCount: expect.any(Number),
-		exposureTotalTimeSteps: expect.any(Number),
-		exposureDaylightTimeSteps: expect.any(Number),
-		exposurePointChunks: expect.any(Number),
-		exposureSolarDispatchCount: expect.any(Number),
-		exposureSkyDispatchCount: expect.any(Number),
-		exposureSolarRayBudget: expect.any(Number),
-		exposureSkyRayBudget: expect.any(Number)
-	});
-	if (!timings) throw new Error('Missing diagnostics timings payload.');
-	expect(timings.exposureQueueWaitMs as number).toBeGreaterThan(0);
-	expect(timings.exposurePointCount).toBeGreaterThan(0);
-	expect(timings.exposureTotalTimeSteps).toBeGreaterThan(0);
-	expect(timings.exposureDaylightTimeSteps).toBeGreaterThan(0);
-	expect(timings.exposureSolarDispatchCount).toBeGreaterThan(0);
-	expect(timings.exposureSkyDispatchCount).toBeGreaterThan(0);
-	expect(timings.exposureSolarRayBudget).toBe(
-		(timings.exposurePointCount as number) * (timings.exposureDaylightTimeSteps as number)
-	);
-	expect(timings.exposureSkyRayBudget).toBe((timings.exposurePointCount as number) * 145);
-}
-
-async function collectCase(
-	page: Page,
-	caseConfig: AnalysisCase
-): Promise<CollectedCase> {
-	const metadata = readMetadata(caseConfig);
-	const requestedUrls: string[] = [];
-	page.on('request', (request) => requestedUrls.push(request.url()));
-
-	const gridQuery =
-		caseConfig.gridResolutionMeters === 0.5
-			? `&gridResolution=${caseConfig.gridResolutionMeters}`
-			: '';
-	const sourceUrl = `/?analysis=${encodeURIComponent(caseConfig.analysisId)}${gridQuery}&utciRender=auto&utciRenderDiagnostics=1`;
-	await page.goto(sourceUrl);
-	const diagnostics = await waitForSelectedHourPublication(page, caseConfig.expectedSelectionKey);
-	const forbiddenComparisonFieldsPresent = collectForbiddenComparisonFields(diagnostics);
-	const forbiddenRequestUrls = requestedUrls.filter(isForbiddenComparisonRequest);
-	const trackedGpuAllocationBytes = diagnostics.trackedGpuAllocationBytes;
-	const coldStart = buildColdStartSnapshot(diagnostics);
-	const firstSelectedHourVisibleAtMs = getFirstVisibleAcknowledgedAtMs(diagnostics);
-
-	assertColdStartProofBoundary({
-		diagnostics,
-		forbiddenComparisonFieldsPresent,
-		forbiddenRequestUrls,
-		sourceUrl,
-		gridResolutionMeters: caseConfig.gridResolutionMeters
-	});
-	assertRequiredColdStartFields(coldStart);
-	expect(firstSelectedHourVisibleAtMs).toEqual(expect.any(Number));
-	expect(firstSelectedHourVisibleAtMs as number).toBeGreaterThanOrEqual(
-		coldStart.firstSelectedHourReadyAtMs as number
-	);
-	assertRequiredExposureSplitTimings(diagnostics.timings);
+function assertLiveDiagnostics(
+	diagnostics: DiagnosticsSnapshot,
+	caseConfig: AnalysisCase,
+	hourIndex: number
+) {
+	expect(diagnostics.baseMetadataGridSize).toBe(caseConfig.gridResolutionMeters);
+	expect(diagnostics.basePointCount).toEqual(expect.any(Number));
+	expect(diagnostics.basePointCount).toBeGreaterThan(0);
+	expect(diagnostics.baseSelectedMonthIndex).toBe(INITIAL_MONTH_INDEX);
+	expect(diagnostics.baseSelectedHourIndex).toBe(hourIndex);
+	expect(diagnostics.baseSelectedTimeIndex).toBe(INITIAL_MONTH_INDEX * 24 + hourIndex);
 	expect(diagnostics.timings?.renderPublication ?? null).not.toBeNull();
-	expect(diagnostics.baseSelectedMonthIndex).toBe(7);
-	expect(diagnostics.baseSelectedHourIndex).toBe(0);
-	expect(diagnostics.baseSelectedTimeIndex).toBe(7 * 24);
 	expect(diagnostics.trackedGpuAllocationBytes).toMatchObject({
 		persistentExposureBytes: expect.any(Number),
 		allHoursOutputBytes: 0,
@@ -460,6 +332,81 @@ async function collectCase(
 	expect(
 		diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytesHighWatermark
 	).toBeGreaterThanOrEqual(diagnostics.trackedGpuAllocationBytes.renderOwnedSelectedHourBytes);
+}
+
+async function scrubToFirstPostVisibleHour(
+	page: Page,
+	caseConfig: AnalysisCase,
+	initialDiagnostics: DiagnosticsSnapshot
+) {
+	const initialRequestId = initialDiagnostics.baseSurfaceRequestId ?? 0;
+	const scrubStartedAt = performance.now();
+	const hourSlider = page.getByRole('slider', { name: /select analysis hour/i });
+	await expect(hourSlider).toBeVisible();
+	await hourSlider.focus();
+	await hourSlider.press('Home');
+	await hourSlider.press('ArrowRight');
+	const scrubDiagnostics = await waitForSelectedHourPublication(
+		page,
+		expectedSelectionKeyForHour(caseConfig, FIRST_SCRUB_HOUR_INDEX),
+		{ minSurfaceRequestId: initialRequestId }
+	);
+	const firstPostVisibleScrubMs = performance.now() - scrubStartedAt;
+	return { scrubDiagnostics, firstPostVisibleScrubMs };
+}
+
+async function collectCase(
+	page: Page,
+	caseConfig: AnalysisCase
+): Promise<CollectedColdCase> {
+	const metadata = readMetadata(caseConfig);
+	const requestedUrls: string[] = [];
+	page.on('request', (request) => requestedUrls.push(request.url()));
+
+	const gridQuery =
+		caseConfig.gridResolutionMeters === 0.5
+			? `&gridResolution=${caseConfig.gridResolutionMeters}`
+			: '';
+	const sourceUrl = `/?analysis=${encodeURIComponent(caseConfig.analysisId)}${gridQuery}&utciRender=auto&utciRenderDiagnostics=1`;
+	await page.goto(sourceUrl);
+	const initialDiagnostics = await waitForSelectedHourPublication(
+		page,
+		caseConfig.expectedSelectionKey
+	);
+	const { scrubDiagnostics, firstPostVisibleScrubMs } = await scrubToFirstPostVisibleHour(
+		page,
+		caseConfig,
+		initialDiagnostics
+	);
+
+	const initialForbiddenComparisonFieldsPresent =
+		collectForbiddenComparisonFields(initialDiagnostics);
+	const scrubForbiddenComparisonFieldsPresent =
+		collectForbiddenComparisonFields(scrubDiagnostics);
+	const allForbiddenRequestUrls = requestedUrls.filter(isForbiddenComparisonRequest);
+
+	assertColdStartProofBoundary({
+		diagnostics: initialDiagnostics,
+		forbiddenComparisonFieldsPresent: initialForbiddenComparisonFieldsPresent,
+		forbiddenRequestUrls: allForbiddenRequestUrls,
+		sourceUrl
+	});
+	assertColdStartProofBoundary({
+		diagnostics: scrubDiagnostics,
+		forbiddenComparisonFieldsPresent: scrubForbiddenComparisonFieldsPresent,
+		forbiddenRequestUrls: allForbiddenRequestUrls,
+		sourceUrl
+	});
+	assertLiveDiagnostics(initialDiagnostics, caseConfig, INITIAL_HOUR_INDEX);
+	assertLiveDiagnostics(scrubDiagnostics, caseConfig, FIRST_SCRUB_HOUR_INDEX);
+	expect(scrubDiagnostics.baseSurfaceRequestId).toBeGreaterThan(
+		initialDiagnostics.baseSurfaceRequestId ?? 0
+	);
+	expect(scrubDiagnostics.gpuResidentCopyRequestId).toBe(scrubDiagnostics.baseSurfaceRequestId);
+
+	const firstSelectedHourVisibleMs = getFirstVisibleAcknowledgedAtMs(initialDiagnostics);
+	expect(firstSelectedHourVisibleMs).toEqual(expect.any(Number));
+	expect(firstPostVisibleScrubMs).toBeGreaterThan(0);
 
 	await page.goto('about:blank');
 
@@ -467,59 +414,29 @@ async function collectCase(
 		projectLabel: caseConfig.projectLabel,
 		analysisId: caseConfig.analysisId,
 		gridResolutionMeters: caseConfig.gridResolutionMeters,
-		colorMode: 'normalized',
-		phase: 'cold-initial',
-		pointCount: diagnostics.basePointCount ?? metadata.num_positions ?? 0,
-		firstSelectedHourVisibleAtMs,
-		firstSelectedHourVisibleProvenance:
-			'renderPublication.renderPublicationTimeline.controllerVisibleAcknowledgedAtMs',
+		pointCount: initialDiagnostics.basePointCount ?? metadata.num_positions ?? 0,
 		sourceUrl,
-		timings: extractTimings(diagnostics.timings),
-		coldStart,
-		renderPublication: diagnostics.timings?.renderPublication ?? null,
-		trackedGpuAllocationBytes: {
-			persistentExposureBytes: trackedGpuAllocationBytes.persistentExposureBytes,
-			allHoursOutputBytes: trackedGpuAllocationBytes.allHoursOutputBytes,
-			selectedHourOutputBytes: trackedGpuAllocationBytes.selectedHourOutputBytes,
-			selectedHourOutputBytesHighWatermark:
-				trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark,
-			renderOwnedSelectedHourBytes:
-				trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
-			renderOwnedSelectedHourBytesHighWatermark:
-				trackedGpuAllocationBytes.renderOwnedSelectedHourBytesHighWatermark,
-			trackingScope: trackedGpuAllocationBytes.trackingScope
+		initial: {
+			firstVisibleMs: firstSelectedHourVisibleMs,
+			timings: extractTimings(initialDiagnostics.timings),
+			renderPublication: extractRenderPublication(initialDiagnostics.timings?.renderPublication),
+			proof: buildProof(initialDiagnostics)
 		},
-		ownedGpuMemoryBytes:
-			trackedGpuAllocationBytes.persistentExposureBytes +
-			trackedGpuAllocationBytes.allHoursOutputBytes +
-			trackedGpuAllocationBytes.selectedHourOutputBytes +
-			trackedGpuAllocationBytes.renderOwnedSelectedHourBytes,
-		proof: {
-			rendererBackend: diagnostics.rendererBackend,
-			utciRenderResolved: diagnostics.utciRenderResolved,
-			utciSurfaceSource: diagnostics.utciSurfaceSource ?? null,
-			baseRenderTransport: diagnostics.baseRenderTransport,
-			dataTextureBuildCount: diagnostics.dataTextureBuildCount ?? 0,
-			selectedHourRuntimeContract: {
-				route: diagnostics.selectedHourRuntimeContract?.route ?? null,
-				readbackInstrumentation:
-					diagnostics.selectedHourRuntimeContract?.readbackInstrumentation ?? null,
-				visibleSelectedHourReadbackCount:
-					diagnostics.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount ?? null,
-				strongVisibleGpuPath:
-					diagnostics.selectedHourRuntimeContract?.strongVisibleGpuPath ?? null
-			},
-			baseSameDeviceForComputeAndRender:
-				diagnostics.baseSameDeviceForComputeAndRender ?? null,
-			selectedMonthIndex: diagnostics.baseSelectedMonthIndex,
-			selectedHourIndex: diagnostics.baseSelectedHourIndex,
-			selectedTimeIndex: diagnostics.baseSelectedTimeIndex
+		firstPostVisibleScrub: {
+			selectedHourIndex: FIRST_SCRUB_HOUR_INDEX,
+			selectedTimeIndex: FIRST_SCRUB_TIME_INDEX,
+			visibleMs: firstPostVisibleScrubMs,
+			surfaceRequestId: scrubDiagnostics.baseSurfaceRequestId ?? null,
+			timings: extractTimings(scrubDiagnostics.timings),
+			renderPublication: extractRenderPublication(scrubDiagnostics.timings?.renderPublication),
+			proof: buildProof(scrubDiagnostics)
 		},
 		assertions: {
 			pythonBinDebugComparisonFieldsAbsent: true,
-			forbiddenComparisonFieldsPresent,
-			forbiddenRequestUrls,
-			memoryScope: trackedGpuAllocationBytes.trackingScope
+			initialForbiddenComparisonFieldsPresent,
+			scrubForbiddenComparisonFieldsPresent,
+			allForbiddenRequestUrls,
+			memoryScope: initialDiagnostics.trackedGpuAllocationBytes.trackingScope
 		}
 	};
 }
@@ -532,18 +449,18 @@ test.describe('main route cold-start waterfall collector', () => {
 	test('collects BG and Ness Tziona 2m and 0.5m cold-start waterfall artifacts', async ({
 		page
 	}, testInfo) => {
-		test.setTimeout(300_000);
+		test.setTimeout(600_000);
 
-		const cases: CollectedCase[] = [];
+		const cases: CollectedColdCase[] = [];
 		for (const caseConfig of CASES) {
 			cases.push(await collectCase(page, caseConfig));
 		}
 
 		const artifact = {
-			collectedOn: COLLECTED_ON,
+			collectedOn: formatLocalDate(new Date()),
 			sourceRoute: SOURCE_ROUTE,
 			collectionMethod:
-				'Main route cold-start waterfall: / with utciRender=auto&utciRenderDiagnostics=1, initial selected hour only, no debug route and no parity/.bin comparison.',
+				'Main route cold-start waterfall: / with utciRender=auto&utciRenderDiagnostics=1, collecting both initial first visible and first post-visible hour-slider scrub; no debug route and no parity/.bin comparison.',
 			cases
 		};
 

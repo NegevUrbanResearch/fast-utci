@@ -486,15 +486,19 @@
 		);
 		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
 		const sceneSyncCompletedAtMs = performance.now();
-			const currentPublicationPhase =
-				selectedHourRenderContext?.publicationPhase ??
-				(activeUtciLayoutReuseState != null ? 'scrub' : 'initial');
-			renderTimings.renderPublication = createRenderPublicationDiagnostics({
+		const positionVertexCount = mesh.geometry.getAttribute('position')?.count ?? null;
+		const indexCount = mesh.geometry.index?.count ?? null;
+		const currentPublicationPhase =
+			selectedHourRenderContext?.publicationPhase ??
+			(activeUtciLayoutReuseState != null ? 'scrub' : 'initial');
+		renderTimings.renderPublication = createRenderPublicationDiagnostics({
 			renderPublicationPath: 'compute-buffer-selected-hour',
 			renderPublicationPhase: currentPublicationPhase,
 			renderPublicationMeshAction: meshAction,
 			renderPublicationPointCount: layout.numPositions,
-			renderPublicationVertexCount: layout.width * layout.height * 6,
+			renderPublicationVertexCount: positionVertexCount ?? undefined,
+			renderPublicationIndexCount: indexCount ?? undefined,
+			renderPublicationDrawIndexCount: indexCount ?? positionVertexCount ?? undefined,
 			renderPublicationGridWidth: layout.width,
 			renderPublicationGridHeight: layout.height,
 			renderPublicationGridSize: layout.gridSize,
@@ -502,7 +506,7 @@
 			renderPublicationTargetByteLength: lastRenderTargetByteLength.value,
 			renderPublicationRenderOwnedBytes:
 				mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
-				renderPublicationTimeline: {
+			renderPublicationTimeline: {
 					scenePendingSurfaceObservedAtMs,
 					sceneReactiveBlockEnteredAtMs:
 						reactiveTiming?.sceneReactiveBlockEnteredAtMs,
