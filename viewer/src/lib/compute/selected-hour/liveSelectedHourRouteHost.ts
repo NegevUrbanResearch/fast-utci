@@ -26,6 +26,10 @@ import {
 import type { UtciRenderMode } from '$lib/utciRenderMode';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
 import { resolveProjectId } from '$lib/utils/analysisPaths';
+import {
+	areExposureSchedulingOptionsEqual,
+	type ExposureSchedulingOptions
+} from '$lib/compute/gpu/exposureScheduling';
 
 export type LiveSelectedHourRouteInputs = {
 	enabled: boolean;
@@ -39,6 +43,7 @@ export type LiveSelectedHourRouteInputs = {
 		selectionKey: string;
 	};
 	gridResolutionMeters?: number;
+	exposureScheduling?: ExposureSchedulingOptions;
 	colorMode: 'normalized' | 'discrete';
 	utciRenderMode: UtciRenderMode;
 	rendererBackend: 'unknown' | 'webgpu';
@@ -239,12 +244,24 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 	};
 }
 
+function buildExposureSchedulingIdentity(
+	exposureScheduling: ExposureSchedulingOptions | undefined
+): string {
+	if (exposureScheduling?.mode !== 'chunked') {
+		return 'exposure:single-submit';
+	}
+	return `exposure:chunked:${exposureScheduling.maxWorkgroupsPerSlice}:${
+		exposureScheduling.yieldBetweenSlices !== false ? 'yield' : 'no-yield'
+	}`;
+}
+
 function buildControllerIdentity(params: {
 	analysisId: string;
 	analysis: Analysis;
 	model: Group;
 	preferredDevice?: GPUDevice;
 	gridResolutionMeters?: number;
+	exposureScheduling?: ExposureSchedulingOptions;
 }): string {
 	let analysisIdentity = objectIdentityIds.get(params.analysis);
 	if (analysisIdentity === undefined) {
@@ -274,6 +291,7 @@ function buildControllerIdentity(params: {
 		`model:${modelIdentity}`,
 		`device:${deviceIdentity ?? 'none'}`,
 		`grid:${params.gridResolutionMeters ?? 'base'}`,
+		buildExposureSchedulingIdentity(params.exposureScheduling),
 		params.preferredDevice ? 'renderer' : 'standalone'
 	].join('|');
 }
@@ -353,6 +371,7 @@ function buildSelectionPlan(params: {
 	selectionKey: string;
 	colorMode: LiveSelectedHourRouteInputs['colorMode'];
 	gridResolutionMeters?: number;
+	exposureScheduling?: ExposureSchedulingOptions;
 }): SelectionPlan {
 	const preferGpuResident =
 		params.rendererBackend === 'webgpu' && params.utciSurfaceBackend === 'gpuNative';
@@ -362,7 +381,8 @@ function buildSelectionPlan(params: {
 		analysis: params.analysis,
 		model: params.model,
 		preferredDevice,
-		gridResolutionMeters: params.gridResolutionMeters
+		gridResolutionMeters: params.gridResolutionMeters,
+		exposureScheduling: params.exposureScheduling
 	});
 	return {
 		preferGpuResident,
@@ -678,7 +698,8 @@ export function createLiveSelectedHourRouteHost(
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
 				colorMode: currentInputs.colorMode,
-				gridResolutionMeters: currentInputs.gridResolutionMeters
+				gridResolutionMeters: currentInputs.gridResolutionMeters,
+				exposureScheduling: currentInputs.exposureScheduling
 			});
 			baseControllerIsCurrent = baseControllerIdentity === selectionPlan.controllerIdentity;
 			basePublishedSurfaceIsCurrent =
@@ -709,7 +730,8 @@ export function createLiveSelectedHourRouteHost(
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
 				colorMode: currentInputs.colorMode,
-				gridResolutionMeters: currentInputs.gridResolutionMeters
+				gridResolutionMeters: currentInputs.gridResolutionMeters,
+				exposureScheduling: currentInputs.exposureScheduling
 			});
 			comparisonControllerIsCurrent =
 				comparisonControllerIdentity === selectionPlan.controllerIdentity;
@@ -1034,6 +1056,7 @@ export function createLiveSelectedHourRouteHost(
 		preferredDevice?: GPUDevice;
 		fallbackProjectId?: string | null;
 		gridResolutionMeters?: number;
+		exposureScheduling?: ExposureSchedulingOptions;
 	}): LiveSelectedHourSessionConfig {
 		return {
 			analysisId: params.analysisId,
@@ -1044,7 +1067,8 @@ export function createLiveSelectedHourRouteHost(
 				fallbackProjectId: params.fallbackProjectId
 			}),
 			preferredDevice: params.preferredDevice,
-			gridResolution: params.gridResolutionMeters
+			gridResolution: params.gridResolutionMeters,
+			exposureScheduling: params.exposureScheduling
 		};
 	}
 
@@ -1072,7 +1096,8 @@ export function createLiveSelectedHourRouteHost(
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
 			colorMode: inputs.colorMode,
-			gridResolutionMeters: inputs.gridResolutionMeters
+			gridResolutionMeters: inputs.gridResolutionMeters,
+			exposureScheduling: inputs.exposureScheduling
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
 		const hadPriorBaseRouteSurface =
@@ -1100,7 +1125,8 @@ export function createLiveSelectedHourRouteHost(
 			model: inputs.baseModel,
 			preferredDevice: selectionPlan.preferredDevice,
 			fallbackProjectId: resolveProjectId(inputs.analysisId),
-			gridResolutionMeters: inputs.gridResolutionMeters
+			gridResolutionMeters: inputs.gridResolutionMeters,
+			exposureScheduling: inputs.exposureScheduling
 		});
 		baseSelectionTriggerKey = selectionTriggerKey;
 		baseRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({
@@ -1184,7 +1210,8 @@ export function createLiveSelectedHourRouteHost(
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
 			colorMode: inputs.colorMode,
-			gridResolutionMeters: inputs.gridResolutionMeters
+			gridResolutionMeters: inputs.gridResolutionMeters,
+			exposureScheduling: inputs.exposureScheduling
 		});
 		const controllerIdentity = selectionPlan.controllerIdentity;
 		const hadPriorComparisonRouteSurface =
@@ -1215,7 +1242,8 @@ export function createLiveSelectedHourRouteHost(
 			model: comparisonSourceContext.model,
 			preferredDevice: selectionPlan.preferredDevice,
 			fallbackProjectId: resolveProjectId(comparisonSourceContext.analysisId),
-			gridResolutionMeters: inputs.gridResolutionMeters
+			gridResolutionMeters: inputs.gridResolutionMeters,
+			exposureScheduling: inputs.exposureScheduling
 		});
 		comparisonSelectionTriggerKey = selectionTriggerKey;
 		comparisonRequestedRenderContext = createLiveSelectedHourPublishedRenderContext({
@@ -1316,7 +1344,17 @@ export function createLiveSelectedHourRouteHost(
 				return;
 			}
 
-			currentInputs = inputs;
+			currentInputs =
+				currentInputs &&
+				areExposureSchedulingOptionsEqual(
+					currentInputs.exposureScheduling,
+					inputs.exposureScheduling
+				)
+					? {
+							...inputs,
+							exposureScheduling: currentInputs.exposureScheduling
+						}
+					: inputs;
 			publishState();
 			queueReconcile();
 		},

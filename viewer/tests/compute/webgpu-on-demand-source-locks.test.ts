@@ -56,7 +56,10 @@ describe('WebGPU on-demand source guards', () => {
 		'\n\n\tasync uploadStaticData'
 	);
 	const uploadStaticDataSource = getSection('async uploadStaticData(', 'private createBvhBindGroup(');
-	const runAllMethodSource = getSection('async runAll', '\n\n\tasync runExposurePrecompute');
+	const runAllMethodSource = getSection(
+		'async runAll',
+		'\n\n\tprivate async runChunkedExposurePrecompute'
+	);
 	const exposureMethodSource = getSection('async runExposurePrecompute', '\n\n\tasync runUtciForTimeIndex');
 	const onDemandMethodSource = getSection('async runUtciForTimeIndex', '\n\n\tasync readOnDemandUtciForDebug');
 	const readUtcisSliceSource = getSection('async readUtcisSlice', '\n\n\tasync readUtciBulk');
@@ -105,6 +108,33 @@ describe('WebGPU on-demand source guards', () => {
 		expect(exposureHelperSource.includes('this.longErfBuffer')).toBe(false);
 		expect(exposureHelperSource.includes('this.shortDmrtBuffer')).toBe(false);
 		expect(exposureHelperSource.includes('this.longDmrtBuffer')).toBe(false);
+	});
+
+	it('keeps default exposure precompute separated from chunked scheduler work', () => {
+		expect(source.includes('private async runChunkedExposurePrecompute')).toBe(true);
+		expect(exposureMethodSource).toMatch(/exposureScheduling\.mode\s*===\s*'chunked'/);
+		expect(exposureMethodSource.includes('await this.runChunkedExposurePrecompute')).toBe(true);
+		expect(exposureMethodSource.includes('await this.encodeExposurePasses')).toBe(true);
+	});
+
+	it('chunked exposure keeps bounded scheduling and diagnostics helpers wired', () => {
+		const chunkedSource = getSection(
+			'private async runChunkedExposurePrecompute',
+			'\n\n\tasync runExposurePrecompute'
+		);
+		expect(chunkedSource.includes('buildExposurePointSlices')).toBe(true);
+		expect(chunkedSource.includes('assertExposurePrecomputeActive')).toBe(true);
+		expect(source.includes('function yieldToBrowserFrame')).toBe(true);
+		expect(source.includes('private publishExposurePrecomputeDiagnostics')).toBe(true);
+		for (const schedulerField of [
+			'exposureSchedulerSliceCount',
+			'exposurePointDispatchChunkCount',
+			'exposureSchedulerQueueWaitMaxMs',
+			'exposureSchedulerYieldCount',
+			'exposureSchedulerSubmitCount'
+		]) {
+			expect(source.includes(schedulerField)).toBe(true);
+		}
 	});
 
 	it('invalidates prior exposure-run state when new static data is uploaded', () => {

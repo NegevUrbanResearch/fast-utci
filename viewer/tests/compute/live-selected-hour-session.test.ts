@@ -183,6 +183,41 @@ describe('selected-hour live session', () => {
 		expect(result.diagnostics.timings.firstSelectedHourReadyMs ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
+	it('passes exposure scheduler options and session abort signal to exposure precompute', async () => {
+		const abortController = new AbortController();
+		const exposureScheduling = {
+			mode: 'chunked' as const,
+			maxWorkgroupsPerSlice: 8192,
+			yieldBetweenSlices: true
+		};
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: abortController.signal,
+			preferredDevice: mockState.rendererDevice,
+			exposureScheduling
+		});
+
+		await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[1].runExposurePrecompute).toHaveBeenCalledWith({
+			numPoints: 2,
+			numHours: 1,
+			numMonths: 12,
+			exposureScheduling,
+			signal: abortController.signal
+		});
+	});
+
 	it('attaches live selected-hour values for same-device GPU-resident range and tooltip data', async () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',

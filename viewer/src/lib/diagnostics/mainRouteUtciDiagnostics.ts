@@ -25,6 +25,7 @@ import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
 import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
 import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
+import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 
 type MainRouteUtciDiagnosticsTimings = Omit<OnDemandTimings, 'renderPublication'> & {
 	renderPublication?: SelectedHourRenderPublicationDiagnostics;
@@ -60,6 +61,7 @@ export type MainRouteUtciDiagnosticsPayload = {
 	baseColorMode?: ColorMode;
 	basePointCount?: number | null;
 	baseMetadataGridSize?: number | null;
+	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	comparisonSurfaceRequestId?: number;
@@ -114,6 +116,7 @@ export type MainRouteUtciDiagnosticsInputs = {
 	baseColorMode?: ColorMode;
 	basePointCount?: number | null;
 	baseMetadataGridSize?: number | null;
+	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	comparisonSurfaceRequestId?: number;
@@ -232,6 +235,9 @@ export function buildMainRouteUtciDiagnostics(
 		baseColorMode: inputs.baseColorMode,
 		basePointCount: inputs.basePointCount,
 		baseMetadataGridSize: inputs.baseMetadataGridSize,
+		exposureScheduling: inputs.exposureScheduling
+			? { ...inputs.exposureScheduling }
+			: undefined,
 		baseRenderContextTimeIndex: inputs.baseRenderContextTimeIndex,
 		baseAcceptedUtciRange: inputs.baseAcceptedUtciRange,
 		comparisonSurfaceRequestId: inputs.comparisonSurfaceRequestId,

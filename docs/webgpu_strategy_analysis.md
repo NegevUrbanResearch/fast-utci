@@ -1,6 +1,6 @@
 # WebGPU Strategy Analysis
 
-Updated: 2026-05-15
+Updated: 2026-05-31
 
 > **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
 
@@ -120,6 +120,22 @@ The UTCI selected-hour dispatch is not the main issue. At Ness Tziona 0.5m it st
 - queue drain and first-use storage setup
 
 The next main-route optimization should therefore be diagnostics-first render publication work. Do not start by changing UTCI equations, color ramps, or `.bin`/debug comparison surfaces.
+
+## 2026-05-31 Cooperative Scheduler And Manual Scrub Observations
+
+The cooperative exposure scheduler evidence lives in [docs/performance/main-route-exposure-scheduler.md](performance/main-route-exposure-scheduler.md), backed by:
+
+- [data/performance-results/main-route-visual-freeze-map.json](../data/performance-results/main-route-visual-freeze-map.json)
+- [data/performance-results/main-route-cold-start-waterfall.json](../data/performance-results/main-route-cold-start-waterfall.json)
+
+Current conclusion: keep chunked scheduling query-gated. The `2048` setting reduced the largest exposure scheduler queue wait to `381.3 ms`, but the top rAF gap stayed at `1569.1 ms`. The remaining top visual freeze overlaps initial render publication / scene sync for the dense Ness Tziona 0.5m surface, so smaller exposure slices alone are not the default-ready answer.
+
+Manual checking after the scheduler pass surfaced two open interaction observations that need a targeted diagnostic pass before any fix:
+
+1. On Ness Tziona 0.5m, month changes are inconsistent in both normal and chunked modes. The same route can feel like about `90 ms`, `200 ms`, or multi-second publication. This should not be attributed to the exposure scheduler until a repeated month-change artifact splits `oneHourDispatchMs`, `firstSelectedHourVisibleMs`, `renderUpdateMs`, selected-hour session timing, and render-publication timeline fields for several consecutive month changes.
+2. In chunked mode, arriving at Ness Tziona 0.5m after first loading Ben-Gurion can show around `200 ms` hour scrub in the Performance panel, while directly loading/reloading into Ness Tziona 0.5m can show around `70 ms`. The Performance panel's "Total calculation time" is `timings.firstSelectedHourVisibleMs`, not pure GPU compute time, so this difference may reflect warm state, route/session/cache history, selected-hour range/color-mode state, or render-publication reuse state rather than a UTCI compute regression.
+
+These observations may be a bug, but they are not yet proven to be one. The next proof should compare direct-load NZ 0.5m, BG -> NZ 0.5m, normal, and `utciExposureSchedule=chunked&utciExposureMaxWorkgroupsPerSlice=2048` in one bounded collector. The collector should record repeated hour and month scrubs, plus the existing GPU-native proof boundary (`webgpu`, `compute-buffer-selected-hour`, same device, no visible selected-hour readback). If the same selection alternates between fast and multi-second runs while proof and cache state look identical, treat it as a scheduler/session invalidation bug. If the slow cases correlate with layout rebuild, cold render-owned storage setup, range scan, or selected-hour CPU materialization, keep it classified as a render-publication/session-state optimization target.
 
 ### Future Analysis Boundary
 

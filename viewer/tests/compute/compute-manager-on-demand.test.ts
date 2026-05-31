@@ -24,7 +24,13 @@ describe('ComputeManager on-demand wrappers', () => {
 		const params: ExposurePrecomputeParams = {
 			numPoints: 8,
 			numHours: 24,
-			numMonths: 1
+			numMonths: 1,
+			signal: new AbortController().signal,
+			exposureScheduling: {
+				mode: 'chunked' as const,
+				maxWorkgroupsPerSlice: 8192,
+				yieldBetweenSlices: true
+			}
 		};
 		const runExposurePrecompute = vi.fn().mockResolvedValue(undefined);
 		const pipeline: UTCIComputePipeline = {

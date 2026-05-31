@@ -1,6 +1,7 @@
 import type { OnDemandOutputFormat } from '$lib/compute/on-demand/onDemandOutputFormat';
 import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
+import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 
 export interface PipelineConfig {
 	numPoints: number;
@@ -134,6 +135,8 @@ export interface ExposurePrecomputeParams {
 	numPoints: number;
 	numHours: number;
 	numMonths: number;
+	exposureScheduling?: ExposureSchedulingOptions;
+	signal?: AbortSignal;
 }
 
 export interface RunUtciForTimeIndexParams {

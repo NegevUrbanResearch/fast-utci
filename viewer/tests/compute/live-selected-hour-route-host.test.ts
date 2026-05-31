@@ -643,6 +643,135 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(host.getState().baseRenderContext?.publicationPhase).toBe('scrub');
 	});
 
+	it('threads exposure scheduler options into base live session identity and config', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const baseModel = {} as Group;
+		const firstScheduling = {
+			mode: 'chunked' as const,
+			maxWorkgroupsPerSlice: 8192,
+			yieldBetweenSlices: true
+		};
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				exposureScheduling: firstScheduling
+			})
+		);
+		await host.flush();
+
+		const firstRequest = factory.records[0].requests[0];
+		expect(firstRequest?.sessionConfig.exposureScheduling).toEqual(firstScheduling);
+		expect(firstRequest?.sessionKey).toContain('exposure:chunked:8192:yield');
+
+		const replacementScheduling = {
+			mode: 'chunked' as const,
+			maxWorkgroupsPerSlice: 4096,
+			yieldBetweenSlices: false
+		};
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				exposureScheduling: replacementScheduling
+			})
+		);
+		await host.flush();
+
+		const replacementRecord = factory.records.find((record) =>
+			record.requests[0]?.sessionKey.includes('exposure:chunked:4096:no-yield')
+		);
+		const replacementRequest = replacementRecord?.requests[0];
+		expect(factory.records[0].dispose).toHaveBeenCalledTimes(1);
+		expect(replacementRequest?.sessionConfig.exposureScheduling).toEqual(
+			replacementScheduling
+		);
+		expect(replacementRequest?.sessionKey).toContain('exposure:chunked:4096:no-yield');
+		expect(replacementRequest?.sessionKey).not.toBe(firstRequest?.sessionKey);
+	});
+
+	it('ignores dormant single-submit scheduler fields in base live session identity', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const baseModel = {} as Group;
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				exposureScheduling: {
+					mode: 'single-submit',
+					maxWorkgroupsPerSlice: 123,
+					yieldBetweenSlices: false
+				}
+			})
+		);
+		await host.flush();
+
+		const firstRequest = factory.records[0].requests[0];
+		expect(firstRequest?.sessionKey).toContain('|exposure:single-submit|');
+		expect(firstRequest?.sessionKey).not.toContain('123');
+		expect(firstRequest?.sessionKey).not.toContain('no-yield');
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				baseAnalysis,
+				baseModel,
+				exposureScheduling: {
+					mode: 'single-submit',
+					maxWorkgroupsPerSlice: 4096,
+					yieldBetweenSlices: true
+				}
+			})
+		);
+		await host.flush();
+
+		expect(factory.records).toHaveLength(2);
+		expect(factory.records[0].dispose).not.toHaveBeenCalled();
+		expect(factory.records[0].requests).toHaveLength(1);
+		expect(factory.records[0].requests[0]?.sessionKey).toBe(firstRequest?.sessionKey);
+	});
+
+	it('threads exposure scheduler options into comparison live session identity and config', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));
+		const exposureScheduling = {
+			mode: 'chunked' as const,
+			maxWorkgroupsPerSlice: 8192,
+			yieldBetweenSlices: true
+		};
+
+		host.setRouteInputs(
+			makeComparisonInputs({
+				exposureScheduling
+			})
+		);
+		await host.flush();
+
+		const comparisonRequest = factory.records[1].requests[0];
+		expect(comparisonRequest?.sessionConfig.exposureScheduling).toEqual(
+			exposureScheduling
+		);
+		expect(comparisonRequest?.sessionKey).toContain('exposure:chunked:8192:yield');
+		expect(host.getState().comparisonSceneSurfaceIdentity?.controllerIdentity).toBe(
+			comparisonRequest?.sessionKey
+		);
+	});
+
 	it('forwards visible-readback instrumentation to route state', async () => {
 		const factory = createControllerFactory();
 		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));

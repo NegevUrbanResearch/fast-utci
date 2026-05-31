@@ -29,6 +29,15 @@ export interface OnDemandTimings {
 	exposureSkyDispatchCount?: number;
 	exposureSolarRayBudget?: number;
 	exposureSkyRayBudget?: number;
+	exposureSchedulerMode?: 'single-submit' | 'chunked';
+	exposureSchedulerSliceCount?: number;
+	exposurePointDispatchChunkCount?: number;
+	exposureSchedulerMaxWorkgroupsPerSlice?: number;
+	exposureSchedulerQueueWaitTotalMs?: number;
+	exposureSchedulerQueueWaitMaxMs?: number;
+	exposureSchedulerQueueWaitMinMs?: number;
+	exposureSchedulerYieldCount?: number;
+	exposureSchedulerSubmitCount?: number;
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
 	renderSceneSyncStartDelayMs?: number;

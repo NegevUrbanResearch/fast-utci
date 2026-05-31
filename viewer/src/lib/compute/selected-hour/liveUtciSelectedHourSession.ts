@@ -7,6 +7,7 @@ import {
 } from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { OnDemandUtciOutput, SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 import { createWebgpuUtciPipeline } from '$lib/compute/gpu/webgpuUtciPipeline';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
@@ -113,6 +114,7 @@ type PreparedSessionState = {
 	numMonths: number;
 	deviceSource: 'renderer' | 'standalone';
 	signal: AbortSignal;
+	exposureScheduling?: ExposureSchedulingOptions;
 	exposureReady: boolean;
 	exposurePrecomputePromise: Promise<void> | null;
 	requestSequence: number;
@@ -310,7 +312,9 @@ async function ensureExposurePrecompute(state: PreparedSessionState): Promise<vo
 			.runExposurePrecompute({
 				numPoints: state.numPoints,
 				numHours: state.numHours,
-				numMonths: state.numMonths
+				numMonths: state.numMonths,
+				exposureScheduling: state.exposureScheduling,
+				signal: state.signal
 			})
 			.then(() => {
 				state.exposureReady = true;
@@ -710,6 +714,7 @@ export async function prepareSelectedHourLiveSession(params: {
 	signal: AbortSignal;
 	preferredDevice?: GPUDevice;
 	gridResolution?: number;
+	exposureScheduling?: ExposureSchedulingOptions;
 	numMonths?: number;
 	startMonth?: number;
 	zHeight?: number;
@@ -722,6 +727,7 @@ export async function prepareSelectedHourLiveSession(params: {
 		signal,
 		preferredDevice,
 		gridResolution,
+		exposureScheduling,
 		numMonths = 12,
 		startMonth = 1,
 		zHeight = base.metadata.bounds?.z ?? 0.9
@@ -899,6 +905,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			numMonths,
 			deviceSource: preferredDevice ? 'renderer' : 'standalone',
 			signal,
+			exposureScheduling,
 			exposureReady: false,
 			exposurePrecomputePromise: null,
 			requestSequence: 0,

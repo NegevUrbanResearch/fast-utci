@@ -18,6 +18,7 @@ type AnalysisCase = {
 	metadataPath: string;
 	expectedSelectionKey: string;
 	gridResolutionMeters: 2 | 0.5;
+	queryParams?: Record<string, string>;
 };
 
 type AnalysisMetadata = {
@@ -43,9 +44,11 @@ type ProofSnapshot = {
 	selectedTimeIndex: number;
 };
 
+type CollectedTimings = Record<string, number | 'single-submit' | 'chunked' | null>;
+
 type CollectedPhase = {
 	firstVisibleMs: number | null;
-	timings: Record<string, number | null>;
+	timings: CollectedTimings;
 	renderPublication: Record<string, unknown> | null;
 	proof: ProofSnapshot;
 };
@@ -55,12 +58,13 @@ type CollectedScrubPhase = {
 	selectedTimeIndex: typeof FIRST_SCRUB_TIME_INDEX;
 	visibleMs: number | null;
 	surfaceRequestId: number | null;
-	timings: Record<string, number | null>;
+	timings: CollectedTimings;
 	renderPublication: Record<string, unknown> | null;
 	proof: ProofSnapshot;
 };
 
 type CollectedColdCase = {
+	caseId: string;
 	projectLabel: string;
 	analysisId: string;
 	gridResolutionMeters: 2 | 0.5;
@@ -107,6 +111,39 @@ const CASES: AnalysisCase[] = [
 		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
 		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
 		gridResolutionMeters: 0.5
+	},
+	{
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '8192'
+		}
+	},
+	{
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '4096'
+		}
+	},
+	{
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '2048'
+		}
 	}
 ];
 
@@ -208,6 +245,16 @@ function numberOrNull(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function exposureSchedulerModeOrNull(value: unknown): 'single-submit' | 'chunked' | null {
+	return value === 'single-submit' || value === 'chunked' ? value : null;
+}
+
+function schedulerCaseIdSuffix(caseConfig: AnalysisCase): string {
+	const schedule = caseConfig.queryParams?.utciExposureSchedule ?? 'single-submit';
+	const maxWorkgroups = caseConfig.queryParams?.utciExposureMaxWorkgroupsPerSlice;
+	return schedule === 'chunked' && maxWorkgroups ? `${schedule}-${maxWorkgroups}` : schedule;
+}
+
 function extractTimings(timings: Record<string, unknown> | undefined) {
 	return {
 		payloadPrepareMs: numberOrNull(timings?.payloadPrepareMs),
@@ -223,6 +270,25 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 		exposureTotalTimeSteps: numberOrNull(timings?.exposureTotalTimeSteps),
 		exposureDaylightTimeSteps: numberOrNull(timings?.exposureDaylightTimeSteps),
 		exposurePointChunks: numberOrNull(timings?.exposurePointChunks),
+		exposureSchedulerMode: exposureSchedulerModeOrNull(timings?.exposureSchedulerMode),
+		exposureSchedulerSliceCount: numberOrNull(timings?.exposureSchedulerSliceCount),
+		exposurePointDispatchChunkCount: numberOrNull(
+			timings?.exposurePointDispatchChunkCount
+		),
+		exposureSchedulerMaxWorkgroupsPerSlice: numberOrNull(
+			timings?.exposureSchedulerMaxWorkgroupsPerSlice
+		),
+		exposureSchedulerQueueWaitTotalMs: numberOrNull(
+			timings?.exposureSchedulerQueueWaitTotalMs
+		),
+		exposureSchedulerQueueWaitMaxMs: numberOrNull(
+			timings?.exposureSchedulerQueueWaitMaxMs
+		),
+		exposureSchedulerQueueWaitMinMs: numberOrNull(
+			timings?.exposureSchedulerQueueWaitMinMs
+		),
+		exposureSchedulerYieldCount: numberOrNull(timings?.exposureSchedulerYieldCount),
+		exposureSchedulerSubmitCount: numberOrNull(timings?.exposureSchedulerSubmitCount),
 		exposureSolarDispatchCount: numberOrNull(timings?.exposureSolarDispatchCount),
 		exposureSkyDispatchCount: numberOrNull(timings?.exposureSkyDispatchCount),
 		exposureSolarRayBudget: numberOrNull(timings?.exposureSolarRayBudget),
@@ -359,15 +425,30 @@ async function collectCase(
 	page: Page,
 	caseConfig: AnalysisCase
 ): Promise<CollectedColdCase> {
+	const caseId = [
+		caseConfig.projectLabel
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-|-$/g, ''),
+		`${caseConfig.gridResolutionMeters}m`.replace('.', '_'),
+		schedulerCaseIdSuffix(caseConfig)
+	].join('-');
 	const metadata = readMetadata(caseConfig);
 	const requestedUrls: string[] = [];
 	page.on('request', (request) => requestedUrls.push(request.url()));
 
-	const gridQuery =
-		caseConfig.gridResolutionMeters === 0.5
-			? `&gridResolution=${caseConfig.gridResolutionMeters}`
-			: '';
-	const sourceUrl = `/?analysis=${encodeURIComponent(caseConfig.analysisId)}${gridQuery}&utciRender=auto&utciRenderDiagnostics=1`;
+	const params = new URLSearchParams({
+		analysis: caseConfig.analysisId,
+		utciRender: 'auto',
+		utciRenderDiagnostics: '1'
+	});
+	if (caseConfig.gridResolutionMeters === 0.5) {
+		params.set('gridResolution', String(caseConfig.gridResolutionMeters));
+	}
+	for (const [key, value] of Object.entries(caseConfig.queryParams ?? {})) {
+		params.set(key, value);
+	}
+	const sourceUrl = `/?${params.toString()}`;
 	await page.goto(sourceUrl);
 	const initialDiagnostics = await waitForSelectedHourPublication(
 		page,
@@ -411,6 +492,7 @@ async function collectCase(
 	await page.goto('about:blank');
 
 	return {
+		caseId,
 		projectLabel: caseConfig.projectLabel,
 		analysisId: caseConfig.analysisId,
 		gridResolutionMeters: caseConfig.gridResolutionMeters,

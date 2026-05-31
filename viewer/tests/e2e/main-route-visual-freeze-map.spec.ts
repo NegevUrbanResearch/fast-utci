@@ -15,6 +15,7 @@ type AnalysisCase = {
 	analysisId: string;
 	expectedSelectionKey: string;
 	gridResolutionMeters: 2 | 0.5;
+	queryParams?: Record<string, string>;
 };
 
 type DiagnosticsSnapshot = Record<string, any>;
@@ -89,6 +90,39 @@ const CASES: AnalysisCase[] = [
 		gridResolutionMeters: 0.5
 	},
 	{
+		caseId: 'ness-tziona-0_5m-chunked-8192',
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '8192'
+		}
+	},
+	{
+		caseId: 'ness-tziona-0_5m-chunked-4096',
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '4096'
+		}
+	},
+	{
+		caseId: 'ness-tziona-0_5m-chunked-2048',
+		projectLabel: 'Ness-Tziona',
+		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		gridResolutionMeters: 0.5,
+		queryParams: {
+			utciExposureSchedule: 'chunked',
+			utciExposureMaxWorkgroupsPerSlice: '2048'
+		}
+	},
+	{
 		caseId: 'ben-gurion-0_5m',
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',
@@ -106,6 +140,10 @@ const CASES: AnalysisCase[] = [
 
 function numberOrNull(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function exposureSchedulerModeOrNull(value: unknown): 'single-submit' | 'chunked' | null {
+	return value === 'single-submit' || value === 'chunked' ? value : null;
 }
 
 function topByDuration<T extends Record<string, unknown>>(items: T[], limit: number): T[] {
@@ -153,6 +191,26 @@ function summarizeDiagnostics(value: DiagnosticsSnapshot | null): Record<string,
 			exposureTotalTimeSteps: numberOrNull(value.timings?.exposureTotalTimeSteps),
 			exposureDaylightTimeSteps: numberOrNull(value.timings?.exposureDaylightTimeSteps),
 			exposurePointChunks: numberOrNull(value.timings?.exposurePointChunks),
+			exposureSchedulerMode: exposureSchedulerModeOrNull(value.timings?.exposureSchedulerMode),
+			exposureSchedulerSliceCount: numberOrNull(value.timings?.exposureSchedulerSliceCount),
+			exposurePointDispatchChunkCount: numberOrNull(
+				value.timings?.exposurePointDispatchChunkCount
+			),
+			exposureSchedulerMaxWorkgroupsPerSlice: numberOrNull(
+				value.timings?.exposureSchedulerMaxWorkgroupsPerSlice
+			),
+			exposureSchedulerQueueWaitTotalMs: numberOrNull(
+				value.timings?.exposureSchedulerQueueWaitTotalMs
+			),
+			exposureSchedulerQueueWaitMaxMs: numberOrNull(
+				value.timings?.exposureSchedulerQueueWaitMaxMs
+			),
+			exposureSchedulerYieldCount: numberOrNull(
+				value.timings?.exposureSchedulerYieldCount
+			),
+			exposureSchedulerSubmitCount: numberOrNull(
+				value.timings?.exposureSchedulerSubmitCount
+			),
 			exposureSolarDispatchCount: numberOrNull(value.timings?.exposureSolarDispatchCount),
 			exposureSkyDispatchCount: numberOrNull(value.timings?.exposureSkyDispatchCount),
 			exposureSolarRayBudget: numberOrNull(value.timings?.exposureSolarRayBudget),
@@ -536,6 +594,9 @@ function buildSourceUrl(caseConfig: AnalysisCase) {
 		utciRender: 'auto',
 		utciRenderDiagnostics: '1'
 	});
+	for (const [key, value] of Object.entries(caseConfig.queryParams ?? {})) {
+		params.set(key, value);
+	}
 	return `${SOURCE_ROUTE}?${params.toString()}`;
 }
 

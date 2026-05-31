@@ -21,6 +21,7 @@ import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
 import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
 import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
+import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 
 export type MainRouteWindow = Window & {
 	__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
@@ -54,6 +55,7 @@ export type MainRouteLiveSelectedHourDiagnosticsParams = {
 	baseColorMode?: ColorMode;
 	basePointCount?: number | null;
 	baseMetadataGridSize?: number | null;
+	exposureScheduling?: ExposureSchedulingOptions;
 	baseSceneRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
 	tooltipInteraction: TooltipInteractionDiagnostics & { hoverSampleCount: number };
@@ -283,6 +285,7 @@ export function buildMainRouteLiveSelectedHourDiagnosticsInputs(
 		baseColorMode: params.baseColorMode,
 		basePointCount: params.basePointCount,
 		baseMetadataGridSize: params.baseMetadataGridSize,
+		exposureScheduling: params.exposureScheduling,
 		baseRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 		baseAcceptedUtciRange: params.baseAcceptedUtciRange,
 		comparisonSurfaceRequestId:

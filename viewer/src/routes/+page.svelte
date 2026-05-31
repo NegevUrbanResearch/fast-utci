@@ -69,6 +69,7 @@
 		resolveMainRouteUtciSurfaceBackend,
 		type UtciRendererBackend,
 	} from "$lib/utciRenderMode";
+	import { parseExposureSchedulingFromSearchParams } from "$lib/compute/gpu/exposureScheduling";
 	import { buildMainRoutePerformanceSnapshot } from "$lib/performance/mainRoutePerformanceTelemetry";
 	import { getMainRouteOverlayGating } from "./mainRouteOverlayGating";
 	import {
@@ -144,6 +145,9 @@
 	});
 	$: utciRenderDiagnosticsEnabled =
 		$page.url.searchParams.get("utciRenderDiagnostics") === "1";
+	$: exposureScheduling = parseExposureSchedulingFromSearchParams(
+		$page.url.searchParams,
+	);
 
 	type MainRouteUtciSurfaceDiagnostics = LiveSelectedHourControllerSurfaceDiagnostics;
 	type MainRouteDiagnosticsPreservedBaseSceneSurface = {
@@ -388,6 +392,7 @@
 			selectionKey: [analysisId, selectedMonthIndex, selectedHourIndex].join("|"),
 		},
 		gridResolutionMeters: selectedGridResolutionMeters,
+		exposureScheduling,
 		colorMode: $viewerStore.colorMode,
 		utciRenderMode,
 		rendererBackend,
@@ -579,6 +584,7 @@
 			baseColorMode: $viewerStore.colorMode,
 			basePointCount: liveRouteState.base.analysis?.metadata.num_positions ?? null,
 			baseMetadataGridSize: liveRouteState.base.analysis?.metadata.grid_size ?? null,
+			exposureScheduling,
 			baseSceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
 			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
 			tooltipInteraction: tooltipInteractionDiagnostics,
