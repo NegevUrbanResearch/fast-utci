@@ -140,6 +140,17 @@ export type SelectedHourRenderPublicationTimeline = {
 	sessionDebugReadbackCompletedAtMs?: number;
 	sessionSelectedHourRangeScanStartedAtMs?: number;
 	sessionSelectedHourRangeScanCompletedAtMs?: number;
+	sessionSelectedHourRangeResolutionPath?:
+		| 'compact-gpu-summary'
+		| 'cpu-scan-existing-values'
+		| 'unavailable'
+		| 'not-needed';
+	sessionSelectedHourRangeReadbackCount?: number;
+	sessionSelectedHourRangeCpuScanCount?: number;
+	sessionSelectedHourRangeSummaryReadbackCount?: number;
+	sessionSelectedHourRangeSummaryReadbackBytes?: number;
+	sessionSelectedHourRangeFullReadbackAvoidedCount?: number;
+	sessionSelectedHourRangeSummaryReductionPassCount?: number;
 	sessionSelectedHourAnalysisBuildStartedAtMs?: number;
 	sessionSelectedHourAnalysisBuildCompletedAtMs?: number;
 	sessionRangeResolveStartedAtMs?: number;
@@ -301,6 +312,20 @@ export function copyRenderPublicationTimeline(
 					timeline.sessionSelectedDayRangeSummaryReadbackBytes,
 				sessionSelectedDayRangeFullReadbackAvoidedCount:
 					timeline.sessionSelectedDayRangeFullReadbackAvoidedCount,
+				sessionSelectedHourRangeResolutionPath:
+					timeline.sessionSelectedHourRangeResolutionPath,
+				sessionSelectedHourRangeReadbackCount:
+					timeline.sessionSelectedHourRangeReadbackCount,
+				sessionSelectedHourRangeCpuScanCount:
+					timeline.sessionSelectedHourRangeCpuScanCount,
+				sessionSelectedHourRangeSummaryReadbackCount:
+					timeline.sessionSelectedHourRangeSummaryReadbackCount,
+				sessionSelectedHourRangeSummaryReadbackBytes:
+					timeline.sessionSelectedHourRangeSummaryReadbackBytes,
+				sessionSelectedHourRangeFullReadbackAvoidedCount:
+					timeline.sessionSelectedHourRangeFullReadbackAvoidedCount,
+				sessionSelectedHourRangeSummaryReductionPassCount:
+					timeline.sessionSelectedHourRangeSummaryReductionPassCount,
 				renderLayoutReuseAction: timeline.renderLayoutReuseAction,
 				renderLayoutReuseReason: timeline.renderLayoutReuseReason,
 				renderLayoutReuseDecisionMs: timeline.renderLayoutReuseDecisionMs,

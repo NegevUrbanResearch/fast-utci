@@ -27,6 +27,7 @@ type CollectorCase = {
 };
 
 type ActionKind = 'initial-visible' | 'hour-scrub' | 'month-change';
+type ColorMode = 'normalized' | 'discrete';
 type DiagnosticsSnapshot = Record<string, any>;
 type RenderPublicationSnapshot = Record<string, unknown> & {
 	renderPublicationTimeline?: Record<string, unknown> | null;
@@ -151,15 +152,24 @@ async function readUtciRenderDiagnostics(page: Page) {
 async function waitForSelectedHourPublication(
 	page: Page,
 	expectedSelectionKey: string,
-	options?: { minSurfaceRequestId?: number; expectedGridResolutionMeters?: number }
+	options?: {
+		minSurfaceRequestId?: number;
+		expectedGridResolutionMeters?: number;
+		colorMode?: ColorMode;
+	}
 ) {
 	logCollectorProgress(
 		`waiting for ${expectedSelectionKey} request>${options?.minSurfaceRequestId ?? 0} grid=${
 			options?.expectedGridResolutionMeters ?? 'any'
-		}`
+		} color=${options?.colorMode ?? 'any'}`
 	);
 	const diagnostics = await page.waitForFunction(
-		({ selectionKey: expectedSelectionKey, minSurfaceRequestId, expectedGridResolutionMeters }) => {
+		({
+			selectionKey: expectedSelectionKey,
+			minSurfaceRequestId,
+			expectedGridResolutionMeters,
+			colorMode
+		}) => {
 			const value = (window as any).__utciRenderDiagnostics__;
 			if (!value) return null;
 			if (
@@ -172,6 +182,7 @@ async function waitForSelectedHourPublication(
 				value.baseSceneSelectionKey === expectedSelectionKey &&
 				(expectedGridResolutionMeters == null ||
 					value.baseMetadataGridSize === expectedGridResolutionMeters) &&
+				(colorMode == null || value.baseColorMode === colorMode) &&
 				typeof value.baseSurfaceRequestId === 'number' &&
 				value.baseSurfaceRequestId > (minSurfaceRequestId ?? 0) &&
 				value.gpuResidentCopyRequestId === value.baseSurfaceRequestId &&
@@ -189,7 +200,8 @@ async function waitForSelectedHourPublication(
 		{
 			selectionKey: expectedSelectionKey,
 			minSurfaceRequestId: options?.minSurfaceRequestId ?? 0,
-			expectedGridResolutionMeters: options?.expectedGridResolutionMeters ?? null
+			expectedGridResolutionMeters: options?.expectedGridResolutionMeters ?? null,
+			colorMode: options?.colorMode ?? null
 		},
 		{ timeout: 240_000 }
 	).catch(async (error) => {
@@ -208,6 +220,13 @@ async function waitForSelectedHourPublication(
 	});
 
 	return diagnostics.jsonValue() as Promise<DiagnosticsSnapshot>;
+}
+
+async function setColorScaleMode(page: Page, mode: 'full day' | 'per hour') {
+	const button = page.getByRole('button', { name: new RegExp(`^${mode}$`, 'i') });
+	await expect(button).toBeVisible();
+	await button.click();
+	await expect(button).toHaveAttribute('aria-pressed', 'true');
 }
 
 async function setHourSelection(page: Page, hourIndex: number) {
@@ -366,6 +385,27 @@ function pickTimelineFields(renderPublication: RenderPublicationSnapshot | null)
 		sessionSelectedDayRangeFullReadbackAvoidedCount: numberOrNull(
 			timeline.sessionSelectedDayRangeFullReadbackAvoidedCount
 		),
+		sessionSelectedHourRangeResolutionPath: stringOrNull(
+			timeline.sessionSelectedHourRangeResolutionPath
+		),
+		sessionSelectedHourRangeReadbackCount: numberOrNull(
+			timeline.sessionSelectedHourRangeReadbackCount
+		),
+		sessionSelectedHourRangeCpuScanCount: numberOrNull(
+			timeline.sessionSelectedHourRangeCpuScanCount
+		),
+		sessionSelectedHourRangeSummaryReadbackCount: numberOrNull(
+			timeline.sessionSelectedHourRangeSummaryReadbackCount
+		),
+		sessionSelectedHourRangeSummaryReadbackBytes: numberOrNull(
+			timeline.sessionSelectedHourRangeSummaryReadbackBytes
+		),
+		sessionSelectedHourRangeFullReadbackAvoidedCount: numberOrNull(
+			timeline.sessionSelectedHourRangeFullReadbackAvoidedCount
+		),
+		sessionSelectedHourRangeSummaryReductionPassCount: numberOrNull(
+			timeline.sessionSelectedHourRangeSummaryReductionPassCount
+		),
 		sessionResultReadyAtMs: numberOrNull(timeline.sessionResultReadyAtMs),
 		sessionResultReturnedAtMs: numberOrNull(timeline.sessionResultReturnedAtMs),
 		routePendingSurfaceExposedAtMs: numberOrNull(timeline.routePendingSurfaceExposedAtMs),
@@ -467,6 +507,7 @@ function buildSample(params: {
 		caseId: params.caseId,
 		actionKind: params.actionKind,
 		actionLabel: params.actionLabel,
+		colorMode: params.diagnostics.baseColorMode ?? null,
 		selectedMonthIndex: params.diagnostics.baseSelectedMonthIndex ?? null,
 		selectedHourIndex: params.diagnostics.baseSelectedHourIndex ?? null,
 		selectedTimeIndex: params.diagnostics.baseSelectedTimeIndex ?? null,
@@ -547,6 +588,28 @@ function assertRangeResolutionProof(sample: ReturnType<typeof buildSample>) {
 	}
 }
 
+function assertPerHourRangeResolutionProof(sample: ReturnType<typeof buildSample>) {
+	if (sample.colorMode !== 'discrete') return;
+
+	const timeline = sample.renderPublication.timeline;
+	const proofLabel = `${sample.caseId} ${sample.actionLabel}`;
+	expect(timeline, `${proofLabel} should include timeline`).not.toBeNull();
+	if (!timeline) return;
+
+	expect(timeline.sessionSelectedHourRangeResolutionPath, `${proofLabel} path`).toBe(
+		'compact-gpu-summary'
+	);
+	expect(timeline.sessionSelectedHourRangeReadbackCount, `${proofLabel} full readbacks`).toBe(0);
+	expect(timeline.sessionSelectedHourRangeCpuScanCount, `${proofLabel} CPU scans`).toBe(0);
+	expect(timeline.sessionSelectedHourRangeSummaryReadbackCount, `${proofLabel} summaries`).toBe(
+		1
+	);
+	expect(timeline.sessionSelectedHourRangeSummaryReadbackBytes, `${proofLabel} bytes`).toBe(16);
+	expect(timeline.sessionSelectedHourRangeFullReadbackAvoidedCount, `${proofLabel} avoided`).toBe(
+		1
+	);
+}
+
 async function collectInteractionSample(params: {
 	page: Page;
 	caseConfig: CollectorCase;
@@ -558,13 +621,18 @@ async function collectInteractionSample(params: {
 	interact: () => Promise<void>;
 	entryUrl: string;
 	targetUrl: string;
+	colorMode?: ColorMode;
 }) {
 	const startedAt = performance.now();
 	await params.interact();
 	const diagnostics = await waitForSelectedHourPublication(
 		params.page,
 		selectionKey(params.caseConfig.analysisId, params.targetMonthIndex, params.targetHourIndex),
-		{ minSurfaceRequestId: params.previousRequestId }
+		{
+			minSurfaceRequestId: params.previousRequestId,
+			expectedGridResolutionMeters: params.caseConfig.gridResolutionMeters,
+			colorMode: params.colorMode
+		}
 	);
 	const wallVisibleMs = performance.now() - startedAt;
 	return {
@@ -658,6 +726,52 @@ async function collectCase(page: Page, caseConfig: CollectorCase) {
 			previousRequestId = result.diagnostics.baseSurfaceRequestId ?? previousRequestId;
 		}
 
+		const stableMonthIndex = MONTH_SEQUENCE[MONTH_SEQUENCE.length - 1];
+		logCollectorProgress(`${caseConfig.caseId}: switch color scale to per hour`);
+		await setColorScaleMode(page, 'per hour');
+		const perHourDiagnostics = await waitForSelectedHourPublication(
+			page,
+			selectionKey(caseConfig.analysisId, stableMonthIndex, stableHourIndex),
+			{
+				minSurfaceRequestId: previousRequestId,
+				expectedGridResolutionMeters: caseConfig.gridResolutionMeters,
+				colorMode: 'discrete'
+			}
+		);
+		assertStrongGpuProof(perHourDiagnostics, sourceUrl);
+		const perHourSample = buildSample({
+			caseId: caseConfig.caseId,
+			actionKind: 'hour-scrub',
+			actionLabel: 'per-hour-mode',
+			wallVisibleMs: null,
+			diagnostics: perHourDiagnostics,
+			entryUrl: entry.entryUrl,
+			targetUrl: entry.targetUrl
+		});
+		assertPerHourRangeResolutionProof(perHourSample);
+		samples.push(perHourSample);
+		previousRequestId = perHourDiagnostics.baseSurfaceRequestId ?? previousRequestId;
+
+		const perHourScrubHourIndex = stableHourIndex + 1;
+		logCollectorProgress(`${caseConfig.caseId}: scrub per-hour hour ${perHourScrubHourIndex}`);
+		const perHourScrub = await collectInteractionSample({
+			page,
+			caseConfig,
+			actionKind: 'hour-scrub',
+			actionLabel: 'per-hour-hour-1',
+			targetMonthIndex: stableMonthIndex,
+			targetHourIndex: perHourScrubHourIndex,
+			previousRequestId,
+			interact: () => setHourSelection(page, perHourScrubHourIndex),
+			entryUrl: entry.entryUrl,
+			targetUrl: entry.targetUrl,
+			colorMode: 'discrete'
+		});
+		assertStrongGpuProof(perHourScrub.diagnostics, sourceUrl);
+		assertPerHourRangeResolutionProof(perHourScrub.sample);
+		samples.push(perHourScrub.sample);
+		previousRequestId = perHourScrub.diagnostics.baseSurfaceRequestId ?? previousRequestId;
+
 		const uncachedCompactMonthSamples = samples.filter((sample) => {
 			const timeline = sample.renderPublication.timeline;
 			return (
@@ -667,6 +781,16 @@ async function collectCase(page: Page, caseConfig: CollectorCase) {
 			);
 		});
 		expect(uncachedCompactMonthSamples.length).toBeGreaterThanOrEqual(2);
+
+		const compactPerHourSamples = samples.filter((sample) => {
+			const timeline = sample.renderPublication.timeline;
+			return (
+				sample.colorMode === 'discrete' &&
+				timeline?.sessionSelectedHourRangeResolutionPath === 'compact-gpu-summary' &&
+				timeline.sessionSelectedHourRangeSummaryReadbackBytes === 16
+			);
+		});
+		expect(compactPerHourSamples.length).toBeGreaterThanOrEqual(2);
 
 		const forbiddenRequestUrls = requestedUrls.filter(isForbiddenComparisonRequest);
 		const forbiddenComparisonFieldsPresent = samples.flatMap(

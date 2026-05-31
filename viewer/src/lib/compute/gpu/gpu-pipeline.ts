@@ -152,6 +152,14 @@ export interface RunUtciRangeSummaryForTimeIndexParams extends RunUtciForTimeInd
 	signal?: AbortSignal;
 }
 
+export interface RunUtciRangeSummaryForOutputParams {
+	timeIndex: number;
+	numPoints: number;
+	format: 'f32-utci';
+	output: OnDemandUtciOutput;
+	signal?: AbortSignal;
+}
+
 export interface OnDemandUtciOutput {
 	format: OnDemandOutputFormat;
 	numPoints: number;
@@ -217,6 +225,10 @@ export interface UTCIComputePipeline {
 
 	runUtciRangeSummaryForTimeIndex?(
 		params: RunUtciRangeSummaryForTimeIndexParams
+	): Promise<UtciRangeSummary>;
+
+	runUtciRangeSummaryForOutput?(
+		params: RunUtciRangeSummaryForOutputParams
 	): Promise<UtciRangeSummary>;
 
 	readOnDemandUtciForDebug?(params: { numPoints: number }): Promise<Float32Array>;

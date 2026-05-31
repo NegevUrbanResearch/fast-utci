@@ -19,6 +19,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sessionSelectedDayRangeSummaryReadbackCount: 23,
 				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
 				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+				sessionSelectedHourRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedHourRangeReadbackCount: 0,
+				sessionSelectedHourRangeCpuScanCount: 0,
+				sessionSelectedHourRangeSummaryReadbackCount: 1,
+				sessionSelectedHourRangeSummaryReadbackBytes: 16,
+				sessionSelectedHourRangeFullReadbackAvoidedCount: 1,
+				sessionSelectedHourRangeSummaryReductionPassCount: 1,
 				sceneReactiveToSyncQueuedMs: 0.1,
 				sceneSyncQueuedToStartMs: 0.2
 			},
@@ -33,6 +40,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sessionSelectedDayRangeSummaryReadbackCount: undefined,
 				sessionSelectedDayRangeSummaryReadbackBytes: undefined,
 				sessionSelectedDayRangeFullReadbackAvoidedCount: undefined,
+				sessionSelectedHourRangeResolutionPath: undefined,
+				sessionSelectedHourRangeReadbackCount: undefined,
+				sessionSelectedHourRangeCpuScanCount: undefined,
+				sessionSelectedHourRangeSummaryReadbackCount: undefined,
+				sessionSelectedHourRangeSummaryReadbackBytes: undefined,
+				sessionSelectedHourRangeFullReadbackAvoidedCount: undefined,
+				sessionSelectedHourRangeSummaryReductionPassCount: undefined,
 				sceneReactiveToSyncQueuedMs: undefined,
 				sceneSyncQueuedToStartMs: undefined,
 				routeProjectedAtMs: 120
@@ -50,6 +64,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			sessionSelectedDayRangeSummaryReadbackCount: 23,
 			sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
 			sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+			sessionSelectedHourRangeResolutionPath: 'compact-gpu-summary',
+			sessionSelectedHourRangeReadbackCount: 0,
+			sessionSelectedHourRangeCpuScanCount: 0,
+			sessionSelectedHourRangeSummaryReadbackCount: 1,
+			sessionSelectedHourRangeSummaryReadbackBytes: 16,
+			sessionSelectedHourRangeFullReadbackAvoidedCount: 1,
+			sessionSelectedHourRangeSummaryReductionPassCount: 1,
 			sceneReactiveToSyncQueuedMs: 0.1,
 			sceneSyncQueuedToStartMs: 0.2,
 			routeProjectedAtMs: 120
@@ -300,6 +321,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sessionSelectedDayRangeSummaryReadbackCount: 23,
 				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
 				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+				sessionSelectedHourRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedHourRangeReadbackCount: 0,
+				sessionSelectedHourRangeCpuScanCount: 0,
+				sessionSelectedHourRangeSummaryReadbackCount: 1,
+				sessionSelectedHourRangeSummaryReadbackBytes: 16,
+				sessionSelectedHourRangeFullReadbackAvoidedCount: 1,
+				sessionSelectedHourRangeSummaryReductionPassCount: 1,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,
@@ -484,6 +512,20 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			999;
 		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeFullReadbackAvoidedCount =
 			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeResolutionPath =
+			'cpu-scan-existing-values';
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeReadbackCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeCpuScanCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeSummaryReadbackCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeSummaryReadbackBytes =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeFullReadbackAvoidedCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedHourRangeSummaryReductionPassCount =
+			999;
 		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.totalMs = 999;
 		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.arrayAllocationMs = 999;
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseProofTrace!.decision =
@@ -558,6 +600,13 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sessionSelectedDayRangeSummaryReadbackCount: 23,
 				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
 				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+				sessionSelectedHourRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedHourRangeReadbackCount: 0,
+				sessionSelectedHourRangeCpuScanCount: 0,
+				sessionSelectedHourRangeSummaryReadbackCount: 1,
+				sessionSelectedHourRangeSummaryReadbackBytes: 16,
+				sessionSelectedHourRangeFullReadbackAvoidedCount: 1,
+				sessionSelectedHourRangeSummaryReductionPassCount: 1,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,

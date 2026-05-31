@@ -60,8 +60,82 @@ async function runGpuCompactSummary(page: Page, values: number[]): Promise<Range
 	}, values);
 }
 
+async function runGpuOutputCompactSummary(page: Page, values: number[]): Promise<RangeSummary> {
+	await page.goto('/');
+	return page.evaluate(async (rawValues) => {
+		if (!navigator.gpu) {
+			throw new Error('WebGPU is not available in this browser context');
+		}
+		const adapter = await navigator.gpu.requestAdapter();
+		if (!adapter) {
+			throw new Error('WebGPU adapter is not available in this browser context');
+		}
+		const device = await adapter.requestDevice();
+		const modulePath = '/src/lib/compute/gpu/webgpuUtciPipeline.ts';
+		const { __TEST_ONLY_WebgpuUtciComputePipeline } = (await import(
+			/* @vite-ignore */ modulePath
+		)) as typeof WebgpuUtciPipelineModule;
+		const outputHandleModulePath = '/src/lib/compute/gpu/selectedHourOutputHandle.ts';
+		const { createSelectedHourOutputHandle } = (await import(
+			/* @vite-ignore */ outputHandleModulePath
+		)) as typeof import('$lib/compute/gpu/selectedHourOutputHandle');
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device, false);
+		const values = new Float32Array(rawValues);
+		const buffer = device.createBuffer({
+			size: values.byteLength,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+			mappedAtCreation: true
+		});
+		new Float32Array(buffer.getMappedRange()).set(values);
+		buffer.unmap();
+		const handle = createSelectedHourOutputHandle({
+			buffer,
+			byteLength: values.byteLength,
+			source: 'webgpu-on-demand-snapshot',
+			timeIndex: 0
+		});
+		try {
+			return await pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 0,
+				numPoints: values.length,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: values.length,
+					timeIndex: 0,
+					gpuBuffer: buffer,
+					gpuOutputHandle: handle,
+					outputBytes: values.byteLength,
+					debugLabel: 'webgpu-on-demand-f32-utci'
+				}
+			});
+		} finally {
+			handle.dispose();
+			pipeline.dispose();
+			device.destroy();
+		}
+	}, values);
+}
+
 async function expectGpuMatchesCpu(page: Page, values: number[]) {
 	const gpuSummary = await runGpuCompactSummary(page, values);
+	const expected = cpuRange(Array.from(new Float32Array(values)));
+
+	expect(gpuSummary.readbackBytes).toBe(16);
+	expect(gpuSummary.validCount).toBe(expected.validCount);
+	expect(gpuSummary.debugLabel).toBe('webgpu-on-demand-f32-utci-range-summary');
+	if (expected.range === null) {
+		expect(gpuSummary.range).toBeNull();
+		return;
+	}
+
+	expect(gpuSummary.range).not.toBeNull();
+	expect(gpuSummary.range?.min).toBeCloseTo(expected.range.min, 5);
+	expect(gpuSummary.range?.max).toBeCloseTo(expected.range.max, 5);
+}
+
+async function expectGpuOutputMatchesCpu(page: Page, values: number[]) {
+	const gpuSummary = await runGpuOutputCompactSummary(page, values);
 	const expected = cpuRange(Array.from(new Float32Array(values)));
 
 	expect(gpuSummary.readbackBytes).toBe(16);
@@ -112,5 +186,16 @@ test.describe('compact WebGPU range summaries', () => {
 		});
 
 		await expectGpuMatchesCpu(page, values);
+	});
+
+	test('match CPU range when reducing an existing selected-hour output buffer', async ({ page }) => {
+		const values = Array.from(
+			{ length: 768 },
+			(_, index) => Math.cos(index * 0.19) * 20 + index / 100
+		);
+		values[33] = -31.5;
+		values[700] = 49.25;
+
+		await expectGpuOutputMatchesCpu(page, values);
 	});
 });

@@ -4,6 +4,7 @@ import {
 	type OnDemandUtciOutput,
 	type ExposurePrecomputeParams,
 	type PointDispatchChunk,
+	type RunUtciRangeSummaryForOutputParams,
 	type RunUtciRangeSummaryForTimeIndexParams,
 	type RunUtciForTimeIndexParams,
 	type UtciRangeSummary,
@@ -940,6 +941,56 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		return this.rangeSummaryFinalStagingBuffer;
 	}
 
+	private resolveOutputRangeSummaryHandle(
+		output: OnDemandUtciOutput,
+		requiredBytes: number
+	): NonNullable<OnDemandUtciOutput['gpuOutputHandle']> {
+		const handle = output.gpuOutputHandle;
+		if (!handle) {
+			throw new Error(
+				'WebGPU UTCI pipeline: compact output range summary requires a selected-hour GPU output handle'
+			);
+		}
+		if (handle.source !== 'webgpu-on-demand-snapshot') {
+			throw new Error(
+				'WebGPU UTCI pipeline: compact output range summary requires a selected-hour GPU output handle from source webgpu-on-demand-snapshot'
+			);
+		}
+		if (handle.disposed) {
+			throw new Error(
+				'WebGPU UTCI pipeline: compact output range summary cannot use a disposed GPU output handle'
+			);
+		}
+		if (typeof handle.byteLength === 'number' && handle.byteLength < requiredBytes) {
+			throw new Error(
+				`WebGPU UTCI pipeline: compact output range summary GPU output handle is too small (required=${requiredBytes}, actual=${handle.byteLength})`
+			);
+		}
+		if (typeof output.outputBytes === 'number' && output.outputBytes < requiredBytes) {
+			throw new Error(
+				`WebGPU UTCI pipeline: compact output range summary outputBytes is too small (required=${requiredBytes}, actual=${output.outputBytes})`
+			);
+		}
+		if (output.gpuBuffer !== undefined && output.gpuBuffer !== handle.buffer) {
+			throw new Error(
+				'WebGPU UTCI pipeline: compact output range summary raw GPU buffer does not match the selected-hour GPU output handle buffer'
+			);
+		}
+
+		const source = handle.buffer;
+		if (!source || typeof source.size !== 'number') {
+			throw new Error(
+				'WebGPU UTCI pipeline: compact output range summary requires a GPU output buffer'
+			);
+		}
+		if (source.size < requiredBytes) {
+			throw new Error(
+				`WebGPU UTCI pipeline: compact output range summary source buffer is too small (required=${requiredBytes}, actual=${source.size})`
+			);
+		}
+		return handle;
+	}
+
 	private encodeRangeSummaryReduction(params: {
 		encoder: GPUCommandEncoder;
 		sourceValuesBuffer: GPUBuffer;
@@ -1720,7 +1771,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		const snapshotBuffer = this.device.createBuffer({
 			size: outputBytes,
-			usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 		});
 		const encoder = this.device.createCommandEncoder();
 		const pass = encoder.beginComputePass();
@@ -1976,6 +2027,113 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		});
 	}
 
+	async runUtciRangeSummaryForOutput(
+		params: RunUtciRangeSummaryForOutputParams
+	): Promise<UtciRangeSummary> {
+		return this.runRangeSummarySerial(async () => {
+			this.ensureNotAborted(params.signal);
+			if (params.format !== 'f32-utci') {
+				throw new Error(
+					`WebGPU UTCI pipeline: unsupported compact range output format "${params.format}"`
+				);
+			}
+			if (params.numPoints <= 0) {
+				throw new Error(
+					`WebGPU UTCI pipeline: invalid compact output range numPoints=${params.numPoints}`
+				);
+			}
+			if (params.output.format !== 'f32-utci') {
+				throw new Error(
+					'WebGPU UTCI pipeline: compact output range summary requires f32-utci output'
+				);
+			}
+			if (params.output.numPoints !== params.numPoints) {
+				throw new Error(
+					`WebGPU UTCI pipeline: compact output range numPoints mismatch output=${params.output.numPoints} requested=${params.numPoints}`
+				);
+			}
+			if (params.output.timeIndex !== params.timeIndex) {
+				throw new Error(
+					`WebGPU UTCI pipeline: compact output range timeIndex mismatch output=${params.output.timeIndex} requested=${params.timeIndex}`
+				);
+			}
+			const requiredBytes = params.numPoints * 4;
+			const handle = this.resolveOutputRangeSummaryHandle(
+				params.output,
+				requiredBytes
+			);
+			return this.reduceRangeSummaryFromValuesBuffer({
+				sourceValuesBuffer: handle.buffer,
+				valueCount: params.numPoints,
+				timeIndex: params.timeIndex,
+				signal: params.signal
+			});
+		});
+	}
+
+	private async reduceRangeSummaryFromValuesBuffer(params: {
+		sourceValuesBuffer: GPUBuffer;
+		valueCount: number;
+		timeIndex: number;
+		signal?: AbortSignal;
+	}): Promise<UtciRangeSummary> {
+		this.ensureNotAborted(params.signal);
+		const [valuesPipeline, rangesPipeline] = await Promise.all([
+			this.ensureRangeReduceValuesPipeline(),
+			this.ensureRangeReduceRangesPipeline()
+		]);
+		this.ensureNotAborted(params.signal);
+
+		const rangeSummaryFinalStagingBuffer = this.ensureRangeSummaryFinalStagingBuffer();
+		const transientUniformBuffers: GPUBuffer[] = [];
+		let mapped = false;
+		try {
+			const encoder = this.device.createCommandEncoder();
+			const { finalBuffer, reductionPassCount } = this.encodeRangeSummaryReduction({
+				encoder,
+				sourceValuesBuffer: params.sourceValuesBuffer,
+				valueCount: params.valueCount,
+				valuesPipeline,
+				rangesPipeline,
+				transientUniformBuffers
+			});
+			encoder.copyBufferToBuffer(
+				finalBuffer,
+				0,
+				rangeSummaryFinalStagingBuffer,
+				0,
+				RANGE_SUMMARY_RECORD_BYTES
+			);
+			this.queue.submit([encoder.finish()]);
+			await this.queue.onSubmittedWorkDone();
+			this.destroyTransientUniformBuffers(transientUniformBuffers);
+
+			this.ensureNotAborted(params.signal);
+			await rangeSummaryFinalStagingBuffer.mapAsync(GPUMapMode.READ);
+			mapped = true;
+			this.ensureNotAborted(params.signal);
+			const mappedRange = rangeSummaryFinalStagingBuffer.getMappedRange(
+				0,
+				RANGE_SUMMARY_RECORD_BYTES
+			);
+			const summaryBytes = mappedRange.slice(0);
+			const parsed = parseRangeSummaryRecord(summaryBytes);
+			return {
+				timeIndex: params.timeIndex,
+				range: parsed.range,
+				validCount: parsed.validCount,
+				readbackBytes: RANGE_SUMMARY_RECORD_BYTES,
+				reductionPassCount,
+				debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+			};
+		} finally {
+			this.destroyTransientUniformBuffers(transientUniformBuffers);
+			if (mapped) {
+				rangeSummaryFinalStagingBuffer.unmap();
+			}
+		}
+	}
+
 	async readOnDemandUtciForDebug(params: { numPoints: number }): Promise<Float32Array> {
 		if (!this.onDemandOutputBuffer) {
 			throw new Error('WebGPU UTCI pipeline: on-demand output buffer not available');
@@ -2042,54 +2200,34 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				values.byteOffset,
 				values.byteLength
 			);
-			const [valuesPipeline, rangesPipeline] = await Promise.all([
-				this.ensureRangeReduceValuesPipeline(),
-				this.ensureRangeReduceRangesPipeline()
-			]);
-			const rangeSummaryFinalStagingBuffer = this.ensureRangeSummaryFinalStagingBuffer();
-			const transientUniformBuffers: GPUBuffer[] = [];
-			let mapped = false;
+			return this.reduceRangeSummaryFromValuesBuffer({
+				sourceValuesBuffer: rangeSummaryOutputBuffer,
+				valueCount: values.length,
+				timeIndex: 0
+			});
+		});
+	}
+
+	async __TEST_ONLY_reduceOutputRangeForDebug(values: Float32Array): Promise<UtciRangeSummary> {
+		return this.runRangeSummarySerial(async () => {
+			if (values.length <= 0) {
+				throw new Error('WebGPU UTCI pipeline: debug compact output range summary requires values');
+			}
+			const buffer = this.device.createBuffer({
+				size: values.byteLength,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+				mappedAtCreation: true
+			});
 			try {
-				const encoder = this.device.createCommandEncoder();
-				const { finalBuffer, reductionPassCount } = this.encodeRangeSummaryReduction({
-					encoder,
-					sourceValuesBuffer: rangeSummaryOutputBuffer,
+				new Float32Array(buffer.getMappedRange()).set(values);
+				buffer.unmap();
+				return await this.reduceRangeSummaryFromValuesBuffer({
+					sourceValuesBuffer: buffer,
 					valueCount: values.length,
-					valuesPipeline,
-					rangesPipeline,
-					transientUniformBuffers
+					timeIndex: 0
 				});
-				encoder.copyBufferToBuffer(
-					finalBuffer,
-					0,
-					rangeSummaryFinalStagingBuffer,
-					0,
-					RANGE_SUMMARY_RECORD_BYTES
-				);
-				this.queue.submit([encoder.finish()]);
-				await this.queue.onSubmittedWorkDone();
-				this.destroyTransientUniformBuffers(transientUniformBuffers);
-				await rangeSummaryFinalStagingBuffer.mapAsync(GPUMapMode.READ);
-				mapped = true;
-				const mappedRange = rangeSummaryFinalStagingBuffer.getMappedRange(
-					0,
-					RANGE_SUMMARY_RECORD_BYTES
-				);
-				const summaryBytes = mappedRange.slice(0);
-				const parsed = parseRangeSummaryRecord(summaryBytes);
-				return {
-					timeIndex: 0,
-					range: parsed.range,
-					validCount: parsed.validCount,
-					readbackBytes: RANGE_SUMMARY_RECORD_BYTES,
-					reductionPassCount,
-					debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
-				};
 			} finally {
-				this.destroyTransientUniformBuffers(transientUniformBuffers);
-				if (mapped) {
-					rangeSummaryFinalStagingBuffer.unmap();
-				}
+				buffer.destroy();
 			}
 		});
 	}

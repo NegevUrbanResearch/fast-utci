@@ -55,6 +55,18 @@ describe('main-route transition scrub diagnostics collector source lock', () => 
 		expect(source).toContain('sessionSelectedDayRangeSummaryReadbackCount');
 		expect(source).toContain('sessionSelectedDayRangeSummaryReadbackBytes');
 		expect(source).toContain('sessionSelectedDayRangeFullReadbackAvoidedCount');
+		expect(source).toContain('sessionSelectedHourRangeResolutionPath');
+		expect(source).toContain('sessionSelectedHourRangeReadbackCount');
+		expect(source).toContain('sessionSelectedHourRangeCpuScanCount');
+		expect(source).toContain('sessionSelectedHourRangeSummaryReadbackCount');
+		expect(source).toContain('sessionSelectedHourRangeSummaryReadbackBytes');
+		expect(source).toContain('sessionSelectedHourRangeFullReadbackAvoidedCount');
+		expect(source).toContain('assertPerHourRangeResolutionProof');
+		expect(source).toContain('setColorScaleMode');
+		expect(source).toContain('colorMode');
+		expect(source).toContain('per-hour-mode');
+		expect(source).toContain('per-hour-hour-1');
+		expect(source).toContain('compactPerHourSamples.length');
 		expect(source).toContain('compact-gpu-summary');
 		expect(source).toContain('cache-hit');
 		expect(source).toContain('renderLayoutReuseAction');

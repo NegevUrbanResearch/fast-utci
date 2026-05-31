@@ -144,6 +144,11 @@ describe('on-demand diagnostics helpers', () => {
 		const diagnostics = createEmptyOnDemandDiagnostics();
 
 		const withReadback = recordOnDemandTiming(diagnostics, 'selectedHourReadbackMs', 11.5);
+		const withSummary = recordOnDemandTiming(
+			withReadback,
+			'selectedHourRangeSummaryReadbackBytes',
+			16
+		);
 		const withSurface = recordOnDemandTiming(withReadback, 'gpuSurfaceUpdateMs', 7.25);
 		const withSceneDelay = recordOnDemandTiming(
 			withSurface,
@@ -155,11 +160,41 @@ describe('on-demand diagnostics helpers', () => {
 		const withDrain = recordOnDemandTiming(withLayout, 'renderQueueDrainMs', 2.25);
 
 		expect(withDrain.timings.selectedHourReadbackMs).toBe(11.5);
+		expect(withSummary.timings.selectedHourRangeSummaryReadbackBytes).toBe(16);
 		expect(withDrain.timings.gpuSurfaceUpdateMs).toBe(7.25);
 		expect(withDrain.timings.renderSceneSyncStartDelayMs).toBe(0.75);
 		expect(withDrain.timings.renderSceneSyncTotalMs).toBe(6.5);
 		expect(withDrain.timings.renderLayoutBuildMs).toBe(1.5);
 		expect(withDrain.timings.renderQueueDrainMs).toBe(2.25);
+	});
+
+	it('records compact selected-hour range summary proof fields independently from CPU readbacks', () => {
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const next = {
+			...diagnostics,
+			timings: {
+				...diagnostics.timings,
+				selectedHourRangeSummaryMs: 2.5,
+				selectedHourRangeSummaryDispatchMs: 1.5,
+				selectedHourRangeSummaryReadbackMs: 0.75,
+				selectedHourRangeSummaryReadbackBytes: 16,
+				selectedHourRangeSummaryReadbackCount: 1,
+				selectedHourRangeSummaryReductionPassCount: 1,
+				selectedHourRangeFullReadbackAvoidedCount: 1
+			}
+		};
+
+		expect(next.timings).toMatchObject({
+			selectedHourRangeSummaryMs: 2.5,
+			selectedHourRangeSummaryDispatchMs: 1.5,
+			selectedHourRangeSummaryReadbackMs: 0.75,
+			selectedHourRangeSummaryReadbackBytes: 16,
+			selectedHourRangeSummaryReadbackCount: 1,
+			selectedHourRangeSummaryReductionPassCount: 1,
+			selectedHourRangeFullReadbackAvoidedCount: 1
+		});
+		expect(next.selectedHourReadbackReasons).toBeUndefined();
+		expect(next.visibleSelectedHourReadbackCount).toBeUndefined();
 	});
 
 	it('merges GPU-resident render timing substeps into the selected-hour timing bucket', () => {

@@ -403,6 +403,124 @@ function accumulateUtciRangeSummary(
 	};
 }
 
+const SELECTED_HOUR_RANGE_SUMMARY_TIMING_KEYS = [
+	'selectedHourRangeSummaryMs',
+	'selectedHourRangeSummaryDispatchMs',
+	'selectedHourRangeSummaryReadbackMs',
+	'selectedHourRangeSummaryReadbackBytes',
+	'selectedHourRangeSummaryReadbackCount',
+	'selectedHourRangeSummaryReductionPassCount',
+	'selectedHourRangeFullReadbackAvoidedCount'
+] as const satisfies ReadonlyArray<keyof OnDemandTimings>;
+
+function pickSelectedHourRangeSummaryTimings(
+	timings: OnDemandTimings | undefined
+): OnDemandTimings {
+	const picked: OnDemandTimings = {};
+	if (!timings) return picked;
+	for (const key of SELECTED_HOUR_RANGE_SUMMARY_TIMING_KEYS) {
+		const value = timings[key];
+		if (value !== undefined) {
+			picked[key] = value as never;
+		}
+	}
+	return picked;
+}
+
+async function resolveSelectedHourUtciRange(params: {
+	state: PreparedSessionState;
+	output: OnDemandUtciOutput;
+	timeIndex: number;
+	colorMode: 'normalized' | 'discrete';
+	selectedHourUtci?: Float32Array;
+}): Promise<{
+	range: { min: number; max: number } | null;
+	resolutionPath:
+		| 'compact-gpu-summary'
+		| 'cpu-scan-existing-values'
+		| 'unavailable'
+		| 'not-needed';
+	readbackCount: number;
+	cpuScanCount: number;
+	summaryReadbackCount: number;
+	summaryReadbackBytes: number;
+	fullReadbackAvoidedCount: number;
+	reductionPassCount: number;
+	timings: OnDemandTimings;
+}> {
+	if (params.colorMode !== 'discrete') {
+		return {
+			range: null,
+			resolutionPath: 'not-needed',
+			readbackCount: 0,
+			cpuScanCount: 0,
+			summaryReadbackCount: 0,
+			summaryReadbackBytes: 0,
+			fullReadbackAvoidedCount: 0,
+			reductionPassCount: 0,
+			timings: {}
+		};
+	}
+
+	if (params.state.pipeline.runUtciRangeSummaryForOutput) {
+		const summaryStartedAt = performance.now();
+		const summary = await params.state.computeManager.runUtciRangeSummaryForOutput({
+			timeIndex: params.timeIndex,
+			numPoints: params.state.numPoints,
+			format: 'f32-utci',
+			output: params.output,
+			signal: params.state.signal
+		});
+		const pipelineTimings = pickSelectedHourRangeSummaryTimings(
+			params.state.computeManager.getOnDemandDiagnostics?.()?.timings
+		);
+		return {
+			range: summary.range,
+			resolutionPath: 'compact-gpu-summary',
+			readbackCount: 0,
+			cpuScanCount: 0,
+			summaryReadbackCount: 1,
+			summaryReadbackBytes: summary.readbackBytes,
+			fullReadbackAvoidedCount: 1,
+			reductionPassCount: summary.reductionPassCount,
+			timings: {
+				selectedHourRangeSummaryMs: performance.now() - summaryStartedAt,
+				selectedHourRangeSummaryReadbackBytes: summary.readbackBytes,
+				selectedHourRangeSummaryReadbackCount: 1,
+				selectedHourRangeSummaryReductionPassCount: summary.reductionPassCount,
+				selectedHourRangeFullReadbackAvoidedCount: 1,
+				...pipelineTimings
+			}
+		};
+	}
+
+	if (params.selectedHourUtci) {
+		return {
+			range: getUtciValuesRange(params.selectedHourUtci),
+			resolutionPath: 'cpu-scan-existing-values',
+			readbackCount: 0,
+			cpuScanCount: 1,
+			summaryReadbackCount: 0,
+			summaryReadbackBytes: 0,
+			fullReadbackAvoidedCount: 0,
+			reductionPassCount: 0,
+			timings: {}
+		};
+	}
+
+	return {
+		range: null,
+		resolutionPath: 'unavailable',
+		readbackCount: 0,
+		cpuScanCount: 0,
+		summaryReadbackCount: 0,
+		summaryReadbackBytes: 0,
+		fullReadbackAvoidedCount: 0,
+		reductionPassCount: 0,
+		timings: {}
+	};
+}
+
 function ensureSelectedHourOutputHandle(params: {
 	output: OnDemandUtciOutput;
 	requestId: number;
@@ -680,13 +798,35 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				recordReadback(params.selectedHourReadbackReason ?? 'tooltip');
 			}
 			const sessionSelectedHourRangeScanStartedAtMs = performance.now();
-			const selectedHourUtciRange =
-				params.colorMode === 'discrete' && selectedHourUtci
-					? getUtciValuesRange(selectedHourUtci)
-					: null;
+			const selectedHourUtciRangeResult = await resolveSelectedHourUtciRange({
+				state,
+				output,
+				timeIndex: params.timeIndex,
+				colorMode: params.colorMode,
+				selectedHourUtci
+			});
+			const selectedHourUtciRange = selectedHourUtciRangeResult.range;
+			diagnostics.timings = {
+				...diagnostics.timings,
+				...selectedHourUtciRangeResult.timings
+			};
 			stampSessionRenderTimeline(diagnostics, {
 				sessionSelectedHourRangeScanStartedAtMs,
-				sessionSelectedHourRangeScanCompletedAtMs: performance.now()
+				sessionSelectedHourRangeScanCompletedAtMs: performance.now(),
+				sessionSelectedHourRangeResolutionPath:
+					selectedHourUtciRangeResult.resolutionPath,
+				sessionSelectedHourRangeReadbackCount:
+					selectedHourUtciRangeResult.readbackCount,
+				sessionSelectedHourRangeCpuScanCount:
+					selectedHourUtciRangeResult.cpuScanCount,
+				sessionSelectedHourRangeSummaryReadbackCount:
+					selectedHourUtciRangeResult.summaryReadbackCount,
+				sessionSelectedHourRangeSummaryReadbackBytes:
+					selectedHourUtciRangeResult.summaryReadbackBytes,
+				sessionSelectedHourRangeFullReadbackAvoidedCount:
+					selectedHourUtciRangeResult.fullReadbackAvoidedCount,
+				sessionSelectedHourRangeSummaryReductionPassCount:
+					selectedHourUtciRangeResult.reductionPassCount
 			});
 			const sessionRangeResolveStartedAtMs = performance.now();
 			const selectedDayUtciRangeResult =

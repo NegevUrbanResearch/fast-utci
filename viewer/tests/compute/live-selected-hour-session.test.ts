@@ -67,6 +67,9 @@ vi.mock('$lib/compute/compute-manager', () => ({
 		runUtciRangeSummaryForTimeIndex = vi.fn(async (params) =>
 			this.pipeline.runUtciRangeSummaryForTimeIndex(params)
 		);
+		runUtciRangeSummaryForOutput = vi.fn(async (params) =>
+			this.pipeline.runUtciRangeSummaryForOutput(params)
+		);
 		getOnDemandDiagnostics = vi.fn(() => mockState.runtimeDiagnostics);
 		getDeviceForDebug = vi.fn(() => mockState.rendererDevice);
 	}
@@ -146,6 +149,14 @@ describe('selected-hour live session', () => {
 			runUtciRangeSummaryForTimeIndex: vi.fn(async (params: { timeIndex: number }) => ({
 				timeIndex: params.timeIndex,
 				range: { min: 10, max: 30 },
+				validCount: 2,
+				readbackBytes: 16,
+				reductionPassCount: 1,
+				debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+			})),
+			runUtciRangeSummaryForOutput: vi.fn(async (params: { timeIndex: number }) => ({
+				timeIndex: params.timeIndex,
+				range: { min: 11, max: 29 },
 				validCount: 2,
 				readbackBytes: 16,
 				reductionPassCount: 1,
@@ -265,9 +276,74 @@ describe('selected-hour live session', () => {
 		});
 		expect(result.loadCpuFallback).toEqual(expect.any(Function));
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+		expect(mockState.pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledTimes(1);
 	});
 
-	it('records one selected-hour range scan and reuses it for discrete GPU-resident range', async () => {
+	it('uses compact selected-hour output summary for discrete GPU-resident range', async () => {
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(async () => new Float32Array([100, 120]));
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		const timeline = result.diagnostics.timings.renderPublication?.renderPublicationTimeline;
+
+		expect(result.analysis?.metadata.utci_range).toEqual({ min: 11, max: 29 });
+		expect(result.gpuResidentOutput?.utciRange).toEqual({ min: 11, max: 29 });
+		expect(result.gpuResidentOutput?.tooltipUtciValues).toEqual(new Float32Array([100, 120]));
+		expect(timeline).toMatchObject({
+			sessionSelectedHourRangeScanStartedAtMs: expect.any(Number),
+			sessionSelectedHourRangeScanCompletedAtMs: expect.any(Number),
+			sessionSelectedHourRangeResolutionPath: 'compact-gpu-summary',
+			sessionSelectedHourRangeReadbackCount: 0,
+			sessionSelectedHourRangeCpuScanCount: 0,
+			sessionSelectedHourRangeSummaryReadbackCount: 1,
+			sessionSelectedHourRangeSummaryReadbackBytes: 16,
+			sessionSelectedHourRangeFullReadbackAvoidedCount: 1,
+			sessionSelectedHourRangeSummaryReductionPassCount: 1,
+			sessionGpuResidentRangeResolveStartedAtMs: expect.any(Number),
+			sessionGpuResidentRangeResolveCompletedAtMs: expect.any(Number)
+		});
+		expect(result.diagnostics.timings).toMatchObject({
+			selectedHourRangeSummaryMs: expect.any(Number),
+			selectedHourRangeSummaryReadbackBytes: 16,
+			selectedHourRangeSummaryReadbackCount: 1,
+			selectedHourRangeSummaryReductionPassCount: 1,
+			selectedHourRangeFullReadbackAvoidedCount: 1
+		});
+		expect(
+			(timeline?.sessionGpuResidentRangeResolveCompletedAtMs ?? 0) -
+				(timeline?.sessionGpuResidentRangeResolveStartedAtMs ?? 0)
+		).toBeGreaterThanOrEqual(0);
+		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+		expect(mockState.pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledWith(
+			expect.objectContaining({
+				timeIndex: 12,
+				numPoints: 2,
+				format: 'f32-utci',
+				output: expect.objectContaining({
+					gpuOutputHandle: expect.objectContaining({
+						source: 'webgpu-on-demand-snapshot'
+					})
+				})
+			})
+		);
+	});
+
+	it('falls back to scanning existing tooltip values when compact selected-hour summary is unavailable', async () => {
+		mockState.pipeline.runUtciRangeSummaryForOutput = undefined;
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
@@ -290,16 +366,53 @@ describe('selected-hour live session', () => {
 		expect(result.analysis?.metadata.utci_range).toEqual({ min: 11, max: 29 });
 		expect(result.gpuResidentOutput?.utciRange).toEqual({ min: 11, max: 29 });
 		expect(timeline).toMatchObject({
-			sessionSelectedHourRangeScanStartedAtMs: expect.any(Number),
-			sessionSelectedHourRangeScanCompletedAtMs: expect.any(Number),
-			sessionGpuResidentRangeResolveStartedAtMs: expect.any(Number),
-			sessionGpuResidentRangeResolveCompletedAtMs: expect.any(Number)
+			sessionSelectedHourRangeResolutionPath: 'cpu-scan-existing-values',
+			sessionSelectedHourRangeReadbackCount: 0,
+			sessionSelectedHourRangeCpuScanCount: 1,
+			sessionSelectedHourRangeSummaryReadbackCount: 0,
+			sessionSelectedHourRangeSummaryReadbackBytes: 0,
+			sessionSelectedHourRangeFullReadbackAvoidedCount: 0,
+			sessionSelectedHourRangeSummaryReductionPassCount: 0
 		});
-		expect(
-			(timeline?.sessionGpuResidentRangeResolveCompletedAtMs ?? 0) -
-				(timeline?.sessionGpuResidentRangeResolveStartedAtMs ?? 0)
-		).toBeGreaterThanOrEqual(0);
+		expect(result.diagnostics.selectedHourReadbackReasons).toEqual(['tooltip']);
+		expect(result.diagnostics.selectedHourReadbackReasons ?? []).not.toContain('range');
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+	});
+
+	it('marks selected-hour range unavailable when compact summary and tooltip values are unavailable', async () => {
+		mockState.pipeline.runUtciRangeSummaryForOutput = undefined;
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(async () => undefined);
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		const timeline = result.diagnostics.timings.renderPublication?.renderPublicationTimeline;
+
+		expect(result.analysis).toBeNull();
+		expect(result.gpuResidentOutput?.utciRange).toEqual({ min: -20, max: 60 });
+		expect(timeline).toMatchObject({
+			sessionSelectedHourRangeResolutionPath: 'unavailable',
+			sessionSelectedHourRangeReadbackCount: 0,
+			sessionSelectedHourRangeCpuScanCount: 0,
+			sessionSelectedHourRangeSummaryReadbackCount: 0,
+			sessionSelectedHourRangeSummaryReadbackBytes: 0,
+			sessionSelectedHourRangeFullReadbackAvoidedCount: 0,
+			sessionSelectedHourRangeSummaryReductionPassCount: 0
+		});
+		expect(result.diagnostics.selectedHourReadbackReasons ?? []).not.toContain('range');
 	});
 
 	it('records selected-day range cache diagnostics for cold and warm normalized months', async () => {

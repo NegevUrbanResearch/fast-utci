@@ -3,6 +3,7 @@ import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemand
 import type {
 	ExposurePrecomputeParams,
 	OnDemandUtciOutput,
+	RunUtciRangeSummaryForOutputParams,
 	RunUtciRangeSummaryForTimeIndexParams,
 	RunUtciForTimeIndexParams,
 	SerializedBvhForGpu,
@@ -325,6 +326,20 @@ export class ComputeManager {
 			throw new Error('UTCI pipeline does not support compact selected-hour range summaries');
 		}
 		return this.pipeline.runUtciRangeSummaryForTimeIndex(params);
+	}
+
+	async runUtciRangeSummaryForOutput(
+		params: RunUtciRangeSummaryForOutputParams
+	): Promise<UtciRangeSummary> {
+		if (params.format !== 'f32-utci') {
+			throw new Error('UTCI range summaries support only f32-utci output format');
+		}
+		if (!this.pipeline.runUtciRangeSummaryForOutput) {
+			throw new Error(
+				'UTCI pipeline does not support compact selected-hour output range summaries'
+			);
+		}
+		return this.pipeline.runUtciRangeSummaryForOutput(params);
 	}
 
 	getOnDemandDiagnostics(): OnDemandRuntimeDiagnostics | undefined {

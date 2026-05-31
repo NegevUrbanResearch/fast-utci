@@ -63,12 +63,21 @@ const createFakePipeline = () => {
 		reductionPassCount: 2,
 		debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
 	}));
+	const runUtciRangeSummaryForOutput = vi.fn(async (params) => ({
+		timeIndex: params.timeIndex,
+		range: { min: 2, max: 9 },
+		validCount: params.numPoints,
+		readbackBytes: 16,
+		reductionPassCount: 1,
+		debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+	}));
 
 	const pipeline: UTCIComputePipeline = {
 		uploadStaticData,
 		runAll,
 		readUtcisSlice,
-		runUtciRangeSummaryForTimeIndex
+		runUtciRangeSummaryForTimeIndex,
+		runUtciRangeSummaryForOutput
 	};
 
 	return {
@@ -76,7 +85,8 @@ const createFakePipeline = () => {
 		uploadStaticData,
 		runAll,
 		readUtcisSlice,
-		runUtciRangeSummaryForTimeIndex
+		runUtciRangeSummaryForTimeIndex,
+		runUtciRangeSummaryForOutput
 	};
 };
 
@@ -257,6 +267,82 @@ describe('ComputeManager', () => {
 			})
 		).rejects.toThrowError(
 			'UTCI pipeline does not support compact selected-hour range summaries'
+		);
+	});
+
+	it('delegates compact UTCI output range summary requests to the pipeline', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+		const output = {
+			format: 'f32-utci' as const,
+			numPoints: 4,
+			timeIndex: 8,
+			gpuBuffer: { size: 16 }
+		};
+
+		const summary = await manager.runUtciRangeSummaryForOutput({
+			timeIndex: 8,
+			numPoints: 4,
+			format: 'f32-utci',
+			output
+		});
+
+		expect(pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledWith({
+			timeIndex: 8,
+			numPoints: 4,
+			format: 'f32-utci',
+			output
+		});
+		expect(summary).toMatchObject({
+			timeIndex: 8,
+			range: { min: 2, max: 9 },
+			validCount: 4,
+			readbackBytes: 16,
+			reductionPassCount: 1,
+			debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+		});
+	});
+
+	it('rejects non-f32 output range summary formats before delegating', async () => {
+		const { pipeline, runUtciRangeSummaryForOutput } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'packed-mrt-utci' as never,
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: { size: 16 }
+				}
+			})
+		).rejects.toThrowError('UTCI range summaries support only f32-utci output format');
+
+		expect(runUtciRangeSummaryForOutput).not.toHaveBeenCalled();
+	});
+
+	it('throws when the pipeline does not support compact output range summaries', async () => {
+		const { pipeline } = createFakePipeline();
+		pipeline.runUtciRangeSummaryForOutput = undefined;
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: { size: 16 }
+				}
+			})
+		).rejects.toThrowError(
+			'UTCI pipeline does not support compact selected-hour output range summaries'
 		);
 	});
 

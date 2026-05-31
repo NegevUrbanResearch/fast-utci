@@ -21,6 +21,22 @@ function createFakePipeline() {
 	};
 }
 
+function createFakeSelectedHourOutputHandle(options?: {
+	buffer?: ReturnType<typeof createFakeBuffer>;
+	byteLength?: number;
+	source?: string;
+	disposed?: boolean;
+}) {
+	const buffer = options?.buffer ?? createFakeBuffer(options?.byteLength ?? 16);
+	return {
+		buffer,
+		byteLength: options?.byteLength ?? buffer.size,
+		source: options?.source ?? 'webgpu-on-demand-snapshot',
+		disposed: options?.disposed ?? false,
+		dispose: vi.fn()
+	};
+}
+
 function createFakeComputePass() {
 	return {
 		setPipeline: vi.fn(),
@@ -778,6 +794,184 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		expect(method).toContain('parseRangeSummaryRecord');
 		expect(method).not.toContain('__TEST_ONLY_parseRangeSummaryRecord');
 		expect(method).toContain('selectedDayRangeSummaryReadbackBytes');
+	});
+
+	it('output range summary method reduces the visible GPU output buffer without debug readback', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const methodStart = source.indexOf('async runUtciRangeSummaryForOutput');
+		expect(methodStart).toBeGreaterThanOrEqual(0);
+		const methodEnd = source.indexOf(
+			'\n\n\tprivate async reduceRangeSummaryFromValuesBuffer',
+			methodStart
+		);
+		expect(methodEnd).toBeGreaterThan(methodStart);
+		const method = source.slice(methodStart, methodEnd);
+
+		expect(method).toContain('runRangeSummarySerial');
+		expect(method).toContain('return this.reduceRangeSummaryFromValuesBuffer({');
+		expect(source).not.toContain('handle?.buffer ?? output.gpuBuffer');
+		expect(method).toContain('sourceValuesBuffer: handle.buffer');
+		expect(method).not.toContain('readOnDemandUtciForDebug');
+		expect(method).not.toContain('runUtciForTimeIndex(params)');
+		expect(method).not.toContain('rangeSummaryOutputBuffer =');
+	});
+
+	it('rejects output range summaries whose request time index differs from the output time index before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 9,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16)
+				}
+			})
+		).rejects.toThrow(/timeIndex mismatch.*output=8.*requested=9/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects disposed output range summary handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({ disposed: true });
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/disposed GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects raw output range summary GPU buffers without selected-hour handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16)
+				}
+			})
+		).rejects.toThrow(/requires a selected-hour GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects foreign output range summary handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({ source: 'foreign-output-buffer' });
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/requires a selected-hour GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects ambiguous output range summary GPU buffers that differ from the selected-hour handle', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle();
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16),
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/does not match the selected-hour GPU output handle buffer/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects undersized output range summary source buffers before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({
+			buffer: createFakeBuffer(12),
+			byteLength: 16
+		});
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/source buffer is too small.*required=16.*actual=12/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('creates selected-hour snapshot buffers that can be reduced as storage input', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const snapshotStart = source.indexOf('const snapshotBuffer = this.device.createBuffer');
+		expect(snapshotStart).toBeGreaterThanOrEqual(0);
+		const snapshotEnd = source.indexOf('});', snapshotStart);
+		const snapshotBlock = source.slice(snapshotStart, snapshotEnd);
+
+		expect(snapshotBlock).toContain('GPUBufferUsage.STORAGE');
+		expect(snapshotBlock).toContain('GPUBufferUsage.COPY_SRC');
+		expect(snapshotBlock).toContain('GPUBufferUsage.COPY_DST');
 	});
 
 	it('serializes all shared compact range summary buffer users', () => {
