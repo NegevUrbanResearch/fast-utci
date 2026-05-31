@@ -35,14 +35,14 @@ type RenderPublicationSnapshot = Record<string, unknown> & {
 
 const CASES: CollectorCase[] = [
 	{
-		caseId: 'direct-nz-0_5m-single-submit',
+		caseId: 'direct-nz-0_5m-default-chunked-2048',
 		entry: 'direct-nz',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		gridResolutionMeters: 0.5,
 		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|7|0`
 	},
 	{
-		caseId: 'bg-then-nz-0_5m-single-submit',
+		caseId: 'bg-then-nz-0_5m-default-chunked-2048',
 		entry: 'bg-then-nz',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		gridResolutionMeters: 0.5,
@@ -851,7 +851,7 @@ test.describe('main route transition scrub diagnostics collector', () => {
 			sourceRoute: SOURCE_ROUTE,
 			artifact: ARTIFACT_FILENAME,
 			collectionMethod:
-				'Main route only: compares direct Ness Tziona 0.5m loads with Ben-Gurion-to-Ness-Tziona project-selector transitions, then records repeated app-visible hour and month publications. Chunked mode is supplied only through utciExposureSchedule=chunked&utciExposureMaxWorkgroupsPerSlice=2048 query params.',
+				'Main route only: compares direct Ness Tziona 0.5m loads with Ben-Gurion-to-Ness-Tziona project-selector transitions, then records repeated app-visible hour and month publications. Product default chunked mode is sampled both by default route parameters and with explicit utciExposureSchedule=chunked&utciExposureMaxWorkgroupsPerSlice=2048 query params.',
 			cases
 		};
 

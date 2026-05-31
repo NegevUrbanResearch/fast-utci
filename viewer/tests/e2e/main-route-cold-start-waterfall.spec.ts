@@ -111,39 +111,6 @@ const CASES: AnalysisCase[] = [
 		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
 		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
 		gridResolutionMeters: 0.5
-	},
-	{
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '8192'
-		}
-	},
-	{
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '4096'
-		}
-	},
-	{
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '2048'
-		}
 	}
 ];
 
@@ -249,10 +216,8 @@ function exposureSchedulerModeOrNull(value: unknown): 'single-submit' | 'chunked
 	return value === 'single-submit' || value === 'chunked' ? value : null;
 }
 
-function schedulerCaseIdSuffix(caseConfig: AnalysisCase): string {
-	const schedule = caseConfig.queryParams?.utciExposureSchedule ?? 'single-submit';
-	const maxWorkgroups = caseConfig.queryParams?.utciExposureMaxWorkgroupsPerSlice;
-	return schedule === 'chunked' && maxWorkgroups ? `${schedule}-${maxWorkgroups}` : schedule;
+function schedulerCaseIdSuffix(): string {
+	return 'chunked-default';
 }
 
 function extractTimings(timings: Record<string, unknown> | undefined) {
@@ -431,7 +396,7 @@ async function collectCase(
 			.replace(/[^a-z0-9]+/g, '-')
 			.replace(/^-|-$/g, ''),
 		`${caseConfig.gridResolutionMeters}m`.replace('.', '_'),
-		schedulerCaseIdSuffix(caseConfig)
+		schedulerCaseIdSuffix()
 	].join('-');
 	const metadata = readMetadata(caseConfig);
 	const requestedUrls: string[] = [];

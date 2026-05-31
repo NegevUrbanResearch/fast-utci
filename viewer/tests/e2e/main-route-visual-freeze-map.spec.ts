@@ -90,39 +90,6 @@ const CASES: AnalysisCase[] = [
 		gridResolutionMeters: 0.5
 	},
 	{
-		caseId: 'ness-tziona-0_5m-chunked-8192',
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '8192'
-		}
-	},
-	{
-		caseId: 'ness-tziona-0_5m-chunked-4096',
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '4096'
-		}
-	},
-	{
-		caseId: 'ness-tziona-0_5m-chunked-2048',
-		projectLabel: 'Ness-Tziona',
-		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
-		gridResolutionMeters: 0.5,
-		queryParams: {
-			utciExposureSchedule: 'chunked',
-			utciExposureMaxWorkgroupsPerSlice: '2048'
-		}
-	},
-	{
 		caseId: 'ben-gurion-0_5m',
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',

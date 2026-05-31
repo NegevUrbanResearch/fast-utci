@@ -122,7 +122,7 @@ describe('WebGPU on-demand source guards', () => {
 		expect(exposureHelperSource.includes('this.longDmrtBuffer')).toBe(false);
 	});
 
-	it('keeps default exposure precompute separated from chunked scheduler work', () => {
+	it('keeps exposure precompute branchable between chunked and single-submit scheduler work', () => {
 		expect(source.includes('private async runChunkedExposurePrecompute')).toBe(true);
 		expect(exposureMethodSource).toMatch(/exposureScheduling\.mode\s*===\s*'chunked'/);
 		expect(exposureMethodSource.includes('await this.runChunkedExposurePrecompute')).toBe(true);

@@ -15,13 +15,13 @@ describe('main-route transition scrub diagnostics collector source lock', () => 
 
 		expect(source).toContain('main-route-transition-scrub-diagnostics.json');
 		expect(source).toContain('main-route-transition-scrub-diagnostics-progress.json');
-		expect(source).toContain('direct-nz-0_5m-single-submit');
-		expect(source).toContain('bg-then-nz-0_5m-single-submit');
+		expect(source).toContain('direct-nz-0_5m-default-chunked-2048');
+		expect(source).toContain('bg-then-nz-0_5m-default-chunked-2048');
 		expect(source).toContain('direct-nz-0_5m-chunked-2048');
 		expect(source).toContain('bg-then-nz-0_5m-chunked-2048');
 	});
 
-	it('keeps chunked-2048 mode query-gated on the main route', () => {
+	it('keeps main-route default and explicit chunked-2048 coverage', () => {
 		const source = readCollector();
 
 		expect(source).toContain("SOURCE_ROUTE = '/'");

@@ -7,19 +7,13 @@ const viewerRoot = resolve(__dirname, '../..');
 const collectorFiles = [
 	{
 		label: 'visual freeze map',
-		relativePath: 'tests/e2e/main-route-visual-freeze-map.spec.ts',
-		caseIdPrefix: 'ness-tziona-0_5m-chunked',
-		hasLiteralCaseIds: true
+		relativePath: 'tests/e2e/main-route-visual-freeze-map.spec.ts'
 	},
 	{
 		label: 'cold-start waterfall',
-		relativePath: 'tests/e2e/main-route-cold-start-waterfall.spec.ts',
-		caseIdPrefix: 'chunked',
-		hasLiteralCaseIds: false
+		relativePath: 'tests/e2e/main-route-cold-start-waterfall.spec.ts'
 	}
 ];
-
-const schedulerSlices = ['8192', '4096', '2048'] as const;
 
 function readCollector(relativePath: string): string {
 	return readFileSync(resolve(viewerRoot, relativePath), 'utf8');
@@ -31,30 +25,19 @@ function countMatches(source: string, pattern: RegExp): number {
 
 describe('main-route exposure scheduler collector source lock', () => {
 	for (const collector of collectorFiles) {
-		it(`${collector.label} includes distinct query-gated Ness-Tziona 0.5m chunked scheduler cases`, () => {
+		it(`${collector.label} uses the promoted default scheduler instead of stale slice comparisons`, () => {
 			const source = readCollector(collector.relativePath);
 
-			for (const slice of schedulerSlices) {
-				if (collector.hasLiteralCaseIds) {
-					expect(
-						source,
-						`${collector.relativePath} should include a ${slice} slice case id`
-					).toContain(`${collector.caseIdPrefix}-${slice}`);
-				} else {
-					expect(
-						source,
-						`${collector.relativePath} should derive chunked case suffixes from max workgroups`
-					).toContain('`${schedule}-${maxWorkgroups}`');
-				}
-				expect(
-					source,
-					`${collector.relativePath} should include a ${slice} slice query param`
-				).toContain(`utciExposureMaxWorkgroupsPerSlice: '${slice}'`);
-			}
-
-			expect(countMatches(source, /utciExposureSchedule:\s*'chunked'/g)).toBeGreaterThanOrEqual(3);
-			expect(countMatches(source, /analysisId:\s*'Ness-Tziona\/exploded\/nes_tziona_unblock_2'/g)).toBeGreaterThanOrEqual(3);
-			expect(countMatches(source, /gridResolutionMeters:\s*0\.5/g)).toBeGreaterThanOrEqual(3);
+			expect(source).not.toContain('chunked-8192');
+			expect(source).not.toContain('chunked-4096');
+			expect(source).not.toContain('chunked-2048');
+			expect(source).not.toContain('utciExposureMaxWorkgroupsPerSlice');
+			expect(source).not.toContain("utciExposureSchedule: 'chunked'");
+			expect(source).not.toContain("utciExposureSchedule: 'single-submit'");
+			expect(
+				countMatches(source, /analysisId:\s*'Ness-Tziona\/exploded\/nes_tziona_unblock_2'/g)
+			).toBeGreaterThanOrEqual(2);
+			expect(countMatches(source, /gridResolutionMeters:\s*0\.5/g)).toBeGreaterThanOrEqual(2);
 		});
 	}
 });

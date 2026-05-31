@@ -9,10 +9,22 @@ import {
 } from '../../src/lib/compute/gpu/exposureScheduling';
 
 describe('exposureScheduling', () => {
-	it('defaults to single-submit exposure scheduling', () => {
+	it('defaults to chunked exposure scheduling', () => {
 		expect(parseExposureSchedulingFromSearchParams(new URLSearchParams(''))).toEqual({
-			mode: 'single-submit',
+			mode: 'chunked',
 			maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
+			yieldBetweenSlices: true
+		});
+	});
+
+	it('parses the explicit single-submit rollback flag', () => {
+		const params = new URLSearchParams(
+			'utciExposureSchedule=single-submit&utciExposureMaxWorkgroupsPerSlice=8192'
+		);
+
+		expect(parseExposureSchedulingFromSearchParams(params)).toEqual({
+			mode: 'single-submit',
+			maxWorkgroupsPerSlice: 8192,
 			yieldBetweenSlices: true
 		});
 	});
@@ -35,7 +47,7 @@ describe('exposureScheduling', () => {
 		);
 
 		expect(parseExposureSchedulingFromSearchParams(params)).toEqual({
-			mode: 'single-submit',
+			mode: 'chunked',
 			maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
 			yieldBetweenSlices: true
 		});
@@ -47,7 +59,7 @@ describe('exposureScheduling', () => {
 		);
 
 		expect(parseExposureSchedulingFromSearchParams(params)).toEqual({
-			mode: 'single-submit',
+			mode: 'chunked',
 			maxWorkgroupsPerSlice: MAX_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
 			yieldBetweenSlices: false
 		});
@@ -60,26 +72,33 @@ describe('exposureScheduling', () => {
 	});
 
 	it('compares exposure scheduling options with mode-aware chunk fields', () => {
-		const explicit = {
-			mode: 'single-submit' as const,
+		const explicitDefault = {
+			mode: 'chunked' as const,
 			maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
+			yieldBetweenSlices: true
+		};
+		const explicitSingleSubmit = {
+			mode: 'single-submit' as const,
+			maxWorkgroupsPerSlice: 8192,
 			yieldBetweenSlices: true
 		};
 
 		expect(areExposureSchedulingOptionsEqual(undefined, DEFAULT_EXPOSURE_SCHEDULING)).toBe(true);
-		expect(areExposureSchedulingOptionsEqual(explicit, DEFAULT_EXPOSURE_SCHEDULING)).toBe(true);
+		expect(areExposureSchedulingOptionsEqual(explicitDefault, DEFAULT_EXPOSURE_SCHEDULING)).toBe(
+			true
+		);
 		expect(
-			areExposureSchedulingOptionsEqual(explicit, {
+			areExposureSchedulingOptionsEqual(explicitSingleSubmit, {
 				mode: 'single-submit',
 				maxWorkgroupsPerSlice: 128,
 				yieldBetweenSlices: false
 			})
 		).toBe(true);
+		expect(areExposureSchedulingOptionsEqual(explicitSingleSubmit, DEFAULT_EXPOSURE_SCHEDULING)).toBe(
+			false
+		);
 		expect(
-			areExposureSchedulingOptionsEqual(explicit, {
-				...explicit,
-				mode: 'chunked'
-			})
+			areExposureSchedulingOptionsEqual(explicitDefault, explicitSingleSubmit)
 		).toBe(false);
 		expect(
 			areExposureSchedulingOptionsEqual(

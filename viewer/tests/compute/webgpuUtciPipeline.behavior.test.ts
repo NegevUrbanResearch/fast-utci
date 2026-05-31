@@ -251,7 +251,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		).rejects.toThrow(/readUtciBulk request does not match the last run config/i);
 	});
 
-	it('uses single-submit exposure scheduling by default', async () => {
+	it('uses chunked exposure scheduling by default', async () => {
 		const device = createFakeDevice();
 		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
 
@@ -265,7 +265,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		const timings = pipeline.getOnDemandDiagnostics().timings;
 		expect(device.queue.submit).toHaveBeenCalledTimes(1);
 		expect(device.queue.onSubmittedWorkDone).toHaveBeenCalledTimes(1);
-		expect(timings.exposureSchedulerMode).toBe('single-submit');
+		expect(timings.exposureSchedulerMode).toBe('chunked');
 		expect(timings.exposureSchedulerSliceCount).toBe(1);
 		expect(timings.exposureSchedulerSubmitCount).toBe(1);
 		expect(timings.exposureSchedulerYieldCount).toBe(0);
@@ -281,7 +281,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		);
 	});
 
-	it('aborts default single-submit exposure during queue wait and blocks later UTCI dispatch', async () => {
+	it('aborts default chunked exposure during queue wait and blocks later UTCI dispatch', async () => {
 		const controller = new AbortController();
 		const device = createFakeDevice({
 			onSubmittedWorkDone: async () => {

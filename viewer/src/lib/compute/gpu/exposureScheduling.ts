@@ -8,12 +8,12 @@ export interface ExposureSchedulingOptions {
 	yieldBetweenSlices: boolean;
 }
 
-export const DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE = 8192;
+export const DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE = 2048;
 export const MIN_EXPOSURE_MAX_WORKGROUPS_PER_SLICE = 1;
 export const MAX_EXPOSURE_MAX_WORKGROUPS_PER_SLICE = 65_535;
 
 export const DEFAULT_EXPOSURE_SCHEDULING: ExposureSchedulingOptions = {
-	mode: 'single-submit',
+	mode: 'chunked',
 	maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
 	yieldBetweenSlices: true
 };
@@ -22,7 +22,7 @@ export function parseExposureSchedulingFromSearchParams(
 	params: URLSearchParams
 ): ExposureSchedulingOptions {
 	const mode =
-		params.get('utciExposureSchedule') === 'chunked' ? 'chunked' : 'single-submit';
+		params.get('utciExposureSchedule') === 'single-submit' ? 'single-submit' : 'chunked';
 	const rawMaxWorkgroups = Number(params.get('utciExposureMaxWorkgroupsPerSlice'));
 	const maxWorkgroupsPerSlice =
 		Number.isFinite(rawMaxWorkgroups) &&

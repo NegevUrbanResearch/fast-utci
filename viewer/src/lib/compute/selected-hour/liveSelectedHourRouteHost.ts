@@ -27,6 +27,7 @@ import type { UtciRenderMode } from '$lib/utciRenderMode';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
 import { resolveProjectId } from '$lib/utils/analysisPaths';
 import {
+	DEFAULT_EXPOSURE_SCHEDULING,
 	areExposureSchedulingOptionsEqual,
 	type ExposureSchedulingOptions
 } from '$lib/compute/gpu/exposureScheduling';
@@ -247,11 +248,12 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 function buildExposureSchedulingIdentity(
 	exposureScheduling: ExposureSchedulingOptions | undefined
 ): string {
-	if (exposureScheduling?.mode !== 'chunked') {
+	const resolvedScheduling = exposureScheduling ?? DEFAULT_EXPOSURE_SCHEDULING;
+	if (resolvedScheduling.mode !== 'chunked') {
 		return 'exposure:single-submit';
 	}
-	return `exposure:chunked:${exposureScheduling.maxWorkgroupsPerSlice}:${
-		exposureScheduling.yieldBetweenSlices !== false ? 'yield' : 'no-yield'
+	return `exposure:chunked:${resolvedScheduling.maxWorkgroupsPerSlice}:${
+		resolvedScheduling.yieldBetweenSlices !== false ? 'yield' : 'no-yield'
 	}`;
 }
 
