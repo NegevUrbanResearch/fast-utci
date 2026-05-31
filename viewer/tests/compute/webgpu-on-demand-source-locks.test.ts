@@ -30,7 +30,19 @@ describe('WebGPU on-demand source guards', () => {
 		const declarationStart = sourceText.indexOf(`function ${functionName}`);
 		expect(declarationStart).toBeGreaterThanOrEqual(0);
 
-		const bodyStart = sourceText.indexOf('{', declarationStart);
+		let bodyStart = -1;
+		let parenDepth = 0;
+		for (let index = declarationStart; index < sourceText.length; index += 1) {
+			const character = sourceText[index];
+			if (character === '(') {
+				parenDepth += 1;
+			} else if (character === ')') {
+				parenDepth -= 1;
+			} else if (character === '{' && parenDepth === 0) {
+				bodyStart = index;
+				break;
+			}
+		}
 		expect(bodyStart).toBeGreaterThanOrEqual(0);
 
 		let depth = 0;
@@ -226,5 +238,12 @@ describe('WebGPU on-demand source guards', () => {
 		);
 		expect(computeBufferBody).toContain('createUtciColorNode(');
 		expect(computeBufferBody).toMatch(/createUtciColorNode\(\s*options\.layout,/);
+	});
+
+	it('keeps compute-buffer indexed grid bounds analytic', () => {
+		const indexedGridBody = extractFunctionBody(renderBridgeSource, 'createIndexedGridSurfaceGeometry');
+		expect(indexedGridBody).toContain('setIndexedGridSurfaceAnalyticBounds(');
+		expect(indexedGridBody).not.toContain('computeBoundingBox()');
+		expect(indexedGridBody).not.toContain('computeBoundingSphere()');
 	});
 });

@@ -29,12 +29,16 @@ import {
 	isComputeBufferUtciSurfaceLayoutCompatible,
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
-import type { SelectedHourRenderLayoutNormalizationSignature } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import type {
+	SelectedHourRenderLayoutNormalizationSignature,
+	SelectedHourRenderSurfaceMeshTrace
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { Analysis, SingleHourData } from '$lib/types/analysis';
 
 function createAnalysis(params?: {
 	positions?: number[];
 	positionsArray?: Float32Array;
+	numPositions?: number;
 	utciValues?: number[];
 	gridSize?: number;
 	coordinateSystem?: 'xy_ground' | 'xz_ground';
@@ -43,10 +47,14 @@ function createAnalysis(params?: {
 	sourceAnalysisId?: string;
 	modelFile?: string;
 }): Analysis {
+	const pointCount =
+		params?.numPositions ??
+		Math.floor((params?.positionsArray?.length ?? params?.positions?.length ?? 12) / 3);
+	const defaultUtciValues = Array.from({ length: pointCount }, (_, index) => 10 + index * 10);
 	const analysis = {
 		metadata: {
 			analysis_type: 'single_hour',
-			num_positions: 4,
+			num_positions: pointCount,
 			hours: ['00:00'],
 			utci_range: { min: 10, max: 40 },
 			grid_size: params?.gridSize ?? 1,
@@ -56,14 +64,14 @@ function createAnalysis(params?: {
 			bounds: params?.bounds
 		},
 		data: {
-			numPositions: 4,
+			numPositions: pointCount,
 			numHours: 1 as const,
 			positions:
 				params?.positionsArray ??
 				new Float32Array(
 					params?.positions ?? [0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1]
 				),
-			utciValues: new Float32Array(params?.utciValues ?? [10, 20, 30, 40])
+			utciValues: new Float32Array(params?.utciValues ?? defaultUtciValues)
 		}
 	} as Analysis & { __source?: string };
 
@@ -1503,6 +1511,55 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.geometry.getAttribute('position').count).toBe(6);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.vertexCount).toBe(6);
 		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1160);
+	});
+
+	it('sets analytic bounds for indexed compute-buffer surfaces', () => {
+		const layout = buildUtciGridLayout(createAnalysis());
+		const trace: SelectedHourRenderSurfaceMeshTrace = { action: 'created', totalMs: 0 };
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 },
+			trace
+		});
+
+		expect(mesh.geometry.boundingBox?.min.toArray()).toEqual([-1, 0, -1]);
+		expect(mesh.geometry.boundingBox?.max.toArray()).toEqual([1, 0, 1]);
+		expect(mesh.geometry.boundingSphere?.center.toArray()).toEqual([0, 0, 0]);
+		expect(mesh.geometry.boundingSphere?.radius).toBe(Math.sqrt(2));
+		expect(trace.createComputeBufferSurfaceBoundsMs).toEqual(expect.any(Number));
+	});
+
+	it('sets analytic bounds for rectangular indexed compute-buffer surfaces', () => {
+		const layout = buildUtciGridLayout(
+			createAnalysis({
+				gridSize: 0.5,
+				positions: [
+					0, 0, 0,
+					0.5, 0, 0,
+					1, 0, 0,
+					0, 0, 0.5,
+					0.5, 0, 0.5,
+					1, 0, 0.5
+				],
+				utciValues: [10, 11, 12, 13, 14, 15]
+			})
+		);
+		const trace: SelectedHourRenderSurfaceMeshTrace = { action: 'created', totalMs: 0 };
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 },
+			trace
+		});
+
+		expect(layout.width).toBe(3);
+		expect(layout.height).toBe(2);
+		expect(mesh.geometry.boundingBox?.min.toArray()).toEqual([-0.75, 0, -0.5]);
+		expect(mesh.geometry.boundingBox?.max.toArray()).toEqual([0.75, 0, 0.5]);
+		expect(mesh.geometry.boundingSphere?.center.toArray()).toEqual([0, 0, 0]);
+		expect(mesh.geometry.boundingSphere?.radius).toBeCloseTo(Math.hypot(0.75, 0.5));
+		expect(trace.createComputeBufferSurfaceBoundsMs).toEqual(expect.any(Number));
 	});
 
 	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {

@@ -913,6 +913,20 @@ function getComputeBufferSurfaceVertexCount(layout: UtciGridLayout): number {
 	return (layout.width + 1) * (layout.height + 1);
 }
 
+function setIndexedGridSurfaceAnalyticBounds(
+	geometry: THREE.BufferGeometry,
+	params: { halfWidth: number; halfHeight: number }
+): void {
+	geometry.boundingBox = new THREE.Box3(
+		new THREE.Vector3(-params.halfWidth, 0, -params.halfHeight),
+		new THREE.Vector3(params.halfWidth, 0, params.halfHeight)
+	);
+	geometry.boundingSphere = new THREE.Sphere(
+		new THREE.Vector3(0, 0, 0),
+		Math.hypot(params.halfWidth, params.halfHeight)
+	);
+}
+
 function createIndexedGridSurfaceGeometry(
 	layout: UtciGridLayout,
 	options?: {
@@ -991,8 +1005,7 @@ function createIndexedGridSurfaceGeometry(
 		now() - attributeStartedAt
 	);
 	const boundsStartedAt = now();
-	geometry.computeBoundingBox();
-	geometry.computeBoundingSphere();
+	setIndexedGridSurfaceAnalyticBounds(geometry, { halfWidth, halfHeight });
 	addCreateSurfaceTraceTiming(
 		options?.trace,
 		'createComputeBufferSurfaceBoundsMs',
