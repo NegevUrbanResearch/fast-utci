@@ -265,6 +265,18 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.sessionRangeResolveStartedAtMs &&
 		left.renderPublicationTimeline?.sessionRangeResolveCompletedAtMs ===
 			right.renderPublicationTimeline?.sessionRangeResolveCompletedAtMs &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeCacheKey ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeCacheKey &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeCacheHit ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeCacheHit &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeCacheSizeBefore ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeCacheSizeBefore &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeCacheSizeAfter ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeCacheSizeAfter &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeReadbackCount ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeReadbackCount &&
+		left.renderPublicationTimeline?.sessionSelectedDayRangeComputedHourCount ===
+			right.renderPublicationTimeline?.sessionSelectedDayRangeComputedHourCount &&
 		left.renderPublicationTimeline?.sessionCpuFallbackSetupStartedAtMs ===
 			right.renderPublicationTimeline?.sessionCpuFallbackSetupStartedAtMs &&
 		left.renderPublicationTimeline?.sessionCpuFallbackSetupCompletedAtMs ===
@@ -315,6 +327,10 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.sceneAcceptedKeyResolvedAtMs &&
 		left.renderPublicationTimeline?.sceneSyncInvocationQueuedAtMs ===
 			right.renderPublicationTimeline?.sceneSyncInvocationQueuedAtMs &&
+		left.renderPublicationTimeline?.sceneReactiveToSyncQueuedMs ===
+			right.renderPublicationTimeline?.sceneReactiveToSyncQueuedMs &&
+		left.renderPublicationTimeline?.sceneSyncQueuedToStartMs ===
+			right.renderPublicationTimeline?.sceneSyncQueuedToStartMs &&
 		left.renderPublicationTimeline?.sceneStartSyncEnteredAtMs ===
 			right.renderPublicationTimeline?.sceneStartSyncEnteredAtMs &&
 		left.renderPublicationTimeline?.sceneStartSyncReturnedAtMs ===

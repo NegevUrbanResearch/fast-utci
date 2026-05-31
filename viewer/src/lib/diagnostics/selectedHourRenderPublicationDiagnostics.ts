@@ -144,6 +144,20 @@ export type SelectedHourRenderPublicationTimeline = {
 	sessionSelectedHourAnalysisBuildCompletedAtMs?: number;
 	sessionRangeResolveStartedAtMs?: number;
 	sessionRangeResolveCompletedAtMs?: number;
+	sessionSelectedDayRangeCacheKey?: string;
+	sessionSelectedDayRangeCacheHit?: boolean;
+	sessionSelectedDayRangeCacheSizeBefore?: number;
+	sessionSelectedDayRangeCacheSizeAfter?: number;
+	sessionSelectedDayRangeReadbackCount?: number;
+	sessionSelectedDayRangeComputedHourCount?: number;
+	sessionSelectedDayRangeResolutionPath?:
+		| 'full-readback'
+		| 'compact-gpu-summary'
+		| 'cache-hit'
+		| 'unavailable';
+	sessionSelectedDayRangeSummaryReadbackCount?: number;
+	sessionSelectedDayRangeSummaryReadbackBytes?: number;
+	sessionSelectedDayRangeFullReadbackAvoidedCount?: number;
 	sessionCpuFallbackSetupStartedAtMs?: number;
 	sessionCpuFallbackSetupCompletedAtMs?: number;
 	sessionGpuResidentRangeResolveStartedAtMs?: number;
@@ -269,6 +283,24 @@ export function copyRenderPublicationTimeline(
 					: timeline.renderLayoutReuseProofTrace,
 				sceneReactiveToSyncQueuedMs: timeline.sceneReactiveToSyncQueuedMs,
 				sceneSyncQueuedToStartMs: timeline.sceneSyncQueuedToStartMs,
+				sessionSelectedDayRangeCacheKey: timeline.sessionSelectedDayRangeCacheKey,
+				sessionSelectedDayRangeCacheHit: timeline.sessionSelectedDayRangeCacheHit,
+				sessionSelectedDayRangeCacheSizeBefore:
+					timeline.sessionSelectedDayRangeCacheSizeBefore,
+				sessionSelectedDayRangeCacheSizeAfter:
+					timeline.sessionSelectedDayRangeCacheSizeAfter,
+				sessionSelectedDayRangeReadbackCount:
+					timeline.sessionSelectedDayRangeReadbackCount,
+				sessionSelectedDayRangeComputedHourCount:
+					timeline.sessionSelectedDayRangeComputedHourCount,
+				sessionSelectedDayRangeResolutionPath:
+					timeline.sessionSelectedDayRangeResolutionPath,
+				sessionSelectedDayRangeSummaryReadbackCount:
+					timeline.sessionSelectedDayRangeSummaryReadbackCount,
+				sessionSelectedDayRangeSummaryReadbackBytes:
+					timeline.sessionSelectedDayRangeSummaryReadbackBytes,
+				sessionSelectedDayRangeFullReadbackAvoidedCount:
+					timeline.sessionSelectedDayRangeFullReadbackAvoidedCount,
 				renderLayoutReuseAction: timeline.renderLayoutReuseAction,
 				renderLayoutReuseReason: timeline.renderLayoutReuseReason,
 				renderLayoutReuseDecisionMs: timeline.renderLayoutReuseDecisionMs,
@@ -348,10 +380,16 @@ export function mergeRenderPublicationTimeline(
 ): SelectedHourRenderPublicationTimeline | undefined {
 	if (!current) return copyRenderPublicationTimeline(next);
 	if (!next) return copyRenderPublicationTimeline(current);
-	return copyRenderPublicationTimeline({
-		...current,
-		...next
-	});
+	const merged = { ...current };
+	for (const [key, value] of Object.entries(next) as [
+		keyof SelectedHourRenderPublicationTimeline,
+		SelectedHourRenderPublicationTimeline[keyof SelectedHourRenderPublicationTimeline]
+	][]) {
+		if (value !== undefined) {
+			merged[key] = value as never;
+		}
+	}
+	return copyRenderPublicationTimeline(merged);
 }
 
 export function mergeRenderPublicationDiagnostics(

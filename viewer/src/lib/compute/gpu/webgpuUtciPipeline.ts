@@ -4,7 +4,9 @@ import {
 	type OnDemandUtciOutput,
 	type ExposurePrecomputeParams,
 	type PointDispatchChunk,
+	type RunUtciRangeSummaryForTimeIndexParams,
 	type RunUtciForTimeIndexParams,
+	type UtciRangeSummary,
 	type UTCIComputePipeline
 } from '$lib/compute/gpu/gpu-pipeline';
 import {
@@ -28,12 +30,19 @@ import mrtUtciOnDemandShaderRaw from '$lib/compute/gpu/shaders/mrt_utci_on_deman
 import bvhRaycastWgsl from '$lib/compute/gpu/shaders/bvh_raycast.wgsl?raw';
 import exposureSolarWgsl from '$lib/compute/gpu/shaders/exposure_solar.wgsl?raw';
 import exposureSkyWgsl from '$lib/compute/gpu/shaders/exposure_sky.wgsl?raw';
+import utciRangeReduceWgsl from '$lib/compute/gpu/shaders/utci_range_reduce.wgsl?raw';
 
 interface RunConfig {
 	numPoints: number;
 	numHours: number;
 	numMonths: number;
 }
+
+type RangeSummaryRecord = {
+	min: number;
+	max: number;
+	validCount: number;
+};
 
 type ExposureEncodeTrace = {
 	commandEncodeTotalMs: number;
@@ -49,7 +58,9 @@ type ExposureEncodeTrace = {
 const SOLAR_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSolarWgsl;
 const SKY_SHADER_CODE = bvhRaycastWgsl + '\n' + exposureSkyWgsl;
 const MRT_DECLS_PATTERN = /\/\/ MRT_COMPONENT_DECLS_START[\s\S]*?\/\/ MRT_COMPONENT_DECLS_END\n?/;
-const MRT_WRITES_PATTERN = /[ \t]*\/\/ MRT_COMPONENT_WRITES_START[\s\S]*?[ \t]*\/\/ MRT_COMPONENT_WRITES_END\n?/;
+const MRT_WRITES_PATTERN =
+	/[ \t]*\/\/ MRT_COMPONENT_WRITES_START[\s\S]*?[ \t]*\/\/ MRT_COMPONENT_WRITES_END\n?/;
+const RANGE_SUMMARY_RECORD_BYTES = 16;
 
 function getMrtShaderCode(enableMrtComponents: boolean): string {
 	if (enableMrtComponents) return mrtUtciShaderRaw;
@@ -114,6 +125,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 `;
 
+function parseRangeSummaryRecord(buffer: ArrayBuffer): {
+	range: { min: number; max: number } | null;
+	validCount: number;
+} {
+	const view = new DataView(buffer, 0, RANGE_SUMMARY_RECORD_BYTES);
+	const record: RangeSummaryRecord = {
+		min: view.getFloat32(0, true),
+		max: view.getFloat32(4, true),
+		validCount: view.getUint32(8, true)
+	};
+	if (record.validCount === 0 || !Number.isFinite(record.min) || !Number.isFinite(record.max)) {
+		return { range: null, validCount: record.validCount };
+	}
+	return {
+		range: { min: record.min, max: record.max },
+		validCount: record.validCount
+	};
+}
+
+export const __TEST_ONLY_parseRangeSummaryRecord = parseRangeSummaryRecord;
+
 class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private device: GPUDevice;
 	private queue: GPUQueue;
@@ -148,6 +180,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private onDemandParamsBuffer: GPUBuffer | null = null;
 	private onDemandReadbackBuffer: GPUBuffer | null = null;
 	private onDemandReadbackSerial: Promise<void> = Promise.resolve();
+	private rangeSummarySerial: Promise<void> = Promise.resolve();
+	private rangeSummaryOutputBuffer: GPUBuffer | null = null;
+	private rangeSummaryPartialBufferA: GPUBuffer | null = null;
+	private rangeSummaryPartialBufferB: GPUBuffer | null = null;
+	private rangeSummaryFinalStagingBuffer: GPUBuffer | null = null;
 	private lastDaylightTimeStepCount: number | null = null;
 
 	private solarStagingBuffer: GPUBuffer | null = null;
@@ -169,12 +206,18 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private skyPipeline: GPUComputePipeline | null = null;
 	private gatherSlicePipeline: GPUComputePipeline | null = null;
 	private onDemandPipeline: GPUComputePipeline | null = null;
+	private rangeReduceValuesPipeline: GPUComputePipeline | null = null;
+	private rangeReduceRangesPipeline: GPUComputePipeline | null = null;
+	private rangeReduceBindGroupLayout: GPUBindGroupLayout | null = null;
+	private rangeReducePipelineLayout: GPUPipelineLayout | null = null;
 
 	private pipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private solarPipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private skyPipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private gatherSlicePipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private onDemandPipelinePromise: Promise<GPUComputePipeline> | null = null;
+	private rangeReduceValuesPipelinePromise: Promise<GPUComputePipeline> | null = null;
+	private rangeReduceRangesPipelinePromise: Promise<GPUComputePipeline> | null = null;
 
 	/** Set when solar/sky passes are dispatched in runAll/runExposurePrecompute; cleared at start of each run. Used to fail readback clearly if exposure was skipped. */
 	private ranExposurePassesThisRun = false;
@@ -191,7 +234,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	getOnDemandDiagnostics(): OnDemandRuntimeDiagnostics {
 		return {
 			...this.onDemandDiagnostics,
-			trackedGpuAllocationBytes: { ...this.onDemandDiagnostics.trackedGpuAllocationBytes },
+			trackedGpuAllocationBytes: {
+				...this.onDemandDiagnostics.trackedGpuAllocationBytes
+			},
 			timeIndices: [...this.onDemandDiagnostics.timeIndices],
 			timings: {
 				...this.onDemandDiagnostics.timings,
@@ -228,7 +273,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private async ensureSolarPipeline(): Promise<GPUComputePipeline> {
 		if (this.solarPipeline) return this.solarPipeline;
 		if (!this.solarPipelinePromise) {
-			const module = this.device.createShaderModule({ code: SOLAR_SHADER_CODE });
+			const module = this.device.createShaderModule({
+				code: SOLAR_SHADER_CODE
+			});
 			this.solarPipelinePromise = this.device
 				.createComputePipelineAsync({
 					layout: 'auto',
@@ -262,7 +309,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private async ensureGatherSlicePipeline(): Promise<GPUComputePipeline> {
 		if (this.gatherSlicePipeline) return this.gatherSlicePipeline;
 		if (!this.gatherSlicePipelinePromise) {
-			const module = this.device.createShaderModule({ code: GATHER_SLICE_SHADER });
+			const module = this.device.createShaderModule({
+				code: GATHER_SLICE_SHADER
+			});
 			this.gatherSlicePipelinePromise = this.device
 				.createComputePipelineAsync({
 					layout: 'auto',
@@ -302,7 +351,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private async ensureOnDemandPipeline(): Promise<GPUComputePipeline> {
 		if (this.onDemandPipeline) return this.onDemandPipeline;
 		if (!this.onDemandPipelinePromise) {
-			const module = this.device.createShaderModule({ code: mrtUtciOnDemandShaderRaw });
+			const module = this.device.createShaderModule({
+				code: mrtUtciOnDemandShaderRaw
+			});
 			this.onDemandPipelinePromise = this.device
 				.createComputePipelineAsync({
 					layout: 'auto',
@@ -314,6 +365,83 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				});
 		}
 		return this.onDemandPipelinePromise;
+	}
+
+	private ensureRangeReduceBindGroupLayout(): GPUBindGroupLayout {
+		if (!this.rangeReduceBindGroupLayout) {
+			this.rangeReduceBindGroupLayout = this.device.createBindGroupLayout({
+				entries: [
+					{
+						binding: 0,
+						visibility: GPUShaderStage.COMPUTE,
+						buffer: { type: 'read-only-storage' }
+					},
+					{
+						binding: 1,
+						visibility: GPUShaderStage.COMPUTE,
+						buffer: { type: 'read-only-storage' }
+					},
+					{
+						binding: 2,
+						visibility: GPUShaderStage.COMPUTE,
+						buffer: { type: 'storage' }
+					},
+					{
+						binding: 3,
+						visibility: GPUShaderStage.COMPUTE,
+						buffer: { type: 'uniform' }
+					}
+				]
+			});
+		}
+		return this.rangeReduceBindGroupLayout;
+	}
+
+	private ensureRangeReducePipelineLayout(): GPUPipelineLayout {
+		if (!this.rangeReducePipelineLayout) {
+			this.rangeReducePipelineLayout = this.device.createPipelineLayout({
+				bindGroupLayouts: [this.ensureRangeReduceBindGroupLayout()]
+			});
+		}
+		return this.rangeReducePipelineLayout;
+	}
+
+	private async ensureRangeReduceValuesPipeline(): Promise<GPUComputePipeline> {
+		if (this.rangeReduceValuesPipeline) return this.rangeReduceValuesPipeline;
+		if (!this.rangeReduceValuesPipelinePromise) {
+			const module = this.device.createShaderModule({
+				code: utciRangeReduceWgsl
+			});
+			this.rangeReduceValuesPipelinePromise = this.device
+				.createComputePipelineAsync({
+					layout: this.ensureRangeReducePipelineLayout(),
+					compute: { module, entryPoint: 'reduce_values' }
+				})
+				.then((p) => {
+					this.rangeReduceValuesPipeline = p;
+					return p;
+				});
+		}
+		return this.rangeReduceValuesPipelinePromise;
+	}
+
+	private async ensureRangeReduceRangesPipeline(): Promise<GPUComputePipeline> {
+		if (this.rangeReduceRangesPipeline) return this.rangeReduceRangesPipeline;
+		if (!this.rangeReduceRangesPipelinePromise) {
+			const module = this.device.createShaderModule({
+				code: utciRangeReduceWgsl
+			});
+			this.rangeReduceRangesPipelinePromise = this.device
+				.createComputePipelineAsync({
+					layout: this.ensureRangeReducePipelineLayout(),
+					compute: { module, entryPoint: 'reduce_ranges' }
+				})
+				.then((p) => {
+					this.rangeReduceRangesPipeline = p;
+					return p;
+				});
+		}
+		return this.rangeReduceRangesPipelinePromise;
 	}
 
 	private clearBvhState(): void {
@@ -368,7 +496,20 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			throw createExposureAbortError('WebGPU UTCI exposure precompute aborted');
 		}
 		if (this.disposed) {
-			throw createExposureAbortError('WebGPU UTCI exposure precompute aborted because the pipeline was disposed');
+			throw createExposureAbortError(
+				'WebGPU UTCI exposure precompute aborted because the pipeline was disposed'
+			);
+		}
+	}
+
+	private ensureNotAborted(signal?: AbortSignal): void {
+		if (signal?.aborted) {
+			throw createExposureAbortError('WebGPU UTCI compact range summary aborted');
+		}
+		if (this.disposed) {
+			throw createExposureAbortError(
+				'WebGPU UTCI compact range summary aborted because the pipeline was disposed'
+			);
 		}
 	}
 
@@ -391,7 +532,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		const numPoints = params.gridPoints.length / 3;
 		if (!Number.isFinite(numPoints) || numPoints <= 0) {
-			throw new Error(`WebGPU UTCI pipeline: invalid gridPoints length=${params.gridPoints.length}`);
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid gridPoints length=${params.gridPoints.length}`
+			);
 		}
 
 		const weatherStride = 7;
@@ -440,8 +583,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: skyBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
 			});
-			staticUploadTrace.skyExposureBufferCreateMs =
-				performance.now() - skyBufferCreateStartedAt;
+			staticUploadTrace.skyExposureBufferCreateMs = performance.now() - skyBufferCreateStartedAt;
 		}
 
 		// Keep CPU allocations small by reusing tiny zero chunk writes.
@@ -449,7 +591,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const solarZeroFillStartedAt = performance.now();
 		let solarZeroFillWriteCount = 0;
 		for (let offset = 0; offset < solarBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(this.solarExposureBuffer, offset, zeroChunk.buffer, 0, Math.min(zeroChunk.byteLength, solarBytes - offset));
+			this.queue.writeBuffer(
+				this.solarExposureBuffer,
+				offset,
+				zeroChunk.buffer,
+				0,
+				Math.min(zeroChunk.byteLength, solarBytes - offset)
+			);
 			solarZeroFillWriteCount += 1;
 		}
 		staticUploadTrace.solarZeroFillMs = performance.now() - solarZeroFillStartedAt;
@@ -458,7 +606,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const skyZeroFillStartedAt = performance.now();
 		let skyZeroFillWriteCount = 0;
 		for (let offset = 0; offset < skyBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(this.skyExposureBuffer, offset, zeroChunk.buffer, 0, Math.min(zeroChunk.byteLength, skyBytes - offset));
+			this.queue.writeBuffer(
+				this.skyExposureBuffer,
+				offset,
+				zeroChunk.buffer,
+				0,
+				Math.min(zeroChunk.byteLength, skyBytes - offset)
+			);
 			skyZeroFillWriteCount += 1;
 		}
 		staticUploadTrace.skyZeroFillMs = performance.now() - skyZeroFillStartedAt;
@@ -473,11 +627,16 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: gridBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.gridBufferCreateMs =
-				performance.now() - gridBufferCreateStartedAt;
+			staticUploadTrace.gridBufferCreateMs = performance.now() - gridBufferCreateStartedAt;
 		}
 		const gridWriteStartedAt = performance.now();
-		this.queue.writeBuffer(this.gridPointsBuffer, 0, params.gridPoints.buffer, params.gridPoints.byteOffset, params.gridPoints.byteLength);
+		this.queue.writeBuffer(
+			this.gridPointsBuffer,
+			0,
+			params.gridPoints.buffer,
+			params.gridPoints.byteOffset,
+			params.gridPoints.byteLength
+		);
 		staticUploadTrace.gridWriteMs = performance.now() - gridWriteStartedAt;
 		staticUploadTrace.gridWriteBytes = gridBytes;
 
@@ -489,11 +648,16 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: sunBytes,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.sunBufferCreateMs =
-				performance.now() - sunBufferCreateStartedAt;
+			staticUploadTrace.sunBufferCreateMs = performance.now() - sunBufferCreateStartedAt;
 		}
 		const sunWriteStartedAt = performance.now();
-		this.queue.writeBuffer(this.sunVectorsBuffer, 0, params.sunVectors.buffer, params.sunVectors.byteOffset, params.sunVectors.byteLength);
+		this.queue.writeBuffer(
+			this.sunVectorsBuffer,
+			0,
+			params.sunVectors.buffer,
+			params.sunVectors.byteOffset,
+			params.sunVectors.byteLength
+		);
 		staticUploadTrace.sunWriteMs = performance.now() - sunWriteStartedAt;
 		staticUploadTrace.sunWriteBytes = sunBytes;
 
@@ -529,8 +693,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				params.sunAltitudes.byteOffset,
 				params.sunAltitudes.byteLength
 			);
-			staticUploadTrace.sunAltitudeWriteMs =
-				performance.now() - altitudeWriteStartedAt;
+			staticUploadTrace.sunAltitudeWriteMs = performance.now() - altitudeWriteStartedAt;
 			staticUploadTrace.sunAltitudeWriteBytes = params.sunAltitudes.byteLength;
 		} else {
 			this.clearSunAltitudeState();
@@ -549,9 +712,14 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					performance.now() - domeVectorBufferCreateStartedAt;
 			}
 			const domeVectorWriteStartedAt = performance.now();
-			this.queue.writeBuffer(this.domeVectorsBuffer, 0, params.domeVectors.buffer, params.domeVectors.byteOffset, params.domeVectors.byteLength);
-			staticUploadTrace.domeVectorWriteMs =
-				performance.now() - domeVectorWriteStartedAt;
+			this.queue.writeBuffer(
+				this.domeVectorsBuffer,
+				0,
+				params.domeVectors.buffer,
+				params.domeVectors.byteOffset,
+				params.domeVectors.byteLength
+			);
+			staticUploadTrace.domeVectorWriteMs = performance.now() - domeVectorWriteStartedAt;
 			staticUploadTrace.domeVectorWriteBytes = domeVecBytes;
 
 			const domeWeightBytes = params.domeWeights.byteLength;
@@ -566,9 +734,14 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					performance.now() - domeWeightBufferCreateStartedAt;
 			}
 			const domeWeightWriteStartedAt = performance.now();
-			this.queue.writeBuffer(this.domeWeightsBuffer, 0, params.domeWeights.buffer, params.domeWeights.byteOffset, params.domeWeights.byteLength);
-			staticUploadTrace.domeWeightWriteMs =
-				performance.now() - domeWeightWriteStartedAt;
+			this.queue.writeBuffer(
+				this.domeWeightsBuffer,
+				0,
+				params.domeWeights.buffer,
+				params.domeWeights.byteOffset,
+				params.domeWeights.byteLength
+			);
+			staticUploadTrace.domeWeightWriteMs = performance.now() - domeWeightWriteStartedAt;
 			staticUploadTrace.domeWeightWriteBytes = domeWeightBytes;
 		} else {
 			this.clearSkyDomeState();
@@ -582,8 +755,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 						const mesh = params.mesh as THREE.Mesh;
 						if (typeof mesh.updateMatrixWorld === 'function') mesh.updateMatrixWorld(true);
 						const result = serializeBvhForGpu(mesh.geometry as THREE.BufferGeometry);
-						staticUploadTrace.bvhSerializeMs =
-							performance.now() - bvhSerializeStartedAt;
+						staticUploadTrace.bvhSerializeMs = performance.now() - bvhSerializeStartedAt;
 						return result;
 					})()
 				: null);
@@ -599,8 +771,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: serialized.bvhNodeBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.bvhNodeBufferCreateMs =
-				performance.now() - bvhNodeCreateStartedAt;
+			staticUploadTrace.bvhNodeBufferCreateMs = performance.now() - bvhNodeCreateStartedAt;
 			const bvhNodeWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.bvhNodeBuffer, 0, serialized.bvhNodeBuffer);
 			staticUploadTrace.bvhNodeWriteMs = performance.now() - bvhNodeWriteStartedAt;
@@ -612,12 +783,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: serialized.bvhIndexBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.bvhIndexBufferCreateMs =
-				performance.now() - bvhIndexCreateStartedAt;
+			staticUploadTrace.bvhIndexBufferCreateMs = performance.now() - bvhIndexCreateStartedAt;
 			const bvhIndexWriteStartedAt = performance.now();
 			this.queue.writeBuffer(this.bvhIndexBuffer, 0, serialized.bvhIndexBuffer);
-			staticUploadTrace.bvhIndexWriteMs =
-				performance.now() - bvhIndexWriteStartedAt;
+			staticUploadTrace.bvhIndexWriteMs = performance.now() - bvhIndexWriteStartedAt;
 			staticUploadTrace.bvhIndexWriteBytes = serialized.bvhIndexBuffer.byteLength;
 
 			this.bvhVertexBuffer?.destroy();
@@ -626,8 +795,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: serialized.vertexBuffer.byteLength,
 				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.bvhVertexBufferCreateMs =
-				performance.now() - bvhVertexCreateStartedAt;
+			staticUploadTrace.bvhVertexBufferCreateMs = performance.now() - bvhVertexCreateStartedAt;
 			const bvhVertexWriteStartedAt = performance.now();
 			this.queue.writeBuffer(
 				this.bvhVertexBuffer,
@@ -636,8 +804,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				serialized.vertexBuffer.byteOffset,
 				serialized.vertexBuffer.byteLength
 			);
-			staticUploadTrace.bvhVertexWriteMs =
-				performance.now() - bvhVertexWriteStartedAt;
+			staticUploadTrace.bvhVertexWriteMs = performance.now() - bvhVertexWriteStartedAt;
 			staticUploadTrace.bvhVertexWriteBytes = serialized.vertexBuffer.byteLength;
 
 			this.bvhParamsBuffer?.destroy();
@@ -646,10 +813,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				size: 16,
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 			});
-			staticUploadTrace.bvhParamBufferCreateMs =
-				performance.now() - bvhParamCreateStartedAt;
+			staticUploadTrace.bvhParamBufferCreateMs = performance.now() - bvhParamCreateStartedAt;
 			const bvhParamWriteStartedAt = performance.now();
-			this.queue.writeBuffer(this.bvhParamsBuffer, 0, new Uint32Array([numNodes, numVertices, numIndices, 0]));
+			this.queue.writeBuffer(
+				this.bvhParamsBuffer,
+				0,
+				new Uint32Array([numNodes, numVertices, numIndices, 0])
+			);
 			staticUploadTrace.bvhParamWriteMs = performance.now() - bvhParamWriteStartedAt;
 			staticUploadTrace.bvhParamWriteBytes = 16;
 		} else {
@@ -664,7 +834,12 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	}
 
 	private createBvhBindGroup(pipeline: GPUComputePipeline): GPUBindGroup {
-		if (!this.bvhNodeBuffer || !this.bvhIndexBuffer || !this.bvhVertexBuffer || !this.bvhParamsBuffer) {
+		if (
+			!this.bvhNodeBuffer ||
+			!this.bvhIndexBuffer ||
+			!this.bvhVertexBuffer ||
+			!this.bvhParamsBuffer
+		) {
 			throw new Error('WebGPU UTCI pipeline: BVH buffers not initialized');
 		}
 		return this.device.createBindGroup({
@@ -701,6 +876,149 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		buffers.length = 0;
 	}
 
+	private async runRangeSummarySerial<T>(operation: () => Promise<T>): Promise<T> {
+		const previousOperation = this.rangeSummarySerial.catch(() => undefined);
+		let finishOperation!: () => void;
+		this.rangeSummarySerial = new Promise<void>((resolve) => {
+			finishOperation = resolve;
+		});
+		await previousOperation;
+
+		try {
+			return await operation();
+		} finally {
+			finishOperation();
+		}
+	}
+
+	private ensureRangeSummaryOutputBuffer(byteLength: number): GPUBuffer {
+		if (!this.rangeSummaryOutputBuffer || this.rangeSummaryOutputBuffer.size !== byteLength) {
+			this.rangeSummaryOutputBuffer?.destroy();
+			this.rangeSummaryOutputBuffer = this.device.createBuffer({
+				size: byteLength,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+			});
+		}
+		return this.rangeSummaryOutputBuffer;
+	}
+
+	private ensureRangeSummaryPartialBufferA(recordCount: number): GPUBuffer {
+		const byteLength = Math.max(1, recordCount) * RANGE_SUMMARY_RECORD_BYTES;
+		if (!this.rangeSummaryPartialBufferA || this.rangeSummaryPartialBufferA.size < byteLength) {
+			this.rangeSummaryPartialBufferA?.destroy();
+			this.rangeSummaryPartialBufferA = this.device.createBuffer({
+				size: byteLength,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+			});
+		}
+		return this.rangeSummaryPartialBufferA;
+	}
+
+	private ensureRangeSummaryPartialBufferB(recordCount: number): GPUBuffer {
+		const byteLength = Math.max(1, recordCount) * RANGE_SUMMARY_RECORD_BYTES;
+		if (!this.rangeSummaryPartialBufferB || this.rangeSummaryPartialBufferB.size < byteLength) {
+			this.rangeSummaryPartialBufferB?.destroy();
+			this.rangeSummaryPartialBufferB = this.device.createBuffer({
+				size: byteLength,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+			});
+		}
+		return this.rangeSummaryPartialBufferB;
+	}
+
+	private ensureRangeSummaryFinalStagingBuffer(): GPUBuffer {
+		if (
+			!this.rangeSummaryFinalStagingBuffer ||
+			this.rangeSummaryFinalStagingBuffer.size !== RANGE_SUMMARY_RECORD_BYTES
+		) {
+			this.rangeSummaryFinalStagingBuffer?.destroy();
+			this.rangeSummaryFinalStagingBuffer = this.device.createBuffer({
+				size: RANGE_SUMMARY_RECORD_BYTES,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+			});
+		}
+		return this.rangeSummaryFinalStagingBuffer;
+	}
+
+	private encodeRangeSummaryReduction(params: {
+		encoder: GPUCommandEncoder;
+		sourceValuesBuffer: GPUBuffer;
+		valueCount: number;
+		valuesPipeline: GPUComputePipeline;
+		rangesPipeline: GPUComputePipeline;
+		transientUniformBuffers: GPUBuffer[];
+	}): { finalBuffer: GPUBuffer; reductionPassCount: number } {
+		const { encoder, sourceValuesBuffer, valueCount, valuesPipeline, rangesPipeline } = params;
+		const valueChunks = createPointDispatchChunks(valueCount, 256);
+		const firstPartialCount = valueChunks.reduce(
+			(total, chunk) => total + Math.ceil(chunk.pointCount / 256),
+			0
+		);
+		const partialBufferA = this.ensureRangeSummaryPartialBufferA(firstPartialCount);
+		const partialBufferB = this.ensureRangeSummaryPartialBufferB(firstPartialCount);
+		const layout = this.ensureRangeReduceBindGroupLayout();
+
+		let outputOffset = 0;
+		const valuesPass = encoder.beginComputePass();
+		valuesPass.setPipeline(valuesPipeline);
+		for (const chunk of valueChunks) {
+			const rangeParamsBuffer = this.createUintParamsBuffer(
+				new Uint32Array([chunk.pointCount, chunk.pointOffset, outputOffset, 1]),
+				params.transientUniformBuffers
+			);
+			const bindGroup = this.device.createBindGroup({
+				layout,
+				entries: [
+					{ binding: 0, resource: { buffer: sourceValuesBuffer } },
+					{ binding: 1, resource: { buffer: partialBufferB } },
+					{ binding: 2, resource: { buffer: partialBufferA } },
+					{ binding: 3, resource: { buffer: rangeParamsBuffer } }
+				]
+			});
+			valuesPass.setBindGroup(0, bindGroup);
+			valuesPass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+			outputOffset += Math.ceil(chunk.pointCount / 256);
+		}
+		valuesPass.end();
+
+		let currentBuffer = partialBufferA;
+		let nextBuffer = partialBufferB;
+		let currentCount = firstPartialCount;
+		let reductionPassCount = 1;
+		while (currentCount > 1) {
+			const rangeChunks = createPointDispatchChunks(currentCount, 256);
+			let nextOutputOffset = 0;
+			const rangesPass = encoder.beginComputePass();
+			rangesPass.setPipeline(rangesPipeline);
+			for (const chunk of rangeChunks) {
+				const rangeParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([chunk.pointCount, chunk.pointOffset, nextOutputOffset, 1]),
+					params.transientUniformBuffers
+				);
+				const bindGroup = this.device.createBindGroup({
+					layout,
+					entries: [
+						{ binding: 0, resource: { buffer: sourceValuesBuffer } },
+						{ binding: 1, resource: { buffer: currentBuffer } },
+						{ binding: 2, resource: { buffer: nextBuffer } },
+						{ binding: 3, resource: { buffer: rangeParamsBuffer } }
+					]
+				});
+				rangesPass.setBindGroup(0, bindGroup);
+				rangesPass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+				nextOutputOffset += Math.ceil(chunk.pointCount / 256);
+			}
+			rangesPass.end();
+			const previousBuffer = currentBuffer;
+			currentBuffer = nextBuffer;
+			nextBuffer = previousBuffer;
+			currentCount = nextOutputOffset;
+			reductionPassCount += 1;
+		}
+
+		return { finalBuffer: currentBuffer, reductionPassCount };
+	}
+
 	private async encodeExposurePassesForChunks(params: {
 		encoder: GPUCommandEncoder;
 		numPoints: number;
@@ -709,7 +1027,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		solarPipeline: GPUComputePipeline;
 		skyPipeline: GPUComputePipeline;
 		daylightTimeSteps?: number;
-	}): Promise<{ transientUniformBuffers: GPUBuffer[]; trace: ExposureEncodeTrace }> {
+	}): Promise<{
+		transientUniformBuffers: GPUBuffer[];
+		trace: ExposureEncodeTrace;
+	}> {
 		const {
 			encoder,
 			numPoints,
@@ -721,7 +1042,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		} = params;
 		const commandEncodeStartedAt = performance.now();
 		const transientUniformBuffers: GPUBuffer[] = [];
-		const hasBvh = this.bvhNodeBuffer && this.bvhIndexBuffer && this.bvhVertexBuffer && this.bvhParamsBuffer;
+		const hasBvh =
+			this.bvhNodeBuffer && this.bvhIndexBuffer && this.bvhVertexBuffer && this.bvhParamsBuffer;
 		let solarEncodeMs: number | undefined;
 		let skyEncodeMs: number | undefined;
 		let solarDispatchCount = 0;
@@ -758,7 +1080,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			}
 
 			const numPatches = 145;
-			if (hasBvh && this.gridPointsBuffer && this.domeVectorsBuffer && this.domeWeightsBuffer && this.skyExposureBuffer) {
+			if (
+				hasBvh &&
+				this.gridPointsBuffer &&
+				this.domeVectorsBuffer &&
+				this.domeWeightsBuffer &&
+				this.skyExposureBuffer
+			) {
 				const skyEncodeStartedAt = performance.now();
 				this.ranExposurePassesThisRun = true;
 				const skyPass = encoder.beginComputePass();
@@ -816,7 +1144,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		solarPipeline: GPUComputePipeline;
 		skyPipeline: GPUComputePipeline;
 		daylightTimeSteps?: number;
-	}): Promise<{ transientUniformBuffers: GPUBuffer[]; trace: ExposureEncodeTrace }> {
+	}): Promise<{
+		transientUniformBuffers: GPUBuffer[];
+		trace: ExposureEncodeTrace;
+	}> {
 		return this.encodeExposurePassesForChunks({
 			...params,
 			pointChunks: createPointDispatchChunks(params.numPoints, params.workgroupSize)
@@ -911,7 +1242,12 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		};
 	}
 
-	async runAll(params: { numPoints: number; numHours: number; numMonths: number; workgroupSize?: number }): Promise<void> {
+	async runAll(params: {
+		numPoints: number;
+		numHours: number;
+		numMonths: number;
+		workgroupSize?: number;
+	}): Promise<void> {
 		if (!this.weatherData) {
 			throw new Error('WebGPU UTCI pipeline: weather data not uploaded');
 		}
@@ -981,7 +1317,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			});
 		}
 
-		this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([numPoints, totalTimeSteps, numHours, 0]));
+		this.queue.writeBuffer(
+			this.paramsBuffer,
+			0,
+			new Uint32Array([numPoints, totalTimeSteps, numHours, 0])
+		);
 
 		const workgroupSize = params.workgroupSize ?? 64;
 		const workgroupsX = Math.ceil(numPoints / workgroupSize);
@@ -1040,7 +1380,12 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				{ binding: 6, resource: { buffer: this.mrtBuffer } }
 			];
 			if (this.supportsMrtComponents) {
-				if (!this.shortErfBuffer || !this.longErfBuffer || !this.shortDmrtBuffer || !this.longDmrtBuffer) {
+				if (
+					!this.shortErfBuffer ||
+					!this.longErfBuffer ||
+					!this.shortDmrtBuffer ||
+					!this.longDmrtBuffer
+				) {
 					throw new Error('WebGPU UTCI pipeline: MRT component buffers are not initialized');
 				}
 				bindEntries.push(
@@ -1229,8 +1574,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const exposureWeatherBufferEnsureStartedAt = performance.now();
 		await this.ensureWeatherBuffer();
 		this.assertExposurePrecomputeActive(params.signal);
-		const exposureWeatherBufferEnsureMs =
-			performance.now() - exposureWeatherBufferEnsureStartedAt;
+		const exposureWeatherBufferEnsureMs = performance.now() - exposureWeatherBufferEnsureStartedAt;
 
 		if (!this.paramsBuffer || this.paramsBuffer.size !== 16) {
 			this.paramsBuffer?.destroy();
@@ -1239,7 +1583,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 			});
 		}
-		this.queue.writeBuffer(this.paramsBuffer, 0, new Uint32Array([numPoints, totalTimeSteps, numHours, 0]));
+		this.queue.writeBuffer(
+			this.paramsBuffer,
+			0,
+			new Uint32Array([numPoints, totalTimeSteps, numHours, 0])
+		);
 		this.assertExposurePrecomputeActive(params.signal);
 
 		const exposureScheduling = params.exposureScheduling ?? DEFAULT_EXPOSURE_SCHEDULING;
@@ -1265,18 +1613,16 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 			const encoder = this.device.createCommandEncoder();
 			this.assertExposurePrecomputeActive(params.signal);
-			const {
-				transientUniformBuffers: exposureUniformBuffers,
-				trace: exposureEncodeTrace
-			} = await this.encodeExposurePasses({
-				encoder,
-				numPoints,
-				totalTimeSteps,
-				workgroupSize,
-				solarPipeline,
-				skyPipeline,
-				daylightTimeSteps: this.lastDaylightTimeStepCount ?? undefined
-			});
+			const { transientUniformBuffers: exposureUniformBuffers, trace: exposureEncodeTrace } =
+				await this.encodeExposurePasses({
+					encoder,
+					numPoints,
+					totalTimeSteps,
+					workgroupSize,
+					solarPipeline,
+					skyPipeline,
+					daylightTimeSteps: this.lastDaylightTimeStepCount ?? undefined
+				});
 			let exposureQueueWaitMs = 0;
 			try {
 				this.assertExposurePrecomputeActive(params.signal);
@@ -1454,6 +1800,182 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		};
 	}
 
+	async runUtciRangeSummaryForTimeIndex(
+		params: RunUtciRangeSummaryForTimeIndexParams
+	): Promise<UtciRangeSummary> {
+		return this.runRangeSummarySerial(async () => {
+			this.ensureNotAborted(params.signal);
+			if (!this.solarExposureBuffer) {
+				throw new Error(
+					'WebGPU UTCI pipeline: solar exposure buffer not available (run runAll or runExposurePrecompute first)'
+				);
+			}
+			if (!this.skyExposureBuffer) {
+				throw new Error(
+					'WebGPU UTCI pipeline: sky exposure buffer not available (run runAll or runExposurePrecompute first)'
+				);
+			}
+			if (!this.sunAltitudesBuffer) {
+				throw new Error(
+					'WebGPU UTCI pipeline: sun altitude buffer not available (upload static data before compact UTCI range summaries)'
+				);
+			}
+			if (!this.ranExposurePassesThisRun) {
+				throw new Error(
+					'WebGPU UTCI pipeline: solar/sky exposure passes did not run (no BVH?). runUtciRangeSummaryForTimeIndex would use zero-filled exposure buffers.'
+				);
+			}
+
+			const { format, numHours, numMonths, numPoints, timeIndex } = params;
+			this.assertMatchesLastConfig({
+				numPoints,
+				numHours,
+				numMonths,
+				context: 'runUtciRangeSummaryForTimeIndex'
+			});
+			if (format !== 'f32-utci') {
+				throw new Error(
+					`WebGPU UTCI pipeline: unsupported compact range output format "${format}"`
+				);
+			}
+			if (numPoints <= 0) {
+				throw new Error(`WebGPU UTCI pipeline: invalid compact range numPoints=${numPoints}`);
+			}
+
+			const totalTimeSteps = numHours * numMonths;
+			if (timeIndex < 0 || timeIndex >= totalTimeSteps) {
+				throw new Error(`Invalid time index ${timeIndex} for totalTimeSteps=${totalTimeSteps}`);
+			}
+
+			const rangeSummaryStartedAt = performance.now();
+			const solarExposureBuffer = this.solarExposureBuffer;
+			const skyExposureBuffer = this.skyExposureBuffer;
+			const sunAltitudesBuffer = this.sunAltitudesBuffer;
+			const weatherBuffer = await this.ensureWeatherBuffer();
+			this.ensureNotAborted(params.signal);
+			const [onDemandPipeline, valuesPipeline, rangesPipeline] = await Promise.all([
+				this.ensureOnDemandPipeline(),
+				this.ensureRangeReduceValuesPipeline(),
+				this.ensureRangeReduceRangesPipeline()
+			]);
+			this.ensureNotAborted(params.signal);
+
+			const outputBytes = numPoints * 4;
+			const rangeSummaryOutputBuffer = this.ensureRangeSummaryOutputBuffer(outputBytes);
+			const rangeSummaryFinalStagingBuffer = this.ensureRangeSummaryFinalStagingBuffer();
+			const transientUniformBuffers: GPUBuffer[] = [];
+			let mapped = false;
+			try {
+				const dispatchStartedAt = performance.now();
+				const encoder = this.device.createCommandEncoder();
+				const onDemandPass = encoder.beginComputePass();
+				onDemandPass.setPipeline(onDemandPipeline);
+				for (const chunk of createPointDispatchChunks(numPoints, 64)) {
+					const onDemandParamsBuffer = this.createUintParamsBuffer(
+						new Uint32Array([
+							numPoints,
+							totalTimeSteps,
+							numHours,
+							timeIndex,
+							0,
+							chunk.pointOffset,
+							0,
+							0
+						]),
+						transientUniformBuffers
+					);
+					const bindGroup = this.device.createBindGroup({
+						layout: onDemandPipeline.getBindGroupLayout(0),
+						entries: [
+							{ binding: 0, resource: { buffer: solarExposureBuffer } },
+							{ binding: 1, resource: { buffer: skyExposureBuffer } },
+							{ binding: 2, resource: { buffer: weatherBuffer } },
+							{ binding: 3, resource: { buffer: rangeSummaryOutputBuffer } },
+							{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
+							{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
+						]
+					});
+					onDemandPass.setBindGroup(0, bindGroup);
+					onDemandPass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+				}
+				onDemandPass.end();
+
+				const { finalBuffer, reductionPassCount } = this.encodeRangeSummaryReduction({
+					encoder,
+					sourceValuesBuffer: rangeSummaryOutputBuffer,
+					valueCount: numPoints,
+					valuesPipeline,
+					rangesPipeline,
+					transientUniformBuffers
+				});
+				encoder.copyBufferToBuffer(
+					finalBuffer,
+					0,
+					rangeSummaryFinalStagingBuffer,
+					0,
+					RANGE_SUMMARY_RECORD_BYTES
+				);
+
+				this.ensureNotAborted(params.signal);
+				this.queue.submit([encoder.finish()]);
+				await this.queue.onSubmittedWorkDone();
+				this.ensureNotAborted(params.signal);
+				const dispatchMs = performance.now() - dispatchStartedAt;
+				this.destroyTransientUniformBuffers(transientUniformBuffers);
+
+				const readbackStartedAt = performance.now();
+				this.ensureNotAborted(params.signal);
+				await rangeSummaryFinalStagingBuffer.mapAsync(GPUMapMode.READ);
+				mapped = true;
+				this.ensureNotAborted(params.signal);
+				const mappedRange = rangeSummaryFinalStagingBuffer.getMappedRange(
+					0,
+					RANGE_SUMMARY_RECORD_BYTES
+				);
+				const summaryBytes = mappedRange.slice(0);
+				const parsed = parseRangeSummaryRecord(summaryBytes);
+				const readbackMs = performance.now() - readbackStartedAt;
+				const summaryMs = performance.now() - rangeSummaryStartedAt;
+
+				this.onDemandDiagnostics = {
+					...this.onDemandDiagnostics,
+					timings: {
+						...this.onDemandDiagnostics.timings,
+						selectedDayRangeSummaryMs: summaryMs,
+						selectedDayRangeSummaryDispatchMs: dispatchMs,
+						selectedDayRangeSummaryReadbackMs: readbackMs,
+						selectedDayRangeSummaryReadbackBytes:
+							(this.onDemandDiagnostics.timings.selectedDayRangeSummaryReadbackBytes ?? 0) +
+							RANGE_SUMMARY_RECORD_BYTES,
+						selectedDayRangeSummaryReadbackCount:
+							(this.onDemandDiagnostics.timings.selectedDayRangeSummaryReadbackCount ?? 0) + 1,
+						selectedDayRangeSummaryComputedHourCount:
+							(this.onDemandDiagnostics.timings.selectedDayRangeSummaryComputedHourCount ?? 0) + 1,
+						selectedDayRangeSummaryReductionPassCount:
+							(this.onDemandDiagnostics.timings.selectedDayRangeSummaryReductionPassCount ?? 0) +
+							reductionPassCount,
+						selectedDayRangeFullReadbackAvoidedCount:
+							(this.onDemandDiagnostics.timings.selectedDayRangeFullReadbackAvoidedCount ?? 0) + 1
+					}
+				};
+
+				return {
+					timeIndex,
+					range: parsed.range,
+					validCount: parsed.validCount,
+					readbackBytes: RANGE_SUMMARY_RECORD_BYTES,
+					reductionPassCount,
+					debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+				};
+			} finally {
+				this.destroyTransientUniformBuffers(transientUniformBuffers);
+				if (mapped) {
+					rangeSummaryFinalStagingBuffer.unmap();
+				}
+			}
+		});
+	}
+
 	async readOnDemandUtciForDebug(params: { numPoints: number }): Promise<Float32Array> {
 		if (!this.onDemandOutputBuffer) {
 			throw new Error('WebGPU UTCI pipeline: on-demand output buffer not available');
@@ -1479,7 +2001,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 			const debugReadbackStart = performance.now();
 			const encoder = this.device.createCommandEncoder();
-			encoder.copyBufferToBuffer(this.onDemandOutputBuffer, 0, this.onDemandReadbackBuffer, 0, bytes);
+			encoder.copyBufferToBuffer(
+				this.onDemandOutputBuffer,
+				0,
+				this.onDemandReadbackBuffer,
+				0,
+				bytes
+			);
 			this.queue.submit([encoder.finish()]);
 
 			await this.onDemandReadbackBuffer.mapAsync(GPUMapMode.READ);
@@ -1499,6 +2027,71 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		} finally {
 			finishReadback();
 		}
+	}
+
+	async __TEST_ONLY_reduceRangeValuesForDebug(values: Float32Array): Promise<UtciRangeSummary> {
+		return this.runRangeSummarySerial(async () => {
+			if (values.length <= 0) {
+				throw new Error('WebGPU UTCI pipeline: debug compact range summary requires values');
+			}
+			const rangeSummaryOutputBuffer = this.ensureRangeSummaryOutputBuffer(values.byteLength);
+			this.queue.writeBuffer(
+				rangeSummaryOutputBuffer,
+				0,
+				values.buffer as ArrayBuffer,
+				values.byteOffset,
+				values.byteLength
+			);
+			const [valuesPipeline, rangesPipeline] = await Promise.all([
+				this.ensureRangeReduceValuesPipeline(),
+				this.ensureRangeReduceRangesPipeline()
+			]);
+			const rangeSummaryFinalStagingBuffer = this.ensureRangeSummaryFinalStagingBuffer();
+			const transientUniformBuffers: GPUBuffer[] = [];
+			let mapped = false;
+			try {
+				const encoder = this.device.createCommandEncoder();
+				const { finalBuffer, reductionPassCount } = this.encodeRangeSummaryReduction({
+					encoder,
+					sourceValuesBuffer: rangeSummaryOutputBuffer,
+					valueCount: values.length,
+					valuesPipeline,
+					rangesPipeline,
+					transientUniformBuffers
+				});
+				encoder.copyBufferToBuffer(
+					finalBuffer,
+					0,
+					rangeSummaryFinalStagingBuffer,
+					0,
+					RANGE_SUMMARY_RECORD_BYTES
+				);
+				this.queue.submit([encoder.finish()]);
+				await this.queue.onSubmittedWorkDone();
+				this.destroyTransientUniformBuffers(transientUniformBuffers);
+				await rangeSummaryFinalStagingBuffer.mapAsync(GPUMapMode.READ);
+				mapped = true;
+				const mappedRange = rangeSummaryFinalStagingBuffer.getMappedRange(
+					0,
+					RANGE_SUMMARY_RECORD_BYTES
+				);
+				const summaryBytes = mappedRange.slice(0);
+				const parsed = parseRangeSummaryRecord(summaryBytes);
+				return {
+					timeIndex: 0,
+					range: parsed.range,
+					validCount: parsed.validCount,
+					readbackBytes: RANGE_SUMMARY_RECORD_BYTES,
+					reductionPassCount,
+					debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+				};
+			} finally {
+				this.destroyTransientUniformBuffers(transientUniformBuffers);
+				if (mapped) {
+					rangeSummaryFinalStagingBuffer.unmap();
+				}
+			}
+		});
 	}
 
 	async readUtcisSlice(params: {
@@ -1549,7 +2142,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 			});
 		}
-		this.queue.writeBuffer(this.sliceParamsBuffer, 0, new Uint32Array([numPoints, totalTimeSteps, timeIndex, 0]));
+		this.queue.writeBuffer(
+			this.sliceParamsBuffer,
+			0,
+			new Uint32Array([numPoints, totalTimeSteps, timeIndex, 0])
+		);
 
 		const bindGroup = this.device.createBindGroup({
 			layout: gatherPipeline.getBindGroupLayout(0),
@@ -1646,7 +2243,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			});
 		}
 		const encoder = this.device.createCommandEncoder();
-		encoder.copyBufferToBuffer(this.solarExposureBuffer, 0, this.solarStagingBuffer, 0, packedBytes);
+		encoder.copyBufferToBuffer(
+			this.solarExposureBuffer,
+			0,
+			this.solarStagingBuffer,
+			0,
+			packedBytes
+		);
 		this.queue.submit([encoder.finish()]);
 		await this.solarStagingBuffer.mapAsync(GPUMapMode.READ);
 		const packed = new Uint32Array(this.solarStagingBuffer.getMappedRange());
@@ -1748,7 +2351,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			!this.longDmrtBuffer ||
 			!this.lastConfig
 		) {
-			throw new Error('WebGPU UTCI pipeline: MRT component buffers not available (run runAll first)');
+			throw new Error(
+				'WebGPU UTCI pipeline: MRT component buffers not available (run runAll first)'
+			);
 		}
 		await this.queue.onSubmittedWorkDone();
 		const { numPoints, numHours, numMonths } = params;
@@ -1908,6 +2513,14 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.onDemandParamsBuffer = null;
 		this.onDemandReadbackBuffer?.destroy();
 		this.onDemandReadbackBuffer = null;
+		this.rangeSummaryOutputBuffer?.destroy();
+		this.rangeSummaryOutputBuffer = null;
+		this.rangeSummaryPartialBufferA?.destroy();
+		this.rangeSummaryPartialBufferA = null;
+		this.rangeSummaryPartialBufferB?.destroy();
+		this.rangeSummaryPartialBufferB = null;
+		this.rangeSummaryFinalStagingBuffer?.destroy();
+		this.rangeSummaryFinalStagingBuffer = null;
 		this.solarStagingBuffer?.destroy();
 		this.solarStagingBuffer = null;
 		this.skyStagingBuffer?.destroy();
@@ -1938,18 +2551,26 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.skyPipeline = null;
 		this.gatherSlicePipeline = null;
 		this.onDemandPipeline = null;
+		this.rangeReduceValuesPipeline = null;
+		this.rangeReduceRangesPipeline = null;
+		this.rangeReduceBindGroupLayout = null;
+		this.rangeReducePipelineLayout = null;
 		this.pipelinePromise = null;
 		this.solarPipelinePromise = null;
 		this.skyPipelinePromise = null;
 		this.gatherSlicePipelinePromise = null;
 		this.onDemandPipelinePromise = null;
+		this.rangeReduceValuesPipelinePromise = null;
+		this.rangeReduceRangesPipelinePromise = null;
 		this.lastConfig = null;
 		this.weatherData = null;
 		this.ranExposurePassesThisRun = false;
 	}
 }
 
-async function getWebgpuDevice(enableDiagnostics: boolean): Promise<{ device: GPUDevice; supportsMrtComponents: boolean }> {
+async function getWebgpuDevice(
+	enableDiagnostics: boolean
+): Promise<{ device: GPUDevice; supportsMrtComponents: boolean }> {
 	if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
 		throw new Error('WebGPU not available in this environment');
 	}
@@ -1966,7 +2587,8 @@ async function getWebgpuDevice(enableDiagnostics: boolean): Promise<{ device: GP
 	}
 	const requiredStorageBuffersPerStage = 10;
 	const supportedStorageBuffersPerStage = adapter.limits.maxStorageBuffersPerShaderStage;
-	const supportsMrtComponents = enableDiagnostics && (supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage);
+	const supportsMrtComponents =
+		enableDiagnostics && supportedStorageBuffersPerStage >= requiredStorageBuffersPerStage;
 
 	// Default limits are often 128MB binding / 256MB buffer; large models (e.g. Ness Tziona)
 	// need solar/utci buffers >256MB. Request adapter max for both so CreateBuffer and
@@ -2016,20 +2638,24 @@ export async function createWebgpuUtciPipeline(
 			enableDiagnostics &&
 			options.device.limits.maxStorageBuffersPerShaderStage >= requiredStorageBuffersPerStage;
 		if (enableDiagnostics && !supportsMrtComponents) {
-			console.warn("MRT diagnostics were requested but the provided WebGPU device does not support them.");
+			console.warn(
+				'MRT diagnostics were requested but the provided WebGPU device does not support them.'
+			);
 		}
 		return new WebgpuUtciComputePipeline(options.device, supportsMrtComponents);
 	}
 
 	if (!cachedDevicePromise || (enableDiagnostics && !cachedSupportsMrtComponents)) {
-		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(({ device, supportsMrtComponents }) => {
-			cachedDevice = device;
-			cachedSupportsMrtComponents = supportsMrtComponents;
-			if (enableDiagnostics && !supportsMrtComponents) {
-				console.warn("MRT diagnostics were requested but hardware does not support them.");
+		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(
+			({ device, supportsMrtComponents }) => {
+				cachedDevice = device;
+				cachedSupportsMrtComponents = supportsMrtComponents;
+				if (enableDiagnostics && !supportsMrtComponents) {
+					console.warn('MRT diagnostics were requested but hardware does not support them.');
+				}
+				return device;
 			}
-			return device;
-		});
+		);
 	}
 	const device = await cachedDevicePromise;
 	const useDiagnostics = enableDiagnostics && cachedSupportsMrtComponents;

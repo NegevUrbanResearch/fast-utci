@@ -55,14 +55,29 @@ const createFakePipeline = () => {
 				return arr;
 			}
 		);
+	const runUtciRangeSummaryForTimeIndex = vi.fn(async (params) => ({
+		timeIndex: params.timeIndex,
+		range: { min: 1, max: 4 },
+		validCount: params.numPoints,
+		readbackBytes: 16,
+		reductionPassCount: 2,
+		debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+	}));
 
 	const pipeline: UTCIComputePipeline = {
 		uploadStaticData,
 		runAll,
-		readUtcisSlice
+		readUtcisSlice,
+		runUtciRangeSummaryForTimeIndex
 	};
 
-	return { pipeline, uploadStaticData, runAll, readUtcisSlice };
+	return {
+		pipeline,
+		uploadStaticData,
+		runAll,
+		readUtcisSlice,
+		runUtciRangeSummaryForTimeIndex
+	};
 };
 
 describe('ComputeManager', () => {
@@ -179,6 +194,70 @@ describe('ComputeManager', () => {
 		// If a future refactor tried to introduce a CPU-computed UTCI path here,
 		// this assertion would start failing because the fake pipeline would no
 		// longer be consulted.
+	});
+
+	it('delegates compact UTCI range summary requests to the pipeline', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		const summary = await manager.runUtciRangeSummaryForTimeIndex({
+			timeIndex: 8,
+			numPoints: 4,
+			numHours: 24,
+			numMonths: 12,
+			format: 'f32-utci'
+		});
+
+		expect(pipeline.runUtciRangeSummaryForTimeIndex).toHaveBeenCalledWith({
+			timeIndex: 8,
+			numPoints: 4,
+			numHours: 24,
+			numMonths: 12,
+			format: 'f32-utci'
+		});
+		expect(summary).toMatchObject({
+			timeIndex: 8,
+			range: { min: 1, max: 4 },
+			validCount: 4,
+			readbackBytes: 16,
+			reductionPassCount: 2,
+			debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+		});
+	});
+
+	it('rejects non-f32 range summary formats before delegating', async () => {
+		const { pipeline, runUtciRangeSummaryForTimeIndex } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForTimeIndex({
+				timeIndex: 8,
+				numPoints: 4,
+				numHours: 24,
+				numMonths: 12,
+				format: 'packed-mrt-utci' as never
+			})
+		).rejects.toThrowError('UTCI range summaries support only f32-utci output format');
+
+		expect(runUtciRangeSummaryForTimeIndex).not.toHaveBeenCalled();
+	});
+
+	it('throws when the pipeline does not support compact UTCI range summaries', async () => {
+		const { pipeline } = createFakePipeline();
+		const { runUtciRangeSummaryForTimeIndex: _unused, ...pipelineWithoutSummarySupport } = pipeline;
+		const manager = new ComputeManager(pipelineWithoutSummarySupport as UTCIComputePipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForTimeIndex({
+				timeIndex: 8,
+				numPoints: 4,
+				numHours: 24,
+				numMonths: 12,
+				format: 'f32-utci'
+			})
+		).rejects.toThrowError(
+			'UTCI pipeline does not support compact selected-hour range summaries'
+		);
 	});
 
 	it('initFromModelAndWeather should return grid points', async () => {

@@ -391,6 +391,18 @@ function accumulateUtciRange(
 	};
 }
 
+function accumulateUtciRangeSummary(
+	current: { min: number; max: number } | null,
+	range: { min: number; max: number } | null
+): { min: number; max: number } | null {
+	if (!range) return current;
+	if (!current) return range;
+	return {
+		min: Math.min(current.min, range.min),
+		max: Math.max(current.max, range.max)
+	};
+}
+
 function ensureSelectedHourOutputHandle(params: {
 	output: OnDemandUtciOutput;
 	requestId: number;
@@ -429,13 +441,61 @@ async function resolveSelectedDayUtciRange(params: {
 	selectedTimeIndex: number;
 	selectedHourUtci?: Float32Array;
 	recordReadback: (reason: SelectedHourReadbackReason) => void;
-}): Promise<{ min: number; max: number } | null> {
+}): Promise<{
+	range: { min: number; max: number } | null;
+	cacheKey: string;
+	cacheHit: boolean;
+	cacheSizeBefore: number;
+	cacheSizeAfter: number;
+	readbackCount: number;
+	computedHourCount: number;
+	resolutionPath: 'full-readback' | 'compact-gpu-summary' | 'cache-hit' | 'unavailable';
+	summaryReadbackCount: number;
+	summaryReadbackBytes: number;
+	fullReadbackAvoidedCount: number;
+}> {
 	const cacheKey = `${params.monthIndex}:${params.state.numHours}`;
+	const cacheSizeBefore = params.state.selectedDayRangeCache.size;
 	const cached = params.state.selectedDayRangeCache.get(cacheKey);
-	if (cached) return cached;
-	if (!params.state.pipeline.readOnDemandUtciForDebug) return null;
+	if (cached) {
+		return {
+			range: cached,
+			cacheKey,
+			cacheHit: true,
+			cacheSizeBefore,
+			cacheSizeAfter: params.state.selectedDayRangeCache.size,
+			readbackCount: 0,
+			computedHourCount: 0,
+			resolutionPath: 'cache-hit',
+			summaryReadbackCount: 0,
+			summaryReadbackBytes: 0,
+			fullReadbackAvoidedCount: 0
+		};
+	}
+	const supportsCompactSummary = Boolean(params.state.pipeline.runUtciRangeSummaryForTimeIndex);
+	const readOnDemandUtciForDebug = params.state.pipeline.readOnDemandUtciForDebug;
+	if (!supportsCompactSummary && !readOnDemandUtciForDebug) {
+		return {
+			range: null,
+			cacheKey,
+			cacheHit: false,
+			cacheSizeBefore,
+			cacheSizeAfter: params.state.selectedDayRangeCache.size,
+			readbackCount: 0,
+			computedHourCount: 0,
+			resolutionPath: 'unavailable',
+			summaryReadbackCount: 0,
+			summaryReadbackBytes: 0,
+			fullReadbackAvoidedCount: 0
+		};
+	}
 
 	let dayRange: { min: number; max: number } | null = null;
+	let readbackCount = 0;
+	let computedHourCount = 0;
+	let summaryReadbackCount = 0;
+	let summaryReadbackBytes = 0;
+	let fullReadbackAvoidedCount = 0;
 	const monthStart = params.monthIndex * params.state.numHours;
 	const monthEnd = Math.min(
 		monthStart + params.state.numHours,
@@ -448,6 +508,26 @@ async function resolveSelectedDayUtciRange(params: {
 			continue;
 		}
 
+		if (supportsCompactSummary) {
+			const summary = await params.state.computeManager.runUtciRangeSummaryForTimeIndex({
+				timeIndex,
+				numPoints: params.state.numPoints,
+				numHours: params.state.numHours,
+				numMonths: params.state.numMonths,
+				format: 'f32-utci',
+				signal: params.state.signal
+			});
+			computedHourCount += 1;
+			summaryReadbackCount += 1;
+			summaryReadbackBytes += summary.readbackBytes;
+			fullReadbackAvoidedCount += 1;
+			dayRange = accumulateUtciRangeSummary(dayRange, summary.range);
+			continue;
+		}
+
+		if (!readOnDemandUtciForDebug) {
+			throw new Error('Selected-day range fallback readback is unavailable.');
+		}
 		await params.state.computeManager.runUtciForTimeIndex({
 			timeIndex,
 			numPoints: params.state.numPoints,
@@ -455,15 +535,29 @@ async function resolveSelectedDayUtciRange(params: {
 			numMonths: params.state.numMonths,
 			format: 'f32-utci'
 		});
-		const values = await params.state.pipeline.readOnDemandUtciForDebug({
+		computedHourCount += 1;
+		const values = await readOnDemandUtciForDebug({
 			numPoints: params.state.numPoints
 		});
 		params.recordReadback('range');
+		readbackCount += 1;
 		dayRange = accumulateUtciRange(dayRange, values);
 	}
 
 	if (dayRange) params.state.selectedDayRangeCache.set(cacheKey, dayRange);
-	return dayRange;
+	return {
+		range: dayRange,
+		cacheKey,
+		cacheHit: false,
+		cacheSizeBefore,
+		cacheSizeAfter: params.state.selectedDayRangeCache.size,
+		readbackCount,
+		computedHourCount,
+		resolutionPath: supportsCompactSummary ? 'compact-gpu-summary' : 'full-readback',
+		summaryReadbackCount,
+		summaryReadbackBytes,
+		fullReadbackAvoidedCount
+	};
 }
 
 function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHourLiveSession {
@@ -595,7 +689,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				sessionSelectedHourRangeScanCompletedAtMs: performance.now()
 			});
 			const sessionRangeResolveStartedAtMs = performance.now();
-			const selectedDayUtciRange =
+			const selectedDayUtciRangeResult =
 				params.colorMode === 'normalized'
 					? await resolveSelectedDayUtciRange({
 							state,
@@ -605,9 +699,28 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 							recordReadback
 					  })
 					: null;
+			const selectedDayUtciRange = selectedDayUtciRangeResult?.range ?? null;
 			stampSessionRenderTimeline(diagnostics, {
 				sessionRangeResolveStartedAtMs,
-				sessionRangeResolveCompletedAtMs: performance.now()
+				sessionRangeResolveCompletedAtMs: performance.now(),
+				sessionSelectedDayRangeCacheKey: selectedDayUtciRangeResult?.cacheKey,
+				sessionSelectedDayRangeCacheHit: selectedDayUtciRangeResult?.cacheHit,
+				sessionSelectedDayRangeCacheSizeBefore:
+					selectedDayUtciRangeResult?.cacheSizeBefore,
+				sessionSelectedDayRangeCacheSizeAfter:
+					selectedDayUtciRangeResult?.cacheSizeAfter,
+				sessionSelectedDayRangeReadbackCount:
+					selectedDayUtciRangeResult?.readbackCount,
+				sessionSelectedDayRangeComputedHourCount:
+					selectedDayUtciRangeResult?.computedHourCount,
+				sessionSelectedDayRangeResolutionPath:
+					selectedDayUtciRangeResult?.resolutionPath,
+				sessionSelectedDayRangeSummaryReadbackCount:
+					selectedDayUtciRangeResult?.summaryReadbackCount,
+				sessionSelectedDayRangeSummaryReadbackBytes:
+					selectedDayUtciRangeResult?.summaryReadbackBytes,
+				sessionSelectedDayRangeFullReadbackAvoidedCount:
+					selectedDayUtciRangeResult?.fullReadbackAvoidedCount
 			});
 			const selectedHourDisplayRange =
 				params.colorMode === 'normalized'

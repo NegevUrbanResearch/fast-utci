@@ -154,15 +154,15 @@ Interpretation:
 
 - `oneHourDispatchMs` stays small for the interaction samples, about `11-21 ms`.
 - Hour 1 is slower because render layout reports `build-required:canonical-mismatch`; hour 2 and hour 3 then drop to about `104-159 ms` visible with `reused:reuse-safe`.
-- Month 8 is slow in this collector because it is the sampled first cold month after initial visibility. Manual checking indicates this is not unique to month 8: the first visit to an uncached month can take seconds, while returning to the same month is usually around `100 ms`.
+- Month 8 is slow in this collector because it is the sampled first uncached month after initial visibility. Manual checking indicates this is not unique to month 8: the first visit to an uncached month can take seconds, while returning to the same month is usually around `100 ms`.
 - Direct vs BG -> NZ adds a modest penalty, but not a new class of failure: BG -> NZ hour 2/3 stays around `134-159 ms`, and the slow month-8 pattern appears in both entry paths.
 - Chunked 2048 does not materially improve or hurt these post-visible scrub/month timings. Its benefit remains visual responsiveness during exposure cold start, not render publication.
 
-The first-scrub issue is now fixed by the hot publication follow-up below. The month-change issue remains unresolved and should be framed as **first-time uncached month publication cost**, upstream of scene sync queue/start, rather than as a month-8-specific issue or a scene duplicate-sync problem.
+The first-scrub issue was fixed by the hot publication follow-up below. Before the compact range-summary work, the month-change issue still needed to be framed as **first-time uncached month publication cost**, upstream of scene sync queue/start, rather than as a month-8-specific issue or a scene duplicate-sync problem.
 
 #### Hot Publication Fix Follow-Up
 
-After the selected-hour publication hot-path change, the refreshed `main-route-transition-scrub-diagnostics.json` shows:
+After the selected-hour publication hot-path change, the pre-compact refreshed `main-route-transition-scrub-diagnostics.json` showed:
 
 | Case | Hour 1 visible | Hour 1 layout/proof | Hour 2 visible | Month 8 visible | Month 8 start delay | Scene queued split |
 | --- | ---: | --- | ---: | ---: | ---: | --- |
@@ -174,10 +174,44 @@ After the selected-hour publication hot-path change, the refreshed `main-route-t
 Conclusion:
 
 - First post-visible hour scrub no longer rebuilds layout. It uses a full safe refreshed proof and lands in the same band as later hour scrubs.
-- The sampled month-8 stall remains, but manual testing shows the broader pattern is first visit to an uncached month: once that month is warm, returning to it is fast.
+- The sampled month-8 stall remained in this pre-compact artifact, but manual testing showed the broader pattern was first visit to an uncached month: once that month was warm, returning to it was fast.
 - The new split fields show `sceneReactiveToSyncQueuedMs` and `sceneSyncQueuedToStartMs` are tiny, so the delay is not inside the scene reactive block after it observes the pending surface.
-- The next month-change investigation should trace upstream of `pendingRenderUpdateStartedAt` / route selected-hour publication, especially per-month/day range resolution or selected-hour session cache warm-up. Do not add duplicate scene-sync queueing changes unless new evidence points back to that layer.
+- The next month-change investigation needed to trace upstream of `pendingRenderUpdateStartedAt` / route selected-hour publication, especially per-month/day range resolution or selected-hour session cache warm-up. Do not add duplicate scene-sync queueing changes unless new evidence points back to that layer.
 - Scheduler mode remains query-gated. It is still useful for cold-start exposure responsiveness, but this hot publication fix is independent of making chunked scheduling default.
+
+#### First-Time Month Range Investigation
+
+The pre-compact follow-up collector sequence sampled first explicit visits and returns for months `8`, `0`, and `1`. Labels used `first` and `return`; cache state was reported separately by `sessionSelectedDayRangeCacheHit`.
+
+That result confirmed the expensive bucket was upstream selected-day range resolution before compact range summaries:
+
+- First explicit visits to uncached month `8` and month `1` spent about `1.8-2.4 s` in `sessionRangeResolveStartedAtMs -> sessionRangeResolveCompletedAtMs`, matching the visible delay.
+- Each uncached sampled month reported `sessionSelectedDayRangeCacheHit=false`, `sessionSelectedDayRangeReadbackCount=23`, and `sessionSelectedDayRangeComputedHourCount=23`.
+- Returning to month `8` and month `1` reported `sessionSelectedDayRangeCacheHit=true`, `readbackCount=0`, `computedHourCount=0`, range resolve around `0 ms`, and visible time around `74-118 ms`.
+- Month `0` was already warm by the time the explicit month sequence reached it, so its first sampled change also reported a cache hit and stayed around `74-105 ms`.
+- GPU-native proof remained intact in that artifact: main route `/`, `rendererBackend=webgpu`, `compute-buffer-selected-hour`, same compute/render device, and no visible selected-hour readback fallback.
+
+Interpretation at that point: this was a per-session selected-day range cache warm-up. The slow first visit computed/read back the remaining `23` hours for the normalized display range; the return visit reused the cached range. It was not a cooperative exposure scheduler bug, and it was not month-8-specific. The next optimization target was selected-day range publication, with compact GPU reduction as the preferred direction now covered by the follow-up below.
+
+#### GPU Compact Range Summary Follow-Up
+
+Evidence was refreshed with:
+
+```powershell
+cd viewer
+npx playwright test --config=playwright.collect.config.ts tests/e2e/main-route-transition-scrub-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --timeout=900000
+```
+
+The follow-up artifact keeps the proof surface on `/` and preserves the visible GPU path: `rendererBackend=webgpu`, `compute-buffer-selected-hour`, same compute/render device, and `visibleSelectedHourReadbackCount=0`. The artifact parser reported `badProof=0`, `forbidden=0`, `missingCompact=0`, and `uncachedMonthProofCount=8` across `4` cases and `40` samples.
+
+Before this change, first visits to uncached months spent about `1.8-2.4 s` resolving the selected-day range and performed `23` full selected-hour value readbacks. The refreshed compact-summary run shows the uncached range-resolution bucket at `280-393 ms` (`343 ms` average). Each uncached month proof reports `sessionSelectedDayRangeResolutionPath=compact-gpu-summary`, `sessionSelectedDayRangeReadbackCount=0`, `sessionSelectedDayRangeSummaryReadbackCount=23`, `sessionSelectedDayRangeSummaryReadbackBytes=368`, and `sessionSelectedDayRangeFullReadbackAvoidedCount=23`.
+
+Cache-hit returns remain `sessionSelectedDayRangeResolutionPath=cache-hit` with `readbackCount=0`, `computedHourCount=0`, and `summaryReadbackBytes=0`; measured range-resolution time is `0 ms` in the refreshed artifact. Wall-visible month-change time still varies (`526-1278 ms` for uncached compact months and `164-998 ms` for returns), so there is remaining non-range publication time to investigate after this fix.
+
+Residual risks:
+
+- GPU reduction ordering can differ from the old CPU scan by a small floating-point epsilon, though the compact parity proof covers mixed, equal, invalid, and all-invalid fixtures.
+- The selected-day range bottleneck is reduced but not the only month-change cost; remaining publication/layout/storage timing should be treated as a separate follow-up.
 
 ### Future Analysis Boundary
 

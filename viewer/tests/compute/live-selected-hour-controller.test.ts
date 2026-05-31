@@ -2104,6 +2104,81 @@ describe('liveSelectedHourController', () => {
 		});
 	});
 
+	it('does not treat changed selected-day range cache timeline diagnostics as idempotent', async () => {
+		const gpu = createGpuResidentOutput(64, 16);
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 64,
+					timeIndex: 16,
+					analysis: createSelectionAnalysis('gpu-range-cache-diagnostics', [18, 20]),
+					gpuResidentOutput: gpu.accepted,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 6400
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(16));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(controller, 'complete'),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					sessionRangeResolveStartedAtMs: 100,
+					sessionRangeResolveCompletedAtMs: 220
+				}
+			})
+		});
+
+		const emittedStates: LiveSelectedHourControllerSurfaceDiagnostics[] = [];
+		const unsubscribe = controller.subscribe((state) => {
+			emittedStates.push(state.renderSurfaceDiagnostics);
+		});
+
+		await controller.handleRenderSurfaceDiagnostics({
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'scrub',
+				renderPublicationMeshAction: 'reused',
+				renderPublicationTimeline: {
+					sessionRangeResolveStartedAtMs: 100,
+					sessionRangeResolveCompletedAtMs: 220,
+					sessionSelectedDayRangeCacheKey: '8:24',
+					sessionSelectedDayRangeCacheHit: false,
+					sessionSelectedDayRangeCacheSizeBefore: 1,
+					sessionSelectedDayRangeCacheSizeAfter: 2,
+					sessionSelectedDayRangeReadbackCount: 23,
+					sessionSelectedDayRangeComputedHourCount: 23,
+					sceneReactiveToSyncQueuedMs: 0.1,
+					sceneSyncQueuedToStartMs: 0.2
+				}
+			})
+		});
+
+		unsubscribe();
+
+		expect(emittedStates).toHaveLength(1);
+		expect(
+			controller.getState().runtimeDiagnostics?.timings.renderPublication
+				?.renderPublicationTimeline
+		).toMatchObject({
+			sessionSelectedDayRangeCacheKey: '8:24',
+			sessionSelectedDayRangeCacheHit: false,
+			sessionSelectedDayRangeCacheSizeBefore: 1,
+			sessionSelectedDayRangeCacheSizeAfter: 2,
+			sessionSelectedDayRangeReadbackCount: 23,
+			sessionSelectedDayRangeComputedHourCount: 23,
+			sceneReactiveToSyncQueuedMs: 0.1,
+			sceneSyncQueuedToStartMs: 0.2
+		});
+	});
+
 	it('does not accept compute-buffer transport without same-device proof', async () => {
 		const gpu = createGpuResidentOutput(61, 13);
 		const sessionMock = createSessionMock([

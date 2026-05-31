@@ -147,6 +147,11 @@ export interface RunUtciForTimeIndexParams {
 	format: OnDemandOutputFormat;
 }
 
+export interface RunUtciRangeSummaryForTimeIndexParams extends RunUtciForTimeIndexParams {
+	format: 'f32-utci';
+	signal?: AbortSignal;
+}
+
 export interface OnDemandUtciOutput {
 	format: OnDemandOutputFormat;
 	numPoints: number;
@@ -155,6 +160,15 @@ export interface OnDemandUtciOutput {
 	gpuOutputHandle?: SelectedHourOutputHandle;
 	outputBytes?: number;
 	debugLabel?: string;
+}
+
+export interface UtciRangeSummary {
+	timeIndex: number;
+	range: { min: number; max: number } | null;
+	validCount: number;
+	readbackBytes: number;
+	reductionPassCount: number;
+	debugLabel: 'webgpu-on-demand-f32-utci-range-summary';
 }
 
 export interface UTCIComputePipeline {
@@ -200,6 +214,10 @@ export interface UTCIComputePipeline {
 	runExposurePrecompute?(params: ExposurePrecomputeParams): Promise<void>;
 
 	runUtciForTimeIndex?(params: RunUtciForTimeIndexParams): Promise<OnDemandUtciOutput>;
+
+	runUtciRangeSummaryForTimeIndex?(
+		params: RunUtciRangeSummaryForTimeIndexParams
+	): Promise<UtciRangeSummary>;
 
 	readOnDemandUtciForDebug?(params: { numPoints: number }): Promise<Float32Array>;
 

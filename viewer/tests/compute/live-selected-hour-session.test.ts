@@ -64,6 +64,9 @@ vi.mock('$lib/compute/compute-manager', () => ({
 		});
 		runExposurePrecompute = vi.fn(async () => undefined);
 		runUtciForTimeIndex = vi.fn(async () => mockState.outputOverride ?? { gpuBuffer: mockState.gpuBuffer });
+		runUtciRangeSummaryForTimeIndex = vi.fn(async (params) =>
+			this.pipeline.runUtciRangeSummaryForTimeIndex(params)
+		);
 		getOnDemandDiagnostics = vi.fn(() => mockState.runtimeDiagnostics);
 		getDeviceForDebug = vi.fn(() => mockState.rendererDevice);
 	}
@@ -140,6 +143,14 @@ describe('selected-hour live session', () => {
 			runAll: vi.fn(async () => undefined),
 			readUtcisSlice: vi.fn(async () => new Float32Array([10, 30])),
 			readOnDemandUtciForDebug: vi.fn(async () => new Float32Array([11, 29])),
+			runUtciRangeSummaryForTimeIndex: vi.fn(async (params: { timeIndex: number }) => ({
+				timeIndex: params.timeIndex,
+				range: { min: 10, max: 30 },
+				validCount: 2,
+				readbackBytes: 16,
+				reductionPassCount: 1,
+				debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+			})),
 			getDeviceForDebug: vi.fn(() => mockState.rendererDevice),
 			dispose: vi.fn()
 		};
@@ -289,6 +300,60 @@ describe('selected-hour live session', () => {
 				(timeline?.sessionGpuResidentRangeResolveStartedAtMs ?? 0)
 		).toBeGreaterThanOrEqual(0);
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+	});
+
+	it('records selected-day range cache diagnostics for cold and warm normalized months', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const cold = await session.runSelectedHour({
+			monthIndex: 1,
+			hourIndex: 3,
+			timeIndex: 27,
+			colorMode: 'normalized',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+		const warm = await session.runSelectedHour({
+			monthIndex: 1,
+			hourIndex: 4,
+			timeIndex: 28,
+			colorMode: 'normalized',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(cold.diagnostics.timings.renderPublication?.renderPublicationTimeline).toMatchObject({
+			sessionSelectedDayRangeCacheKey: '1:24',
+			sessionSelectedDayRangeCacheHit: false,
+			sessionSelectedDayRangeCacheSizeBefore: 0,
+			sessionSelectedDayRangeCacheSizeAfter: 1,
+			sessionSelectedDayRangeReadbackCount: 0,
+			sessionSelectedDayRangeComputedHourCount: 23,
+			sessionSelectedDayRangeResolutionPath: 'compact-gpu-summary',
+			sessionSelectedDayRangeSummaryReadbackCount: 23,
+			sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
+			sessionSelectedDayRangeFullReadbackAvoidedCount: 23
+		});
+		expect(warm.diagnostics.timings.renderPublication?.renderPublicationTimeline).toMatchObject({
+			sessionSelectedDayRangeCacheKey: '1:24',
+			sessionSelectedDayRangeCacheHit: true,
+			sessionSelectedDayRangeCacheSizeBefore: 1,
+			sessionSelectedDayRangeCacheSizeAfter: 1,
+			sessionSelectedDayRangeReadbackCount: 0,
+			sessionSelectedDayRangeComputedHourCount: 0,
+			sessionSelectedDayRangeResolutionPath: 'cache-hit',
+			sessionSelectedDayRangeSummaryReadbackCount: 0,
+			sessionSelectedDayRangeSummaryReadbackBytes: 0
+		});
+		expect(mockState.pipeline.runUtciRangeSummaryForTimeIndex).toHaveBeenCalledTimes(23);
 	});
 
 	it('uses an explicitly requested 0.5m grid instead of clamping to base 2m metadata', async () => {
@@ -639,6 +704,7 @@ describe('selected-hour live session', () => {
 		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(async () => {
 			return readbacks.shift() ?? new Float32Array([0, 1]);
 		});
+		mockState.pipeline.runUtciRangeSummaryForTimeIndex = undefined;
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),

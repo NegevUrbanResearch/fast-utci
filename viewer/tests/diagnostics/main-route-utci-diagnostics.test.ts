@@ -1,8 +1,61 @@
 import { describe, expect, it } from 'vitest';
 import { buildMainRouteUtciDiagnostics } from '$lib/diagnostics/mainRouteUtciDiagnostics';
-import { createRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import {
+	createRenderPublicationDiagnostics,
+	mergeRenderPublicationTimeline
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 describe('buildMainRouteUtciDiagnostics', () => {
+	it('does not erase existing render publication fields with undefined partial timeline values', () => {
+		const merged = mergeRenderPublicationTimeline(
+			{
+				sessionSelectedDayRangeCacheKey: '8:24',
+				sessionSelectedDayRangeCacheHit: false,
+				sessionSelectedDayRangeCacheSizeBefore: 1,
+				sessionSelectedDayRangeCacheSizeAfter: 2,
+				sessionSelectedDayRangeReadbackCount: 0,
+				sessionSelectedDayRangeComputedHourCount: 23,
+				sessionSelectedDayRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedDayRangeSummaryReadbackCount: 23,
+				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
+				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+				sceneReactiveToSyncQueuedMs: 0.1,
+				sceneSyncQueuedToStartMs: 0.2
+			},
+			{
+				sessionSelectedDayRangeCacheKey: undefined,
+				sessionSelectedDayRangeCacheHit: undefined,
+				sessionSelectedDayRangeCacheSizeBefore: undefined,
+				sessionSelectedDayRangeCacheSizeAfter: undefined,
+				sessionSelectedDayRangeReadbackCount: undefined,
+				sessionSelectedDayRangeComputedHourCount: undefined,
+				sessionSelectedDayRangeResolutionPath: undefined,
+				sessionSelectedDayRangeSummaryReadbackCount: undefined,
+				sessionSelectedDayRangeSummaryReadbackBytes: undefined,
+				sessionSelectedDayRangeFullReadbackAvoidedCount: undefined,
+				sceneReactiveToSyncQueuedMs: undefined,
+				sceneSyncQueuedToStartMs: undefined,
+				routeProjectedAtMs: 120
+			}
+		);
+
+		expect(merged).toMatchObject({
+			sessionSelectedDayRangeCacheKey: '8:24',
+			sessionSelectedDayRangeCacheHit: false,
+			sessionSelectedDayRangeCacheSizeBefore: 1,
+			sessionSelectedDayRangeCacheSizeAfter: 2,
+			sessionSelectedDayRangeReadbackCount: 0,
+			sessionSelectedDayRangeComputedHourCount: 23,
+			sessionSelectedDayRangeResolutionPath: 'compact-gpu-summary',
+			sessionSelectedDayRangeSummaryReadbackCount: 23,
+			sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
+			sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
+			sceneReactiveToSyncQueuedMs: 0.1,
+			sceneSyncQueuedToStartMs: 0.2,
+			routeProjectedAtMs: 120
+		});
+	});
+
 	it('returns undefined when diagnostics are disabled', () => {
 		expect(
 			buildMainRouteUtciDiagnostics({
@@ -237,6 +290,16 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneLayoutKeyStartedAtMs: 112.25,
 				sceneLayoutKeyCompletedAtMs: 113.25,
 				scenePublicationPlanReadyAtMs: 119,
+				sessionSelectedDayRangeCacheKey: '8:24',
+				sessionSelectedDayRangeCacheHit: false,
+				sessionSelectedDayRangeCacheSizeBefore: 1,
+				sessionSelectedDayRangeCacheSizeAfter: 2,
+				sessionSelectedDayRangeReadbackCount: 0,
+				sessionSelectedDayRangeComputedHourCount: 23,
+				sessionSelectedDayRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedDayRangeSummaryReadbackCount: 23,
+				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
+				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,
@@ -401,6 +464,26 @@ describe('buildMainRouteUtciDiagnostics', () => {
 		renderPublication.renderPublicationPhase = 'unknown';
 		renderPublication.renderPublicationPointCount = 12;
 		renderPublication.renderPublicationTimeline!.sceneSyncCompletedAtMs = 999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeCacheKey =
+			'mutated-cache-key';
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeCacheHit =
+			true;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeCacheSizeBefore =
+			99;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeCacheSizeAfter =
+			100;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeReadbackCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeComputedHourCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeResolutionPath =
+			'full-readback';
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeSummaryReadbackCount =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeSummaryReadbackBytes =
+			999;
+		renderPublication.renderPublicationTimeline!.sessionSelectedDayRangeFullReadbackAvoidedCount =
+			999;
 		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.totalMs = 999;
 		renderPublication.renderPublicationTimeline!.renderLayoutBuildTrace!.arrayAllocationMs = 999;
 		renderPublication.renderPublicationTimeline!.renderLayoutReuseProofTrace!.decision =
@@ -465,6 +548,16 @@ describe('buildMainRouteUtciDiagnostics', () => {
 				sceneLayoutKeyStartedAtMs: 112.25,
 				sceneLayoutKeyCompletedAtMs: 113.25,
 				scenePublicationPlanReadyAtMs: 119,
+				sessionSelectedDayRangeCacheKey: '8:24',
+				sessionSelectedDayRangeCacheHit: false,
+				sessionSelectedDayRangeCacheSizeBefore: 1,
+				sessionSelectedDayRangeCacheSizeAfter: 2,
+				sessionSelectedDayRangeReadbackCount: 0,
+				sessionSelectedDayRangeComputedHourCount: 23,
+				sessionSelectedDayRangeResolutionPath: 'compact-gpu-summary',
+				sessionSelectedDayRangeSummaryReadbackCount: 23,
+				sessionSelectedDayRangeSummaryReadbackBytes: 23 * 16,
+				sessionSelectedDayRangeFullReadbackAvoidedCount: 23,
 				renderLayoutBuildTrace: {
 					totalMs: 5,
 					arrayAllocationMs: 0.5,

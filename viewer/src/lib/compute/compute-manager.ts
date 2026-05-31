@@ -3,8 +3,10 @@ import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemand
 import type {
 	ExposurePrecomputeParams,
 	OnDemandUtciOutput,
+	RunUtciRangeSummaryForTimeIndexParams,
 	RunUtciForTimeIndexParams,
 	SerializedBvhForGpu,
+	UtciRangeSummary,
 	UTCIComputePipeline
 } from '$lib/compute/gpu/gpu-pipeline';
 import { parseEPW } from '$lib/compute/weather/epw-parser';
@@ -311,6 +313,18 @@ export class ComputeManager {
 			throw new Error('The configured UTCI pipeline does not support one-hour UTCI compute.');
 		}
 		return this.pipeline.runUtciForTimeIndex(params);
+	}
+
+	async runUtciRangeSummaryForTimeIndex(
+		params: RunUtciRangeSummaryForTimeIndexParams
+	): Promise<UtciRangeSummary> {
+		if (params.format !== 'f32-utci') {
+			throw new Error('UTCI range summaries support only f32-utci output format');
+		}
+		if (!this.pipeline.runUtciRangeSummaryForTimeIndex) {
+			throw new Error('UTCI pipeline does not support compact selected-hour range summaries');
+		}
+		return this.pipeline.runUtciRangeSummaryForTimeIndex(params);
 	}
 
 	getOnDemandDiagnostics(): OnDemandRuntimeDiagnostics | undefined {

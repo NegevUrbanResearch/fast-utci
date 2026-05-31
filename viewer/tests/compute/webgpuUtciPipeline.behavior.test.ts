@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+	__TEST_ONLY_parseRangeSummaryRecord,
 	__TEST_ONLY_WebgpuUtciComputePipeline,
 	createWebgpuUtciPipeline
 } from '$lib/compute/gpu/webgpuUtciPipeline';
@@ -150,7 +153,9 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 
 	it('can wrap a provided renderer-owned GPUDevice instead of requesting a standalone device', async () => {
 		const device = createFakeDeviceWithStorageLimit(8);
-		const pipeline = await createWebgpuUtciPipeline({ device: device as unknown as GPUDevice });
+		const pipeline = await createWebgpuUtciPipeline({
+			device: device as unknown as GPUDevice
+		});
 
 		expect(pipeline.getDeviceForDebug?.()).toBe(device);
 		expect(pipeline.supportsMrtComponentDiagnostics).toBeDefined();
@@ -692,5 +697,134 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 
 		expect(device.queue.submit).toHaveBeenCalledTimes(1);
 		expect(device.queue.onSubmittedWorkDone).toHaveBeenCalledTimes(1);
+	});
+
+	it('parses mixed f32/u32 range summary records correctly', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, -3.5, true);
+		view.setFloat32(4, 42.25, true);
+		view.setUint32(8, 8171761, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: { min: -3.5, max: 42.25 },
+			validCount: 8171761
+		});
+	});
+
+	it('keeps equal-valued valid range summaries instead of dropping them', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, 12.25, true);
+		view.setFloat32(4, 12.25, true);
+		view.setUint32(8, 4, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: { min: 12.25, max: 12.25 },
+			validCount: 4
+		});
+	});
+
+	it('returns null range when compact summary valid count is zero', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, 3.4028234663852886e38, true);
+		view.setFloat32(4, -3.4028234663852886e38, true);
+		view.setUint32(8, 0, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: null,
+			validCount: 0
+		});
+	});
+
+	it('returns null range for non-finite bounds even when valid count is positive', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, Number.NaN, true);
+		view.setFloat32(4, 42.25, true);
+		view.setUint32(8, 7, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: null,
+			validCount: 7
+		});
+	});
+
+	it('range summary method does not call full selected-hour debug readback', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const methodStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
+		expect(methodStart).toBeGreaterThanOrEqual(0);
+		const methodEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', methodStart);
+		expect(methodEnd).toBeGreaterThan(methodStart);
+		const method = source.slice(methodStart, methodEnd);
+
+		expect(method).toContain('ensureRangeReduceValuesPipeline');
+		expect(method).toContain('ensureRangeReduceRangesPipeline');
+		expect(method).not.toContain('readOnDemandUtciForDebug');
+		expect(method).not.toContain('runUtciForTimeIndex(params)');
+		expect(method).toContain('copyBufferToBuffer');
+		expect(method).toContain('RANGE_SUMMARY_RECORD_BYTES');
+		expect(method).toContain('unmap()');
+		expect(method).toContain('rangeSummaryOutputBuffer');
+		expect(method).toContain('runRangeSummarySerial');
+		expect(method).toContain('parseRangeSummaryRecord');
+		expect(method).not.toContain('__TEST_ONLY_parseRangeSummaryRecord');
+		expect(method).toContain('selectedDayRangeSummaryReadbackBytes');
+	});
+
+	it('serializes all shared compact range summary buffer users', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const productionStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
+		const productionEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', productionStart);
+		const debugStart = source.indexOf('async __TEST_ONLY_reduceRangeValuesForDebug');
+		const debugEnd = source.indexOf('\n\n\tasync readUtcisSlice', debugStart);
+		expect(source).toContain('private rangeSummarySerial: Promise<void> = Promise.resolve()');
+		expect(source).toContain('private async runRangeSummarySerial');
+		expect(productionStart).toBeGreaterThanOrEqual(0);
+		expect(productionEnd).toBeGreaterThan(productionStart);
+		expect(debugStart).toBeGreaterThanOrEqual(0);
+		expect(debugEnd).toBeGreaterThan(debugStart);
+
+		const productionMethod = source.slice(productionStart, productionEnd);
+		const debugMethod = source.slice(debugStart, debugEnd);
+		expect(productionMethod).toContain('return this.runRangeSummarySerial(async () =>');
+		expect(debugMethod).toContain('return this.runRangeSummarySerial(async () =>');
+	});
+
+	it('disposes compact range summary GPU buffers', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+
+		expect(source).toContain('rangeSummaryOutputBuffer?.destroy()');
+		expect(source).toContain('rangeSummaryPartialBufferA?.destroy()');
+		expect(source).toContain('rangeSummaryPartialBufferB?.destroy()');
+		expect(source).toContain('rangeSummaryFinalStagingBuffer?.destroy()');
+	});
+
+	it('keeps compact range reduction shader source WebGPU-compatible', () => {
+		const shader = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/shaders/utci_range_reduce.wgsl'),
+			'utf8'
+		);
+
+		expect(shader).toContain('fn reduce_values');
+		expect(shader).toContain('fn reduce_ranges');
+		expect(shader).toContain('array<f32, 256>');
+		expect(shader).toContain('array<u32, 256>');
+		expect(shader).toContain('value == value && abs(value) <= F32_MAX_VALUE');
+		expect(shader).not.toContain('isFinite');
 	});
 });

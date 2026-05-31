@@ -50,6 +50,14 @@ export interface OnDemandTimings {
 	renderPublication?: SelectedHourRenderPublicationDiagnostics;
 	debugReadbackMs?: number;
 	selectedHourReadbackMs?: number;
+	selectedDayRangeSummaryMs?: number;
+	selectedDayRangeSummaryDispatchMs?: number;
+	selectedDayRangeSummaryReadbackMs?: number;
+	selectedDayRangeSummaryReadbackBytes?: number;
+	selectedDayRangeSummaryReadbackCount?: number;
+	selectedDayRangeSummaryComputedHourCount?: number;
+	selectedDayRangeSummaryReductionPassCount?: number;
+	selectedDayRangeFullReadbackAvoidedCount?: number;
 	selectedHourAnalysisBuildMs?: number;
 	cpuColorBuildMs?: number;
 	gpuSurfaceUpdateMs?: number;

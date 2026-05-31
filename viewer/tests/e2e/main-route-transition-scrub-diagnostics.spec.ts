@@ -15,7 +15,7 @@ const TARGET_GRID_RESOLUTION_METERS = 0.5;
 const BG_ENTRY_GRID_RESOLUTION_METERS = 2;
 const INITIAL_MONTH_INDEX = 7;
 const HOUR_SEQUENCE = [0, 1, 2, 3] as const;
-const MONTH_SEQUENCE = [8, 0, 7] as const;
+const MONTH_SEQUENCE = [8, 0, 1, 8, 0, 1] as const;
 
 type CollectorCase = {
 	caseId: string;
@@ -335,6 +335,37 @@ function pickTimelineFields(renderPublication: RenderPublicationSnapshot | null)
 		controllerStatePublishedAtMs: numberOrNull(timeline.controllerStatePublishedAtMs),
 		sessionComputeOutputReturnedAtMs: numberOrNull(timeline.sessionComputeOutputReturnedAtMs),
 		sessionGpuOutputHandleReadyAtMs: numberOrNull(timeline.sessionGpuOutputHandleReadyAtMs),
+		sessionRangeResolveStartedAtMs: numberOrNull(timeline.sessionRangeResolveStartedAtMs),
+		sessionRangeResolveCompletedAtMs: numberOrNull(timeline.sessionRangeResolveCompletedAtMs),
+		sessionSelectedDayRangeCacheKey: stringOrNull(timeline.sessionSelectedDayRangeCacheKey),
+		sessionSelectedDayRangeCacheHit:
+			typeof timeline.sessionSelectedDayRangeCacheHit === 'boolean'
+				? timeline.sessionSelectedDayRangeCacheHit
+				: null,
+		sessionSelectedDayRangeCacheSizeBefore: numberOrNull(
+			timeline.sessionSelectedDayRangeCacheSizeBefore
+		),
+		sessionSelectedDayRangeCacheSizeAfter: numberOrNull(
+			timeline.sessionSelectedDayRangeCacheSizeAfter
+		),
+		sessionSelectedDayRangeReadbackCount: numberOrNull(
+			timeline.sessionSelectedDayRangeReadbackCount
+		),
+		sessionSelectedDayRangeComputedHourCount: numberOrNull(
+			timeline.sessionSelectedDayRangeComputedHourCount
+		),
+		sessionSelectedDayRangeResolutionPath: stringOrNull(
+			timeline.sessionSelectedDayRangeResolutionPath
+		),
+		sessionSelectedDayRangeSummaryReadbackCount: numberOrNull(
+			timeline.sessionSelectedDayRangeSummaryReadbackCount
+		),
+		sessionSelectedDayRangeSummaryReadbackBytes: numberOrNull(
+			timeline.sessionSelectedDayRangeSummaryReadbackBytes
+		),
+		sessionSelectedDayRangeFullReadbackAvoidedCount: numberOrNull(
+			timeline.sessionSelectedDayRangeFullReadbackAvoidedCount
+		),
 		sessionResultReadyAtMs: numberOrNull(timeline.sessionResultReadyAtMs),
 		sessionResultReturnedAtMs: numberOrNull(timeline.sessionResultReturnedAtMs),
 		routePendingSurfaceExposedAtMs: numberOrNull(timeline.routePendingSurfaceExposedAtMs),
@@ -460,6 +491,62 @@ function buildSample(params: {
 	};
 }
 
+function assertRangeResolutionProof(sample: ReturnType<typeof buildSample>) {
+	if (sample.actionKind !== 'month-change') return;
+
+	const timeline = sample.renderPublication.timeline;
+	const proofLabel = `${sample.caseId} ${sample.actionLabel}`;
+	expect(
+		timeline,
+		`${proofLabel} should include timeline`
+	).not.toBeNull();
+	if (!timeline) return;
+
+	if (sample.actionLabel.endsWith('-return')) {
+		expect(timeline.sessionSelectedDayRangeCacheHit, `${proofLabel} cache hit`).toBe(true);
+		expect(timeline.sessionSelectedDayRangeResolutionPath, `${proofLabel} resolution path`).toBe(
+			'cache-hit'
+		);
+		expect(timeline.sessionSelectedDayRangeReadbackCount, `${proofLabel} full readbacks`).toBe(0);
+		expect(timeline.sessionSelectedDayRangeComputedHourCount, `${proofLabel} computed hours`).toBe(
+			0
+		);
+		expect(
+			timeline.sessionSelectedDayRangeSummaryReadbackCount,
+			`${proofLabel} compact summaries`
+		).toBe(0);
+		expect(timeline.sessionSelectedDayRangeSummaryReadbackBytes, `${proofLabel} summary bytes`).toBe(
+			0
+		);
+		expect(
+			timeline.sessionSelectedDayRangeFullReadbackAvoidedCount,
+			`${proofLabel} avoided full readbacks`
+		).toBe(0);
+		return;
+	}
+
+	if (timeline.sessionSelectedDayRangeCacheHit === false) {
+		expect(timeline.sessionSelectedDayRangeResolutionPath, `${proofLabel} resolution path`).toBe(
+			'compact-gpu-summary'
+		);
+		expect(timeline.sessionSelectedDayRangeReadbackCount, `${proofLabel} full readbacks`).toBe(0);
+		expect(timeline.sessionSelectedDayRangeComputedHourCount, `${proofLabel} computed hours`).toBe(
+			23
+		);
+		expect(
+			timeline.sessionSelectedDayRangeSummaryReadbackCount,
+			`${proofLabel} compact summaries`
+		).toBe(23);
+		expect(timeline.sessionSelectedDayRangeSummaryReadbackBytes, `${proofLabel} summary bytes`).toBe(
+			23 * 16
+		);
+		expect(
+			timeline.sessionSelectedDayRangeFullReadbackAvoidedCount,
+			`${proofLabel} avoided full readbacks`
+		).toBe(23);
+	}
+}
+
 async function collectInteractionSample(params: {
 	page: Page;
 	caseConfig: CollectorCase;
@@ -547,13 +634,17 @@ async function collectCase(page: Page, caseConfig: CollectorCase) {
 		}
 
 		const stableHourIndex = HOUR_SEQUENCE[HOUR_SEQUENCE.length - 1];
+		const monthVisitCounts = new Map<number, number>();
 		for (const monthIndex of MONTH_SEQUENCE) {
-			logCollectorProgress(`${caseConfig.caseId}: change month ${monthIndex}`);
+			const visitCount = (monthVisitCounts.get(monthIndex) ?? 0) + 1;
+			monthVisitCounts.set(monthIndex, visitCount);
+			const actionLabel = `month-${monthIndex}-${visitCount === 1 ? 'first' : 'return'}`;
+			logCollectorProgress(`${caseConfig.caseId}: change ${actionLabel}`);
 			const result = await collectInteractionSample({
 				page,
 				caseConfig,
 				actionKind: 'month-change',
-				actionLabel: `month-${monthIndex}`,
+				actionLabel,
 				targetMonthIndex: monthIndex,
 				targetHourIndex: stableHourIndex,
 				previousRequestId,
@@ -562,9 +653,20 @@ async function collectCase(page: Page, caseConfig: CollectorCase) {
 				targetUrl: entry.targetUrl
 			});
 			assertStrongGpuProof(result.diagnostics, sourceUrl);
+			assertRangeResolutionProof(result.sample);
 			samples.push(result.sample);
 			previousRequestId = result.diagnostics.baseSurfaceRequestId ?? previousRequestId;
 		}
+
+		const uncachedCompactMonthSamples = samples.filter((sample) => {
+			const timeline = sample.renderPublication.timeline;
+			return (
+				sample.actionKind === 'month-change' &&
+				timeline?.sessionSelectedDayRangeCacheHit === false &&
+				timeline.sessionSelectedDayRangeResolutionPath === 'compact-gpu-summary'
+			);
+		});
+		expect(uncachedCompactMonthSamples.length).toBeGreaterThanOrEqual(2);
 
 		const forbiddenRequestUrls = requestedUrls.filter(isForbiddenComparisonRequest);
 		const forbiddenComparisonFieldsPresent = samples.flatMap(
