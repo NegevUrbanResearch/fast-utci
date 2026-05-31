@@ -39,5 +39,22 @@ describe('main-route exposure scheduler collector source lock', () => {
 			).toBeGreaterThanOrEqual(2);
 			expect(countMatches(source, /gridResolutionMeters:\s*0\.5/g)).toBeGreaterThanOrEqual(2);
 		});
+
+		it(`${collector.label} preserves summarized diagnostics fields needed for exposure evidence`, () => {
+			const source = readCollector(collector.relativePath);
+
+			expect(source).toContain('exposureSchedulerBreathingTrace');
+			expect(source).toContain('renderPublicationPreStorageMs');
+			expect(source).toContain('renderCopyQueueDrainMs');
+			expect(source).toContain('visibleSelectedHourReadbackCount');
+			expect(source).toContain('baseSameDeviceForComputeAndRender');
+		});
 	}
+
+	it('visual freeze map preserves browser gap fields needed for raf evidence', () => {
+		const source = readCollector('tests/e2e/main-route-visual-freeze-map.spec.ts');
+
+		expect(source).toContain('topRafGaps');
+		expect(source).toContain('longTasks');
+	});
 });

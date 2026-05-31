@@ -87,7 +87,6 @@
 	export let onAcceptedGpuResidentOutputRelease:
 		| AcceptedGpuResidentOutputReleaseCallback
 		| undefined = undefined;
-
 	export let utciSurface: Mesh | null = null;
 	let lastAnalysis: Analysis | null = null;
 	let lastBackend: UtciSurfaceBackendType | null = null;
@@ -399,6 +398,9 @@
 			throw new Error('Compute-buffer UTCI storage attribute was not available.');
 		}
 		let lastDevice: GPUDevice | undefined;
+		let renderStorageInvalidateRequestedAtMs: number | undefined;
+		let renderStorageFirstWaitFrameRequestedAtMs: number | undefined;
+		let renderStorageFirstWaitFrameCompletedAtMs: number | undefined;
 		const isSuperseded = () =>
 			acceptedGpuResidentSurfaceSync.isSuperseded(
 				activeSyncRun,
@@ -408,8 +410,11 @@
 			deadlineMs: 1000,
 			now: performance.now.bind(performance),
 			waitForNextFrame: async () => {
+				renderStorageInvalidateRequestedAtMs ??= performance.now();
 				invalidate();
+				renderStorageFirstWaitFrameRequestedAtMs ??= performance.now();
 				await waitForNextFrame();
+				renderStorageFirstWaitFrameCompletedAtMs ??= performance.now();
 			},
 			isSuperseded,
 			collectDiagnostics: true,
@@ -628,6 +633,24 @@
 						renderTimings.renderPublication?.renderPublicationTimeline
 							?.renderSurfaceMeshTrace,
 					sceneSurfacePendingStorageInitAtMs,
+					renderPublicationPreStorageStartedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderPublicationPreStorageStartedAtMs,
+					renderPublicationPreStorageCompletedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderPublicationPreStorageCompletedAtMs,
+					renderPublicationPreStorageMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderPublicationPreStorageMs,
+					renderStoragePendingFlagStartedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderStoragePendingFlagStartedAtMs,
+					renderStoragePendingFlagCompletedAtMs:
+						renderTimings.renderPublication?.renderPublicationTimeline
+							?.renderStoragePendingFlagCompletedAtMs,
+					renderStorageInvalidateRequestedAtMs,
+					renderStorageFirstWaitFrameRequestedAtMs,
+					renderStorageFirstWaitFrameCompletedAtMs,
 					renderStorageWaitStartedAtMs,
 					renderStoragePreWaitMs,
 					renderStorageReadyAtMs,
@@ -635,6 +658,10 @@
 					renderBufferCopyEncoderCreateMs: copyTimings.copyEncoderCreateMs,
 					renderBufferCopyCommandRecordMs: copyTimings.copyCommandRecordMs,
 					renderBufferCopySubmitMs: copyTimings.copySubmitMs,
+					renderCopyQueueDrainStartedAtMs: copyTimings.queueDrainStartedAtMs,
+					renderCopyQueueDrainCompletedAtMs:
+						copyTimings.queueDrainCompletedAtMs,
+					renderCopyQueueDrainMs: copyTimings.queueDrainMs,
 					sceneSyncCompletedAtMs,
 				sceneSyncResetHistory:
 					acceptedGpuResidentSurfaceSync.getResetHistory(),
@@ -696,6 +723,7 @@
 			const previousProof = activeUtciLayoutReuseState?.proof ?? null;
 			const previousKey = activeUtciLayoutReuseState?.key ?? null;
 			const layoutReuseKeyDiagnostics: UtciLayoutReuseKeyDiagnostics = {};
+			const renderPublicationPreStorageStartedAtMs = performance.now();
 			const sceneLayoutKeyStartedAtMs = performance.now();
 			const layoutReuseDecisionStartedAt = performance.now();
 			const currentKey = createUtciLayoutReuseKeyForAnalysis({
@@ -919,14 +947,27 @@
 				selectionKey: liveSelectedHourSurfaceIdentity?.selectionKey ?? null
 			});
 
-			const pendingStorageStartedAt = performance.now();
+			const renderStoragePendingFlagStartedAtMs = performance.now();
 			setComputeBufferSurfacePendingStorageInit(utciSurface);
-			const sceneSurfacePendingStorageInitAtMs = performance.now();
+			const renderStoragePendingFlagCompletedAtMs = performance.now();
+			const renderPublicationPreStorageCompletedAtMs =
+				renderStoragePendingFlagCompletedAtMs;
+			const renderPublicationPreStorageMs =
+				renderPublicationPreStorageCompletedAtMs != null &&
+				renderPublicationPreStorageStartedAtMs != null
+					? renderPublicationPreStorageCompletedAtMs -
+						renderPublicationPreStorageStartedAtMs
+					: undefined;
+			const sceneSurfacePendingStorageInitAtMs =
+				renderPublicationPreStorageCompletedAtMs ?? performance.now();
 			if (renderSurfaceMeshTrace) {
 				addSurfaceTraceTiming(
 					renderSurfaceMeshTrace,
 					'setPostSurfacePendingStorageInitMs',
-					sceneSurfacePendingStorageInitAtMs - pendingStorageStartedAt
+					renderStoragePendingFlagStartedAtMs != null
+						? sceneSurfacePendingStorageInitAtMs -
+							renderStoragePendingFlagStartedAtMs
+						: 0
 				);
 				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
 				renderSurfaceMeshTrace.totalMs = renderTimings.renderSurfaceMeshMs;
@@ -991,7 +1032,12 @@
 								: null,
 						activeLayoutCandidateCount: pendingReuseState ? 1 : 0,
 						renderSurfaceMeshTrace,
-						sceneSurfacePendingStorageInitAtMs
+						sceneSurfacePendingStorageInitAtMs,
+						renderPublicationPreStorageStartedAtMs,
+						renderPublicationPreStorageCompletedAtMs,
+						renderPublicationPreStorageMs,
+						renderStoragePendingFlagStartedAtMs,
+						renderStoragePendingFlagCompletedAtMs
 					}
 				});
 			}

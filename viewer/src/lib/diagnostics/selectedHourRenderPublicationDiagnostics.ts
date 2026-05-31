@@ -230,6 +230,14 @@ export type SelectedHourRenderPublicationTimeline = {
 	activeLayoutCandidateCount?: number;
 	renderSurfaceMeshTrace?: SelectedHourRenderSurfaceMeshTrace;
 	sceneSurfacePendingStorageInitAtMs?: number;
+	renderPublicationPreStorageStartedAtMs?: number;
+	renderPublicationPreStorageCompletedAtMs?: number;
+	renderPublicationPreStorageMs?: number;
+	renderStoragePendingFlagStartedAtMs?: number;
+	renderStoragePendingFlagCompletedAtMs?: number;
+	renderStorageInvalidateRequestedAtMs?: number;
+	renderStorageFirstWaitFrameRequestedAtMs?: number;
+	renderStorageFirstWaitFrameCompletedAtMs?: number;
 	renderStorageWaitStartedAtMs?: number;
 	renderStoragePreWaitMs?: number;
 	renderStorageReadyAtMs?: number;
@@ -237,6 +245,9 @@ export type SelectedHourRenderPublicationTimeline = {
 	renderBufferCopyEncoderCreateMs?: number;
 	renderBufferCopyCommandRecordMs?: number;
 	renderBufferCopySubmitMs?: number;
+	renderCopyQueueDrainStartedAtMs?: number;
+	renderCopyQueueDrainCompletedAtMs?: number;
+	renderCopyQueueDrainMs?: number;
 	sceneSyncCompletedAtMs?: number;
 	sceneSyncResetHistory?: SelectedHourRenderPublicationSceneSyncResetEvent[];
 	sceneSyncActiveWindowResetHistory?: SelectedHourRenderPublicationSceneSyncResetEvent[];
@@ -364,6 +375,21 @@ export function copyRenderPublicationTimeline(
 					: timeline.renderSurfaceMeshTrace,
 				sceneSurfacePendingStorageInitAtMs:
 					timeline.sceneSurfacePendingStorageInitAtMs,
+				renderPublicationPreStorageStartedAtMs:
+					timeline.renderPublicationPreStorageStartedAtMs,
+				renderPublicationPreStorageCompletedAtMs:
+					timeline.renderPublicationPreStorageCompletedAtMs,
+				renderPublicationPreStorageMs: timeline.renderPublicationPreStorageMs,
+				renderStoragePendingFlagStartedAtMs:
+					timeline.renderStoragePendingFlagStartedAtMs,
+				renderStoragePendingFlagCompletedAtMs:
+					timeline.renderStoragePendingFlagCompletedAtMs,
+				renderStorageInvalidateRequestedAtMs:
+					timeline.renderStorageInvalidateRequestedAtMs,
+				renderStorageFirstWaitFrameRequestedAtMs:
+					timeline.renderStorageFirstWaitFrameRequestedAtMs,
+				renderStorageFirstWaitFrameCompletedAtMs:
+					timeline.renderStorageFirstWaitFrameCompletedAtMs,
 				renderStorageWaitStartedAtMs: timeline.renderStorageWaitStartedAtMs,
 				renderStoragePreWaitMs: timeline.renderStoragePreWaitMs,
 				renderStorageWaitTrace: timeline.renderStorageWaitTrace
@@ -377,6 +403,11 @@ export function copyRenderPublicationTimeline(
 							}))
 						}
 					: timeline.renderStorageWaitTrace,
+				renderCopyQueueDrainStartedAtMs:
+					timeline.renderCopyQueueDrainStartedAtMs,
+				renderCopyQueueDrainCompletedAtMs:
+					timeline.renderCopyQueueDrainCompletedAtMs,
+				renderCopyQueueDrainMs: timeline.renderCopyQueueDrainMs,
 				sceneSyncResetHistory: timeline.sceneSyncResetHistory?.map((event) => ({
 					...event
 				})),

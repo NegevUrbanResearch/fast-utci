@@ -1,4 +1,5 @@
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
+import type { ExposureSchedulingMode } from '$lib/compute/gpu/exposureScheduling';
 import {
 	copyRenderPublicationDiagnostics,
 	type SelectedHourRenderPublicationDiagnostics
@@ -7,6 +8,53 @@ import {
 export type OnDemandRendererBackend = 'webgpu' | 'unknown';
 
 export type OnDemandPath = 'idle' | 'run-all-baseline' | 'exposure-only-f32' | 'error';
+
+export type ExposureSchedulerSliceTraceSample = {
+	sliceIndex: number;
+	pointStart: number;
+	pointCount: number;
+	workgroupCount: number;
+	encodeMs: number;
+	submitAtMs: number;
+	queueWaitMs: number;
+	yieldStartedAtMs?: number;
+	yieldRafCallbackAtMs?: number;
+	yieldCompletedAtMs?: number;
+	yieldWaitMs?: number;
+	yieldPostRafTimeoutMs?: number;
+};
+
+export type ExposureSchedulerSliceWindow = {
+	sliceIndex: number;
+	startMs: number;
+	endMs: number;
+	queueWaitMs: number;
+	yieldWaitMs?: number;
+};
+
+export type ExposureSchedulerBreathingTrace = {
+	version: 1;
+	mode: ExposureSchedulingMode;
+	maxWorkgroupsPerSlice: number;
+	sliceCount: number;
+	submitCount: number;
+	yieldCount: number;
+	queueWaitTotalMs: number;
+	queueWaitMaxMs: number;
+	queueWaitMinMs: number;
+	queueWaitAverageMs: number;
+	encodeTotalMs: number;
+	yieldWaitTotalMs: number;
+	yieldWaitMaxMs: number;
+	yieldWaitAverageMs: number;
+	yieldPostRafTimeoutMaxMs: number;
+	yieldPostRafTimeoutAverageMs: number;
+	allSliceWindows: ExposureSchedulerSliceWindow[];
+	firstSamples: ExposureSchedulerSliceTraceSample[];
+	worstQueueWaitSamples: ExposureSchedulerSliceTraceSample[];
+	worstYieldSamples: ExposureSchedulerSliceTraceSample[];
+	lastSamples: ExposureSchedulerSliceTraceSample[];
+};
 
 export interface OnDemandTimings {
 	payloadPrepareMs?: number;
@@ -29,7 +77,7 @@ export interface OnDemandTimings {
 	exposureSkyDispatchCount?: number;
 	exposureSolarRayBudget?: number;
 	exposureSkyRayBudget?: number;
-	exposureSchedulerMode?: 'single-submit' | 'chunked';
+	exposureSchedulerMode?: ExposureSchedulingMode;
 	exposureSchedulerSliceCount?: number;
 	exposurePointDispatchChunkCount?: number;
 	exposureSchedulerMaxWorkgroupsPerSlice?: number;
@@ -38,6 +86,7 @@ export interface OnDemandTimings {
 	exposureSchedulerQueueWaitMinMs?: number;
 	exposureSchedulerYieldCount?: number;
 	exposureSchedulerSubmitCount?: number;
+	exposureSchedulerBreathingTrace?: ExposureSchedulerBreathingTrace;
 	oneHourDispatchMs?: number;
 	renderUpdateMs?: number;
 	renderSceneSyncStartDelayMs?: number;

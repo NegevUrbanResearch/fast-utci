@@ -434,6 +434,121 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		);
 	});
 
+	it('publishes a bounded chunked exposure breathing trace with honest yield timing splits', async () => {
+		const queueWaitsMs = [1, 6, 2, 8, 3, 4, 7, 5, 9, 2, 1, 3, 4, 6, 2, 5];
+		let queueWaitIndex = 0;
+		const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+		globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+			return setTimeout(() => callback(performance.now()), 0) as unknown as number;
+		}) as typeof requestAnimationFrame;
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				const waitMs = queueWaitsMs[queueWaitIndex] ?? 0;
+				queueWaitIndex += 1;
+				await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		try {
+			await pipeline.uploadStaticData(exposureUploadParams(4096));
+			await pipeline.runExposurePrecompute({
+				numPoints: 4096,
+				numHours: 1,
+				numMonths: 1,
+				exposureScheduling: {
+					mode: 'chunked',
+					maxWorkgroupsPerSlice: 4,
+					yieldBetweenSlices: true
+				},
+				diagnosticsEnabled: true
+			});
+		} finally {
+			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+		}
+
+		const trace = pipeline.getOnDemandDiagnostics().timings.exposureSchedulerBreathingTrace;
+		expect(trace).toBeDefined();
+		expect(trace?.mode).toBe('chunked');
+		expect(trace?.sliceCount).toBe(16);
+		expect(trace?.submitCount).toBe(16);
+		expect(trace?.yieldCount).toBe(15);
+		expect(trace?.allSliceWindows).toHaveLength(16);
+		expect(trace?.firstSamples).toHaveLength(8);
+		expect(trace?.lastSamples).toHaveLength(8);
+		expect(trace?.worstQueueWaitSamples).toHaveLength(8);
+		expect(trace?.worstYieldSamples).toHaveLength(8);
+		expect(trace?.queueWaitMinMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.queueWaitAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.yieldWaitAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.yieldPostRafTimeoutAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.worstQueueWaitSamples.map((sample) => sample.queueWaitMs)).toEqual(
+			[...((trace?.worstQueueWaitSamples ?? []).map((sample) => sample.queueWaitMs))].sort(
+				(left, right) => right - left
+			)
+		);
+		for (const sample of trace?.firstSamples.slice(0, 7) ?? []) {
+			expect(sample.yieldStartedAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldRafCallbackAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldCompletedAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldWaitMs).toEqual(expect.any(Number));
+			expect(sample.yieldPostRafTimeoutMs).toEqual(expect.any(Number));
+			expect(sample.yieldCompletedAtMs).toBeGreaterThanOrEqual(sample.yieldStartedAtMs ?? Infinity);
+			expect(sample.yieldCompletedAtMs).toBeGreaterThanOrEqual(
+				sample.yieldRafCallbackAtMs ?? Infinity
+			);
+		}
+		const finalSample = trace?.lastSamples[trace.lastSamples.length - 1];
+		expect(finalSample?.sliceIndex).toBe(15);
+		expect(finalSample?.yieldStartedAtMs).toBeUndefined();
+		expect(finalSample?.yieldCompletedAtMs).toBeUndefined();
+		expect(finalSample?.yieldWaitMs).toBeUndefined();
+		expect(finalSample?.yieldPostRafTimeoutMs).toBeUndefined();
+	});
+
+	it('publishes a comparable one-slice breathing trace for single-submit exposure', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1,
+			exposureScheduling: {
+				mode: 'single-submit',
+				maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
+				yieldBetweenSlices: false
+			},
+			diagnosticsEnabled: true
+		});
+
+		const trace = pipeline.getOnDemandDiagnostics().timings.exposureSchedulerBreathingTrace;
+		expect(trace).toBeDefined();
+		expect(trace).toMatchObject({
+			mode: 'single-submit',
+			sliceCount: 1,
+			submitCount: 1,
+			yieldCount: 0
+		});
+		expect(trace?.allSliceWindows).toHaveLength(1);
+		expect(trace?.firstSamples).toHaveLength(1);
+		expect(trace?.lastSamples).toHaveLength(1);
+		expect(trace?.worstQueueWaitSamples).toHaveLength(1);
+		expect(trace?.worstYieldSamples).toHaveLength(1);
+		expect(trace?.firstSamples[0]).toMatchObject({
+			sliceIndex: 0,
+			pointStart: 0,
+			pointCount: 1024
+		});
+		expect(trace?.firstSamples[0]?.yieldWaitMs).toBeUndefined();
+		expect(trace?.yieldWaitTotalMs).toBe(0);
+		expect(trace?.yieldWaitMaxMs).toBe(0);
+		expect(trace?.yieldWaitAverageMs).toBe(0);
+		expect(trace?.yieldPostRafTimeoutMaxMs).toBe(0);
+		expect(trace?.yieldPostRafTimeoutAverageMs).toBe(0);
+	});
+
 	it('clears stale selected-hour diagnostics when exposure precompute reruns', async () => {
 		const device = createFakeDevice();
 		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);

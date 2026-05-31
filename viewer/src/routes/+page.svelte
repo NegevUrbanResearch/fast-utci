@@ -393,6 +393,7 @@
 		},
 		gridResolutionMeters: selectedGridResolutionMeters,
 		exposureScheduling,
+		diagnosticsEnabled: utciRenderDiagnosticsEnabled,
 		colorMode: $viewerStore.colorMode,
 		utciRenderMode,
 		rendererBackend,

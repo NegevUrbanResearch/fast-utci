@@ -166,6 +166,8 @@ export async function copyComputeBufferToRenderStorage(
 ): Promise<{
 	bufferCopyMs: number;
 	queueDrainMs: number;
+	queueDrainStartedAtMs: number;
+	queueDrainCompletedAtMs: number;
 	copyEncoderCreateMs: number;
 	copyCommandRecordMs: number;
 	copySubmitMs: number;
@@ -185,14 +187,17 @@ export async function copyComputeBufferToRenderStorage(
 	params.queue.submit([commandBuffer]);
 	const copySubmitMs = params.now() - submitStartedAt;
 	const bufferCopyMs = params.now() - copyStartedAt;
-	const queueDrainStartedAt = params.now();
+	const queueDrainStartedAtMs = params.now();
 	await params.queue.onSubmittedWorkDone();
+	const queueDrainCompletedAtMs = params.now();
 	if (params.isSuperseded?.()) {
 		throw new Error('GPU-resident render copy was superseded after queue drain.');
 	}
 	return {
 		bufferCopyMs,
-		queueDrainMs: params.now() - queueDrainStartedAt,
+		queueDrainMs: queueDrainCompletedAtMs - queueDrainStartedAtMs,
+		queueDrainStartedAtMs,
+		queueDrainCompletedAtMs,
 		copyEncoderCreateMs,
 		copyCommandRecordMs,
 		copySubmitMs

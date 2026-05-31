@@ -136,6 +136,7 @@ export interface ExposurePrecomputeParams {
 	numHours: number;
 	numMonths: number;
 	exposureScheduling?: ExposureSchedulingOptions;
+	diagnosticsEnabled?: boolean;
 	signal?: AbortSignal;
 }
 

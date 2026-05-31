@@ -13,6 +13,7 @@ import {
 import {
 	DEFAULT_EXPOSURE_SCHEDULING,
 	buildExposurePointSlices,
+	type ExposureSchedulingMode,
 	type ExposureSchedulingOptions
 } from '$lib/compute/gpu/exposureScheduling';
 import {
@@ -21,6 +22,8 @@ import {
 	recordOnDemandTiming,
 	type OnDemandTimings,
 	type OnDemandRuntimeDiagnostics,
+	type ExposureSchedulerBreathingTrace,
+	type ExposureSchedulerSliceTraceSample,
 	type StaticUploadTrace
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
@@ -80,15 +83,81 @@ function getMrtShaderCode(enableMrtComponents: boolean): string {
 	return code;
 }
 
-function yieldToBrowserFrame(): Promise<void> {
+async function yieldToBrowserFrame(): Promise<{
+	rafCallbackAtMs?: number;
+	completedAtMs: number;
+}> {
 	if (typeof requestAnimationFrame === 'function') {
-		return new Promise((resolve) => {
+		let rafCallbackAtMs: number | undefined;
+		await new Promise<void>((resolve) => {
 			requestAnimationFrame(() => {
+				rafCallbackAtMs = performance.now();
 				setTimeout(resolve, 0);
 			});
 		});
+		return { rafCallbackAtMs, completedAtMs: performance.now() };
 	}
-	return new Promise((resolve) => setTimeout(resolve, 0));
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
+	return { completedAtMs: performance.now() };
+}
+
+function buildBoundedExposureBreathingTrace(params: {
+	mode: ExposureSchedulingMode;
+	maxWorkgroupsPerSlice: number;
+	samples: ExposureSchedulerSliceTraceSample[];
+	queueWaitTotalMs: number;
+	queueWaitMaxMs: number;
+	queueWaitMinMs: number;
+	encodeTotalMs: number;
+	yieldWaitTotalMs: number;
+	yieldWaitMaxMs: number;
+	submitCount: number;
+	yieldCount: number;
+}): ExposureSchedulerBreathingTrace {
+	const sliceCount = params.samples.length;
+	const byQueueWait = [...params.samples]
+		.sort((left, right) => right.queueWaitMs - left.queueWaitMs)
+		.slice(0, 8);
+	const byYieldWait = [...params.samples]
+		.sort((left, right) => (right.yieldWaitMs ?? 0) - (left.yieldWaitMs ?? 0))
+		.slice(0, 8);
+	const yieldPostRafTimeouts = params.samples
+		.map((sample) => sample.yieldPostRafTimeoutMs)
+		.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+	const yieldPostRafTimeoutTotal = yieldPostRafTimeouts.reduce((sum, value) => sum + value, 0);
+	return {
+		version: 1,
+		mode: params.mode,
+		maxWorkgroupsPerSlice: params.maxWorkgroupsPerSlice,
+		sliceCount,
+		submitCount: params.submitCount,
+		yieldCount: params.yieldCount,
+		queueWaitTotalMs: params.queueWaitTotalMs,
+		queueWaitMaxMs: params.queueWaitMaxMs,
+		queueWaitMinMs: params.queueWaitMinMs,
+		queueWaitAverageMs: sliceCount > 0 ? params.queueWaitTotalMs / sliceCount : 0,
+		encodeTotalMs: params.encodeTotalMs,
+		yieldWaitTotalMs: params.yieldWaitTotalMs,
+		yieldWaitMaxMs: params.yieldWaitMaxMs,
+		yieldWaitAverageMs: params.yieldCount > 0 ? params.yieldWaitTotalMs / params.yieldCount : 0,
+		yieldPostRafTimeoutMaxMs:
+			yieldPostRafTimeouts.length > 0 ? Math.max(...yieldPostRafTimeouts) : 0,
+		yieldPostRafTimeoutAverageMs:
+			yieldPostRafTimeouts.length > 0
+				? yieldPostRafTimeoutTotal / yieldPostRafTimeouts.length
+				: 0,
+		allSliceWindows: params.samples.map((sample) => ({
+			sliceIndex: sample.sliceIndex,
+			startMs: sample.submitAtMs,
+			endMs: sample.yieldCompletedAtMs ?? sample.submitAtMs + sample.queueWaitMs,
+			queueWaitMs: sample.queueWaitMs,
+			yieldWaitMs: sample.yieldWaitMs
+		})),
+		firstSamples: params.samples.slice(0, 8),
+		worstQueueWaitSamples: byQueueWait,
+		worstYieldSamples: byYieldWait,
+		lastSamples: params.samples.slice(-8)
+	};
 }
 
 function createExposureAbortError(message: string): Error {
@@ -1229,6 +1298,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		exposureSchedulerQueueWaitMinMs: number;
 		exposureSchedulerYieldCount: number;
 		exposureSchedulerSubmitCount: number;
+		exposureSchedulerBreathingTrace?: ExposureSchedulerBreathingTrace;
 	}): void {
 		const solarExposureBytes =
 			Math.ceil((params.numPoints * params.numHours * params.numMonths) / 32) * 4;
@@ -1263,7 +1333,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			exposureSchedulerQueueWaitMaxMs: params.exposureSchedulerQueueWaitMaxMs,
 			exposureSchedulerQueueWaitMinMs: params.exposureSchedulerQueueWaitMinMs,
 			exposureSchedulerYieldCount: params.exposureSchedulerYieldCount,
-			exposureSchedulerSubmitCount: params.exposureSchedulerSubmitCount
+			exposureSchedulerSubmitCount: params.exposureSchedulerSubmitCount,
+			exposureSchedulerBreathingTrace: params.exposureSchedulerBreathingTrace
 		};
 
 		this.onDemandDiagnostics = {
@@ -1486,6 +1557,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		skyPipeline: GPUComputePipeline;
 		exposureScheduling: ExposureSchedulingOptions;
 		exposureWeatherBufferEnsureMs: number;
+		diagnosticsEnabled?: boolean;
 		signal?: AbortSignal;
 	}): Promise<void> {
 		const {
@@ -1498,6 +1570,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			skyPipeline,
 			exposureScheduling,
 			exposureWeatherBufferEnsureMs,
+			diagnosticsEnabled = false,
 			signal
 		} = params;
 		const pointSlices = buildExposurePointSlices({
@@ -1520,6 +1593,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		let queueWaitMinMs = Number.POSITIVE_INFINITY;
 		let submitCount = 0;
 		let yieldCount = 0;
+		let yieldWaitTotalMs = 0;
+		let yieldWaitMaxMs = 0;
+		const sliceSamples: ExposureSchedulerSliceTraceSample[] | undefined = diagnosticsEnabled
+			? []
+			: undefined;
 		const transientUniformBuffers: GPUBuffer[] = [];
 
 		try {
@@ -1557,6 +1635,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					skyRayBudget += trace.skyRayBudget;
 
 					this.assertExposurePrecomputeActive(signal);
+					const submitAtMs = performance.now();
 					this.queue.submit([encoder.finish()]);
 					submitCount += 1;
 					const queueWaitStartedAt = performance.now();
@@ -1565,16 +1644,44 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					queueWaitTotalMs += queueWaitMs;
 					queueWaitMaxMs = Math.max(queueWaitMaxMs, queueWaitMs);
 					queueWaitMinMs = Math.min(queueWaitMinMs, queueWaitMs);
+					const sample: ExposureSchedulerSliceTraceSample | undefined = diagnosticsEnabled
+						? {
+								sliceIndex,
+								pointStart: pointSlice.pointOffset,
+								pointCount: pointSlice.pointCount,
+								workgroupCount: Math.ceil(pointSlice.pointCount / workgroupSize),
+								encodeMs: trace.commandEncodeTotalMs,
+								submitAtMs,
+								queueWaitMs
+							}
+						: undefined;
 					this.assertExposurePrecomputeActive(signal);
+					if (exposureScheduling.yieldBetweenSlices && sliceIndex < pointSlices.length - 1) {
+						const yieldStartedAtMs = performance.now();
+						const yieldResult = await yieldToBrowserFrame();
+						const yieldCompletedAtMs = yieldResult.completedAtMs;
+						const yieldWaitMs = yieldCompletedAtMs - yieldStartedAtMs;
+						if (sample) {
+							sample.yieldStartedAtMs = yieldStartedAtMs;
+							sample.yieldRafCallbackAtMs = yieldResult.rafCallbackAtMs;
+							sample.yieldCompletedAtMs = yieldCompletedAtMs;
+							sample.yieldWaitMs = yieldWaitMs;
+							sample.yieldPostRafTimeoutMs =
+								yieldResult.rafCallbackAtMs != null
+									? Math.max(0, yieldCompletedAtMs - yieldResult.rafCallbackAtMs)
+									: undefined;
+						}
+						yieldWaitTotalMs += yieldWaitMs;
+						yieldWaitMaxMs = Math.max(yieldWaitMaxMs, yieldWaitMs);
+						yieldCount += 1;
+						this.assertExposurePrecomputeActive(signal);
+					}
+					if (sample) {
+						sliceSamples?.push(sample);
+					}
 				} finally {
 					this.destroyTransientUniformBuffers(sliceUniformBuffers);
 					transientUniformBuffers.splice(transientStartIndex, sliceUniformBufferCount);
-				}
-
-				if (exposureScheduling.yieldBetweenSlices && sliceIndex < pointSlices.length - 1) {
-					await yieldToBrowserFrame();
-					yieldCount += 1;
-					this.assertExposurePrecomputeActive(signal);
 				}
 			}
 		} finally {
@@ -1605,7 +1712,23 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			exposureSchedulerQueueWaitMinMs:
 				queueWaitMinMs === Number.POSITIVE_INFINITY ? 0 : queueWaitMinMs,
 			exposureSchedulerYieldCount: yieldCount,
-			exposureSchedulerSubmitCount: submitCount
+			exposureSchedulerSubmitCount: submitCount,
+			exposureSchedulerBreathingTrace: sliceSamples
+				? buildBoundedExposureBreathingTrace({
+						mode: exposureScheduling.mode,
+						maxWorkgroupsPerSlice: exposureScheduling.maxWorkgroupsPerSlice,
+						samples: sliceSamples,
+						queueWaitTotalMs,
+						queueWaitMaxMs,
+						queueWaitMinMs:
+							queueWaitMinMs === Number.POSITIVE_INFINITY ? 0 : queueWaitMinMs,
+						encodeTotalMs: commandEncodeTotalMs,
+						yieldWaitTotalMs,
+						yieldWaitMaxMs,
+						submitCount,
+						yieldCount
+					})
+				: undefined
 		});
 	}
 
@@ -1657,6 +1780,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					skyPipeline,
 					exposureScheduling,
 					exposureWeatherBufferEnsureMs,
+					diagnosticsEnabled: params.diagnosticsEnabled,
 					signal: params.signal
 				});
 				return;
@@ -1675,13 +1799,40 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 					daylightTimeSteps: this.lastDaylightTimeStepCount ?? undefined
 				});
 			let exposureQueueWaitMs = 0;
+			let breathingTrace: ExposureSchedulerBreathingTrace | undefined;
 			try {
 				this.assertExposurePrecomputeActive(params.signal);
+				const submitAtMs = performance.now();
 				this.queue.submit([encoder.finish()]);
 				const exposureQueueWaitStartedAt = performance.now();
 				await this.queue.onSubmittedWorkDone();
 				exposureQueueWaitMs = performance.now() - exposureQueueWaitStartedAt;
 				this.assertExposurePrecomputeActive(params.signal);
+				if (params.diagnosticsEnabled) {
+					breathingTrace = buildBoundedExposureBreathingTrace({
+						mode: exposureScheduling.mode,
+						maxWorkgroupsPerSlice: exposureScheduling.maxWorkgroupsPerSlice,
+						samples: [
+							{
+								sliceIndex: 0,
+								pointStart: 0,
+								pointCount: numPoints,
+								workgroupCount: Math.ceil(numPoints / workgroupSize),
+								encodeMs: exposureEncodeTrace.commandEncodeTotalMs,
+								submitAtMs,
+								queueWaitMs: exposureQueueWaitMs
+							}
+						],
+						queueWaitTotalMs: exposureQueueWaitMs,
+						queueWaitMaxMs: exposureQueueWaitMs,
+						queueWaitMinMs: exposureQueueWaitMs,
+						encodeTotalMs: exposureEncodeTrace.commandEncodeTotalMs,
+						yieldWaitTotalMs: 0,
+						yieldWaitMaxMs: 0,
+						submitCount: 1,
+						yieldCount: 0
+					});
+				}
 			} finally {
 				this.destroyTransientUniformBuffers(exposureUniformBuffers);
 			}
@@ -1708,7 +1859,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				exposureSchedulerQueueWaitMaxMs: exposureQueueWaitMs,
 				exposureSchedulerQueueWaitMinMs: exposureQueueWaitMs,
 				exposureSchedulerYieldCount: 0,
-				exposureSchedulerSubmitCount: 1
+				exposureSchedulerSubmitCount: 1,
+				exposureSchedulerBreathingTrace: breathingTrace
 			});
 		} catch (error) {
 			this.ranExposurePassesThisRun = false;

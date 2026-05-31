@@ -6,8 +6,12 @@ const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..'
 const RESULTS_DIR = resolve(REPO_ROOT, 'data/performance-results');
 const ARTIFACT_FILENAME = 'main-route-visual-freeze-map.json';
 const ARTIFACT_PATH = resolve(RESULTS_DIR, ARTIFACT_FILENAME);
+const DIAGNOSTIC_ARTIFACT_FILENAME = 'main-route-exposure-and-raf-diagnostics.json';
+const DIAGNOSTIC_ARTIFACT_PATH = resolve(RESULTS_DIR, DIAGNOSTIC_ARTIFACT_FILENAME);
 const SOURCE_ROUTE = '/';
 const DIAGNOSTICS_POLL_INTERVAL_MS = 500;
+const DIAGNOSTIC_FOCUS =
+	'exposure breathing during cold load plus render-publication rAF correlation on main route /';
 
 type AnalysisCase = {
 	caseId: string;
@@ -39,6 +43,22 @@ type PollSample = {
 	hasDiagnostics: boolean;
 	readError?: string;
 	diagnostics: Record<string, unknown> | null;
+};
+
+type TimingWindow = {
+	label: string;
+	startMs: number;
+	endMs: number;
+	durationMs: number;
+};
+
+type OverlapSummaryEntry = {
+	startMs: number | null;
+	endMs: number | null;
+	durationMs: number | null;
+	overlapExposureSliceCount: number;
+	overlapExposureSliceIndexes: number[];
+	overlapRenderPublicationWindowLabels: string[];
 };
 
 type PageEvents = {
@@ -119,6 +139,145 @@ function topByDuration<T extends Record<string, unknown>>(items: T[], limit: num
 		.slice(0, limit);
 }
 
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+	return typeof value === 'object' && value != null ? (value as Record<string, unknown>) : null;
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+	return Array.isArray(value)
+		? value.filter(
+				(item): item is Record<string, unknown> =>
+					typeof item === 'object' && item != null
+			)
+		: [];
+}
+
+function createWindow(
+	label: string,
+	startMs: unknown,
+	endMs: unknown
+): TimingWindow | null {
+	const normalizedStartMs = numberOrNull(startMs);
+	const normalizedEndMs = numberOrNull(endMs);
+	if (normalizedStartMs == null || normalizedEndMs == null || normalizedEndMs < normalizedStartMs) {
+		return null;
+	}
+	return {
+		label,
+		startMs: normalizedStartMs,
+		endMs: normalizedEndMs,
+		durationMs: normalizedEndMs - normalizedStartMs
+	};
+}
+
+function windowsOverlap(left: TimingWindow, right: TimingWindow): boolean {
+	return left.startMs < right.endMs && left.endMs > right.startMs;
+}
+
+function buildGapWindow(
+	entry: Record<string, unknown>,
+	kind: 'raf' | 'interval' | 'longTask',
+	index: number
+): TimingWindow | null {
+	if (kind === 'longTask') {
+		const startMs = numberOrNull(entry.startTimeMs);
+		const durationMs = numberOrNull(entry.durationMs);
+		if (startMs == null || durationMs == null) return null;
+		return createWindow(`longTask:${index}`, startMs, startMs + durationMs);
+	}
+	return createWindow(`${kind}:${index}`, entry.startMs, entry.endMs);
+}
+
+function collectExposureSliceWindows(diagnostics: Record<string, unknown> | null): TimingWindow[] {
+	const timings = recordOrNull(diagnostics?.timings);
+	const breathingTrace = recordOrNull(timings?.exposureSchedulerBreathingTrace);
+	return asRecordArray(breathingTrace?.allSliceWindows)
+		.map((window, index) =>
+			createWindow(`slice:${numberOrNull(window.sliceIndex) ?? index}`, window.startMs, window.endMs)
+		)
+		.filter((window): window is TimingWindow => window != null);
+}
+
+function collectRenderPublicationWindows(
+	diagnostics: Record<string, unknown> | null
+): TimingWindow[] {
+	const timings = recordOrNull(diagnostics?.timings);
+	const renderPublication = recordOrNull(timings?.renderPublication);
+	const timeline = recordOrNull(renderPublication?.renderPublicationTimeline);
+	return [
+		createWindow(
+			'renderPublicationTotal',
+			timeline?.sceneSurfaceReceivedAtMs,
+			timeline?.controllerVisibleAcknowledgedAtMs
+		),
+		createWindow(
+			'renderPublicationPreStorage',
+			timeline?.renderPublicationPreStorageStartedAtMs,
+			timeline?.renderPublicationPreStorageCompletedAtMs
+		),
+		createWindow(
+			'renderStorageFirstWaitFrame',
+			timeline?.renderStorageFirstWaitFrameRequestedAtMs,
+			timeline?.renderStorageFirstWaitFrameCompletedAtMs
+		),
+		createWindow(
+			'renderStorageWait',
+			timeline?.renderStorageWaitStartedAtMs,
+			timeline?.renderStorageReadyAtMs
+		),
+		createWindow(
+			'renderCopyQueueDrain',
+			timeline?.renderCopyQueueDrainStartedAtMs,
+			timeline?.renderCopyQueueDrainCompletedAtMs
+		)
+	].filter((window): window is TimingWindow => window != null);
+}
+
+function summarizeEventOverlaps(
+	items: Array<Record<string, unknown>>,
+	kind: 'raf' | 'interval' | 'longTask',
+	exposureSliceWindows: TimingWindow[],
+	renderPublicationWindows: TimingWindow[]
+): OverlapSummaryEntry[] {
+	return items.map((item, index) => {
+		const gapWindow = buildGapWindow(item, kind, index);
+		const overlappingExposureWindows =
+			gapWindow == null
+				? []
+				: exposureSliceWindows.filter((window) => windowsOverlap(gapWindow, window));
+		const overlappingRenderPublicationWindows =
+			gapWindow == null
+				? []
+				: renderPublicationWindows.filter((window) => windowsOverlap(gapWindow, window));
+		return {
+			startMs: gapWindow?.startMs ?? null,
+			endMs: gapWindow?.endMs ?? null,
+			durationMs: numberOrNull(item.durationMs),
+			overlapExposureSliceCount: overlappingExposureWindows.length,
+			overlapExposureSliceIndexes: overlappingExposureWindows
+				.map((window) => Number(window.label.replace('slice:', '')))
+				.filter(Number.isFinite)
+				.slice(0, 12),
+			overlapRenderPublicationWindowLabels: overlappingRenderPublicationWindows
+				.map((window) => window.label)
+				.slice(0, 12)
+		};
+	});
+}
+
+function selectOverlapDiagnostics(params: {
+	finalDiagnostics: DiagnosticsSnapshot | null;
+	pollSamples: PollSample[];
+}): Record<string, unknown> | null {
+	const summarizedFinalDiagnostics = summarizeDiagnostics(params.finalDiagnostics);
+	if (summarizedFinalDiagnostics) return summarizedFinalDiagnostics;
+	for (let index = params.pollSamples.length - 1; index >= 0; index -= 1) {
+		const diagnostics = recordOrNull(params.pollSamples[index]?.diagnostics);
+		if (diagnostics) return diagnostics;
+	}
+	return null;
+}
+
 function summarizeDiagnostics(value: DiagnosticsSnapshot | null): Record<string, unknown> | null {
 	if (!value) return null;
 	return {
@@ -172,6 +331,8 @@ function summarizeDiagnostics(value: DiagnosticsSnapshot | null): Record<string,
 			exposureSchedulerQueueWaitMaxMs: numberOrNull(
 				value.timings?.exposureSchedulerQueueWaitMaxMs
 			),
+			exposureSchedulerBreathingTrace:
+				value.timings?.exposureSchedulerBreathingTrace ?? null,
 			exposureSchedulerYieldCount: numberOrNull(
 				value.timings?.exposureSchedulerYieldCount
 			),
@@ -193,9 +354,33 @@ function summarizeDiagnostics(value: DiagnosticsSnapshot | null): Record<string,
 			renderStorageInitWaitMs: numberOrNull(value.timings?.renderStorageInitWaitMs),
 			renderBufferCopyMs: numberOrNull(value.timings?.renderBufferCopyMs),
 			renderQueueDrainMs: numberOrNull(value.timings?.renderQueueDrainMs),
+			renderPublicationPreStorageMs: numberOrNull(
+				value.timings?.renderPublication?.renderPublicationTimeline
+					?.renderPublicationPreStorageMs
+			),
+			renderCopyQueueDrainMs: numberOrNull(
+				value.timings?.renderPublication?.renderPublicationTimeline
+					?.renderCopyQueueDrainMs
+			),
 			renderPublication: value.timings?.renderPublication ?? null
 		},
 		trackedGpuAllocationBytes: value.trackedGpuAllocationBytes ?? null
+	};
+}
+
+function summarizeTimingBuckets(value: DiagnosticsSnapshot | null): Record<string, unknown> | null {
+	const diagnostics = summarizeDiagnostics(value);
+	const timings = recordOrNull(diagnostics?.timings);
+	if (!timings) return null;
+	const {
+		exposureSchedulerBreathingTrace: _exposureSchedulerBreathingTrace,
+		renderPublication: _renderPublication,
+		firstSelectedHourVisibleMs,
+		...compactTimings
+	} = timings;
+	return {
+		...compactTimings,
+		pipelineFirstSelectedHourVisibleMs: numberOrNull(firstSelectedHourVisibleMs)
 	};
 }
 
@@ -587,6 +772,9 @@ function buildSummary(params: {
 	const topIntervalGaps = topByDuration(browserProbe.intervalGaps, 10);
 	const longTasks = topByDuration(browserProbe.longTasks, 25);
 	const pollDurations = pollSamples.map((sample) => sample.nodePollDurationMs);
+	const overlapDiagnostics = selectOverlapDiagnostics({ finalDiagnostics, pollSamples });
+	const exposureSliceWindows = collectExposureSliceWindows(overlapDiagnostics);
+	const renderPublicationWindows = collectRenderPublicationWindows(overlapDiagnostics);
 	return {
 		publicationReached,
 		durationMs,
@@ -594,7 +782,7 @@ function buildSummary(params: {
 			finalDiagnostics?.timings?.renderPublication?.renderPublicationTimeline
 				?.controllerVisibleAcknowledgedAtMs
 		),
-		finalTimingBuckets: summarizeDiagnostics(finalDiagnostics)?.timings ?? null,
+		finalTimingBuckets: summarizeTimingBuckets(finalDiagnostics),
 		trackedGpuAllocationBytes: finalDiagnostics?.trackedGpuAllocationBytes ?? null,
 		ownedGpuMemoryBytes: ownedGpuMemoryBytes(finalDiagnostics),
 		drawIndices:
@@ -608,6 +796,28 @@ function buildSummary(params: {
 		rafGapCount: browserProbe.rafGaps.length,
 		intervalGapCount: browserProbe.intervalGaps.length,
 		longTaskCount: browserProbe.longTasks.length,
+		gapOverlapSummary: {
+			exposureSliceWindowCount: exposureSliceWindows.length,
+			renderPublicationWindowCount: renderPublicationWindows.length,
+			topRafGaps: summarizeEventOverlaps(
+				topRafGaps,
+				'raf',
+				exposureSliceWindows,
+				renderPublicationWindows
+			),
+			topIntervalGaps: summarizeEventOverlaps(
+				topIntervalGaps,
+				'interval',
+				exposureSliceWindows,
+				renderPublicationWindows
+			),
+			longTasks: summarizeEventOverlaps(
+				longTasks,
+				'longTask',
+				exposureSliceWindows,
+				renderPublicationWindows
+			)
+		},
 		gpuEventCount: browserProbe.gpuEvents.length,
 		pageErrorCount: pageEvents.pageErrors.length,
 		requestFailureCount: pageEvents.requestFailures.length,
@@ -712,6 +922,32 @@ function assertCollectorConfig(testInfo: {
 	}
 }
 
+function buildFocusedDiagnosticArtifact(artifact: {
+	collectedAt: string;
+	sourceRoute: string;
+	headedCollectorConfig: string;
+	collectionMethod: string;
+	pollIntervalMs: number;
+	cases: CollectedCase[];
+}) {
+	return {
+		...artifact,
+		diagnosticFocus: DIAGNOSTIC_FOCUS,
+		cases: artifact.cases.map((entry) => ({
+			...entry,
+			raw: {
+				topRafGaps: entry.raw.topRafGaps,
+				topIntervalGaps: entry.raw.topIntervalGaps,
+				longTasks: entry.raw.longTasks,
+				gpuEvents: entry.raw.gpuEvents,
+				probeCounters: entry.raw.probeCounters,
+				finalDiagnostics: entry.raw.finalDiagnostics,
+				pageEvents: entry.raw.pageEvents
+			}
+		}))
+	};
+}
+
 test.describe('main route desktop visual freeze map collector', () => {
 	test.afterEach(async ({ page }) => {
 		await page.goto('about:blank').catch(() => undefined);
@@ -745,15 +981,22 @@ test.describe('main route desktop visual freeze map collector', () => {
 			pollIntervalMs: DIAGNOSTICS_POLL_INTERVAL_MS,
 			cases
 		};
+		const diagnosticArtifact = buildFocusedDiagnosticArtifact(artifact);
 
 		if (!existsSync(RESULTS_DIR)) {
 			mkdirSync(RESULTS_DIR, { recursive: true });
 		}
 
 		const json = JSON.stringify(artifact, null, 2);
+		const diagnosticJson = JSON.stringify(diagnosticArtifact, null, 2);
 		writeFileSync(ARTIFACT_PATH, json, 'utf8');
+		writeFileSync(DIAGNOSTIC_ARTIFACT_PATH, diagnosticJson, 'utf8');
 		await testInfo.attach(ARTIFACT_FILENAME, {
 			body: json,
+			contentType: 'application/json'
+		});
+		await testInfo.attach(DIAGNOSTIC_ARTIFACT_FILENAME, {
+			body: diagnosticJson,
 			contentType: 'application/json'
 		});
 

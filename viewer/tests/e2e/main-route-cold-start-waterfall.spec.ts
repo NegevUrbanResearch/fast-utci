@@ -44,7 +44,10 @@ type ProofSnapshot = {
 	selectedTimeIndex: number;
 };
 
-type CollectedTimings = Record<string, number | 'single-submit' | 'chunked' | null>;
+type CollectedTimings = Record<
+	string,
+	number | 'single-submit' | 'chunked' | Record<string, unknown> | null
+>;
 
 type CollectedPhase = {
 	firstVisibleMs: number | null;
@@ -216,11 +219,21 @@ function exposureSchedulerModeOrNull(value: unknown): 'single-submit' | 'chunked
 	return value === 'single-submit' || value === 'chunked' ? value : null;
 }
 
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+	return typeof value === 'object' && value != null ? (value as Record<string, unknown>) : null;
+}
+
 function schedulerCaseIdSuffix(): string {
 	return 'chunked-default';
 }
 
 function extractTimings(timings: Record<string, unknown> | undefined) {
+	const renderPublicationTimeline = recordOrNull(
+		recordOrNull(timings?.renderPublication)?.renderPublicationTimeline
+	);
+	const exposureSchedulerBreathingTrace = recordOrNull(
+		timings?.exposureSchedulerBreathingTrace
+	);
 	return {
 		payloadPrepareMs: numberOrNull(timings?.payloadPrepareMs),
 		workerBvhMs: numberOrNull(timings?.workerBvhMs),
@@ -252,6 +265,7 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 		exposureSchedulerQueueWaitMinMs: numberOrNull(
 			timings?.exposureSchedulerQueueWaitMinMs
 		),
+		exposureSchedulerBreathingTrace,
 		exposureSchedulerYieldCount: numberOrNull(timings?.exposureSchedulerYieldCount),
 		exposureSchedulerSubmitCount: numberOrNull(timings?.exposureSchedulerSubmitCount),
 		exposureSolarDispatchCount: numberOrNull(timings?.exposureSolarDispatchCount),
@@ -268,7 +282,13 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 		renderSurfaceMeshMs: numberOrNull(timings?.renderSurfaceMeshMs),
 		renderStorageInitWaitMs: numberOrNull(timings?.renderStorageInitWaitMs),
 		renderBufferCopyMs: numberOrNull(timings?.renderBufferCopyMs),
-		renderQueueDrainMs: numberOrNull(timings?.renderQueueDrainMs)
+		renderQueueDrainMs: numberOrNull(timings?.renderQueueDrainMs),
+		renderPublicationPreStorageMs: numberOrNull(
+			renderPublicationTimeline?.renderPublicationPreStorageMs
+		),
+		renderCopyQueueDrainMs: numberOrNull(
+			renderPublicationTimeline?.renderCopyQueueDrainMs
+		)
 	};
 }
 

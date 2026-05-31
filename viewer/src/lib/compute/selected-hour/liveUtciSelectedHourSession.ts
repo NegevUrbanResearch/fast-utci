@@ -115,6 +115,7 @@ type PreparedSessionState = {
 	deviceSource: 'renderer' | 'standalone';
 	signal: AbortSignal;
 	exposureScheduling?: ExposureSchedulingOptions;
+	diagnosticsEnabled?: boolean;
 	exposureReady: boolean;
 	exposurePrecomputePromise: Promise<void> | null;
 	requestSequence: number;
@@ -314,6 +315,7 @@ async function ensureExposurePrecompute(state: PreparedSessionState): Promise<vo
 				numHours: state.numHours,
 				numMonths: state.numMonths,
 				exposureScheduling: state.exposureScheduling,
+				diagnosticsEnabled: state.diagnosticsEnabled,
 				signal: state.signal
 			})
 			.then(() => {
@@ -968,6 +970,7 @@ export async function prepareSelectedHourLiveSession(params: {
 	preferredDevice?: GPUDevice;
 	gridResolution?: number;
 	exposureScheduling?: ExposureSchedulingOptions;
+	diagnosticsEnabled?: boolean;
 	numMonths?: number;
 	startMonth?: number;
 	zHeight?: number;
@@ -981,6 +984,7 @@ export async function prepareSelectedHourLiveSession(params: {
 		preferredDevice,
 		gridResolution,
 		exposureScheduling,
+		diagnosticsEnabled = false,
 		numMonths = 12,
 		startMonth = 1,
 		zHeight = base.metadata.bounds?.z ?? 0.9
@@ -1159,6 +1163,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			deviceSource: preferredDevice ? 'renderer' : 'standalone',
 			signal,
 			exposureScheduling,
+			diagnosticsEnabled,
 			exposureReady: false,
 			exposurePrecomputePromise: null,
 			requestSequence: 0,

@@ -419,6 +419,28 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.renderStoragePreWaitMs &&
 		left.renderPublicationTimeline?.renderStorageReadyAtMs ===
 			right.renderPublicationTimeline?.renderStorageReadyAtMs &&
+		left.renderPublicationTimeline?.renderPublicationPreStorageStartedAtMs ===
+			right.renderPublicationTimeline?.renderPublicationPreStorageStartedAtMs &&
+		left.renderPublicationTimeline?.renderPublicationPreStorageCompletedAtMs ===
+			right.renderPublicationTimeline?.renderPublicationPreStorageCompletedAtMs &&
+		left.renderPublicationTimeline?.renderPublicationPreStorageMs ===
+			right.renderPublicationTimeline?.renderPublicationPreStorageMs &&
+		left.renderPublicationTimeline?.renderStoragePendingFlagStartedAtMs ===
+			right.renderPublicationTimeline?.renderStoragePendingFlagStartedAtMs &&
+		left.renderPublicationTimeline?.renderStoragePendingFlagCompletedAtMs ===
+			right.renderPublicationTimeline?.renderStoragePendingFlagCompletedAtMs &&
+		left.renderPublicationTimeline?.renderStorageInvalidateRequestedAtMs ===
+			right.renderPublicationTimeline?.renderStorageInvalidateRequestedAtMs &&
+		left.renderPublicationTimeline?.renderStorageFirstWaitFrameRequestedAtMs ===
+			right.renderPublicationTimeline?.renderStorageFirstWaitFrameRequestedAtMs &&
+		left.renderPublicationTimeline?.renderStorageFirstWaitFrameCompletedAtMs ===
+			right.renderPublicationTimeline?.renderStorageFirstWaitFrameCompletedAtMs &&
+		left.renderPublicationTimeline?.renderCopyQueueDrainStartedAtMs ===
+			right.renderPublicationTimeline?.renderCopyQueueDrainStartedAtMs &&
+		left.renderPublicationTimeline?.renderCopyQueueDrainCompletedAtMs ===
+			right.renderPublicationTimeline?.renderCopyQueueDrainCompletedAtMs &&
+		left.renderPublicationTimeline?.renderCopyQueueDrainMs ===
+			right.renderPublicationTimeline?.renderCopyQueueDrainMs &&
 		areRenderStorageWaitTracesEqual(
 			left.renderPublicationTimeline?.renderStorageWaitTrace,
 			right.renderPublicationTimeline?.renderStorageWaitTrace
