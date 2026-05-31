@@ -137,6 +137,48 @@ Manual checking after the scheduler pass surfaced two open interaction observati
 
 These observations may be a bug, but they are not yet proven to be one. The next proof should compare direct-load NZ 0.5m, BG -> NZ 0.5m, normal, and `utciExposureSchedule=chunked&utciExposureMaxWorkgroupsPerSlice=2048` in one bounded collector. The collector should record repeated hour and month scrubs, plus the existing GPU-native proof boundary (`webgpu`, `compute-buffer-selected-hour`, same device, no visible selected-hour readback). If the same selection alternates between fast and multi-second runs while proof and cache state look identical, treat it as a scheduler/session invalidation bug. If the slow cases correlate with layout rebuild, cold render-owned storage setup, range scan, or selected-hour CPU materialization, keep it classified as a render-publication/session-state optimization target.
 
+### 2026-05-31 Transition Scrub Diagnostic
+
+Fresh targeted evidence now lives in [data/performance-results/main-route-transition-scrub-diagnostics.json](../data/performance-results/main-route-transition-scrub-diagnostics.json), collected on `/` with GPU-native proof preserved. The collector compares direct Ness Tziona 0.5m with Ben-Gurion 2m -> Ness Tziona -> diagnostics grid change to 0.5m, in both single-submit and query-gated `chunked&2048` modes.
+
+Key result: the manual inconsistency is reproduced, but it does not point at the cooperative exposure scheduler. The slow hour-1 and month-8 samples are dominated by render publication / scene sync delay. Later hour scrubs are fast once render layout reuse is safe.
+
+| Case | Initial visible | Hour 1 visible | Hour 2 visible | Month 8 visible | Month 0 visible |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct NZ, single-submit | `20929 ms` | `651 ms` | `117 ms` | `1907 ms` | `87 ms` |
+| BG -> NZ, single-submit | `21386 ms` | `864 ms` | `158 ms` | `2239 ms` | `110 ms` |
+| Direct NZ, chunked 2048 | `22033 ms` | `638 ms` | `111 ms` | `1929 ms` | `82 ms` |
+| BG -> NZ, chunked 2048 | `22487 ms` | `878 ms` | `159 ms` | `2308 ms` | `111 ms` |
+
+Interpretation:
+
+- `oneHourDispatchMs` stays small for the interaction samples, about `11-21 ms`.
+- Hour 1 is slower because render layout reports `build-required:canonical-mismatch`; hour 2 and hour 3 then drop to about `104-159 ms` visible with `reused:reuse-safe`.
+- Month 8 is slow in this collector because it is the sampled first cold month after initial visibility. Manual checking indicates this is not unique to month 8: the first visit to an uncached month can take seconds, while returning to the same month is usually around `100 ms`.
+- Direct vs BG -> NZ adds a modest penalty, but not a new class of failure: BG -> NZ hour 2/3 stays around `134-159 ms`, and the slow month-8 pattern appears in both entry paths.
+- Chunked 2048 does not materially improve or hurt these post-visible scrub/month timings. Its benefit remains visual responsiveness during exposure cold start, not render publication.
+
+The first-scrub issue is now fixed by the hot publication follow-up below. The month-change issue remains unresolved and should be framed as **first-time uncached month publication cost**, upstream of scene sync queue/start, rather than as a month-8-specific issue or a scene duplicate-sync problem.
+
+#### Hot Publication Fix Follow-Up
+
+After the selected-hour publication hot-path change, the refreshed `main-route-transition-scrub-diagnostics.json` shows:
+
+| Case | Hour 1 visible | Hour 1 layout/proof | Hour 2 visible | Month 8 visible | Month 8 start delay | Scene queued split |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| Direct NZ, single-submit | `185 ms` | `reused:refreshed-proof-safe`, `refreshed-runtime-proof` | `140 ms` | `1917 ms` | `1873 ms` | `0.0 / 0.3 ms` |
+| BG -> NZ, single-submit | `240 ms` | `reused:refreshed-proof-safe`, `refreshed-runtime-proof` | `193 ms` | `2680 ms` | `2627 ms` | `0.0 / 0.1 ms` |
+| Direct NZ, chunked 2048 | `110 ms` | `reused:refreshed-proof-safe`, `refreshed-runtime-proof` | `106 ms` | `2272 ms` | `2227 ms` | `0.0 / 0.1 ms` |
+| BG -> NZ, chunked 2048 | `150 ms` | `reused:refreshed-proof-safe`, `refreshed-runtime-proof` | `153 ms` | `2316 ms` | `2267 ms` | `0.0 / 0.3 ms` |
+
+Conclusion:
+
+- First post-visible hour scrub no longer rebuilds layout. It uses a full safe refreshed proof and lands in the same band as later hour scrubs.
+- The sampled month-8 stall remains, but manual testing shows the broader pattern is first visit to an uncached month: once that month is warm, returning to it is fast.
+- The new split fields show `sceneReactiveToSyncQueuedMs` and `sceneSyncQueuedToStartMs` are tiny, so the delay is not inside the scene reactive block after it observes the pending surface.
+- The next month-change investigation should trace upstream of `pendingRenderUpdateStartedAt` / route selected-hour publication, especially per-month/day range resolution or selected-hour session cache warm-up. Do not add duplicate scene-sync queueing changes unless new evidence points back to that layer.
+- Scheduler mode remains query-gated. It is still useful for cold-start exposure responsiveness, but this hot publication fix is independent of making chunked scheduling default.
+
 ### Future Analysis Boundary
 
 Future all-hours histograms are feasible if they are implemented as async derived summaries, not as all-hours/all-points resident fields.

@@ -115,7 +115,7 @@ export type UtciLayoutPublicationPlan =
 	| {
 			action: 'reuse-existing';
 			layout: UtciGridLayout;
-			reason: 'reuse-safe';
+			reason: 'reuse-safe' | 'refreshed-proof-safe';
 			keyMatch: true;
 	  }
 	| {
@@ -1347,6 +1347,7 @@ export function planUtciLayoutPublication(params: {
 	currentSurfaceSource: string | null;
 	currentRendererBackend: string | null;
 	publicationPhase: 'initial' | 'scrub';
+	refreshedProof?: UtciGridLayoutReuseProofDiagnostics | null;
 }): UtciLayoutPublicationPlan {
 	if (params.publicationPhase !== 'scrub') {
 		return {
@@ -1372,19 +1373,43 @@ export function planUtciLayoutPublication(params: {
 		previousKey: params.previousKey,
 		currentKey: params.currentKey
 	});
-	if (candidate.action !== 'reuse-candidate' || !params.previousLayout) {
+	const refreshKeyMatch =
+		params.previousKey != null && areUtciLayoutReuseKeysEqual(params.previousKey, params.currentKey);
+	if (candidate.action === 'reuse-candidate' && params.previousLayout) {
+		return {
+			action: 'reuse-existing',
+			layout: params.previousLayout,
+			reason: 'reuse-safe',
+			keyMatch: true
+		};
+	}
+
+	if (
+		params.previousLayout &&
+		params.previousKey &&
+		refreshKeyMatch &&
+		isUtciLayoutReuseProofSafe(params.refreshedProof)
+	) {
+		return {
+			action: 'reuse-existing',
+			layout: params.previousLayout,
+			reason: 'refreshed-proof-safe',
+			keyMatch: true
+		};
+	}
+
+	if (params.refreshedProof && params.previousLayout && params.previousKey && refreshKeyMatch) {
 		return {
 			action: 'build-new',
-			reason: candidate.reason,
-			keyMatch: candidate.keyMatch
+			reason: 'proof-not-safe',
+			keyMatch: refreshKeyMatch
 		};
 	}
 
 	return {
-		action: 'reuse-existing',
-		layout: params.previousLayout,
-		reason: 'reuse-safe',
-		keyMatch: true
+		action: 'build-new',
+		reason: candidate.reason,
+		keyMatch: candidate.keyMatch
 	};
 }
 

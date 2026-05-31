@@ -72,7 +72,8 @@ export type SelectedHourRenderLayoutReuseAction =
 	| 'reused';
 export type SelectedHourRenderLayoutReuseProofSource =
 	| 'fresh-build-proof'
-	| 'previous-publication-proof';
+	| 'previous-publication-proof'
+	| 'refreshed-runtime-proof';
 
 export type SelectedHourRenderSurfaceMeshRecreateDecision = {
 	missingSurface: boolean;
@@ -166,6 +167,8 @@ export type SelectedHourRenderPublicationTimeline = {
 	sceneRenderStateResolvedAtMs?: number;
 	sceneAcceptedKeyResolvedAtMs?: number;
 	sceneSyncInvocationQueuedAtMs?: number;
+	sceneReactiveToSyncQueuedMs?: number;
+	sceneSyncQueuedToStartMs?: number;
 	sceneStartSyncEnteredAtMs?: number;
 	sceneStartSyncReturnedAtMs?: number;
 	sceneSyncAttemptStartedAtMs?: number;
@@ -264,6 +267,8 @@ export function copyRenderPublicationTimeline(
 									: timeline.renderLayoutReuseProofTrace.previousNormalizationSignature
 						}
 					: timeline.renderLayoutReuseProofTrace,
+				sceneReactiveToSyncQueuedMs: timeline.sceneReactiveToSyncQueuedMs,
+				sceneSyncQueuedToStartMs: timeline.sceneSyncQueuedToStartMs,
 				renderLayoutReuseAction: timeline.renderLayoutReuseAction,
 				renderLayoutReuseReason: timeline.renderLayoutReuseReason,
 				renderLayoutReuseDecisionMs: timeline.renderLayoutReuseDecisionMs,

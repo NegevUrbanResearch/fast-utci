@@ -147,6 +147,8 @@ describe('utciSurfaceSync', () => {
 			renderPublicationTimeline: {
 				routeProjectedAtMs: 101,
 				scenePendingSurfaceObservedAtMs: 102,
+				sceneReactiveToSyncQueuedMs: 12,
+				sceneSyncQueuedToStartMs: 34,
 				sceneSyncAttemptStartedAtMs: 102.5,
 				sceneSyncAttemptToken: 8,
 				sceneSurfaceReceivedAtMs: 103,
@@ -196,6 +198,8 @@ describe('utciSurfaceSync', () => {
 			renderPublicationTimeline: {
 				routeProjectedAtMs: 101,
 				scenePendingSurfaceObservedAtMs: 102,
+				sceneReactiveToSyncQueuedMs: 12,
+				sceneSyncQueuedToStartMs: 34,
 				sceneSyncAttemptStartedAtMs: 102.5,
 				sceneSyncAttemptToken: 8,
 				sceneSurfaceReceivedAtMs: 103,

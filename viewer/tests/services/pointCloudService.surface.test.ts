@@ -977,6 +977,81 @@ describe('pointCloudService UTCI surface seam', () => {
 		});
 	});
 
+	it('allows a runtime-compatible existing mesh to refresh stale initial proof for the first scrub', () => {
+		const analysis = createAnalysis({ sourceAnalysisId: 'Ness-Tziona/hot-path' });
+		const previousLayout = buildUtciGridLayout(analysis);
+		const currentKey = createPublicationReuseKey(analysis);
+		const staleInitialProof = buildUtciGridLayoutReuseProofDiagnostics({
+			previousLayout: null,
+			nextLayout: previousLayout,
+			canonicalRuntimeCompatibilityWouldReuse: null
+		});
+		const refreshedProof = buildUtciGridLayoutReuseProofDiagnostics({
+			previousLayout,
+			nextLayout: previousLayout,
+			canonicalRuntimeCompatibilityWouldReuse: true,
+			canonicalPointCompatibility: {
+				compatible: true,
+				cellToPointMappingMatch: true,
+				requiredExpensiveMappingComparison: false,
+				performedExpensiveMappingComparison: false
+			}
+		});
+
+		expect(isUtciLayoutReuseProofSafe(refreshedProof)).toBe(true);
+		expect(
+			planUtciLayoutPublication({
+				previousLayout,
+				previousProof: staleInitialProof,
+				previousKey: currentKey,
+				currentKey,
+				currentSurfaceSource: 'compute-buffer-selected-hour',
+				currentRendererBackend: 'webgpu',
+				publicationPhase: 'scrub',
+				refreshedProof
+			})
+		).toEqual({
+			action: 'reuse-existing',
+			layout: previousLayout,
+			reason: 'refreshed-proof-safe',
+			keyMatch: true
+		});
+	});
+
+	it('does not reuse from refreshed proof when hover/cell safety is inconclusive', () => {
+		const analysis = createAnalysis({ sourceAnalysisId: 'Ness-Tziona/hot-path' });
+		const previousLayout = buildUtciGridLayout(analysis);
+		const currentKey = createPublicationReuseKey(analysis);
+		const refreshedProof = {
+			...buildUtciGridLayoutReuseProofDiagnostics({
+				previousLayout,
+				nextLayout: previousLayout,
+				canonicalRuntimeCompatibilityWouldReuse: true,
+				canonicalPointCompatibility: {
+					compatible: true,
+					cellToPointMappingMatch: true,
+					requiredExpensiveMappingComparison: false,
+					performedExpensiveMappingComparison: false
+				}
+			}),
+			hoverCellLookupProofStatus: 'proof-inconclusive' as const
+		};
+
+		expect(isUtciLayoutReuseProofSafe(refreshedProof)).toBe(false);
+		expect(
+			planUtciLayoutPublication({
+				previousLayout,
+				previousProof: null,
+				previousKey: currentKey,
+				currentKey,
+				currentSurfaceSource: 'compute-buffer-selected-hour',
+				currentRendererBackend: 'webgpu',
+				publicationPhase: 'scrub',
+				refreshedProof
+			})
+		).toEqual({ action: 'build-new', reason: 'proof-not-safe', keyMatch: true });
+	});
+
 	it('commits pending reuse metadata only after sync completion succeeds', () => {
 		const analysis = createAnalysis({ sourceAnalysisId: 'Ben-Gurion/base' });
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({

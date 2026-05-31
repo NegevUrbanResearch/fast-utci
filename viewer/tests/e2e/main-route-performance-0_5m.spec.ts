@@ -130,6 +130,7 @@ type RenderPublicationTimelineTiming = {
 	renderLayoutReuseProofSource:
 		| 'fresh-build-proof'
 		| 'previous-publication-proof'
+		| 'refreshed-runtime-proof'
 		| null;
 	renderLayoutReusePreviousKey: string | null;
 	renderLayoutReusePreviousRequestId: number | null;
@@ -148,6 +149,11 @@ type RenderPublicationTimelineTiming = {
 	sceneSyncResetHistory: RenderPublicationSceneSyncResetEvent[];
 	sceneSyncActiveWindowResetHistory: RenderPublicationSceneSyncResetEvent[] | null;
 };
+
+const REUSED_LAYOUT_PROOF_SOURCES = [
+	'previous-publication-proof',
+	'refreshed-runtime-proof'
+] as const;
 
 type RenderLayoutBuildTrace = {
 	totalMs: number | null;
@@ -935,7 +941,7 @@ function extractRenderPublicationTimeline(
 		renderLayoutReuseKeyMatch: booleanOrNull(payload.renderLayoutReuseKeyMatch),
 		renderLayoutReuseProofSource: stringFromSetOrNull(
 			payload.renderLayoutReuseProofSource,
-			['fresh-build-proof', 'previous-publication-proof']
+			['fresh-build-proof', 'previous-publication-proof', 'refreshed-runtime-proof']
 		),
 		renderLayoutReusePreviousKey: stringOrNull(payload.renderLayoutReusePreviousKey),
 		renderLayoutReusePreviousRequestId: numberOrNull(
@@ -1822,9 +1828,9 @@ function expectValidRenderPublicationTimeline(
 	if (timeline.renderLayoutReuseAction === 'reused') {
 		expect(timeline.renderLayoutBuildTrace, `${label} renderLayoutBuildTrace`).toBeNull();
 		expect(
-			timeline.renderLayoutReuseProofSource,
+			REUSED_LAYOUT_PROOF_SOURCES,
 			`${label} renderLayoutReuseProofSource`
-		).toBe('previous-publication-proof');
+		).toContain(timeline.renderLayoutReuseProofSource);
 		expect(
 			timeline.renderLayoutReusePreviousKey,
 			`${label} renderLayoutReusePreviousKey`
@@ -2471,10 +2477,12 @@ function expectRenderPublicationForAllSamples(collectedCase: CollectedCase) {
 					`${label} scrub should skip layout rebuild`
 				).toBeNull();
 				expect(
+					REUSED_LAYOUT_PROOF_SOURCES,
+					`${label} scrub should use a safe reused-layout proof`
+				).toContain(
 					sample.timings.renderPublication?.renderPublicationTimeline
-						?.renderLayoutReuseProofSource,
-					`${label} scrub should reuse previous publication proof`
-				).toBe('previous-publication-proof');
+						?.renderLayoutReuseProofSource
+				);
 				expect(
 					sample.timings.renderPublication?.renderPublicationTimeline
 						?.renderLayoutReusePreviousKey,
@@ -2778,9 +2786,9 @@ async function verifyRouteReuseAndRebuildHoverTruth(page: Page) {
 	);
 	expect(bgScrubTimeline?.renderLayoutBuildTrace, 'BG scrub build trace').toBeNull();
 	expect(
-		bgScrubTimeline?.renderLayoutReuseProofSource,
+		REUSED_LAYOUT_PROOF_SOURCES,
 		'BG scrub proof source'
-	).toBe('previous-publication-proof');
+	).toContain(bgScrubTimeline?.renderLayoutReuseProofSource);
 	expect(bgScrubTimeline?.renderLayoutReusePreviousKey).toEqual(expect.any(String));
 	expect(bgScrubTimeline?.renderLayoutReusePreviousRequestId).toEqual(expect.any(Number));
 	expect(bgScrubTimeline?.renderLayoutReusePreviousSelectionKey).toEqual(

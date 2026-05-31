@@ -518,6 +518,23 @@
 						reactiveTiming?.sceneAcceptedKeyResolvedAtMs,
 					sceneSyncInvocationQueuedAtMs:
 						reactiveTiming?.sceneSyncInvocationQueuedAtMs,
+					sceneReactiveToSyncQueuedMs:
+						reactiveTiming?.sceneSyncInvocationQueuedAtMs != null &&
+						reactiveTiming.sceneReactiveBlockEnteredAtMs != null
+							? Math.max(
+									0,
+									reactiveTiming.sceneSyncInvocationQueuedAtMs -
+										reactiveTiming.sceneReactiveBlockEnteredAtMs
+								)
+							: undefined,
+					sceneSyncQueuedToStartMs:
+						reactiveTiming?.sceneSyncInvocationQueuedAtMs != null
+							? Math.max(
+									0,
+									sceneSyncAttemptStartedAtMs -
+										reactiveTiming.sceneSyncInvocationQueuedAtMs
+								)
+							: undefined,
 					sceneStartSyncEnteredAtMs:
 						reactiveTiming?.sceneStartSyncEnteredAtMs,
 					sceneStartSyncReturnedAtMs:
@@ -692,7 +709,7 @@
 				selectedHourRenderContext?.publicationPhase ??
 				(previousReuseState != null ? 'scrub' : 'initial');
 			const layoutPublicationPlanStartedAt = performance.now();
-			const layoutPublicationPlan = planUtciLayoutPublication({
+			let layoutPublicationPlan = planUtciLayoutPublication({
 				previousLayout,
 				previousProof,
 				previousKey,
@@ -702,10 +719,51 @@
 				currentRendererBackend: 'webgpu',
 				publicationPhase
 			});
-			const renderLayoutPublicationPlanMs =
-				performance.now() - layoutPublicationPlanStartedAt;
-			const renderLayoutReuseDecisionMs =
-				performance.now() - layoutReuseDecisionStartedAt;
+			let runtimeLayoutCompatibility:
+				ReturnType<typeof evaluateComputeBufferUtciSurfaceLayoutCompatibility> | null = null;
+			let acceptedRefreshedLayoutReuseProof: SelectedHourRenderLayoutReuseProofTrace | null = null;
+			let refreshedLayoutCompatibilityMs = 0;
+			let refreshedLayoutProofMs = 0;
+			if (
+				layoutPublicationPlan.action === 'build-new' &&
+				layoutPublicationPlan.reason === 'canonical-mismatch' &&
+				previousLayout
+			) {
+				const refreshCompatibilityStartedAt = performance.now();
+				const refreshLayoutCompatibility = evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+					state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
+					previousLayout,
+					nextLayout: previousLayout,
+					allowExpensiveMappingComparison: true
+				});
+				refreshedLayoutCompatibilityMs =
+					performance.now() - refreshCompatibilityStartedAt;
+				const refreshProofStartedAt = performance.now();
+				const refreshedLayoutReuseProof = buildUtciGridLayoutReuseProofDiagnostics({
+					previousLayout,
+					nextLayout: previousLayout,
+					canonicalRuntimeCompatibilityWouldReuse:
+						refreshLayoutCompatibility.compatible ?? false,
+					canonicalPointCompatibility:
+						refreshLayoutCompatibility.pointCompatibility
+				});
+				refreshedLayoutProofMs = performance.now() - refreshProofStartedAt;
+				layoutPublicationPlan = planUtciLayoutPublication({
+					previousLayout,
+					previousProof,
+					previousKey,
+					currentKey,
+					currentSurfaceSource:
+						(utciSurface?.userData.utciSurfaceSource as string | undefined) ?? null,
+					currentRendererBackend: 'webgpu',
+					publicationPhase,
+					refreshedProof: refreshedLayoutReuseProof
+				});
+				if (layoutPublicationPlan.action === 'reuse-existing') {
+					runtimeLayoutCompatibility = refreshLayoutCompatibility;
+					acceptedRefreshedLayoutReuseProof = refreshedLayoutReuseProof;
+				}
+			}
 			const layoutStartedAt = performance.now();
 			let layoutBuildTrace: SelectedHourRenderLayoutBuildTrace | null =
 				layoutPublicationPlan.action === 'reuse-existing' ? null : { totalMs: 0 };
@@ -717,17 +775,18 @@
 							layoutBuildTrace ?? undefined
 						);
 			const layoutCompatibilityStartedAt = performance.now();
-			const runtimeLayoutCompatibility = evaluateComputeBufferUtciSurfaceLayoutCompatibility({
-				state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
-				previousLayout,
-				nextLayout: layout,
-				allowExpensiveMappingComparison: true
-			});
+			runtimeLayoutCompatibility ??= evaluateComputeBufferUtciSurfaceLayoutCompatibility({
+					state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
+					previousLayout,
+					nextLayout: layout,
+					allowExpensiveMappingComparison: true
+				});
 			const renderLayoutCompatibilityMs =
-				performance.now() - layoutCompatibilityStartedAt;
+				performance.now() - layoutCompatibilityStartedAt + refreshedLayoutCompatibilityMs;
 			const layoutReuseProofStartedAt = performance.now();
 			const layoutReuseProofTrace: SelectedHourRenderLayoutReuseProofTrace =
-				layoutPublicationPlan.action === 'reuse-existing'
+				acceptedRefreshedLayoutReuseProof ??
+				(layoutPublicationPlan.action === 'reuse-existing'
 					? layoutPublicationPlan.layout === previousLayout && previousProof
 						? previousProof
 						: buildUtciGridLayoutReuseProofDiagnostics({
@@ -745,13 +804,17 @@
 								previousLayout != null
 									? (runtimeLayoutCompatibility.compatible ?? null)
 									: null,
-						canonicalPointCompatibility:
+							canonicalPointCompatibility:
 								previousLayout != null
 									? runtimeLayoutCompatibility.pointCompatibility
 								: null
-						});
+						}));
 			const renderLayoutReuseProofMs =
-				performance.now() - layoutReuseProofStartedAt;
+				performance.now() - layoutReuseProofStartedAt + refreshedLayoutProofMs;
+			const renderLayoutPublicationPlanMs =
+				performance.now() - layoutPublicationPlanStartedAt;
+			const renderLayoutReuseDecisionMs =
+				performance.now() - layoutReuseDecisionStartedAt;
 			const scenePublicationPlanReadyAtMs = performance.now();
 			let meshAction: 'created' | 'reused' = 'reused';
 			let renderSurfaceMeshTrace: SelectedHourRenderSurfaceMeshTrace | undefined;
@@ -910,7 +973,9 @@
 						renderLayoutReuseProofMs,
 						renderLayoutReuseKeyMatch: layoutPublicationPlan.keyMatch,
 						renderLayoutReuseProofSource:
-							layoutPublicationPlan.action === 'reuse-existing'
+							acceptedRefreshedLayoutReuseProof
+								? 'refreshed-runtime-proof'
+								: layoutPublicationPlan.action === 'reuse-existing'
 								? 'previous-publication-proof'
 								: 'fresh-build-proof',
 						renderLayoutReusePreviousKey:
