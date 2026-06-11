@@ -29,6 +29,7 @@ import {
 	isComputeBufferUtciSurfaceLayoutCompatible,
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
+import { resolveComputeBufferMetricColorPolicy } from '$lib/services/computeBufferMetricColorPolicy';
 import type {
 	SelectedHourRenderLayoutNormalizationSignature,
 	SelectedHourRenderSurfaceMeshTrace
@@ -194,6 +195,20 @@ describe('pointCloudService UTCI surface seam', () => {
 			expect(gpuNativeColors[cellOffset + 2]).toBeCloseTo(expected.b, 6);
 			expect(gpuNativeColors[cellOffset + 3]).toBeCloseTo(0.9, 6);
 		}
+	});
+
+	it('does not recursively fall back to UTCI colors when Shading Index values are unavailable', () => {
+		const analysis = createAnalysis({
+			utciValues: [10, 20, 30, 40]
+		});
+		const utciColors = createColors(analysis, 0, 'normalized', 'utci');
+
+		const shadingColors = createColors(analysis, 0, 'normalized', 'shading_index');
+
+		expect(Array.from(shadingColors)).toEqual(
+			Array.from({ length: analysis.data.numPositions * 3 }, () => 0)
+		);
+		expect(Array.from(shadingColors)).not.toEqual(Array.from(utciColors));
 	});
 
 	it('rebuilds logical fallback cell mapping from metadata.bounds for live webgpu analyses', () => {
@@ -1480,6 +1495,61 @@ describe('pointCloudService UTCI surface seam', () => {
 		).toEqual([0]);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 10, max: 40 });
 		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1104);
+	});
+
+	it('creates compute-buffer Shading Index surfaces with metric-aware range and color policy', () => {
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: {
+				width: 1,
+				height: 1,
+				gridSize: 1,
+				numPositions: 1,
+				centerX: 0.5,
+				centerZ: 0.5,
+				minX: 0,
+				minZ: 0,
+				baseY: 0,
+				coordinateSystem: 'xy_ground' as const,
+				minY: 0,
+				maxY: 0,
+				indexToRow: new Uint32Array([0]),
+				indexToColumn: new Uint32Array([0]),
+				indexToTexel: new Uint32Array([0]),
+				colorBuffer: new Uint8Array(4)
+			},
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 },
+			metricType: 'shading_index',
+			valueRange: { min: 0, max: 1 }
+		});
+
+		expect(mesh.userData.gpuNativeUtciSurfaceState.metricType).toBe('shading_index');
+		expect(mesh.userData.gpuNativeUtciSurfaceState.valueRange).toEqual({ min: 0, max: 1 });
+		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 0, max: 1 });
+		expect(mesh.userData.gpuNativeUtciSurfaceState.colorLutMetricType).toBe('shading_index');
+	});
+
+	it('resolves compute-buffer metric color policy outside the render bridge', () => {
+		expect(
+			resolveComputeBufferMetricColorPolicy({
+				metricType: 'utci',
+				utciRange: { min: 10, max: 40 },
+				valueRange: { min: 12, max: 36 }
+			})
+		).toEqual({
+			metricType: 'utci',
+			valueRange: { min: 12, max: 36 }
+		});
+		expect(
+			resolveComputeBufferMetricColorPolicy({
+				metricType: 'shading_index',
+				utciRange: { min: 10, max: 40 },
+				valueRange: { min: 0.2, max: 0.8 }
+			})
+		).toEqual({
+			metricType: 'shading_index',
+			valueRange: { min: 0, max: 1 }
+		});
 	});
 
 	it('uses indexed shared-grid geometry for compute-buffer surfaces', () => {

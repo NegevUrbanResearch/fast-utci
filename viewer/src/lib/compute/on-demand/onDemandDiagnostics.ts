@@ -88,6 +88,10 @@ export interface OnDemandTimings {
 	exposureSchedulerSubmitCount?: number;
 	exposureSchedulerBreathingTrace?: ExposureSchedulerBreathingTrace;
 	oneHourDispatchMs?: number;
+	shadingIndexDispatchMs?: number;
+	shadingIndexQueueWaitMs?: number;
+	shadingIndexOutputBytes?: number;
+	shadingIndexSnapshotBytes?: number;
 	renderUpdateMs?: number;
 	renderSceneSyncStartDelayMs?: number;
 	renderSceneSyncTotalMs?: number;

@@ -195,6 +195,7 @@ function createSessionMock(
 		monthIndex: number;
 		hourIndex: number;
 		timeIndex: number;
+		metricType: 'utci' | 'shading_index';
 		colorMode: 'normalized' | 'discrete';
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
@@ -235,6 +236,7 @@ function createRequestParams(timeIndex: number) {
 		monthIndex,
 		hourIndex,
 		timeIndex,
+		metricType: 'utci' as const,
 		colorMode: 'discrete' as const,
 		preferGpuResident: true
 	};
@@ -510,6 +512,10 @@ describe('liveSelectedHourController', () => {
 			requestId: 31,
 			timeIndex: 31,
 			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-on-demand-snapshot',
+			metricType: 'utci',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'time-index', index: 31 },
 			disposed: false,
 			dispose() {
 				if (sharedHandle.disposed) return;
@@ -618,6 +624,10 @@ describe('liveSelectedHourController', () => {
 			requestId: 41,
 			timeIndex: 41,
 			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-on-demand-snapshot',
+			metricType: 'utci',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'time-index', index: 41 },
 			disposed: false,
 			dispose() {
 				if (sharedHandle.disposed) return;

@@ -335,7 +335,8 @@
 		comparisonUtciMesh = createComputeBufferUtciSurfaceMesh({
 			layout,
 			utciBuffer: sourceBuffer,
-			utciRange: acceptedOutput.utciRange
+			utciRange: acceptedOutput.utciRange,
+			metricType: acceptedOutput.metricType ?? 'utci'
 		});
 		applySurfaceMeshState(comparisonUtciMesh, layout, 'gpuNative');
 		setComputeBufferSurfacePendingStorageInit(comparisonUtciMesh);
@@ -486,7 +487,8 @@
 				const updated = updateComputeBufferUtciSurfaceMesh(comparisonUtciMesh, {
 					layout,
 					utciBuffer: sourceBuffer,
-					utciRange: acceptedOutput.utciRange
+					utciRange: acceptedOutput.utciRange,
+					metricType: acceptedOutput.metricType ?? 'utci'
 				});
 				if (!updated) {
 					recreateComputeBufferComparisonSurface(activeAnalysis, acceptedOutput, layout);

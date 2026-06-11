@@ -1,5 +1,6 @@
 import type { Group } from 'three';
 import type { Analysis } from '$lib/types/analysis';
+import type { MetricType } from '$lib/types/viewer';
 import {
 	createLiveSelectedHourController,
 	type LiveSelectedHourAcceptedVisibleSurface,
@@ -37,6 +38,7 @@ export type LiveSelectedHourRouteInputs = {
 	analysisId: string | null;
 	baseAnalysis: Analysis | null;
 	baseModel: Group | null;
+	metricType: MetricType;
 	selection: {
 		monthIndex: number;
 		hourIndex: number;
@@ -302,6 +304,7 @@ function buildControllerIdentity(params: {
 function buildSelectionTriggerKey(params: {
 	controllerIdentity: string;
 	selectionKey: string;
+	metricType: MetricType;
 	colorMode: 'normalized' | 'discrete';
 	preferGpuResident: boolean;
 	gridResolutionMeters?: number;
@@ -309,6 +312,7 @@ function buildSelectionTriggerKey(params: {
 	return [
 		params.controllerIdentity,
 		params.selectionKey,
+		params.metricType,
 		params.colorMode,
 		`grid:${params.gridResolutionMeters ?? 'base'}`,
 		params.preferGpuResident ? 'gpu' : 'cpu'
@@ -372,6 +376,7 @@ function buildSelectionPlan(params: {
 	rendererDevice?: GPUDevice;
 	utciSurfaceBackend: LiveSelectedHourRouteInputs['utciSurfaceBackend'];
 	selectionKey: string;
+	metricType: LiveSelectedHourRouteInputs['metricType'];
 	colorMode: LiveSelectedHourRouteInputs['colorMode'];
 	gridResolutionMeters?: number;
 	exposureScheduling?: ExposureSchedulingOptions;
@@ -394,6 +399,7 @@ function buildSelectionPlan(params: {
 		selectionTriggerKey: buildSelectionTriggerKey({
 			controllerIdentity,
 			selectionKey: params.selectionKey,
+			metricType: params.metricType,
 			colorMode: params.colorMode,
 			gridResolutionMeters: params.gridResolutionMeters,
 			preferGpuResident
@@ -700,6 +706,7 @@ export function createLiveSelectedHourRouteHost(
 				rendererDevice: currentInputs.rendererDevice,
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
+				metricType: currentInputs.metricType,
 				colorMode: currentInputs.colorMode,
 				gridResolutionMeters: currentInputs.gridResolutionMeters,
 				exposureScheduling: currentInputs.exposureScheduling
@@ -732,6 +739,7 @@ export function createLiveSelectedHourRouteHost(
 					comparisonSourceContext.rendererDevice ?? currentInputs.rendererDevice,
 				utciSurfaceBackend: currentInputs.utciSurfaceBackend,
 				selectionKey: currentInputs.selection.selectionKey,
+				metricType: currentInputs.metricType,
 				colorMode: currentInputs.colorMode,
 				gridResolutionMeters: currentInputs.gridResolutionMeters,
 				exposureScheduling: currentInputs.exposureScheduling
@@ -852,6 +860,7 @@ export function createLiveSelectedHourRouteHost(
 		let liveUnifiedRange: LiveSelectedHourRangeOverride | null = null;
 		if (
 			liveEnabled &&
+			currentInputs?.metricType === 'utci' &&
 			comparisonEligible &&
 			baseVisibleSurface &&
 			comparisonVisibleSurface
@@ -1100,6 +1109,7 @@ export function createLiveSelectedHourRouteHost(
 			rendererDevice: inputs.rendererDevice,
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
+			metricType: inputs.metricType,
 			colorMode: inputs.colorMode,
 			gridResolutionMeters: inputs.gridResolutionMeters,
 			exposureScheduling: inputs.exposureScheduling
@@ -1151,7 +1161,8 @@ export function createLiveSelectedHourRouteHost(
 				hasRoutePendingSurface:
 					state.baseSceneSurfaceIdentity != null || hadPriorBaseRouteSurface
 			}),
-			colorMode: inputs.colorMode
+			colorMode: inputs.colorMode,
+			metricType: inputs.metricType
 		});
 		const requestResult = await requestControllerSelection(baseController, {
 			sessionKey: controllerIdentity,
@@ -1160,6 +1171,7 @@ export function createLiveSelectedHourRouteHost(
 			hourIndex: inputs.selection.hourIndex,
 			timeIndex: inputs.selection.timeIndex,
 			selectionKey: inputs.selection.selectionKey,
+			metricType: inputs.metricType,
 			colorMode: inputs.colorMode,
 			preferGpuResident: selectionPlan.preferGpuResident,
 			rendererDevice: selectionPlan.preferredDevice
@@ -1215,6 +1227,7 @@ export function createLiveSelectedHourRouteHost(
 			rendererDevice: comparisonSourceContext.rendererDevice ?? inputs.rendererDevice,
 			utciSurfaceBackend: inputs.utciSurfaceBackend,
 			selectionKey: inputs.selection.selectionKey,
+			metricType: inputs.metricType,
 			colorMode: inputs.colorMode,
 			gridResolutionMeters: inputs.gridResolutionMeters,
 			exposureScheduling: inputs.exposureScheduling
@@ -1271,7 +1284,8 @@ export function createLiveSelectedHourRouteHost(
 					state.comparisonSceneSurfaceIdentity != null ||
 					hadPriorComparisonRouteSurface
 			}),
-			colorMode: inputs.colorMode
+			colorMode: inputs.colorMode,
+			metricType: inputs.metricType
 		});
 		const requestResult = await requestControllerSelection(comparisonController, {
 			sessionKey: controllerIdentity,
@@ -1280,6 +1294,7 @@ export function createLiveSelectedHourRouteHost(
 			hourIndex: inputs.selection.hourIndex,
 			timeIndex: inputs.selection.timeIndex,
 			selectionKey: inputs.selection.selectionKey,
+			metricType: inputs.metricType,
 			colorMode: inputs.colorMode,
 			preferGpuResident: selectionPlan.preferGpuResident,
 			rendererDevice: selectionPlan.preferredDevice,

@@ -1,6 +1,6 @@
 # WebGPU Strategy Analysis
 
-Updated: 2026-05-31
+Updated: 2026-06-01
 
 > **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
 
@@ -119,7 +119,7 @@ The UTCI selected-hour dispatch is not the main issue. At Ness Tziona 0.5m it st
 - render-owned selected-hour storage handling
 - queue drain and first-use storage setup
 
-The next main-route optimization should therefore be diagnostics-first render publication work. Do not start by changing UTCI equations, color ramps, or `.bin`/debug comparison surfaces.
+At the time of this 0.5m stress baseline, the next inference was diagnostics-first render-publication work. The later init-smoothness attribution section supersedes that as the current next step: first rank early startup, exposure breathing, and render-publication freezes together. Still do not start by changing UTCI equations, color ramps, or `.bin`/debug comparison surfaces.
 
 ## 2026-05-31 Cooperative Scheduler And Manual Scrub Observations
 
@@ -214,6 +214,106 @@ Residual risks:
 
 - GPU reduction ordering can differ from the old CPU scan by a small floating-point epsilon, though the compact parity proof covers mixed, equal, invalid, and all-invalid fixtures.
 - The selected-day range bottleneck is reduced but not the only month-change cost; remaining publication/layout/storage timing should be treated as a separate follow-up.
+
+### 2026-06-01 Cold Initial Prepared-Layout Attempt
+
+A cold initial render-publication attempt prepared the selected-hour compute-buffer render layout before scene publication and attached it to the GPU-resident selected-hour result. The implementation was removed after the proof gate failed; keep the conclusion, not the unused runtime path.
+
+The headed `/` collector for Ness Tziona `0.5m` showed the intended bucket improvement:
+
+- `preparedRenderLayoutStatus=used`
+- `rendererBackend=webgpu`
+- `utciSurfaceSource=compute-buffer-selected-hour`
+- `baseRenderTransport=compute-buffer-selected-hour`
+- `baseSameDeviceForComputeAndRender=true`
+- `visibleSelectedHourReadbackCount=0`
+- `renderPublicationPreStorageMs` dropped to about `515-517 ms`, meeting the `<600 ms` target
+
+But the user-visible freeze did not improve. The largest render-publication-overlapped rAF gap stayed around `1342 ms`, and the matching interval gap stayed around `1395 ms`, above the `<800 ms` target and broadly in the previous range.
+
+The artifact explains the miss: the prepared layout build moved out of the named scene-side pre-storage bucket, but not out of the blocking main-thread window. The largest render-overlapped rAF gap began while `preparedLayoutBuild` was still running, then continued through scene publication:
+
+| Bucket | Approx. duration |
+| --- | ---: |
+| Prepared layout build | `547 ms` |
+| Scene/key/mesh pre-storage work | `517 ms` |
+| Surface mesh creation | `268 ms` |
+| Render-owned storage wait | `275 ms` |
+| Copy queue drain | `379 ms` |
+
+Inside `renderSurfaceMeshMs`, the expensive work was typed-array construction rather than Three.js object creation: position fill about `78 ms`, index fill about `127 ms`, and cell-to-point fill about `54 ms`.
+
+Conclusion: moving layout construction earlier inside the same synchronous selected-hour publication path can make `renderPublicationPreStorageMs` look better, but it does not reduce the felt rAF freeze because the work remains on the main thread immediately before scene publication. Do not reintroduce prepared-layout plumbing as a performance fix unless the design makes the work genuinely non-blocking or removes it from the cold visible path.
+
+### 2026-06-01 Three.js GPU-Driven Publication Research
+
+A follow-up architecture review considered whether the viewer should imitate fully GPU-driven renderers where custom render setup is expressed as compute shaders rather than CPU callbacks.
+
+Conclusion: keep Three.js as the scene/render owner. The useful direction is not replacing Three.js with a custom renderer; it is making the UTCI overlay behave more like a stable GPU resource whose values and small uniforms change, rather than a freshly published render object with expensive synchronous setup.
+
+The repo is already GPU-native in the important selected-hour sense:
+
+- UTCI selected-hour compute runs on WebGPU.
+- The visible route can render from `compute-buffer-selected-hour`.
+- The proven hot path keeps `visibleSelectedHourReadbackCount=0`.
+- The proven hot path keeps `dataTextureBuildCount=0`.
+- The material path is already storage-buffer/uniform shaped: UTCI values, cell-to-point mapping, range uniforms, and LUT sampling are expressed through Three WebGPU/TSL nodes.
+
+The remaining architectural knot is render publication and resource ownership, not JavaScript render callbacks. Today the compute output is still synchronized into a Three-owned render storage buffer. The scene path may need to wait for Three storage initialization, copy the selected-hour compute output into render-owned storage, drain or observe queue completion, and publish visibility through Svelte/Three scene state. Dense geometry and cell mapping are also still CPU-created when a new render surface is built.
+
+That means "more GPU-driven" should be interpreted narrowly:
+
+| Direction | Keep | Avoid |
+| --- | --- | --- |
+| Stable Three-managed overlay | Three.js scene ownership, camera integration, fallbacks, diagnostics | Replacing the renderer as a first move |
+| GPU-resident values and small uniforms | selected-hour UTCI buffer, range uniforms, LUT, opacity, grid constants | full selected-hour readback or `DataTexture` rebuilds |
+| Publication lifecycle reduction | reuse/prewarm/directly bind resources when evidence says it removes a measured bucket | moving the same synchronous work to a different immediately adjacent bucket |
+| Shader responsibility | data-parallel color/value/mapping work | month/hour selection, cache identity, fallback decisions, invalidation semantics |
+
+Guardrails for the downstream publication plan, after init smoothness attribution decides render publication is the right target:
+
+- Do not chase "GPU-driven" as a slogan. Each candidate must name the measured bucket it removes: layout/key/proof, mesh creation, storage init wait, buffer copy, queue drain, scene sync delay, or adjacent pre-scene publication work.
+- Do not reintroduce hidden readbacks. Preserve `compute-buffer-selected-hour`, same-device proof, `visibleSelectedHourReadbackCount=0`, and `dataTextureBuildCount=0`.
+- Do not make publication depend on fresh dense mesh/storage setup per interaction when the layout can be reused.
+- Do not treat diagnostics/parity surfaces as the product route.
+- Do not move product control-plane semantics into WGSL unless the data is truly parallel and the measurement says it matters.
+- Do not call a bucket improvement successful unless the top rAF/interval gap and first-visible/first-scrub publication metrics move.
+
+If attribution confirms render publication as the right next target, the likely high-value boundary is resource ownership between the WebGPU compute pipeline and Three's WebGPU backend: either find a supported way to bind/reuse the selected-hour GPU resource with less copy/sync churn, or prove that the copy/storage lifecycle is not the limiting bucket and target the adjacent CPU publication work instead.
+
+### 2026-06-01 Init Smoothness And rAF Attribution Correction
+
+A follow-up review of the existing rAF artifacts corrected the framing again: rAF is a freeze detector and phase-correlation tool, not the whole performance goal.
+
+The current `data/performance-results/main-route-exposure-and-raf-diagnostics.json` artifact for `ness-tziona-0_5m` reports `rafGapCount=76`, but stores only the top rAF gaps rather than the complete frame distribution. The stored top gaps still contain enough timestamp data for first-pass attribution:
+
+| Gap | Window | Duration | Overlap |
+| --- | --- | ---: | --- |
+| Top overall rAF gap | `4314.5 -> 5663.2 ms` | `1348.7 ms` | no exposure-slice or render-publication overlap |
+| Top overall interval gap | `4284.3 -> 5669.5 ms` | `1385.2 ms` | no exposure-slice or render-publication overlap |
+| Top overall long task | `4310.3 -> 5666.3 ms` | `1356 ms` | no exposure-slice or render-publication overlap |
+| Largest render-publication rAF gap | `23613.8 -> 24927.9 ms` | `1314.1 ms` | `renderPublicationTotal`, `renderPublicationPreStorage`, `renderStorageFirstWaitFrame`, `renderStorageWait` |
+| Render-publication tail rAF gap | `24934.9 -> 25261.5 ms` | `326.6 ms` | `renderCopyQueueDrain` |
+| Largest exposure-overlapped rAF gaps | exposure slices `27-32` | about `326-355 ms` | exposure slices only |
+
+This means the single largest page-local freeze in the current artifact is an early startup/pre-exposure stall, not render publication. Render publication is still a proven app-owned freeze near the end of the initial load, but it is not the only visible freeze owner. Exposure is the main wall-clock latency owner, but the current artifact does not prove the exposure phase is the largest page-local rAF freeze owner after chunking.
+
+The next work should therefore be a **main-route init smoothness attribution pass**, not a direct optimization pass. It should answer two separate questions:
+
+| Question | Metric family | Current owner candidates |
+| --- | --- | --- |
+| How long until the UTCI surface is visible? | `firstSelectedHourVisibleMs`, `pipelineFirstSelectedHourVisibleMs`, exposure, one-hour dispatch, render update, scene sync | full-grid exposure latency, first publication |
+| Does the app visibly freeze while waiting? | rAF gaps, interval gaps, long tasks, input/paint proxies | early startup/pre-exposure stall, render publication, exposure-slice breathing |
+
+Updated owner ranking:
+
+1. **Total latency owner:** full-grid exposure for NZ `0.5m` remains the largest wall-clock cost (`exposurePrecomputeMs` around `17.2 s` in the current focused artifact). This is likely a mix of workload/HW reality and scheduling strategy.
+2. **Largest measured contiguous page freeze:** early startup/pre-exposure work around `4.3 -> 5.7 s`, currently under-attributed.
+3. **Known app-owned publication freeze:** render publication / scene sync around `23.6 -> 25.3 s`, with layout/pre-storage, storage wait, and queue drain sub-windows.
+4. **Exposure roughness:** repeated exposure-overlapped rAF gaps around `326-355 ms`, which may represent GPU/driver pressure or page-local breath limits, but are smaller than the top startup/publication freezes.
+5. **Non-owners for current init smoothness:** selected-hour UTCI dispatch, full visible-path readback, and `DataTexture` rebuilds remain ruled out by the current proof boundary.
+
+Planning implication: do not pick the next optimization from the render-publication upper-bound table alone. First preserve or collect enough data to attribute the early startup/pre-exposure gap and to summarize the rAF distribution, not just the maximum. Render-publication optimization remains likely valuable, but it should be chosen after the init smoothness map shows whether it is the largest app-owned freeze, the easiest app-owned freeze, or simply one of several meaningful freezes.
 
 ### Future Analysis Boundary
 
@@ -388,28 +488,23 @@ So the bottleneck story has changed:
 - **Old story:** memory blow-up from all-hours UTCI/MRT storage and CPU copies
 - **Current story:** selected-hour memory is now proven plausible on the tested 0.5m main-route cases, but 0.5m scrub/render publication is still UX-poor.
 
-Important caveat: we have collected the current main route at 0.5m, but we have **not** recollected it after the planned render-publication diagnostics pass. The next evidence target is therefore not "prove 0.5m exists"; it is "explain and rank the measured 0.5m render-publication bottlenecks."
+Important caveat: we have collected the current main route at 0.5m and have now ruled out one narrow prepared-layout shift as an effective visible-freeze fix. The next evidence target is therefore not "prove 0.5m exists" or "move the same synchronous work earlier"; it is to attribute whether early startup/pre-exposure, exposure breathing, render publication, or another phase owns the most important visible freezes and total-latency costs.
 
 ## Recommended Next Step
 
-The next step should be an intentional **main-route render publication diagnostics pass** based on the measured 0.5m bottlenecks, not another opportunistic optimization without a clear target.
+The next step should be an intentional **main-route init smoothness attribution pass**, not another opportunistic optimization without a clear target.
 
-Current planning artifact: [2026-05-15 main-route render diagnostics plan](superpowers/plans/2026-05-15-main-route-render-diagnostics.md).
+Current planning artifact: [2026-06-01 main-route init smoothness attribution plan](superpowers/plans/2026-06-01-main-route-init-smoothness-attribution.md). That plan first preserves enough rAF/interval/long-task distribution data and early startup phase marks to rank total-latency owners separately from visible-freeze owners.
+
+The older [2026-06-01 main-route cold publication next steps plan](superpowers/plans/2026-06-01-main-route-cold-publication-next-steps.md) remains useful after attribution, but it is now downstream of the init smoothness map. Do not choose a render-publication implementation only from the cold-publication upper-bound table until the early startup/pre-exposure gap is attributed.
 
 Current objective:
 
 1. Keep `/` as the canonical product proof route and keep `/debug` thin/proof-oriented.
-2. Add deeper modular diagnostics around the render publication path without turning `viewer/src/routes/+page.svelte` back into a debug shell.
-3. Explain the multi-second 0.5m scrub gap between selected-hour compute completion and visible render publication.
-4. Decide whether the first optimization should be render-owned storage reuse, layout/mesh reuse, queue-drain scheduling, scene sync handoff, or tiling.
+2. Preserve or collect enough diagnostics to rank early startup/pre-exposure, exposure breathing, and render-publication freezes in the same artifact.
+3. Separate total latency from visible freeze before choosing a fix.
+4. Only after attribution, decide whether the first implementation should target startup/data prep, render publication, exposure scheduling/tiling, or a deliberately scoped combination with a single falsifiable gate.
 5. Preserve `dataTexture` and other legacy/fallback paths until the selected-hour route is clearly good enough to replace them more broadly.
-
-Historical plan trail for this route:
-
-- Prototype implementation plan: [docs/superpowers/plans/2026-05-07-webgpu-compute-on-demand-prototype.md](superpowers/plans/2026-05-07-webgpu-compute-on-demand-prototype.md)
-- Prototype results: [docs/superpowers/plans/2026-05-07-webgpu-compute-on-demand-prototype-results.md](superpowers/plans/2026-05-07-webgpu-compute-on-demand-prototype-results.md)
-- F32 vertical-slice follow-up plan: [docs/superpowers/plans/2026-05-08-webgpu-f32-on-demand-vertical-slice.md](superpowers/plans/2026-05-08-webgpu-f32-on-demand-vertical-slice.md)
-- Debug on-demand integration plan: [docs/superpowers/plans/2026-05-08-webgpu-on-demand-debug-integration.md](superpowers/plans/2026-05-08-webgpu-on-demand-debug-integration.md)
 
 Why this is the right risk order:
 
@@ -523,31 +618,35 @@ Keep it as:
 
 Do not spend the next major effort on CPU decoded-slice LRU unless the selected-hour GPU-native path stalls out or a fallback path urgently needs stabilization.
 
-## Next Investigation And Optimization Plan
+## Next Investigation Plan
+
+This plan is attribution-first. Render-publication optimization candidates remain downstream until the init smoothness attribution pass explains the early startup/pre-exposure gap and ranks total-latency owners separately from visible-freeze owners.
 
 1. **Preserve the measurement baseline**
    - Keep using the main route `/` for BG/NZ 2m and 0.5m route-level proof.
    - Keep route-level proof visible: `compute-buffer-selected-hour`, zero selected-hour readback, zero `dataTexture` rebuilds.
 
-2. **Map the render publication gap**
-   - Trace the time from selected-hour output acceptance to scene sync start.
-   - Split mesh create vs mesh reuse, layout extraction, render-owned storage wait, buffer copy, queue drain, visibility publication, and invalidation.
-   - Decide which parts are one-time setup, repeated scrub work, or unavoidable waits.
+2. **Map init smoothness across phases**
+   - Preserve or collect enough rAF/interval/long-task distribution data to distinguish one maximum gap from repeated roughness.
+   - Add or preserve phase marks before exposure starts so the `4314.5 -> 5663.2 ms` startup/pre-exposure stall is no longer anonymous.
+   - Keep exposure slice windows and render-publication windows in the same artifact so overlap evidence stays comparable.
 
-3. **Map the scene-sync path**
-   - Treat `renderSurfaceMeshMs`, `renderStorageInitWaitMs`, and `renderQueueDrainMs` as the current measured scene-sync suspects.
-   - Decide whether the likely win is reuse, prewarm, caching, synchronization changes, or something else.
+3. **Rank latency and freeze owners separately**
+   - Treat full-grid exposure as the current total-latency owner unless fresh evidence changes it.
+   - Treat early startup/pre-exposure as the currently largest measured page-local freeze until it is attributed or falsified.
+   - Treat render publication as a proven app-owned freeze near the end of init, not necessarily the only or first fix target.
 
-4. **Prioritize boring/high-confidence optimization candidates**
-   - Reuse or cache work that is currently front-loaded into the first selected-hour render.
-   - Prewarm scene-owned GPU surface/storage setup if that cost is mostly first-use overhead.
-   - Reduce explicit first-use synchronization / queue drain where it is not actually required.
-   - Avoid repeated payload/BVH/upload work when the selected analysis has not changed.
+4. **Use the prepared-layout failure as a downstream constraint**
+   - Do not keep or reintroduce unused prepared-layout runtime code.
+   - Do not count a bucket-name improvement as success if the rAF/interval gap does not move.
+   - Treat synchronous work immediately before scene publication as still part of the felt freeze, even when it is owned by selected-hour session assembly rather than scene sync.
 
-5. **Remeasure before optimizing**
-   - Recollect BG and NZ 0.5m after the diagnostics pass.
-   - Produce a short evidence note that ranks the suspected render buckets.
-   - Only then choose the first behavior-changing optimization.
+5. **Only after attribution, rank implementation candidates**
+   - Treat typed-array mesh/layout construction as important evidence, not as an automatic next implementation. `renderSurfaceMeshMs` was about `268 ms`, which is meaningful but too small by itself to explain a `1342 ms` gap against an `<800 ms` target.
+   - Treat the synchronous layout/prep work adjacent to publication as part of the same felt freeze even when it is not inside the scene-side bucket.
+   - Treat render-owned storage readiness as a separate suspect: the failed attempt still showed a one-frame storage wait around `275 ms`.
+   - Treat queue drain as a separate suspect: the failed attempt still produced a later render-publication-overlapped gap around `361 ms`.
+   - Prefer candidates whose measured upper bound can move the chosen product gate, whether that gate is early startup freeze, render-publication freeze, total first-visible latency, or a combination.
 
 ## Open Risks And Boundaries
 
@@ -555,7 +654,7 @@ Do not spend the next major effort on CPU decoded-slice LRU unless the selected-
 | --- | --- |
 | We optimize the wrong bucket first. | Keep BG/NZ timing splits current and choose changes from the measured breakdown, not intuition. |
 | The large remaining NZ cost may be split across both pre-scene-sync delay and scene sync. | Keep `renderSceneSyncStartDelayMs` and `renderSceneSyncTotalMs` as separate live suspects in the next design pass. |
-| 0.5m is measured but still UX-poor on scrub/render publication. | Do not treat 0.5m as product-smooth until the route is recollected after render-publication diagnostics and the measured bottlenecks are ranked. |
+| 0.5m is measured but still UX-poor on init smoothness. | Do not treat 0.5m as product-smooth until the route is recollected after init smoothness attribution and the measured bottlenecks are ranked. |
 | Capability/status reporting can still mislead future debugging. | Keep trusting stronger runtime proof over weak `navigatorGpu`/overlay capability checks. |
 | Solar bitmask at 0.5m is still hundreds of MB. | Add spatial tiling after bridge proof; keep BVH persistent and tile exposure/results. |
 | GPU-only values are inconvenient for charts, exports, and picking. | Add small targeted readbacks for summaries/picked cells, not full-field readback. |

@@ -13,6 +13,7 @@ import { getNormalizedMousePosition } from '$lib/utils/mouse';
 import type { UtciGridLayout } from './pointCloudService';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
+import { sharedMetricPointReadbackCache } from '$lib/compute/gpu/metricPointReadback';
 
 export interface TooltipData {
 	value: number;
@@ -20,7 +21,35 @@ export interface TooltipData {
 	positionIndex: number;
 }
 
+export type TooltipProbeData = Omit<TooltipData, 'value'>;
+
+export type TooltipMetricPointValueReader = {
+	monthIndex: number;
+	requestId?: number;
+	ownerId?: string;
+	readbackByteLength?: number;
+	readMetricPointValue: (key: {
+		metricType: MetricType;
+		monthIndex: number;
+		positionIndex: number;
+		requestId?: number;
+		ownerId?: string;
+	}) => Promise<number>;
+};
+
 export type TooltipResolutionPath = 'none' | 'plane-cell' | 'mesh-raycast';
+
+export interface TooltipMetricPointReadbackMeasurement {
+	metricType: MetricType;
+	monthIndex: number;
+	positionIndex: number;
+	requestId?: number;
+	ownerId?: string;
+	cacheHit: boolean;
+	byteLength: number;
+	latencyMs: number;
+	success: boolean;
+}
 
 export interface TooltipInteractionMeasurement {
 	hit: boolean;
@@ -58,6 +87,14 @@ export interface TooltipInteractionDiagnostics {
 	directCellHitCount: number;
 	directCellMissCount: number;
 	nearestScanFallbackCount: number;
+	metricPointReadbackCount: number;
+	metricPointReadbackBytes: number;
+	metricPointReadbackLastBytes: number | null;
+	metricPointReadbackCacheEntries: number;
+	metricPointReadbackCacheHitCount: number;
+	metricPointReadbackCacheMissCount: number;
+	metricPointReadbackLastLatencyMs: number | null;
+	metricPointReadbackMaxLatencyMs: number;
 }
 
 type TooltipWorldTransformContext = {
@@ -71,6 +108,12 @@ type TooltipSurfaceBounds = {
 	halfWidth: number;
 	halfHeight: number;
 	epsilon: number;
+};
+
+type TooltipHitResolution = {
+	position: { x: number; y: number; z: number };
+	positionIndex: number;
+	emitMeasurement: (hit: boolean) => void;
 };
 
 export const TOOLTIP_SLOW_BUDGET_MS = 8;
@@ -102,7 +145,15 @@ export function createEmptyTooltipInteractionDiagnostics(
 		meshRaycastPathCount: 0,
 		directCellHitCount: 0,
 		directCellMissCount: 0,
-		nearestScanFallbackCount: 0
+		nearestScanFallbackCount: 0,
+		metricPointReadbackCount: 0,
+		metricPointReadbackBytes: 0,
+		metricPointReadbackLastBytes: null,
+		metricPointReadbackCacheEntries: 0,
+		metricPointReadbackCacheHitCount: 0,
+		metricPointReadbackCacheMissCount: 0,
+		metricPointReadbackLastLatencyMs: null,
+		metricPointReadbackMaxLatencyMs: 0
 	};
 }
 
@@ -529,6 +580,35 @@ export function getTooltipData(
 		onDiagnosticsSample?: (measurement: TooltipInteractionMeasurement) => void;
 	}
 ): TooltipData | null {
+	const hit = resolveTooltipHit(event, camera, utciMesh, analysis, canvasRect, options);
+	if (!hit) {
+		return null;
+	}
+
+	const value = getMetricValue(analysis!, hit.positionIndex, metricType, hourIndex);
+	if (value === null) {
+		hit.emitMeasurement(false);
+		return null;
+	}
+
+	hit.emitMeasurement(true);
+	return {
+		value,
+		position: hit.position,
+		positionIndex: hit.positionIndex
+	};
+}
+
+function resolveTooltipHit(
+	event: MouseEvent,
+	camera: THREE.Camera,
+	utciMesh: THREE.Mesh | null,
+	analysis: Analysis | null,
+	canvasRect: DOMRect,
+	options?: {
+		onDiagnosticsSample?: (measurement: TooltipInteractionMeasurement) => void;
+	}
+): TooltipHitResolution | null {
 	const onDiagnosticsSample = options?.onDiagnosticsSample;
 	const diagnosticsEnabled = typeof onDiagnosticsSample === 'function';
 	const totalStart = diagnosticsEnabled ? performance.now() : 0;
@@ -640,20 +720,6 @@ export function getTooltipData(
 		return null;
 	}
 
-	const value = getMetricValue(analysis, positionIndex, metricType, hourIndex);
-	if (value === null) {
-		emitMeasurement(
-			false,
-			raycastMs,
-			nearestPointMs,
-			resolutionPath,
-			directCellHit,
-			nearestScanUsed,
-			directCellMissCount
-		);
-		return null;
-	}
-
 	const position = getPositionCoordinates(analysis, positionIndex);
 	if (!position) {
 		emitMeasurement(
@@ -668,19 +734,135 @@ export function getTooltipData(
 		return null;
 	}
 
-	emitMeasurement(
-		true,
-		raycastMs,
-		nearestPointMs,
-		resolutionPath,
-		directCellHit,
-		nearestScanUsed,
-		directCellMissCount
+	return {
+		position,
+		positionIndex,
+		emitMeasurement: (hit: boolean) =>
+			emitMeasurement(
+				hit,
+				raycastMs,
+				nearestPointMs,
+				resolutionPath,
+				directCellHit,
+				nearestScanUsed,
+				directCellMissCount
+			)
+	};
+}
+
+export function getTooltipProbeData(
+	event: MouseEvent,
+	camera: THREE.Camera,
+	utciMesh: THREE.Mesh | null,
+	analysis: Analysis | null,
+	canvasRect: DOMRect,
+	options?: {
+		onDiagnosticsSample?: (measurement: TooltipInteractionMeasurement) => void;
+	}
+): TooltipProbeData | null {
+	const hit = resolveTooltipHit(event, camera, utciMesh, analysis, canvasRect, options);
+	if (!hit) {
+		return null;
+	}
+
+	return {
+		position: hit.position,
+		positionIndex: hit.positionIndex
+	};
+}
+
+export async function getTooltipDataAsync(
+	event: MouseEvent,
+	camera: THREE.Camera,
+	utciMesh: THREE.Mesh | null,
+	analysis: Analysis | null,
+	metricType: MetricType,
+	hourIndex: number,
+	canvasRect: DOMRect,
+	options?: {
+		onDiagnosticsSample?: (measurement: TooltipInteractionMeasurement) => void;
+		metricPointValueReader?: TooltipMetricPointValueReader;
+		onMetricPointReadbackSample?: (
+			measurement: TooltipMetricPointReadbackMeasurement
+		) => void;
+	}
+): Promise<TooltipData | null> {
+	const hit = resolveTooltipHit(
+		event,
+		camera,
+		utciMesh,
+		analysis,
+		canvasRect,
+		options
 	);
+	if (!hit) {
+		return null;
+	}
+
+	let value = analysis ? getMetricValue(analysis, hit.positionIndex, metricType, hourIndex) : null;
+	if (
+		value === null &&
+		metricType === 'shading_index' &&
+		options?.metricPointValueReader
+	) {
+		const reader = options.metricPointValueReader;
+		const readbackStartedAt = performance.now();
+		let cacheHit = false;
+		let byteLength = 0;
+		try {
+			const key = {
+				metricType,
+				monthIndex: reader.monthIndex,
+				positionIndex: hit.positionIndex,
+				requestId: reader.requestId,
+				ownerId: reader.ownerId
+			};
+			const result = await sharedMetricPointReadbackCache.getOrReadWithStats(
+				key,
+				() =>
+					reader.readMetricPointValue({
+						metricType,
+						monthIndex: reader.monthIndex,
+						positionIndex: hit.positionIndex,
+						requestId: reader.requestId,
+						ownerId: reader.ownerId
+					})
+			);
+			value = result.value;
+			cacheHit = result.cacheHit;
+			byteLength = cacheHit ? 0 : (reader.readbackByteLength ?? 4);
+			options.onMetricPointReadbackSample?.({
+				...key,
+				cacheHit,
+				byteLength,
+				latencyMs: performance.now() - readbackStartedAt,
+				success: true
+			});
+		} catch {
+			options.onMetricPointReadbackSample?.({
+				metricType,
+				monthIndex: reader.monthIndex,
+				positionIndex: hit.positionIndex,
+				requestId: reader.requestId,
+				ownerId: reader.ownerId,
+				cacheHit,
+				byteLength,
+				latencyMs: performance.now() - readbackStartedAt,
+				success: false
+			});
+			value = null;
+		}
+	}
+	if (value === null || !Number.isFinite(value)) {
+		hit.emitMeasurement(false);
+		return null;
+	}
+
+	hit.emitMeasurement(true);
 	return {
 		value,
-		position,
-		positionIndex
+		position: hit.position,
+		positionIndex: hit.positionIndex
 	};
 }
 

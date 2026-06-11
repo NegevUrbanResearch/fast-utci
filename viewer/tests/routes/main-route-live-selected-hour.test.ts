@@ -1,14 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Group } from 'three';
 
 import {
 	buildMainRouteLiveSelectedHourDiagnostics,
 	createMainRouteRenderPublicationProjectionTracker,
+	resolveMainRouteLiveMetricSelection,
 	releaseBaseAcceptedGpuResidentOutput,
 	releaseComparisonAcceptedGpuResidentOutput,
 	type MainRouteAcceptedGpuResidentOutputReleaseParams,
 	type MainRouteLiveSelectedHourDiagnosticsParams
 } from '../../src/routes/main/liveSelectedHour';
-import type { LiveSelectedHourRouteHost } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
+import type { Analysis } from '$lib/types/analysis';
+import {
+	createLiveSelectedHourRouteHost,
+	type LiveSelectedHourRouteHost
+} from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
+import {
+	createFullDayAnalysis,
+	createLiveRouteInputs,
+	createMetricRecordingControllerFactory
+} from '../compute/live-selected-hour-route-host.test-support';
 
 function createReleaseParams(): MainRouteAcceptedGpuResidentOutputReleaseParams {
 	return {
@@ -125,7 +136,15 @@ function createDiagnosticsParams(): MainRouteLiveSelectedHourDiagnosticsParams {
 			meshRaycastPathCount: 0,
 			directCellHitCount: 1,
 			directCellMissCount: 0,
-			nearestScanFallbackCount: 0
+			nearestScanFallbackCount: 0,
+			metricPointReadbackCount: 0,
+			metricPointReadbackBytes: 0,
+			metricPointReadbackLastBytes: null,
+			metricPointReadbackCacheEntries: 0,
+			metricPointReadbackCacheHitCount: 0,
+			metricPointReadbackCacheMissCount: 0,
+			metricPointReadbackLastLatencyMs: null,
+			metricPointReadbackMaxLatencyMs: 0
 		},
 		cameraInteraction: {
 			slowThresholdMs: 20,
@@ -140,6 +159,194 @@ function createDiagnosticsParams(): MainRouteLiveSelectedHourDiagnosticsParams {
 }
 
 describe('main route live selected-hour helper', () => {
+	it('builds a month-only live Shading Index selection for the main route', () => {
+		const analysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base'
+		});
+		const selection = resolveMainRouteLiveMetricSelection({
+			analysis,
+			analysisId: 'Ben-Gurion/base',
+			metricType: 'shading_index',
+			currentMonth: 7,
+			currentHour: 12,
+			rendererBackend: 'webgpu',
+			rendererDevice: { label: 'renderer' } as unknown as GPUDevice,
+			utciSurfaceBackend: 'gpuNative'
+		});
+
+		expect(selection).toMatchObject({
+			useLiveMetricOnMainRoute: true,
+			liveRouteEnabled: true,
+			selectedMonthIndex: 7,
+			selectedHourIndex: 0,
+			selectedTimeIndex: 168,
+			selectionKey: 'Ben-Gurion/base|shading_index|7',
+			fixedTimePickerMode: 'month',
+			liveMetricUnavailableError: null
+		});
+
+		const selectionAfterHourChange = resolveMainRouteLiveMetricSelection({
+			analysis,
+			analysisId: 'Ben-Gurion/base',
+			metricType: 'shading_index',
+			currentMonth: 7,
+			currentHour: 17,
+			rendererBackend: 'webgpu',
+			rendererDevice: { label: 'renderer' } as unknown as GPUDevice,
+			utciSurfaceBackend: 'gpuNative'
+		});
+
+		expect(selectionAfterHourChange).toMatchObject({
+			selectedHourIndex: 0,
+			selectedTimeIndex: 168,
+			selectionKey: 'Ben-Gurion/base|shading_index|7',
+			fixedTimePickerMode: 'month'
+		});
+	});
+
+	it('keeps Shading Index on the live route with an explicit unavailable state instead of a data fallback', () => {
+		const selection = resolveMainRouteLiveMetricSelection({
+			analysis: createFullDayAnalysis({
+				label: 'base',
+				sourceAnalysisId: 'Ben-Gurion/base'
+			}),
+			analysisId: 'Ben-Gurion/base',
+			metricType: 'shading_index',
+			currentMonth: 7,
+			currentHour: 12,
+			rendererBackend: 'unknown',
+			rendererDevice: undefined,
+			utciSurfaceBackend: 'dataTexture'
+		});
+
+		expect(selection.useLiveMetricOnMainRoute).toBe(true);
+		expect(selection.liveRouteEnabled).toBe(false);
+		expect(selection.liveMetricUnavailableError).toMatch(/requires WebGPU/i);
+	});
+
+	it('forwards metric type into live route controller requests and invalidates same selection on metric switch', async () => {
+		const factory = createMetricRecordingControllerFactory();
+		const host = createLiveSelectedHourRouteHost({
+			createController: factory.createController,
+			resolveEpwUrl: ({ analysisId }) => `/weather/${analysisId ?? 'default'}.epw`
+		});
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const baseModel = {} as Group;
+		const rendererDevice = { label: 'renderer' } as unknown as GPUDevice;
+		const selectionKey = 'Ben-Gurion/base|7';
+
+		host.setRouteInputs(
+			createLiveRouteInputs({
+				metricType: 'utci',
+				baseAnalysis,
+				baseModel,
+				rendererDevice,
+				selectionKey
+			})
+		);
+		await host.flush();
+		host.setRouteInputs(
+			createLiveRouteInputs({
+				metricType: 'shading_index',
+				baseAnalysis,
+				baseModel,
+				rendererDevice,
+				selectionKey
+			})
+		);
+		await host.flush();
+
+		expect(factory.records[0].requests).toHaveLength(2);
+		expect(factory.records[0].requests.map((request) => request.metricType)).toEqual([
+			'utci',
+			'shading_index'
+		]);
+	});
+
+	it('does not compute or apply UTCI unified range overrides for live Shading Index', async () => {
+		const factory = createMetricRecordingControllerFactory();
+		const host = createLiveSelectedHourRouteHost({
+			createController: factory.createController,
+			resolveEpwUrl: ({ analysisId }) => `/weather/${analysisId ?? 'default'}.epw`
+		});
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+		const comparisonAnalysis = createFullDayAnalysis({
+			label: 'comparison',
+			sourceAnalysisId: 'Ben-Gurion/comparison',
+			baseMin: 5,
+			baseMax: 20
+		});
+
+		host.setRouteInputs(
+			createLiveRouteInputs({
+				metricType: 'shading_index',
+				baseAnalysis,
+				comparisonAnalysis,
+				selectionKey: 'Ben-Gurion/base|shading_index|7',
+				hourIndex: 0,
+				timeIndex: 168
+			})
+		);
+		await host.flush();
+
+		const state = host.getState();
+		expect(state.liveUnifiedRange).toBeNull();
+		expect(state.baseRenderContext?.metricType).toBe('shading_index');
+		expect(state.comparisonRenderContext?.metricType).toBe('shading_index');
+		expect(state.baseRenderContext?.rangeOverride).toBeNull();
+		expect(state.comparisonRenderContext?.rangeOverride).toBeNull();
+	});
+
+	it('publishes live Shading Index route/context once the metric-aware render bridge is available', async () => {
+		const factory = createMetricRecordingControllerFactory();
+		const host = createLiveSelectedHourRouteHost({
+			createController: factory.createController,
+			resolveEpwUrl: ({ analysisId }) => `/weather/${analysisId ?? 'default'}.epw`
+		});
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'base',
+			sourceAnalysisId: 'Ben-Gurion/base',
+			baseMin: 18,
+			baseMax: 30
+		});
+
+		host.setRouteInputs(
+			createLiveRouteInputs({
+				metricType: 'shading_index',
+				baseAnalysis,
+				selectionKey: 'Ben-Gurion/base|shading_index|7',
+				hourIndex: 0,
+				timeIndex: 168
+			})
+		);
+		await host.flush();
+
+		const state = host.getState();
+		expect(factory.records[0].requests).toHaveLength(1);
+		expect(factory.records[0].requests[0]).toMatchObject({
+			metricType: 'shading_index',
+			selectionKey: 'Ben-Gurion/base|shading_index|7'
+		});
+		expect(state.base.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(state.baseRenderContext?.metricType).toBe('shading_index');
+		expect(state.baseDisplayAnalysis).toBe(baseAnalysis);
+		expect(state.baseSceneSurfaceIdentity?.selectionKey).toBe('Ben-Gurion/base|shading_index|7');
+		expect(state.baseSurfaceIdentity?.selectionKey).toBe('Ben-Gurion/base|shading_index|7');
+		expect(state.baseHasVisibleLiveSurface).toBe(true);
+		expect(state.baseReady).toBe(true);
+	});
+
 	it('forwards base accepted GPU resident output releases with controller instance ids intact', () => {
 		const host = {
 			releaseBaseAcceptedGpuResidentOutput: vi.fn(),
@@ -173,9 +380,25 @@ describe('main route live selected-hour helper', () => {
 			baseSelectionKey: 'analysis|7|12'
 		});
 		expect(diagnostics?.selectedHourRuntimeContract.acceptedRequestId).toBe(11);
-		expect(JSON.stringify(diagnostics)).not.toMatch(
-			/\.bin|parity|Python|loadReferenceFromFs|__onDemandPrototypeDiagnostics__|LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID/i
-		);
+		expect(diagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+		expect(diagnostics?.selectedHourRuntimeContract).toMatchObject({
+			route: 'main',
+			selectedHourEngine: 'shared-host',
+			renderTransport: 'compute-buffer-selected-hour',
+			utciSurfaceSource: 'compute-buffer-selected-hour'
+		});
+		const diagnosticsRecord = diagnostics as Record<string, unknown>;
+		for (const debugField of [
+			'binComparisonEnabled',
+			'binComparisonValid',
+			'parityMode',
+			'pythonReferencePath',
+			'loadReferenceFromFs',
+			'__onDemandPrototypeDiagnostics__',
+			'LEGACY_DEBUG_SELECTED_HOUR_CONTROLLER_ID'
+		]) {
+			expect(diagnosticsRecord).not.toHaveProperty(debugField);
+		}
 	});
 
 	it('stamps routeProjectedAtMs once per published request and selection', () => {

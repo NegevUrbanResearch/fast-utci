@@ -13,19 +13,92 @@ import type {
 	LiveSelectedHourRouteState,
 } from '$lib/compute/selected-hour/liveSelectedHourRouteHost';
 import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+import type { Analysis } from '$lib/types/analysis';
 import {
 	copyRenderPublicationDiagnostics,
 	stampRenderPublicationTimeline
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
+import type { MetricType } from '$lib/types/viewer';
 import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
 import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
 import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
+import { resolveLiveSelectedHourTimeIndex } from '$lib/compute/selected-hour/liveUtciSelectedHour';
 
 export type MainRouteWindow = Window & {
 	__utciRenderDiagnostics__?: MainRouteUtciDiagnosticsPayload;
 };
+
+export type MainRouteLiveMetricSelection = {
+	useLiveMetricOnMainRoute: boolean;
+	liveRouteEnabled: boolean;
+	selectedMonthIndex: number;
+	selectedHourIndex: number;
+	selectedTimeIndex: number;
+	selectionKey: string;
+	showTimeSection: boolean;
+	fixedTimePickerMode: 'month' | null;
+	liveMetricUnavailableError: string | null;
+};
+
+export function resolveMainRouteLiveMetricSelection(params: {
+	analysis: Analysis | null;
+	analysisId: string | null;
+	metricType: MetricType;
+	currentMonth: number | null | undefined;
+	currentHour: number;
+	rendererBackend: UtciRendererBackend;
+	rendererDevice?: GPUDevice;
+	utciSurfaceBackend: 'dataTexture' | 'gpuNative';
+}): MainRouteLiveMetricSelection {
+	const isFullDayAnalysis = params.analysis?.metadata.analysis_type === 'full_day';
+	const selectedMonthIndex = params.currentMonth ?? 7;
+	const selectedHourIndex = params.metricType === 'shading_index' ? 0 : params.currentHour;
+	const selectedTimeIndex = resolveLiveSelectedHourTimeIndex({
+		monthIndex: selectedMonthIndex,
+		hourIndex: selectedHourIndex
+	});
+	const useLiveMetricOnMainRoute =
+		isFullDayAnalysis &&
+		(params.metricType === 'utci' || params.metricType === 'shading_index');
+	const webgpuLiveReady =
+		params.rendererBackend === 'webgpu' &&
+		params.rendererDevice != null &&
+		params.utciSurfaceBackend === 'gpuNative';
+	const liveRouteEnabled =
+		useLiveMetricOnMainRoute &&
+		(params.metricType === 'utci' || webgpuLiveReady);
+	const selectionKey =
+		params.metricType === 'shading_index'
+			? [params.analysisId, params.metricType, selectedMonthIndex].join('|')
+			: [
+					params.analysisId,
+					params.metricType,
+					selectedMonthIndex,
+					selectedHourIndex
+				].join('|');
+	const liveMetricUnavailableError =
+		useLiveMetricOnMainRoute &&
+		params.metricType === 'shading_index' &&
+		!webgpuLiveReady
+			? 'Shading Index requires WebGPU rendering on the main route.'
+			: null;
+
+	return {
+		useLiveMetricOnMainRoute,
+		liveRouteEnabled,
+		selectedMonthIndex,
+		selectedHourIndex,
+		selectedTimeIndex,
+		selectionKey,
+		showTimeSection:
+			isFullDayAnalysis &&
+			(params.metricType === 'utci' || params.metricType === 'shading_index'),
+		fixedTimePickerMode: params.metricType === 'shading_index' ? 'month' : null,
+		liveMetricUnavailableError
+	};
+}
 
 export type MainRouteAcceptedGpuResidentOutputReleaseParams =
 	LiveSelectedHourGpuResidentRelease;

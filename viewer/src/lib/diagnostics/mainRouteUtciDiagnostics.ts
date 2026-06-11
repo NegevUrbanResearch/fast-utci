@@ -182,13 +182,42 @@ function copyRenderPublicationDiagnostics(
 }
 
 function copyDiagnosticsTimings(
-	timings: MainRouteUtciDiagnosticsTimings | undefined
+	timings: MainRouteUtciDiagnosticsTimings | undefined,
+	tooltipInteraction?: TooltipInteractionDiagnostics & {
+		hoverSampleCount: number;
+	}
 ): MainRouteUtciDiagnosticsTimings | undefined {
 	if (!timings) return undefined;
-	return {
+	const copied = {
 		...timings,
 		renderPublication: copyRenderPublicationDiagnostics(timings.renderPublication)
 	};
+	const timeline = copied.renderPublication?.renderPublicationTimeline;
+	if (
+		copied.renderPublication &&
+		timeline?.sessionMetricType === 'shading_index' &&
+		tooltipInteraction
+	) {
+		copied.renderPublication = {
+			...copied.renderPublication,
+			renderPublicationTimeline: {
+				...timeline,
+				sessionTooltipPointReadbackCount:
+					tooltipInteraction.metricPointReadbackCount,
+				sessionTooltipPointReadbackBytes:
+					tooltipInteraction.metricPointReadbackBytes,
+				sessionTooltipPointReadbackCacheHitCount:
+					tooltipInteraction.metricPointReadbackCacheHitCount,
+				sessionTooltipPointReadbackCacheMissCount:
+					tooltipInteraction.metricPointReadbackCacheMissCount,
+				sessionTooltipPointReadbackLastLatencyMs:
+					tooltipInteraction.metricPointReadbackLastLatencyMs,
+				sessionTooltipPointReadbackMaxLatencyMs:
+					tooltipInteraction.metricPointReadbackMaxLatencyMs
+			}
+		};
+	}
+	return copied;
 }
 
 export function buildMainRouteUtciDiagnostics(
@@ -257,7 +286,7 @@ export function buildMainRouteUtciDiagnostics(
 			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId,
 		tooltipInteraction: inputs.tooltipInteraction,
 		cameraInteraction: inputs.cameraInteraction,
-		timings: copyDiagnosticsTimings(inputs.timings),
+		timings: copyDiagnosticsTimings(inputs.timings, inputs.tooltipInteraction),
 		trackedGpuAllocationBytes: inputs.trackedGpuAllocationBytes
 			? { ...inputs.trackedGpuAllocationBytes }
 			: undefined,

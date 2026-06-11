@@ -17,6 +17,7 @@ import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/l
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 import type { UtciRenderMode, UtciRendererBackend } from '$lib/utciRenderMode';
 import type { DebugRouteAcceptedGpuResidentOutputRelease } from './legacySelectedHourWiring';
+import type { MetricType } from '$lib/types/viewer';
 
 export function createDebugSharedRouteHost(dataBasePath: string): LiveSelectedHourRouteHost {
 	return createLiveSelectedHourRouteHost({ dataBasePath });
@@ -30,22 +31,29 @@ export function buildDebugSharedRouteHostInputs(params: {
 	monthIndex: number;
 	hourIndex: number;
 	timeIndex: number;
+	metricType?: MetricType;
 	colorMode: 'normalized' | 'discrete';
 	utciRenderMode: UtciRenderMode;
 	rendererBackend: UtciRendererBackend;
 	rendererDevice?: GPUDevice;
 	utciSurfaceBackend: 'dataTexture' | 'gpuNative';
 }): LiveSelectedHourRouteInputs {
+	const metricType = params.metricType ?? 'utci';
+	const selectionKey =
+		metricType === 'shading_index'
+			? [params.analysisId, metricType, params.monthIndex].join('|')
+			: [params.analysisId, params.monthIndex, params.hourIndex].join('|');
 	return {
 		enabled: params.enabled,
 		analysisId: params.analysisId,
 		baseAnalysis: params.baseAnalysis,
 		baseModel: params.baseModel,
+		metricType,
 		selection: {
 			monthIndex: params.monthIndex,
 			hourIndex: params.hourIndex,
 			timeIndex: params.timeIndex,
-			selectionKey: [params.analysisId, params.monthIndex, params.hourIndex].join('|')
+			selectionKey
 		},
 		colorMode: params.colorMode,
 		utciRenderMode: params.utciRenderMode,
@@ -156,7 +164,8 @@ export function buildDebugSharedDiagnosticsPatch(params: {
 		renderContextTimeIndex: params.debugSharedBaseRenderContext?.timeIndex,
 		acceptedUtciRange: params.debugSharedBasePendingGpuResidentOutput?.utciRange,
 		renderTransport:
-			params.debugSharedRouteState.base.renderTransport === 'idle'
+			params.debugSharedRouteState.base.renderTransport === 'idle' ||
+			params.debugSharedRouteState.base.renderTransport === 'live-render-pending'
 				? 'none'
 				: params.debugSharedRouteState.base.renderTransport,
 		sameDeviceForComputeAndRender:

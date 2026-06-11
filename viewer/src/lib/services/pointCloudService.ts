@@ -377,9 +377,8 @@ export function createColors(
 		const shadingIndexValues = getShadingIndex(data);
 		
 		if (!shadingIndexValues) {
-			// Fallback to UTCI if Shading Index not available (backward compatibility)
-			console.warn('[PointCloud] Shading Index requested but not available, falling back to UTCI');
-			return createColors(analysis, hourIndex, colorMode, 'utci', rangeOverride, monthIndex);
+			console.warn('[PointCloud] Shading Index requested but no Shading Index values are available.');
+			return colors;
 		}
 
 		// Get Shading Index range from metadata

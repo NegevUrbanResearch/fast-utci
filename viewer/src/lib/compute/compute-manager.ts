@@ -2,6 +2,9 @@ import type { Analysis } from '$lib/types/analysis';
 import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type {
 	ExposurePrecomputeParams,
+	F32MetricOutput,
+	RunF32OutputRangeSummaryParams,
+	RunShadingIndexParams,
 	OnDemandUtciOutput,
 	RunUtciRangeSummaryForOutputParams,
 	RunUtciRangeSummaryForTimeIndexParams,
@@ -88,6 +91,7 @@ export class ComputeManager {
 		sunVectorsFixture?: {
 			sunVectors: Float32Array;
 			sunAltitudes?: Float32Array;
+			sunUpMask?: Uint32Array;
 		};
 		epwContent: string;
 		gridResolution: number;
@@ -152,6 +156,7 @@ export class ComputeManager {
 
 		let sunVectors: Float32Array;
 		let sunAltitudes: Float32Array;
+		let sunUpMask: Uint32Array | undefined;
 		if (sunVectorsFixture) {
 			const expectedVecLen = numMonths * numHours * 3;
 			if (sunVectorsFixture.sunVectors.length !== expectedVecLen) {
@@ -171,16 +176,34 @@ export class ComputeManager {
 			} else {
 				sunAltitudes = new Float32Array(numMonths * numHours);
 			}
+			if (sunVectorsFixture.sunUpMask) {
+				const expectedMaskLen = numMonths * numHours;
+				if (sunVectorsFixture.sunUpMask.length !== expectedMaskLen) {
+					throw new Error(
+						`sunUpMask fixture length mismatch: expected ${expectedMaskLen}, got ${sunVectorsFixture.sunUpMask.length}`
+					);
+				}
+				sunUpMask = sunVectorsFixture.sunUpMask;
+			}
 		} else {
 			sunVectors = new Float32Array(numMonths * numHours * 3);
 			sunAltitudes = new Float32Array(numMonths * numHours);
+			sunUpMask = new Uint32Array(numMonths * numHours);
 			for (let monthOffset = 0; monthOffset < numMonths; monthOffset++) {
 				const month = Math.min(12, Math.max(1, startMonth + monthOffset));
 				const day = representativeDay;
-				const { sunVectors: dayVectors, altitudes: dayAltitudes } = getSunVectors(location, month, day);
-				if (dayVectors.length < numHours || dayAltitudes.length < numHours) {
+				const {
+					sunVectors: dayVectors,
+					altitudes: dayAltitudes,
+					isSunUp: daySunUp
+				} = getSunVectors(location, month, day);
+				if (
+					dayVectors.length < numHours ||
+					dayAltitudes.length < numHours ||
+					daySunUp.length < numHours
+				) {
 					throw new Error(
-						`Sun vector contract mismatch for month=${month}, day=${day}: expected at least ${numHours} entries, got vectors=${dayVectors.length}, altitudes=${dayAltitudes.length}`
+						`Sun vector contract mismatch for month=${month}, day=${day}: expected at least ${numHours} entries, got vectors=${dayVectors.length}, altitudes=${dayAltitudes.length}, isSunUp=${daySunUp.length}`
 					);
 				}
 				for (let hour = 0; hour < numHours; hour++) {
@@ -190,6 +213,7 @@ export class ComputeManager {
 					sunVectors[idx * 3 + 1] = v[1];
 					sunVectors[idx * 3 + 2] = v[2];
 					sunAltitudes[idx] = (dayAltitudes[hour] * Math.PI) / 180; // radians for shader
+					sunUpMask[idx] = daySunUp[hour] ? 1 : 0;
 				}
 			}
 		}
@@ -268,6 +292,7 @@ export class ComputeManager {
 			gridPoints,
 			sunVectors,
 			sunAltitudes,
+			sunUpMask,
 			weather,
 			serializedBvh,
 			domeVectors,
@@ -316,6 +341,13 @@ export class ComputeManager {
 		return this.pipeline.runUtciForTimeIndex(params);
 	}
 
+	async runShadingIndex(params: RunShadingIndexParams): Promise<F32MetricOutput> {
+		if (!this.pipeline.runShadingIndex) {
+			throw new Error('The configured UTCI pipeline does not support shading index compute.');
+		}
+		return this.pipeline.runShadingIndex(params);
+	}
+
 	async runUtciRangeSummaryForTimeIndex(
 		params: RunUtciRangeSummaryForTimeIndexParams
 	): Promise<UtciRangeSummary> {
@@ -340,6 +372,26 @@ export class ComputeManager {
 			);
 		}
 		return this.pipeline.runUtciRangeSummaryForOutput(params);
+	}
+
+	async runF32OutputRangeSummary(
+		params: RunF32OutputRangeSummaryParams
+	): Promise<UtciRangeSummary> {
+		this.assertOwnedOneF32PerPointOutput(params.output);
+		if (!this.pipeline.runF32OutputRangeSummary) {
+			throw new Error(
+				'The configured UTCI pipeline does not support generic f32 output range summaries.'
+			);
+		}
+		return this.pipeline.runF32OutputRangeSummary(params);
+	}
+
+	private assertOwnedOneF32PerPointOutput(output: F32MetricOutput): void {
+		if (output.valueLayout !== 'one-f32-per-point' || !output.gpuOutputHandle) {
+			throw new Error(
+				'Generic f32 output range summaries support only one-f32-per-point owned outputs.'
+			);
+		}
 	}
 
 	getOnDemandDiagnostics(): OnDemandRuntimeDiagnostics | undefined {

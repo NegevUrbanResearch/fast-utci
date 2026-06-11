@@ -29,6 +29,27 @@ export function getAcceptedGpuResidentKey(
 	value: SelectedHourGpuResidentOutput | null
 ): string | null {
 	if (!value) return null;
+	if (value.metricType === 'shading_index') {
+		const range = value.shadingIndexRange ?? { min: 0, max: 1 };
+		return [
+			value.requestId,
+			value.metricType,
+			value.monthIndex,
+			value.timeIndex,
+			range.min,
+			range.max
+		].join(':');
+	}
+	if (value.metricType === 'utci') {
+		return [
+			value.requestId,
+			value.metricType,
+			value.monthIndex,
+			value.timeIndex,
+			value.utciRange.min,
+			value.utciRange.max
+		].join(':');
+	}
 	return `${value.requestId}:${value.monthIndex}:${value.timeIndex}:${value.utciRange.min}:${value.utciRange.max}`;
 }
 

@@ -1,4 +1,5 @@
 import type { Analysis } from '$lib/types/analysis';
+import type { MetricType } from '$lib/types/viewer';
 import { getEffectiveHourIndex } from '$lib/utils/effectiveHourIndex';
 
 export type LiveSelectedHourRangeOverride = {
@@ -14,7 +15,7 @@ export type LiveSelectedHourPublishedRenderContext = {
 	selectionKey: string;
 	publicationPhase: 'initial' | 'scrub';
 	colorMode: 'normalized' | 'discrete';
-	metricType: 'utci';
+	metricType: MetricType;
 	rangeOverride: LiveSelectedHourRangeOverride | null;
 };
 
@@ -23,7 +24,7 @@ export type LiveSelectedHourSceneRenderState = {
 	hourIndex: number;
 	monthIndex: number;
 	colorMode: 'normalized' | 'discrete';
-	metricType: 'utci';
+	metricType: MetricType;
 	rangeOverride: LiveSelectedHourRangeOverride | undefined;
 };
 
@@ -31,8 +32,19 @@ export type LiveSelectedHourViewerStateLike = {
 	currentHour: number;
 	currentMonth?: number | null;
 	colorMode?: 'normalized' | 'discrete';
-	metricType?: string | null;
+	metricType?: MetricType | null;
 };
+
+function resolveMetricType(metricType: MetricType | null | undefined): MetricType {
+	return metricType === 'shading_index' ? 'shading_index' : 'utci';
+}
+
+function resolveRangeOverride(
+	metricType: MetricType,
+	rangeOverride: LiveSelectedHourRangeOverride | null | undefined
+): LiveSelectedHourRangeOverride | null {
+	return metricType === 'utci' ? (rangeOverride ?? null) : null;
+}
 
 export function createLiveSelectedHourPublishedRenderContext(params: {
 	analysis: Analysis;
@@ -42,8 +54,10 @@ export function createLiveSelectedHourPublishedRenderContext(params: {
 	selectionKey: string;
 	publicationPhase: 'initial' | 'scrub';
 	colorMode: 'normalized' | 'discrete';
+	metricType?: MetricType;
 	rangeOverride?: LiveSelectedHourRangeOverride | null;
 }): LiveSelectedHourPublishedRenderContext {
+	const metricType = resolveMetricType(params.metricType);
 	return {
 		analysis: params.analysis,
 		monthIndex: params.monthIndex,
@@ -52,8 +66,8 @@ export function createLiveSelectedHourPublishedRenderContext(params: {
 		selectionKey: params.selectionKey,
 		publicationPhase: params.publicationPhase,
 		colorMode: params.colorMode,
-		metricType: 'utci',
-		rangeOverride: params.rangeOverride ?? null
+		metricType,
+		rangeOverride: resolveRangeOverride(metricType, params.rangeOverride)
 	};
 }
 
@@ -75,7 +89,10 @@ export function resolveLiveSelectedHourSurfaceRenderState(params: {
 			monthIndex: publishedRenderContext.monthIndex,
 			colorMode: publishedRenderContext.colorMode,
 			metricType: publishedRenderContext.metricType,
-			rangeOverride: publishedRenderContext.rangeOverride ?? undefined
+			rangeOverride:
+				publishedRenderContext.metricType === 'utci'
+					? (publishedRenderContext.rangeOverride ?? undefined)
+					: undefined
 		};
 	}
 
@@ -85,12 +102,14 @@ export function resolveLiveSelectedHourSurfaceRenderState(params: {
 
 	const monthIndex = params.viewerState.currentMonth ?? 7;
 	const hourIndex = params.viewerState.currentHour ?? 0;
+	const metricType = resolveMetricType(params.viewerState.metricType);
 	return {
 		analysis: params.analysis,
 		hourIndex: getEffectiveHourIndex(params.analysis, hourIndex, monthIndex),
 		monthIndex,
 		colorMode: params.viewerState.colorMode ?? 'normalized',
-		metricType: 'utci',
-		rangeOverride: params.rangeOverride ?? undefined
+		metricType,
+		rangeOverride:
+			metricType === 'utci' ? (params.rangeOverride ?? undefined) : undefined
 	};
 }

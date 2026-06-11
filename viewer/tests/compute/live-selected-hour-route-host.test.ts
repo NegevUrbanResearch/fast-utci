@@ -360,6 +360,7 @@ function makeBaseInputs(
 			baseMax: 30
 		}),
 		baseModel: {} as Group,
+		metricType: 'utci',
 		selection: {
 			monthIndex,
 			hourIndex,

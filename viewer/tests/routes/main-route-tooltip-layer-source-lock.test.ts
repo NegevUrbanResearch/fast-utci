@@ -34,4 +34,34 @@ describe('main route tooltip layer source lock', () => {
 		expect(incrementIndex).toBeGreaterThan(suppressIndex);
 		expect(incrementIndex).toBeGreaterThan(throttleIndex);
 	});
+
+	it('invalidates pending async hover work before lifecycle-driven tooltip hides', () => {
+		if (!existsSync(tooltipLayerPath)) return;
+
+		const source = readFileSync(tooltipLayerPath, 'utf8');
+		expect(source).toMatch(/function cancelPendingHover\(\)/);
+
+		for (const functionName of [
+			'hideTooltipForCameraMotion',
+			'handleTooltipMotionPointerDown',
+			'handleTooltipMotionPointerRelease',
+			'handleTooltipMotionWheel',
+			'handleMouseLeave'
+		]) {
+			const functionSource = source.slice(source.indexOf(`function ${functionName}`));
+			expect(functionSource.slice(0, 400)).toMatch(/cancelPendingHover\(\)/);
+		}
+
+		const destroySource = source.slice(source.indexOf('onDestroy(() =>'));
+		expect(destroySource.slice(0, 400)).toMatch(/cancelPendingHover\(\)/);
+	});
+
+	it('keeps GPU point readback failures out of the cached reader miss conversion path', () => {
+		if (!existsSync(tooltipLayerPath)) return;
+
+		const source = readFileSync(tooltipLayerPath, 'utf8');
+		const readerSource = source.slice(source.indexOf('readMetricPointValue'));
+		expect(readerSource.slice(0, 700)).not.toMatch(/catch/);
+		expect(readerSource.slice(0, 700)).not.toMatch(/return null;/);
+	});
 });

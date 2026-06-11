@@ -129,6 +129,8 @@ describe('ComputeManager', () => {
 		// sunAltitudes: numMonths * numHours (radians)
 		expect(args.sunAltitudes).toBeInstanceOf(Float32Array);
 		expect(args.sunAltitudes!.length).toBe(1 * 24);
+		expect(args.sunUpMask).toBeInstanceOf(Uint32Array);
+		expect(args.sunUpMask!.length).toBe(1 * 24);
 
 		// weather: numMonths * numHours * 7
 		// (air, mrt_lw, wind, rh, direct_normal, diffuse_horizontal, horiz_infrared)
@@ -418,6 +420,45 @@ describe('ComputeManager', () => {
 		expect(args.sunVectors[2]).toBeCloseTo(-1, 6);
 	});
 
+	it('should upload the explicit sun-up mask from getSunVectors isSunUp flags', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 4 });
+		const epw = buildMinimalEpw();
+
+		const sunVectors = Array.from(
+			{ length: 24 },
+			(_, hour) => [hour === 2 ? 0 : 1, hour === 2 ? 0 : 1, 0] as [number, number, number]
+		);
+		const altitudes = Array.from({ length: 24 }, (_, hour) => (hour === 1 ? 10 : 0));
+		const isSunUp = Array.from({ length: 24 }, (_, hour) => hour === 0 || hour === 2);
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors').mockReturnValue({
+			sunVectors,
+			altitudes,
+			isSunUp
+		});
+
+		try {
+			await manager.initFromModelAndWeather({
+				serializedBvh: createSerializedBvhFixture(),
+				epwContent: epw,
+				gridResolution: 2,
+				zHeight: 1.5,
+				useRectangularGridFromBounds: true,
+				analysisBounds: TEST_BOUNDS
+			});
+		} finally {
+			spy.mockRestore();
+		}
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunAltitudes[0]).toBe(0);
+		expect(args.sunAltitudes[1]).toBeCloseTo((10 * Math.PI) / 180, 6);
+		expect(args.sunAltitudes[2]).toBe(0);
+		expect(args.sunAltitudes[3]).toBe(0);
+		expect(Array.from(args.sunUpMask)).toEqual([1, 0, 1, 0]);
+	});
+
 	it('should use fixture sun vectors directly when parity fixture mode is provided', async () => {
 		const { pipeline, uploadStaticData } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
@@ -425,11 +466,13 @@ describe('ComputeManager', () => {
 
 		const fixtureVectors = new Float32Array(24 * 3);
 		const fixtureAltitudes = new Float32Array(24);
+		const fixtureSunUpMask = new Uint32Array(24);
 		for (let i = 0; i < 24; i++) {
 			fixtureVectors[i * 3] = 0.1;
 			fixtureVectors[i * 3 + 1] = 0.9;
 			fixtureVectors[i * 3 + 2] = -0.2;
 			fixtureAltitudes[i] = 0.5;
+			fixtureSunUpMask[i] = i % 2;
 		}
 
 		const spy = vi.spyOn(sunpath, 'getSunVectors');
@@ -442,14 +485,37 @@ describe('ComputeManager', () => {
 			analysisBounds: TEST_BOUNDS,
 			sunVectorsFixture: {
 				sunVectors: fixtureVectors,
-				sunAltitudes: fixtureAltitudes
+				sunAltitudes: fixtureAltitudes,
+				sunUpMask: fixtureSunUpMask
 			}
 		});
 
 		const args = uploadStaticData.mock.calls[0][0];
 		expect(args.sunVectors).toBe(fixtureVectors);
 		expect(args.sunAltitudes).toBe(fixtureAltitudes);
+		expect(args.sunUpMask).toBe(fixtureSunUpMask);
 		expect(spy).not.toHaveBeenCalled();
 		spy.mockRestore();
+	});
+
+	it('should not invent a sun-up mask for fixture sun vectors without one', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
+			sunVectorsFixture: {
+				sunVectors: new Float32Array(24 * 3),
+				sunAltitudes: new Float32Array(24).fill(0.5)
+			}
+		});
+
+		expect(uploadStaticData.mock.calls[0][0].sunUpMask).toBeUndefined();
 	});
 });

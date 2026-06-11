@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	ON_DEMAND_OUTPUT_FORMATS,
+	F32_METRIC_OUTPUT_LAYOUT,
+	F32_METRIC_OUTPUT_TYPES,
 	getOnDemandOutputFormat
 } from '$lib/compute/on-demand/onDemandOutputFormat';
 
@@ -44,6 +46,14 @@ describe('onDemandOutputFormat', () => {
 		}).toThrow(TypeError);
 		expect(getOnDemandOutputFormat('f32-utci').description).toBe(
 			'Baseline bridge format with one f32 UTCI value per point.'
+		);
+	});
+
+	it('exposes the metric-aware f32 output contract without adding a legacy format id', () => {
+		expect(F32_METRIC_OUTPUT_LAYOUT).toBe('one-f32-per-point');
+		expect(F32_METRIC_OUTPUT_TYPES).toEqual(['utci', 'shading_index']);
+		expect(Object.keys(ON_DEMAND_OUTPUT_FORMATS).sort()).toEqual(
+			['f32-utci', 'packed-mrt-utci'].sort()
 		);
 	});
 });

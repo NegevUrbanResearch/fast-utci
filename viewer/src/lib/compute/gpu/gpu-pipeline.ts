@@ -1,6 +1,14 @@
-import type { OnDemandOutputFormat } from '$lib/compute/on-demand/onDemandOutputFormat';
+import type {
+	F32MetricPeriod,
+	F32MetricType,
+	F32MetricValueLayout,
+	OnDemandOutputFormat
+} from '$lib/compute/on-demand/onDemandOutputFormat';
 import type { OnDemandRuntimeDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
-import type { SelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
+import type {
+	SelectedHourOutputHandle,
+	SelectedHourOutputSource
+} from '$lib/compute/gpu/selectedHourOutputHandle';
 import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 
 export interface PipelineConfig {
@@ -161,8 +169,45 @@ export interface RunUtciRangeSummaryForOutputParams {
 	signal?: AbortSignal;
 }
 
+export type { F32MetricPeriod };
+
+export interface F32MetricOutput {
+	source: SelectedHourOutputSource;
+	ownerId: string;
+	metricType: F32MetricType;
+	valueLayout: F32MetricValueLayout;
+	period: F32MetricPeriod;
+	numPoints: number;
+	gpuBuffer?: unknown;
+	gpuOutputHandle?: SelectedHourOutputHandle;
+	outputBytes?: number;
+	debugLabel: string;
+}
+
+export interface RunShadingIndexParams {
+	numPoints: number;
+	numHours: number;
+	numMonths: number;
+	monthIndex: number;
+	startTimeIndex: number;
+	timeCount: number;
+	signal?: AbortSignal;
+}
+
+export interface RunF32OutputRangeSummaryParams {
+	output: F32MetricOutput;
+	metricType: F32MetricType;
+	numPoints: number;
+	signal?: AbortSignal;
+}
+
 export interface OnDemandUtciOutput {
 	format: OnDemandOutputFormat;
+	source?: SelectedHourOutputSource;
+	ownerId?: string;
+	metricType?: 'utci';
+	valueLayout?: 'one-f32-per-point';
+	period?: Extract<F32MetricPeriod, { kind: 'time-index' }>;
 	numPoints: number;
 	timeIndex: number;
 	gpuBuffer?: unknown;
@@ -189,6 +234,7 @@ export interface UTCIComputePipeline {
 		gridPoints: Float32Array; // vec3<f32>[numPoints]
 		sunVectors: Float32Array; // vec3<f32>[numMonths * numHours]
 		sunAltitudes?: Float32Array; // f32[numMonths * numHours] in radians, for MRT shader
+		sunUpMask?: Uint32Array; // u32[numMonths * numHours], 1 when sun is up
 		weather: Float32Array; // packed per-hour weather structs
 		domeVectors?: Float32Array; // Tregenza 145 patches, Y-up, for sky exposure
 		domeWeights?: Float32Array; // 145 weights
@@ -231,6 +277,10 @@ export interface UTCIComputePipeline {
 	runUtciRangeSummaryForOutput?(
 		params: RunUtciRangeSummaryForOutputParams
 	): Promise<UtciRangeSummary>;
+
+	runShadingIndex?(params: RunShadingIndexParams): Promise<F32MetricOutput>;
+
+	runF32OutputRangeSummary?(params: RunF32OutputRangeSummaryParams): Promise<UtciRangeSummary>;
 
 	readOnDemandUtciForDebug?(params: { numPoints: number }): Promise<Float32Array>;
 

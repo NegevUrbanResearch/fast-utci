@@ -1,17 +1,25 @@
 import * as THREE from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	buildUtciGridLayout,
 	buildUtciGridLayoutReuseProofDiagnostics
 } from '$lib/services/pointCloudService';
+import { clearMetricPointReadbackCache } from '$lib/compute/gpu/metricPointReadback';
 import { createVertexToPointIndexArray } from '$lib/services/gpuUtciRenderBridge';
 import {
 	TOOLTIP_SLOW_BUDGET_MS,
 	createEmptyTooltipInteractionDiagnostics,
 	getTooltipData,
+	getTooltipDataAsync,
+	getTooltipProbeData,
 	resolvePositionIndexFromIntersection,
 	recordTooltipInteractionMeasurement
 } from '$lib/services/tooltipService';
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+	clearMetricPointReadbackCache();
+});
 
 describe('resolvePositionIndexFromIntersection', () => {
 	it('returns the expected point index from the hovered UTCI surface cell', () => {
@@ -289,6 +297,14 @@ describe('tooltip interaction diagnostics', () => {
 		expect(diagnostics.directCellHitCount).toBe(0);
 		expect(diagnostics.directCellMissCount).toBe(0);
 		expect(diagnostics.nearestScanFallbackCount).toBe(0);
+		expect(diagnostics.metricPointReadbackCount).toBe(0);
+		expect(diagnostics.metricPointReadbackBytes).toBe(0);
+		expect(diagnostics.metricPointReadbackLastBytes).toBeNull();
+		expect(diagnostics.metricPointReadbackCacheEntries).toBe(0);
+		expect(diagnostics.metricPointReadbackCacheHitCount).toBe(0);
+		expect(diagnostics.metricPointReadbackCacheMissCount).toBe(0);
+		expect(diagnostics.metricPointReadbackLastLatencyMs).toBeNull();
+		expect(diagnostics.metricPointReadbackMaxLatencyMs).toBe(0);
 	});
 
 	it('aggregates hit, miss, max, and over-budget timing stats without storing histories', () => {
@@ -626,6 +642,330 @@ describe('tooltip interaction diagnostics', () => {
 		);
 		expect(diagnostics.nearestScanFallbackCount).toBe(1);
 		expect(diagnostics.directCellMissCount).toBe(1);
+	});
+
+	it('reads Shading Index directly from CPU fallback/debug values when present', () => {
+		const analysis = {
+			...createGridAnalysis(),
+			data: {
+				...createGridAnalysis().data,
+				shadingIndex: new Float32Array([0.1, 0.2, 0.3, 0.85])
+			},
+			metadata: {
+				...createGridAnalysis().metadata,
+				has_shading_index: true,
+				shading_index_range: { min: 0, max: 1 }
+			}
+		} as any;
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect()
+		);
+
+		expect(result?.positionIndex).toBe(3);
+		expect(result?.value).toBeCloseTo(0.85);
+	});
+
+	it('uses the GPU point-value path for live Shading Index when CPU values are absent', async () => {
+		const analysis = {
+			...createGridAnalysis(),
+			data: {
+				...createGridAnalysis().data,
+				liveShadingIndexOutput: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'shading-output',
+					metricType: 'shading_index',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 7, startTimeIndex: 168, timeCount: 24 },
+					outputBytes: 16
+				}
+			},
+			metadata: {
+				...createGridAnalysis().metadata,
+				has_shading_index: true,
+				shading_index_range: { min: 0, max: 1 }
+			}
+		} as any;
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+		const readMetricPointValue = vi.fn(async () => 0.9);
+		const readbackSamples: any[] = [];
+
+		const first = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				onMetricPointReadbackSample: (measurement) => readbackSamples.push(measurement),
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 12,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+		const second = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				onMetricPointReadbackSample: (measurement) => readbackSamples.push(measurement),
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 12,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+
+		expect(first?.value).toBeCloseTo(0.9);
+		expect(second?.value).toBeCloseTo(0.9);
+		expect(readMetricPointValue).toHaveBeenCalledTimes(1);
+		expect(readbackSamples).toHaveLength(2);
+		expect(readbackSamples[0]).toMatchObject({
+			metricType: 'shading_index',
+			cacheHit: false,
+			byteLength: 4,
+			success: true
+		});
+		expect(readbackSamples[0]?.latencyMs).toEqual(expect.any(Number));
+		expect(readbackSamples[0]?.latencyMs).toBeGreaterThanOrEqual(0);
+		expect(readbackSamples[1]).toMatchObject({
+			metricType: 'shading_index',
+			cacheHit: true,
+			byteLength: 0,
+			success: true
+		});
+		expect(readbackSamples[1]?.latencyMs).toEqual(expect.any(Number));
+		expect(readbackSamples[1]?.latencyMs).toBeGreaterThanOrEqual(0);
+		expect(readMetricPointValue).toHaveBeenCalledWith({
+			metricType: 'shading_index',
+			monthIndex: 7,
+			positionIndex: 3,
+			requestId: 12,
+			ownerId: 'shading-output'
+		});
+	});
+
+	it('retries the GPU point-value path after a transient readback failure', async () => {
+		const analysis = {
+			...createGridAnalysis(),
+			data: {
+				...createGridAnalysis().data,
+				liveShadingIndexOutput: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'shading-output',
+					metricType: 'shading_index',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 7, startTimeIndex: 168, timeCount: 24 },
+					outputBytes: 16
+				}
+			},
+			metadata: {
+				...createGridAnalysis().metadata,
+				has_shading_index: true,
+				shading_index_range: { min: 0, max: 1 }
+			}
+		} as any;
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+		const readMetricPointValue = vi
+			.fn<() => Promise<number>>()
+			.mockRejectedValueOnce(new Error('transient gpu readback failure'))
+			.mockResolvedValueOnce(0.91);
+
+		const first = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 12,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+		const second = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 12,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+		const third = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 12,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+
+		expect(first).toBeNull();
+		expect(second?.value).toBeCloseTo(0.91);
+		expect(third?.value).toBeCloseTo(0.91);
+		expect(readMetricPointValue).toHaveBeenCalledTimes(2);
+	});
+
+	it('resolves GPU-only Shading Index hits once without synthetic full-size UTCI values', async () => {
+		const originalFloat32Array = globalThis.Float32Array;
+		const float32Allocations: unknown[] = [];
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+		const points = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 1 }));
+		points.userData.utciLayout = {} as any;
+		points.updateMatrixWorld(true);
+		const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
+		camera.position.set(0, 0, 5);
+		camera.lookAt(0, 0, 0);
+		camera.updateProjectionMatrix();
+		camera.updateMatrixWorld(true);
+		const analysis = {
+			data: {
+				numPositions: 1,
+				numHours: 0,
+				positions: new originalFloat32Array([0, 0, 0]),
+				liveShadingIndexOutput: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'shading-output',
+					metricType: 'shading_index',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 7, startTimeIndex: 168, timeCount: 24 },
+					outputBytes: 4
+				}
+			},
+			metadata: {
+				grid_size: 2,
+				coordinate_system: 'xy_ground',
+				has_shading_index: true,
+				shading_index_range: { min: 0, max: 1 }
+			}
+		} as any;
+		const intersectSpy = vi.spyOn(THREE.Raycaster.prototype, 'intersectObject');
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
+		const readMetricPointValue = vi.fn(async () => 0.6);
+		const Float32ArraySpy = vi.fn(function (
+			input?: number | ArrayLike<number> | ArrayBufferLike
+		) {
+			float32Allocations.push(input);
+			return new originalFloat32Array(input as any);
+		});
+		vi.stubGlobal('Float32Array', Float32ArraySpy);
+
+		const result = await getTooltipDataAsync(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			points as unknown as THREE.Mesh,
+			analysis,
+			'shading_index',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement),
+				metricPointValueReader: {
+					monthIndex: 7,
+					requestId: 13,
+					ownerId: 'shading-output',
+					readMetricPointValue
+				}
+			}
+		);
+
+		expect(result).toEqual({
+			value: 0.6,
+			position: { x: 0, y: 0, z: 0 },
+			positionIndex: 0
+		});
+		expect(intersectSpy).toHaveBeenCalledOnce();
+		expect(samples).toHaveLength(1);
+		expect(readMetricPointValue).toHaveBeenCalledOnce();
+		expect(float32Allocations).not.toContain(analysis.data.numPositions);
+
+		intersectSpy.mockRestore();
+	});
+
+	it('resolves current-surface probe coordinates without a metric value', () => {
+		const analysis = {
+			...createGridAnalysis(),
+			data: {
+				...createGridAnalysis().data,
+				utciByHour: []
+			}
+		};
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 1),
+			target: new THREE.Vector3(1, layout.baseY, 1)
+		});
+
+		const result = getTooltipProbeData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			createDomRect()
+		);
+
+		expect(result).toEqual({
+			position: { x: 1, y: 0, z: 1 },
+			positionIndex: 3
+		});
 	});
 });
 

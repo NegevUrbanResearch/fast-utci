@@ -15,7 +15,9 @@ const mockState = vi.hoisted(() => ({
 	pipeline: null as any,
 	rendererDevice: {} as GPUDevice,
 	gpuBuffer: null as any,
+	shadingBuffer: null as any,
 	outputOverride: null as any,
+	shadingOutputOverride: null as any,
 	initResult: null as any,
 	runtimeDiagnostics: null as any,
 	constructors: [] as any[]
@@ -64,6 +66,9 @@ vi.mock('$lib/compute/compute-manager', () => ({
 		});
 		runExposurePrecompute = vi.fn(async () => undefined);
 		runUtciForTimeIndex = vi.fn(async () => mockState.outputOverride ?? { gpuBuffer: mockState.gpuBuffer });
+		runShadingIndex = vi.fn(async (params) =>
+			mockState.shadingOutputOverride ?? this.pipeline.runShadingIndex(params)
+		);
 		runUtciRangeSummaryForTimeIndex = vi.fn(async (params) =>
 			this.pipeline.runUtciRangeSummaryForTimeIndex(params)
 		);
@@ -123,12 +128,18 @@ describe('selected-hour live session', () => {
 		vi.restoreAllMocks();
 		mockState.rendererDevice = {} as GPUDevice;
 		mockState.gpuBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
+		mockState.shadingBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
 		mockState.outputOverride = null;
+		mockState.shadingOutputOverride = null;
 		mockState.initResult = null;
 		mockState.runtimeDiagnostics = {
 			timings: {
 				exposurePrecomputeMs: 12.5,
-				oneHourDispatchMs: 3.75
+				oneHourDispatchMs: 3.75,
+				shadingIndexDispatchMs: 4.5,
+				shadingIndexQueueWaitMs: 1.25,
+				shadingIndexOutputBytes: 8,
+				shadingIndexSnapshotBytes: 8
 			},
 			trackedGpuAllocationBytes: {
 				persistentExposureBytes: 128,
@@ -162,6 +173,36 @@ describe('selected-hour live session', () => {
 				reductionPassCount: 1,
 				debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
 			})),
+			runShadingIndex: vi.fn(async (params: { monthIndex: number; startTimeIndex: number; timeCount: number }) => {
+				const ownerId = `webgpu-shading-index:${params.monthIndex}:${params.startTimeIndex}:${params.timeCount}:test`;
+				const period = {
+					kind: 'month-index' as const,
+					index: params.monthIndex,
+					startTimeIndex: params.startTimeIndex,
+					timeCount: params.timeCount
+				};
+				const gpuOutputHandle = createSelectedHourOutputHandle({
+					buffer: mockState.shadingBuffer,
+					byteLength: 8,
+					source: 'webgpu-on-demand-snapshot',
+					ownerId,
+					metricType: 'shading_index',
+					valueLayout: 'one-f32-per-point',
+					period
+				});
+				return {
+					source: 'webgpu-on-demand-snapshot' as const,
+					ownerId,
+					metricType: 'shading_index' as const,
+					valueLayout: 'one-f32-per-point' as const,
+					period,
+					numPoints: 2,
+					gpuBuffer: mockState.shadingBuffer,
+					gpuOutputHandle,
+					outputBytes: 8,
+					debugLabel: 'webgpu-shading-index'
+				};
+			}),
 			getDeviceForDebug: vi.fn(() => mockState.rendererDevice),
 			dispose: vi.fn()
 		};
@@ -236,6 +277,7 @@ describe('selected-hour live session', () => {
 			numHours: 1,
 			numMonths: 12,
 			exposureScheduling,
+			diagnosticsEnabled: false,
 			signal: abortController.signal
 		});
 	});
@@ -277,6 +319,249 @@ describe('selected-hour live session', () => {
 		expect(result.loadCpuFallback).toEqual(expect.any(Function));
 		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
 		expect(mockState.pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledTimes(1);
+	});
+
+	it('preserves explicit UTCI metric behavior on the GPU-resident path', async () => {
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			metricType: 'utci',
+			monthIndex: 0,
+			hourIndex: 12,
+			timeIndex: 12,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.analysis?.metadata.has_shading_index).not.toBe(true);
+		expect(result.gpuResidentOutput?.metricType).toBe('utci');
+		expect(mockState.constructors[1].runUtciForTimeIndex).toHaveBeenCalledTimes(1);
+		expect(mockState.constructors[1].runShadingIndex).not.toHaveBeenCalled();
+		expect(mockState.pipeline.readOnDemandUtciForDebug).toHaveBeenCalledTimes(1);
+		expect(mockState.pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledTimes(1);
+	});
+
+	it('publishes Shading Index as a same-device GPU-resident metric output', async () => {
+		const destroy = vi.fn();
+		mockState.shadingBuffer = { destroy } as unknown as GPUBuffer;
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			numMonths: 12
+		});
+
+		const result = await session.runSelectedHour({
+			metricType: 'shading_index',
+			monthIndex: 1,
+			hourIndex: 3,
+			timeIndex: 27,
+			colorMode: 'normalized',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+		const timeline = result.diagnostics.timings.renderPublication?.renderPublicationTimeline;
+
+		expect(result).toMatchObject({
+			renderTransport: 'compute-buffer-selected-hour',
+			sameDeviceForComputeAndRender: true,
+			analysis: {
+				metadata: {
+					analysis_type: 'single_hour',
+					has_shading_index: true,
+					shading_index_range: { min: 0, max: 1 }
+				}
+			}
+		});
+		expect(result.gpuResidentOutput).toMatchObject({
+			metricType: 'shading_index',
+			utciRange: { min: 0, max: 1 },
+			shadingIndexRange: { min: 0, max: 1 },
+			output: {
+				gpuBuffer: mockState.shadingBuffer,
+				metricType: 'shading_index'
+			}
+		});
+		expect(result.gpuResidentOutput?.gpuOutputHandle?.disposed).toBe(false);
+		expect((result.analysis?.data as any).liveShadingIndexOutput).toMatchObject({
+			source: 'webgpu-on-demand-snapshot',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			outputBytes: 8
+		});
+		expect((result.analysis?.data as any).liveShadingIndexOutput.gpuOutputHandle).toBe(
+			result.gpuResidentOutput?.gpuOutputHandle
+		);
+		expect(mockState.constructors[1].runExposurePrecompute).toHaveBeenCalledTimes(1);
+		expect(mockState.constructors[1].runShadingIndex).toHaveBeenCalledWith({
+			numPoints: 2,
+			numHours: 24,
+			numMonths: 12,
+			monthIndex: 1,
+			startTimeIndex: 24,
+			timeCount: 24,
+			signal: expect.any(AbortSignal)
+		});
+		expect(mockState.constructors[1].runUtciForTimeIndex).not.toHaveBeenCalled();
+		expect(mockState.pipeline.readOnDemandUtciForDebug).not.toHaveBeenCalled();
+		expect(mockState.pipeline.runUtciRangeSummaryForOutput).not.toHaveBeenCalled();
+		expect(mockState.pipeline.runUtciRangeSummaryForTimeIndex).not.toHaveBeenCalled();
+		expect(destroy).not.toHaveBeenCalled();
+		expect(timeline).toMatchObject({
+			sessionMetricType: 'shading_index',
+			sessionOutputBytes: 8,
+			sessionCompactSummaryBytes: 0,
+			sessionShadingIndexDispatchMs: 4.5,
+			sessionShadingIndexQueueWaitMs: 1.25,
+			sessionShadingIndexOutputBytes: 8,
+			sessionShadingIndexSnapshotBytes: 8,
+			sessionShadingIndexSource: 'fresh-dispatch',
+			sessionShadingIndexMonthCacheHit: false,
+			sessionFullSolarReadbackCount: 0,
+			sessionTooltipPointReadbackCount: 0,
+			sessionTooltipPointReadbackBytes: 0
+		});
+		expect(result.diagnostics.timings).toMatchObject({
+			shadingIndexDispatchMs: 4.5,
+			shadingIndexQueueWaitMs: 1.25,
+			shadingIndexOutputBytes: 8,
+			shadingIndexSnapshotBytes: 8
+		});
+		expect(result.diagnostics.trackedGpuAllocationBytes.selectedHourOutputBytes).toBe(8);
+		expect(timeline?.sessionSelectedHourRangeResolutionPath).toBeUndefined();
+		expect(timeline?.sessionSelectedDayRangeResolutionPath).toBeUndefined();
+		expect(result.diagnostics.selectedHourReadbackReasons ?? []).not.toContain('tooltip');
+		expect(result.diagnostics.selectedHourReadbackReasons ?? []).not.toContain('range');
+
+		disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
+		expect(destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses fixed Shading Index range for shading publication when base UTCI metadata range is invalid', async () => {
+		const base = createFullDayBaseAnalysis();
+		base.metadata.utci_range = { min: Number.NaN, max: Number.NaN };
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base,
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			numMonths: 12
+		});
+
+		const result = await session.runSelectedHour({
+			metricType: 'shading_index',
+			monthIndex: 1,
+			hourIndex: 3,
+			timeIndex: 27,
+			colorMode: 'normalized',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(result.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(result.gpuResidentOutput?.metricType).toBe('shading_index');
+		expect(result.gpuResidentOutput?.utciRange).toEqual({ min: 0, max: 1 });
+		expect(result.gpuResidentOutput?.shadingIndexRange).toEqual({ min: 0, max: 1 });
+		expect(result.analysis?.metadata.shading_index_range).toEqual({ min: 0, max: 1 });
+
+		disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput);
+	});
+
+	it('disposes shading GPU output when aborted after shading output creation', async () => {
+		const abort = new AbortController();
+		const destroy = vi.fn();
+		mockState.shadingBuffer = { destroy } as unknown as GPUBuffer;
+		const originalRunShadingIndex = mockState.pipeline.runShadingIndex;
+		mockState.pipeline.runShadingIndex = vi.fn(async (params) => {
+			const output = await originalRunShadingIndex(params);
+			abort.abort();
+			return output;
+		});
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: abort.signal,
+			preferredDevice: mockState.rendererDevice,
+			numMonths: 12
+		});
+
+		await expect(
+			session.runSelectedHour({
+				metricType: 'shading_index',
+				monthIndex: 1,
+				hourIndex: 3,
+				timeIndex: 27,
+				colorMode: 'normalized',
+				preferGpuResident: true,
+				rendererDevice: mockState.rendererDevice
+			})
+		).rejects.toThrow(/aborted/i);
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('disposes shading GPU output when publication errors after shading output creation', async () => {
+		const destroy = vi.fn();
+		const handle = createSelectedHourOutputHandle({
+			buffer: { destroy } as unknown as GPUBuffer,
+			byteLength: 8,
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'month-index', index: 1, startTimeIndex: 24, timeCount: 24 }
+		});
+		mockState.shadingOutputOverride = {
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:mismatch',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'month-index', index: 1, startTimeIndex: 24, timeCount: 24 },
+			numPoints: 2,
+			gpuBuffer: handle.buffer,
+			gpuOutputHandle: handle,
+			outputBytes: 8,
+			debugLabel: 'webgpu-shading-index'
+		};
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createFullDayBaseAnalysis(),
+			model: {} as Group,
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice,
+			numMonths: 12
+		});
+
+		await expect(
+			session.runSelectedHour({
+				metricType: 'shading_index',
+				monthIndex: 1,
+				hourIndex: 3,
+				timeIndex: 27,
+				colorMode: 'normalized',
+				preferGpuResident: true,
+				rendererDevice: mockState.rendererDevice
+			})
+		).rejects.toThrow(/authoritative shading index output/i);
+
+		expect(destroy).toHaveBeenCalledTimes(1);
+		expect(handle.disposed).toBe(true);
 	});
 
 	it('uses compact selected-hour output summary for discrete GPU-resident range', async () => {

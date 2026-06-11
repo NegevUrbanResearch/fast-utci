@@ -28,6 +28,30 @@ describe('utciSurfaceSync', () => {
 		expect(key).toBe('5:7:180:18.5:41.25');
 	});
 
+	it('includes metric type and metric range in accepted GPU resident keys', () => {
+		const key = getAcceptedGpuResidentKey({
+			requestId: 5,
+			metricType: 'shading_index',
+			monthIndex: 7,
+			hourIndex: 0,
+			timeIndex: 168,
+			utciRange: { min: 18.5, max: 41.25 },
+			shadingIndexRange: { min: 0, max: 1 },
+			output: {
+				source: 'webgpu-on-demand-snapshot',
+				ownerId: 'shading:7',
+				metricType: 'shading_index',
+				valueLayout: 'one-f32-per-point',
+				period: { kind: 'month-index', index: 7, startTimeIndex: 168, timeCount: 24 },
+				numPoints: 2,
+				gpuBuffer: {} as GPUBuffer,
+				debugLabel: 'webgpu-shading-index'
+			}
+		});
+
+		expect(key).toBe('5:shading_index:7:168:0:1');
+	});
+
 	it('does not treat userData alone as authoritative compute-buffer proof', () => {
 		const mesh = new Mesh();
 		mesh.userData.utciSurfaceSource = 'compute-buffer-selected-hour';

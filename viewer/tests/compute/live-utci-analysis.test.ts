@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import type { F32MetricOutput, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
 import { createLiveUtciAnalysisFromCompute } from '$lib/compute/selected-hour/liveUtciAnalysis';
 import {
+	buildSelectedHourLiveShadingAnalysis,
 	buildSelectedHourLiveAnalysis,
 	resolveAcceptedGpuResidentUtciRange,
 	resolveLiveGpuResidentUtciRange,
@@ -317,6 +319,78 @@ describe('liveUtciAnalysis adapter', () => {
 });
 
 describe('selected-hour live UTCI helpers', () => {
+	it('builds selected-hour live shading analysis only from authoritative GPU shading output metadata', () => {
+		const base = createBaseAnalysisFixture();
+		const period = { kind: 'month-index' as const, index: 2, startTimeIndex: 48, timeCount: 24 };
+		const shadingOutput: F32MetricOutput = {
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period,
+			numPoints: 3,
+			gpuOutputHandle: createSelectedHourOutputHandle({
+				buffer: { destroy: vi.fn() } as unknown as GPUBuffer,
+				byteLength: 12,
+				source: 'webgpu-on-demand-snapshot',
+				ownerId: 'webgpu-shading-index:test',
+				metricType: 'shading_index',
+				valueLayout: 'one-f32-per-point',
+				period
+			}),
+			outputBytes: 12,
+			debugLabel: 'webgpu-shading-index'
+		};
+		const analysis = buildSelectedHourLiveShadingAnalysis({
+			base,
+			monthIndex: 2,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 2, hourIndex: 11 }),
+			shadingOutput
+		});
+
+		expect(analysis.metadata).toMatchObject({
+			analysis_type: 'single_hour',
+			num_positions: 3,
+			num_months: 1,
+			has_shading_index: true,
+			shading_index_range: { min: 0, max: 1 }
+		});
+		expect(analysis.data.positions).toBe(base.data.positions);
+		expect((analysis.data as any).liveShadingIndexOutput).toMatchObject({
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
+			outputBytes: 12
+		});
+		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBeUndefined();
+		expect((analysis.data as any).selectedMonthIndex).toBe(2);
+		expect((analysis.data as any).selectedTimeIndex).toBe(59);
+	});
+
+	it('rejects selected-hour live shading analysis without authoritative shading output metadata', () => {
+		const base = createBaseAnalysisFixture();
+
+		expect(() =>
+			buildSelectedHourLiveShadingAnalysis({
+				base,
+				monthIndex: 2,
+				timeIndex: 59,
+				shadingOutput: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'webgpu-shading-index:test',
+					metricType: 'utci',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
+					numPoints: 3,
+					outputBytes: 12,
+					debugLabel: 'webgpu-shading-index'
+				} as any
+			})
+		).toThrow(/authoritative shading index output/i);
+	});
+
 	it('builds selected-hour live analysis with a supplied UTCI range without deriving a different one', () => {
 		const base = createBaseAnalysisFixture();
 		const analysis = buildSelectedHourLiveAnalysis({

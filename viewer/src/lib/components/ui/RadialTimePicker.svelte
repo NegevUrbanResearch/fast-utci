@@ -20,7 +20,9 @@
 
 	const dayRingGradient = getDayRingConicGradient();
 	const yearRingGradient = getYearRingConicGradient();
-	let mode: "day" | "month" = "day";
+	const circumference = 2 * Math.PI * HANDLE_RADIUS;
+	export let fixedMode: "day" | "month" | null = null;
+	let mode: "day" | "month" = fixedMode ?? "day";
 	/** Handle stops short of the hour labels (at 110) so it doesn’t sit on the text */
 	let dialEl: HTMLDivElement | null = null;
 	let isDragging = false;
@@ -55,7 +57,6 @@
 		hourValues,
 		totalHours,
 	);
-	$: circumference = 2 * Math.PI * HANDLE_RADIUS;
 	$: progressDash =
 		totalSegments > 0 ? (currentIndex / totalSegments) * circumference : 0;
 	$: ringGradient = mode === "day" ? dayRingGradient : yearRingGradient;
@@ -139,6 +140,9 @@
 	$: if (mode === "month" && ($viewerStore.currentMonth ?? 7) !== currentMonthIndex) {
 		setCurrentMonth(currentMonthIndex);
 	}
+	$: if (fixedMode && mode !== fixedMode) {
+		mode = fixedMode;
+	}
 </script>
 
 <div class="radial-wrapper">
@@ -215,7 +219,7 @@
 						filter="url(#label-drop-shadow)"
 						aria-hidden="true"
 					>
-						{#each Array(mode === "day" ? 24 : 12) as _, i}
+						{#each Array(mode === "day" ? 24 : 12) as _, i (i)}
 							{@const pos = getPositionForIndex(i, mode === "day" ? 24 : 12, LABEL_RADIUS)}
 							<text
 								x={pos.x}
@@ -287,24 +291,26 @@
 			</div>
 		</div>
 
-		<div class="mode-toggle">
-			<button
-				class="mode-pill"
-				class:active={mode === "day"}
-				on:click={() => (mode = "day")}
-				type="button"
-			>
-				Day
-			</button>
-			<button
-				class="mode-pill"
-				class:active={mode === "month"}
-				on:click={() => (mode = "month")}
-				type="button"
-			>
-				Month
-			</button>
-		</div>
+		{#if fixedMode == null}
+			<div class="mode-toggle">
+				<button
+					class="mode-pill"
+					class:active={mode === "day"}
+					on:click={() => (mode = "day")}
+					type="button"
+				>
+					Day
+				</button>
+				<button
+					class="mode-pill"
+					class:active={mode === "month"}
+					on:click={() => (mode = "month")}
+					type="button"
+				>
+					Month
+				</button>
+			</div>
+		{/if}
 		<ColorModeToggle />
 	</div>
 </div>

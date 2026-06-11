@@ -1,4 +1,15 @@
 export type OnDemandOutputFormat = 'f32-utci' | 'packed-mrt-utci';
+export type F32MetricType = 'utci' | 'shading_index';
+export type F32MetricValueLayout = 'one-f32-per-point';
+export type F32MetricPeriod =
+	| { kind: 'time-index'; index: number }
+	| { kind: 'month-index'; index: number; startTimeIndex: number; timeCount: number };
+
+export const F32_METRIC_OUTPUT_LAYOUT: F32MetricValueLayout = 'one-f32-per-point';
+export const F32_METRIC_OUTPUT_TYPES: readonly F32MetricType[] = Object.freeze([
+	'utci',
+	'shading_index'
+]);
 
 export interface OnDemandOutputFormatInfo {
 	id: OnDemandOutputFormat;

@@ -4,6 +4,7 @@ import {
 	prepareSelectedHourLiveSession,
 	type SelectedHourCpuFallbackOutput,
 	type SelectedHourGpuResidentOutput,
+	type SelectedHourLiveMetricType,
 	type SelectedHourLiveSession
 } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 import {
@@ -26,7 +27,8 @@ import {
 export type LiveSelectedHourRenderTransport =
 	| 'idle'
 	| 'cpu-uploaded-selected-hour'
-	| 'compute-buffer-selected-hour';
+	| 'compute-buffer-selected-hour'
+	| 'live-render-pending';
 
 export type LiveSelectedHourControllerSurfaceDiagnostics = {
 	utciSurfaceSource?: string;
@@ -97,6 +99,7 @@ export type LiveSelectedHourControllerRequest = {
 	hourIndex: number;
 	timeIndex: number;
 	selectionKey?: string;
+	metricType: SelectedHourLiveMetricType;
 	colorMode: 'normalized' | 'discrete';
 	preferGpuResident: boolean;
 	rendererDevice?: GPUDevice;
@@ -1452,6 +1455,7 @@ export function createLiveSelectedHourController(
 					monthIndex: request.monthIndex,
 					hourIndex: request.hourIndex,
 					timeIndex: request.timeIndex,
+					metricType: request.metricType,
 					colorMode: request.colorMode,
 					preferGpuResident: request.preferGpuResident,
 					rendererDevice: request.rendererDevice,
@@ -1557,19 +1561,22 @@ export function createLiveSelectedHourController(
 
 				replaceAcceptedGpuResidentOutput(acceptedGpuResidentOutput, {
 					analysis: result.analysis,
-					surfaceIdentity: createSurfaceIdentity({
-						requestId: controllerRequestId,
-						monthIndex: result.monthIndex,
-						hourIndex: result.hourIndex,
-						timeIndex: result.timeIndex,
-						selectionKey: acceptedSelectionKey,
-						pendingRenderUpdateStartedAt:
-							result.renderTransport === 'compute-buffer-selected-hour'
-								? result.pendingRenderUpdateStartedAt
-								: undefined,
-						selectedHourVisibleStartedAt: result.selectedHourVisibleStartedAt,
-						acceptedGpuResidentOutput: acceptedGpuResidentOutput
-					}),
+					surfaceIdentity:
+						result.renderTransport === 'live-render-pending'
+							? null
+							: createSurfaceIdentity({
+									requestId: controllerRequestId,
+									monthIndex: result.monthIndex,
+									hourIndex: result.hourIndex,
+									timeIndex: result.timeIndex,
+									selectionKey: acceptedSelectionKey,
+									pendingRenderUpdateStartedAt:
+										result.renderTransport === 'compute-buffer-selected-hour'
+											? result.pendingRenderUpdateStartedAt
+											: undefined,
+									selectedHourVisibleStartedAt: result.selectedHourVisibleStartedAt,
+									acceptedGpuResidentOutput: acceptedGpuResidentOutput
+								}),
 					loading: result.renderTransport === 'compute-buffer-selected-hour',
 					error: null,
 					renderTransport: result.renderTransport,

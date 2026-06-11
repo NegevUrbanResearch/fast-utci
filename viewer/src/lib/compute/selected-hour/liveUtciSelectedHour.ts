@@ -1,7 +1,9 @@
 import type { Analysis } from '$lib/types/analysis';
+import type { F32MetricOutput } from '$lib/compute/gpu/gpu-pipeline';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
 
 const DEFAULT_LIVE_UTCI_DISPLAY_RANGE = { min: -20, max: 60 };
+const LIVE_SHADING_INDEX_RANGE = { min: 0, max: 1 };
 
 export function resolveLiveSelectedHourTimeIndex(params: {
 	monthIndex: number;
@@ -56,6 +58,62 @@ export function buildSelectedHourLiveAnalysis(params: {
 				'shadingIndex' in params.base.data ? params.base.data.shadingIndex : undefined,
 			selectedMonthIndex: params.monthIndex,
 			selectedTimeIndex: params.timeIndex
+		} as Analysis['data']
+	};
+}
+
+export function buildSelectedHourLiveShadingAnalysis(params: {
+	base: Analysis;
+	shadingOutput: F32MetricOutput;
+	monthIndex: number;
+	timeIndex: number;
+}): Analysis {
+	const { shadingOutput } = params;
+	const hasAuthoritativeShadingOutput =
+		shadingOutput.metricType === 'shading_index' &&
+		shadingOutput.source === 'webgpu-on-demand-snapshot' &&
+		shadingOutput.valueLayout === 'one-f32-per-point' &&
+		shadingOutput.gpuOutputHandle?.metricType === 'shading_index' &&
+		shadingOutput.gpuOutputHandle.source === shadingOutput.source &&
+		shadingOutput.gpuOutputHandle.ownerId === shadingOutput.ownerId &&
+		shadingOutput.gpuOutputHandle.disposed !== true;
+
+	if (!hasAuthoritativeShadingOutput) {
+		throw new Error(
+			'Selected-hour live shading analysis requires authoritative shading index output metadata.'
+		);
+	}
+
+	return {
+		metadata: {
+			...params.base.metadata,
+			analysis_type: 'single_hour',
+			num_positions: params.base.data.numPositions,
+			num_months: 1,
+			has_shading_index: true,
+			shading_index_range: { ...LIVE_SHADING_INDEX_RANGE }
+		},
+		data: {
+			numPositions: params.base.data.numPositions,
+			numHours: 1,
+			positions: params.base.data.positions,
+			shadingIndex:
+				'shadingIndex' in params.base.data &&
+				params.base.data.shadingIndex?.length === params.base.data.numPositions
+					? params.base.data.shadingIndex
+					: undefined,
+			selectedMonthIndex: params.monthIndex,
+			selectedTimeIndex: params.timeIndex,
+			liveShadingIndexOutput: {
+				source: shadingOutput.source,
+				ownerId: shadingOutput.ownerId,
+				metricType: shadingOutput.metricType,
+				valueLayout: shadingOutput.valueLayout,
+				period: shadingOutput.period,
+				outputBytes: shadingOutput.outputBytes,
+				debugLabel: shadingOutput.debugLabel,
+				gpuOutputHandle: shadingOutput.gpuOutputHandle
+			}
 		} as Analysis['data']
 	};
 }

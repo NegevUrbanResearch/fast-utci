@@ -56,7 +56,6 @@
 	import { projectMainRouteLiveSceneState } from "$lib/compute/selected-hour/liveSelectedHourRouteProjection";
 	import type { LiveSelectedHourSurfaceIdentity } from "$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity";
 	import { createLiveSelectedHourRouteHost } from "$lib/compute/selected-hour/liveSelectedHourRouteHost";
-	import { resolveLiveSelectedHourTimeIndex } from "$lib/compute/selected-hour/liveUtciSelectedHour";
 	import type { SelectedHourGpuResidentOutput } from "$lib/compute/selected-hour/liveUtciSelectedHourSession";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import {
@@ -75,6 +74,7 @@
 	import {
 		createMainRouteRenderPublicationProjectionTracker,
 		publishMainRouteUtciDiagnostics,
+		resolveMainRouteLiveMetricSelection,
 		releaseBaseAcceptedGpuResidentOutput,
 		releaseComparisonAcceptedGpuResidentOutput,
 		type MainRouteAcceptedGpuResidentOutputReleaseParams,
@@ -180,7 +180,15 @@
 	let comparisonModelForLiveCompute: Group | null = null;
 	let baseDisplayedAnalysis: Analysis | null = null;
 	let comparisonRendererDisplayAnalysis: Analysis | null | undefined = undefined;
-	let useLiveUtciOnMainRoute = false;
+	let useLiveMetricOnMainRoute = false;
+	let liveRouteEnabled = false;
+	let liveMetricSelectionKey = "";
+	let liveMetricUnavailableError: string | null = null;
+	let showTimeSection = false;
+	let fixedTimePickerMode: "month" | null = null;
+	let selectedMonthIndex = 7;
+	let selectedHourIndex = 0;
+	let selectedTimeIndex = 0;
 	let baseLiveReady = false;
 	let comparisonLiveReady = true;
 	let baseHasVisibleLiveSurface = false;
@@ -371,25 +379,37 @@
 		isComparing && comparisonRenderer && !$comparisonStore.modelLoading
 			? comparisonRenderer.getComparisonModel()
 			: null;
-	$: useLiveUtciOnMainRoute =
-		$viewerStore.metricType === "utci" &&
-		$analysisStore?.metadata.analysis_type === "full_day";
-	$: selectedMonthIndex = $viewerStore.currentMonth ?? 7;
-	$: selectedHourIndex = $viewerStore.currentHour;
-	$: selectedTimeIndex = resolveLiveSelectedHourTimeIndex({
-		monthIndex: selectedMonthIndex,
-		hourIndex: selectedHourIndex,
-	});
+	$: ({
+		useLiveMetricOnMainRoute,
+		liveRouteEnabled,
+		selectedMonthIndex,
+		selectedHourIndex,
+		selectedTimeIndex,
+		selectionKey: liveMetricSelectionKey,
+		showTimeSection,
+		fixedTimePickerMode,
+		liveMetricUnavailableError,
+	} = resolveMainRouteLiveMetricSelection({
+		analysis: $analysisStore,
+		analysisId,
+		metricType: $viewerStore.metricType,
+		currentMonth: $viewerStore.currentMonth,
+		currentHour: $viewerStore.currentHour,
+		rendererBackend,
+		rendererDevice: rendererDeviceForMain,
+		utciSurfaceBackend: resolvedUtciSurfaceBackend,
+	}));
 	$: liveRouteHost.setRouteInputs({
-		enabled: useLiveUtciOnMainRoute,
+		enabled: liveRouteEnabled,
 		analysisId,
 		baseAnalysis: $analysisStore,
 		baseModel: modelLoading ? null : model,
+		metricType: $viewerStore.metricType,
 		selection: {
 			monthIndex: selectedMonthIndex,
 			hourIndex: selectedHourIndex,
 			timeIndex: selectedTimeIndex,
-			selectionKey: [analysisId, selectedMonthIndex, selectedHourIndex].join("|"),
+			selectionKey: liveMetricSelectionKey,
 		},
 		gridResolutionMeters: selectedGridResolutionMeters,
 		exposureScheduling,
@@ -425,7 +445,7 @@
 		basePendingRenderUpdateStartedAt,
 		comparisonPendingRenderUpdateStartedAt,
 	} = projectMainRouteLiveSceneState({
-		useLiveUtciOnMainRoute,
+		useLiveUtciOnMainRoute: useLiveMetricOnMainRoute,
 		isComparing,
 		baseAnalysis: $analysisStore,
 		comparisonAnalysis: $comparisonAnalysis,
@@ -436,7 +456,7 @@
 		showComparisonModeOverlay: showMainRouteComparisonOverlay,
 	} = getMainRouteOverlayGating({
 		modelLoading,
-		useLiveUtciOnMainRoute,
+		useLiveUtciOnMainRoute: useLiveMetricOnMainRoute,
 		baseLiveLoading: liveRouteState.base.loading,
 		baseHasVisibleLiveSurface,
 		isComparing: $comparisonStore.isComparing,
@@ -587,11 +607,14 @@
 			baseMetadataGridSize: liveRouteState.base.analysis?.metadata.grid_size ?? null,
 			exposureScheduling,
 			baseSceneRenderContextTimeIndex: baseSceneRenderContext?.timeIndex,
-			baseAcceptedUtciRange: basePendingGpuResidentOutput?.utciRange ?? undefined,
+			baseAcceptedUtciRange:
+				$viewerStore.metricType === "utci"
+					? (basePendingGpuResidentOutput?.utciRange ?? undefined)
+					: undefined,
 			tooltipInteraction: tooltipInteractionDiagnostics,
 			cameraInteraction: cameraInteractionDiagnostics,
 			timingsOverride: mainRouteRenderPublicationProjectionTracker.apply({
-				enabled: useLiveUtciOnMainRoute,
+				enabled: useLiveMetricOnMainRoute,
 				timings: liveRouteState.base.runtimeDiagnostics?.timings,
 				projectedSceneSurfaceIdentity: baseSceneSurfaceIdentity,
 				publishedSurfaceIdentity: liveRouteState.baseSurfaceIdentity,
@@ -606,10 +629,10 @@
 			buildMainRoutePerformanceSnapshot({
 				analysisId,
 				projectLabel: currentProjectId,
-				pointCount: useLiveUtciOnMainRoute
+				pointCount: useLiveMetricOnMainRoute
 					? (liveRouteState.base.analysis?.metadata.num_positions ?? null)
 					: ($analysisStore?.metadata?.num_positions ?? null),
-				gridSizeMeters: useLiveUtciOnMainRoute
+				gridSizeMeters: useLiveMetricOnMainRoute
 					? (liveRouteState.base.analysis?.metadata.grid_size ??
 							selectedGridResolutionMeters)
 					: ($analysisStore?.metadata?.grid_size ?? null),
@@ -644,9 +667,7 @@
 
 <ViewerShell
 	bind:mainViewportElement
-	showTimeSection={$analysisStore != null &&
-		$analysisStore.metadata.analysis_type === "full_day" &&
-		$viewerStore.metricType === "utci"}
+	{showTimeSection}
 >
 	<svelte:fragment slot="headerRight">
 		{#key analysisId}
@@ -689,19 +710,23 @@
 	</svelte:fragment>
 
 	<svelte:fragment slot="time">
-		{#if $analysisStore && $analysisStore.metadata.analysis_type === "full_day" && $viewerStore.metricType === "utci"}
-			<div class="section-header">Time of Day</div>
-			<div class="section-subtitle">
-				Select analysis hour for UTCI
+		{#if showTimeSection}
+			<div class="section-header">
+				{$viewerStore.metricType === "shading_index" ? "Month" : "Time of Day"}
 			</div>
-			<RadialTimePicker />
+			<div class="section-subtitle">
+				{$viewerStore.metricType === "shading_index"
+					? "Select representative month"
+					: "Select analysis hour for UTCI"}
+			</div>
+			<RadialTimePicker fixedMode={fixedTimePickerMode} />
 		{/if}
 	</svelte:fragment>
 
 	<svelte:fragment slot="legend">
 		<ColorLegend
-			displayAnalysis={useLiveUtciOnMainRoute ? baseDisplayedAnalysis : null}
-			utciRangeOverride={useLiveUtciOnMainRoute
+			displayAnalysis={useLiveMetricOnMainRoute ? baseDisplayedAnalysis : null}
+			utciRangeOverride={$viewerStore.metricType === "utci" && useLiveMetricOnMainRoute
 				? (basePendingGpuResidentOutput?.utciRange ?? null)
 				: undefined}
 		/>
@@ -718,12 +743,15 @@
 			baseMesh={utciMesh}
 			{baseDisplayedAnalysis}
 			baseSceneTimeIndex={baseSceneRenderContext?.timeIndex}
-			comparisonDisplayedAnalysis={useLiveUtciOnMainRoute
+			{basePendingGpuResidentOutput}
+			comparisonDisplayedAnalysis={useLiveMetricOnMainRoute
 				? comparisonRendererDisplayAnalysis
 				: $comparisonAnalysis}
 			comparisonSceneTimeIndex={comparisonSceneRenderContext?.timeIndex}
+			{comparisonPendingGpuResidentOutput}
+			rendererDevice={rendererDeviceForMain}
 			getComparisonUtciMesh={() => comparisonRenderer?.getComparisonUtciMesh() ?? null}
-			{useLiveUtciOnMainRoute}
+			useLiveUtciOnMainRoute={useLiveMetricOnMainRoute}
 			{isComparing}
 			{mainViewportElement}
 			curtainPosition={$comparisonStore.curtainPosition}
@@ -738,14 +766,14 @@
 		<MainRouteOverlays
 			loading={$viewerStore.loading}
 			error={$viewerStore.error}
-			baseLiveError={liveRouteState.base.error}
+			baseLiveError={liveMetricUnavailableError ?? liveRouteState.base.error}
 			comparisonLiveError={liveRouteState.comparison.error}
 			{showMainRouteOverlay}
 			{showMainRouteComparisonOverlay}
 			curtainPosition={$comparisonStore.curtainPosition}
 			{modelLoading}
 			comparisonModelLoading={$comparisonStore.modelLoading}
-			{useLiveUtciOnMainRoute}
+			useLiveUtciOnMainRoute={useLiveMetricOnMainRoute}
 			{isComparing}
 			{mainViewportElement}
 			{comparisonScenarioName}

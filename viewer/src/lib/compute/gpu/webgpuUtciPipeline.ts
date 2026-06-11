@@ -3,7 +3,10 @@ import {
 	getUtciFlatIndex,
 	type OnDemandUtciOutput,
 	type ExposurePrecomputeParams,
+	type F32MetricOutput,
 	type PointDispatchChunk,
+	type RunF32OutputRangeSummaryParams,
+	type RunShadingIndexParams,
 	type RunUtciRangeSummaryForOutputParams,
 	type RunUtciRangeSummaryForTimeIndexParams,
 	type RunUtciForTimeIndexParams,
@@ -26,7 +29,10 @@ import {
 	type ExposureSchedulerSliceTraceSample,
 	type StaticUploadTrace
 } from '$lib/compute/on-demand/onDemandDiagnostics';
-import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
+import {
+	createSelectedHourOutputHandle,
+	resolveOwnedF32MetricOutputHandle
+} from '$lib/compute/gpu/selectedHourOutputHandle';
 import { serializeBvhForGpu } from '$lib/compute/gpu/bvhGpuUpload';
 import * as THREE from 'three';
 import mrtUtciShaderRaw from '$lib/compute/gpu/shaders/mrt_utci.wgsl?raw';
@@ -35,6 +41,7 @@ import bvhRaycastWgsl from '$lib/compute/gpu/shaders/bvh_raycast.wgsl?raw';
 import exposureSolarWgsl from '$lib/compute/gpu/shaders/exposure_solar.wgsl?raw';
 import exposureSkyWgsl from '$lib/compute/gpu/shaders/exposure_sky.wgsl?raw';
 import utciRangeReduceWgsl from '$lib/compute/gpu/shaders/utci_range_reduce.wgsl?raw';
+import shadingIndexWgsl from '$lib/compute/gpu/shaders/shading_index.wgsl?raw';
 
 interface RunConfig {
 	numPoints: number;
@@ -234,6 +241,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 	private gridPointsBuffer: GPUBuffer | null = null;
 	private sunVectorsBuffer: GPUBuffer | null = null;
+	private sunUpMaskBuffer: GPUBuffer | null = null;
 	private sunAltitudesBuffer: GPUBuffer | null = null;
 	private domeVectorsBuffer: GPUBuffer | null = null;
 	private domeWeightsBuffer: GPUBuffer | null = null;
@@ -256,6 +264,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private rangeSummaryPartialBufferB: GPUBuffer | null = null;
 	private rangeSummaryFinalStagingBuffer: GPUBuffer | null = null;
 	private lastDaylightTimeStepCount: number | null = null;
+	private metricOutputSequence = 0;
 
 	private solarStagingBuffer: GPUBuffer | null = null;
 	private skyStagingBuffer: GPUBuffer | null = null;
@@ -276,6 +285,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private skyPipeline: GPUComputePipeline | null = null;
 	private gatherSlicePipeline: GPUComputePipeline | null = null;
 	private onDemandPipeline: GPUComputePipeline | null = null;
+	private shadingIndexPipeline: GPUComputePipeline | null = null;
 	private rangeReduceValuesPipeline: GPUComputePipeline | null = null;
 	private rangeReduceRangesPipeline: GPUComputePipeline | null = null;
 	private rangeReduceBindGroupLayout: GPUBindGroupLayout | null = null;
@@ -286,8 +296,10 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	private skyPipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private gatherSlicePipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private onDemandPipelinePromise: Promise<GPUComputePipeline> | null = null;
+	private shadingIndexPipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private rangeReduceValuesPipelinePromise: Promise<GPUComputePipeline> | null = null;
 	private rangeReduceRangesPipelinePromise: Promise<GPUComputePipeline> | null = null;
+	private shadingIndexSerial: Promise<void> = Promise.resolve();
 
 	/** Set when solar/sky passes are dispatched in runAll/runExposurePrecompute; cleared at start of each run. Used to fail readback clearly if exposure was skipped. */
 	private ranExposurePassesThisRun = false;
@@ -437,6 +449,25 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		return this.onDemandPipelinePromise;
 	}
 
+	private async ensureShadingIndexPipeline(): Promise<GPUComputePipeline> {
+		if (this.shadingIndexPipeline) return this.shadingIndexPipeline;
+		if (!this.shadingIndexPipelinePromise) {
+			const module = this.device.createShaderModule({
+				code: shadingIndexWgsl
+			});
+			this.shadingIndexPipelinePromise = this.device
+				.createComputePipelineAsync({
+					layout: 'auto',
+					compute: { module, entryPoint: 'main' }
+				})
+				.then((p) => {
+					this.shadingIndexPipeline = p;
+					return p;
+				});
+		}
+		return this.shadingIndexPipelinePromise;
+	}
+
 	private ensureRangeReduceBindGroupLayout(): GPUBindGroupLayout {
 		if (!this.rangeReduceBindGroupLayout) {
 			this.rangeReduceBindGroupLayout = this.device.createBindGroupLayout({
@@ -530,6 +561,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.sunAltitudesBuffer = null;
 	}
 
+	private clearSunUpMaskState(): void {
+		this.sunUpMaskBuffer?.destroy();
+		this.sunUpMaskBuffer = null;
+	}
+
 	private clearSkyDomeState(): void {
 		this.domeVectorsBuffer?.destroy();
 		this.domeVectorsBuffer = null;
@@ -587,6 +623,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		gridPoints: Float32Array;
 		sunVectors: Float32Array;
 		sunAltitudes?: Float32Array;
+		sunUpMask?: Uint32Array;
 		weather: Float32Array;
 		domeVectors?: Float32Array;
 		domeWeights?: Float32Array;
@@ -616,9 +653,15 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const totalTimeSteps = this.weatherData.length / weatherStride;
 		staticUploadTrace.weatherTimeStepCount = totalTimeSteps;
 		let daylightTimeSteps = 0;
-		if (params.sunAltitudes?.length) {
-			for (const altitude of params.sunAltitudes) {
-				if (altitude > 0) daylightTimeSteps += 1;
+		if (params.sunUpMask?.length) {
+			if (params.sunUpMask.length < totalTimeSteps) {
+				throw new Error(
+					`WebGPU UTCI pipeline: sun-up mask length (${params.sunUpMask.length}) is too small for totalTimeSteps=${totalTimeSteps}`
+				);
+			}
+			for (let timeIndex = 0; timeIndex < totalTimeSteps; timeIndex += 1) {
+				const isSunUp = params.sunUpMask[timeIndex] ?? 0;
+				if (isSunUp !== 0) daylightTimeSteps += 1;
 			}
 		} else {
 			for (let index = 0; index + 2 < params.sunVectors.length; index += 3) {
@@ -745,6 +788,11 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		if (params.sunAltitudes) {
 			const altBytes = totalTimeSteps * 4;
+			if (params.sunAltitudes.length < totalTimeSteps) {
+				throw new Error(
+					`WebGPU UTCI pipeline: sun altitude length (${params.sunAltitudes.length}) is too small for totalTimeSteps=${totalTimeSteps}`
+				);
+			}
 			if (!this.sunAltitudesBuffer || this.sunAltitudesBuffer.size !== altBytes) {
 				const altitudeBufferCreateStartedAt = performance.now();
 				this.sunAltitudesBuffer?.destroy();
@@ -761,12 +809,36 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				0,
 				params.sunAltitudes.buffer,
 				params.sunAltitudes.byteOffset,
-				params.sunAltitudes.byteLength
+				altBytes
 			);
 			staticUploadTrace.sunAltitudeWriteMs = performance.now() - altitudeWriteStartedAt;
-			staticUploadTrace.sunAltitudeWriteBytes = params.sunAltitudes.byteLength;
+			staticUploadTrace.sunAltitudeWriteBytes = altBytes;
 		} else {
 			this.clearSunAltitudeState();
+		}
+		if (params.sunUpMask) {
+			const sunUpMaskBytes = totalTimeSteps * 4;
+			if (params.sunUpMask.length < totalTimeSteps) {
+				throw new Error(
+					`WebGPU UTCI pipeline: sun-up mask length (${params.sunUpMask.length}) is too small for totalTimeSteps=${totalTimeSteps}`
+				);
+			}
+			if (!this.sunUpMaskBuffer || this.sunUpMaskBuffer.size !== sunUpMaskBytes) {
+				this.sunUpMaskBuffer?.destroy();
+				this.sunUpMaskBuffer = this.device.createBuffer({
+					size: sunUpMaskBytes,
+					usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+				});
+			}
+			this.queue.writeBuffer(
+				this.sunUpMaskBuffer,
+				0,
+				params.sunUpMask.buffer,
+				params.sunUpMask.byteOffset,
+				sunUpMaskBytes
+			);
+		} else {
+			this.clearSunUpMaskState();
 		}
 
 		if (params.domeVectors && params.domeWeights) {
@@ -1990,17 +2062,206 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 
 		return {
 			format,
+			metricType: 'utci',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'time-index', index: timeIndex },
 			numPoints,
 			timeIndex,
 			gpuBuffer: snapshotBuffer,
 			gpuOutputHandle: createSelectedHourOutputHandle({
 				buffer: snapshotBuffer,
 				byteLength: outputBytes,
-				source: 'webgpu-on-demand-snapshot'
+				source: 'webgpu-on-demand-snapshot',
+				metricType: 'utci',
+				valueLayout: 'one-f32-per-point',
+				period: { kind: 'time-index', index: timeIndex },
+				timeIndex
 			}),
 			outputBytes,
 			debugLabel: 'webgpu-on-demand-f32-utci'
 		};
+	}
+
+	async runShadingIndex(params: RunShadingIndexParams): Promise<F32MetricOutput> {
+		this.ensureNotAborted(params.signal);
+		if (!this.solarExposureBuffer) {
+			throw new Error(
+				'WebGPU UTCI pipeline: solar exposure buffer not available (run runAll or runExposurePrecompute first)'
+			);
+		}
+		if (!this.sunUpMaskBuffer) {
+			throw new Error(
+				'WebGPU UTCI pipeline: sun-up mask buffer not available (upload static data with explicit sunUpMask before shading index runs)'
+			);
+		}
+		if (!this.ranExposurePassesThisRun) {
+			throw new Error(
+				'WebGPU UTCI pipeline: solar exposure passes did not run (no BVH?). runShadingIndex would use zero-filled exposure buffers.'
+			);
+		}
+
+		const { monthIndex, numHours, numMonths, numPoints, startTimeIndex, timeCount } = params;
+		this.assertMatchesLastConfig({
+			numPoints,
+			numHours,
+			numMonths,
+			context: 'runShadingIndex'
+		});
+		if (numPoints <= 0) {
+			throw new Error(`WebGPU UTCI pipeline: invalid shading index numPoints=${numPoints}`);
+		}
+		if (numHours <= 0 || numMonths <= 0) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index period dimensions numHours=${numHours}, numMonths=${numMonths}`
+			);
+		}
+		if (monthIndex < 0 || monthIndex >= numMonths) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index monthIndex=${monthIndex} for numMonths=${numMonths}`
+			);
+		}
+		const totalTimeSteps = numHours * numMonths;
+		if (startTimeIndex < 0 || startTimeIndex >= totalTimeSteps) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index startTimeIndex=${startTimeIndex} for totalTimeSteps=${totalTimeSteps}`
+			);
+		}
+		const expectedStartTimeIndex = monthIndex * numHours;
+		if (startTimeIndex !== expectedStartTimeIndex) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index startTimeIndex=${startTimeIndex} for monthIndex=${monthIndex}, expected ${expectedStartTimeIndex}`
+			);
+		}
+		if (timeCount <= 0) {
+			throw new Error(`WebGPU UTCI pipeline: invalid shading index timeCount=${timeCount}`);
+		}
+		if (startTimeIndex + timeCount > totalTimeSteps) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index period end=${startTimeIndex + timeCount} exceeds totalTimeSteps=${totalTimeSteps}`
+			);
+		}
+		if (timeCount > numHours) {
+			throw new Error(
+				`WebGPU UTCI pipeline: invalid shading index timeCount=${timeCount} for numHours=${numHours}`
+			);
+		}
+
+		const outputBytes = numPoints * 4;
+		const solarWords = Math.ceil(numPoints * totalTimeSteps / 32);
+		const solarBytes = solarWords * 4;
+		if (this.solarExposureBuffer.size < solarBytes) {
+			throw new Error(
+				`WebGPU UTCI pipeline: shading index solar exposure buffer is too small (required=${solarBytes}, actual=${this.solarExposureBuffer.size})`
+			);
+		}
+		const sunUpMaskBytes = totalTimeSteps * 4;
+		if (this.sunUpMaskBuffer.size < sunUpMaskBytes) {
+			throw new Error(
+				`WebGPU UTCI pipeline: shading index sun-up mask buffer is too small (required=${sunUpMaskBytes}, actual=${this.sunUpMaskBuffer.size})`
+			);
+		}
+
+		const previousOperation = this.shadingIndexSerial.catch(() => undefined);
+		let finishOperation!: () => void;
+		this.shadingIndexSerial = new Promise<void>((resolve) => {
+			finishOperation = resolve;
+		});
+		await previousOperation;
+
+		const transientUniformBuffers: GPUBuffer[] = [];
+		let shadingIndexBuffer: GPUBuffer | null = null;
+		let returnedOwnedOutput = false;
+		try {
+			const dispatchStartedAt = performance.now();
+			this.ensureNotAborted(params.signal);
+			const shadingIndexPipeline = await this.ensureShadingIndexPipeline();
+			this.ensureNotAborted(params.signal);
+			shadingIndexBuffer = this.device.createBuffer({
+				size: outputBytes,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+			});
+			const encoder = this.device.createCommandEncoder();
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(shadingIndexPipeline);
+			for (const chunk of createPointDispatchChunks(numPoints, 64)) {
+				const shadingParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([
+						numPoints,
+						totalTimeSteps,
+						startTimeIndex,
+						timeCount,
+						chunk.pointOffset,
+						0,
+						0,
+						0
+					]),
+					transientUniformBuffers
+				);
+				const bindGroup = this.device.createBindGroup({
+					layout: shadingIndexPipeline.getBindGroupLayout(0),
+					entries: [
+						{ binding: 0, resource: { buffer: this.solarExposureBuffer } },
+						{ binding: 1, resource: { buffer: this.sunUpMaskBuffer } },
+						{ binding: 2, resource: { buffer: shadingIndexBuffer } },
+						{ binding: 3, resource: { buffer: shadingParamsBuffer } }
+					]
+				});
+				pass.setBindGroup(0, bindGroup);
+				pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+			}
+			pass.end();
+			this.queue.submit([encoder.finish()]);
+			const queueWaitStartedAt = performance.now();
+			await this.queue.onSubmittedWorkDone();
+			const shadingIndexQueueWaitMs = performance.now() - queueWaitStartedAt;
+			const shadingIndexDispatchMs = performance.now() - dispatchStartedAt;
+
+			const ownerId = `webgpu-shading-index:${monthIndex}:${startTimeIndex}:${timeCount}:${this.metricOutputSequence++}`;
+			const period = { kind: 'month-index' as const, index: monthIndex, startTimeIndex, timeCount };
+			const gpuOutputHandle = createSelectedHourOutputHandle({
+				buffer: shadingIndexBuffer,
+				byteLength: outputBytes,
+				source: 'webgpu-on-demand-snapshot',
+				ownerId,
+				metricType: 'shading_index',
+				valueLayout: 'one-f32-per-point',
+				period
+			});
+			const output: F32MetricOutput = {
+				source: 'webgpu-on-demand-snapshot',
+				ownerId,
+				metricType: 'shading_index',
+				valueLayout: 'one-f32-per-point',
+				period,
+				numPoints,
+				gpuBuffer: shadingIndexBuffer,
+				gpuOutputHandle,
+				outputBytes,
+				debugLabel: 'webgpu-shading-index'
+			};
+			this.onDemandDiagnostics = mergeTrackedGpuAllocationBytes(
+				{
+					...this.onDemandDiagnostics,
+					oneHourOutputBytes: outputBytes,
+					timings: {
+						...this.onDemandDiagnostics.timings,
+						shadingIndexDispatchMs,
+						shadingIndexQueueWaitMs,
+						shadingIndexOutputBytes: outputBytes,
+						shadingIndexSnapshotBytes: outputBytes
+					}
+				},
+				{ selectedHourOutputBytes: outputBytes }
+			);
+			returnedOwnedOutput = true;
+			return output;
+		} finally {
+			if (shadingIndexBuffer && !returnedOwnedOutput) {
+				shadingIndexBuffer.destroy();
+			}
+			this.destroyTransientUniformBuffers(transientUniformBuffers);
+			finishOperation();
+		}
 	}
 
 	async runUtciRangeSummaryForTimeIndex(
@@ -2218,6 +2479,44 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 				sourceValuesBuffer: handle.buffer,
 				valueCount: params.numPoints,
 				timeIndex: params.timeIndex,
+				signal: params.signal
+			});
+		});
+	}
+
+	async runF32OutputRangeSummary(params: RunF32OutputRangeSummaryParams): Promise<UtciRangeSummary> {
+		return this.runRangeSummarySerial(async () => {
+			this.ensureNotAborted(params.signal);
+			if (params.numPoints <= 0) {
+				throw new Error(
+					`WebGPU UTCI pipeline: invalid f32 output range numPoints=${params.numPoints}`
+				);
+			}
+			const handle = resolveOwnedF32MetricOutputHandle({
+				output: params.output,
+				metricType: params.metricType,
+				numPoints: params.numPoints,
+				source: 'webgpu-on-demand-snapshot',
+				ownerId: params.output.ownerId
+			});
+			const source = handle.buffer;
+			if (!source || typeof source.size !== 'number') {
+				throw new Error('WebGPU UTCI pipeline: f32 output range summary requires a GPU buffer');
+			}
+			const requiredBytes = params.numPoints * 4;
+			if (source.size < requiredBytes) {
+				throw new Error(
+					`WebGPU UTCI pipeline: f32 output range summary source buffer is too small (required=${requiredBytes}, actual=${source.size})`
+				);
+			}
+			const summaryTimeIndex =
+				params.output.period.kind === 'time-index'
+					? params.output.period.index
+					: params.output.period.startTimeIndex;
+			return this.reduceRangeSummaryFromValuesBuffer({
+				sourceValuesBuffer: handle.buffer,
+				valueCount: params.numPoints,
+				timeIndex: summaryTimeIndex,
 				signal: params.signal
 			});
 		});
@@ -2769,6 +3068,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.sunVectorsBuffer = null;
 		this.sunAltitudesBuffer?.destroy();
 		this.sunAltitudesBuffer = null;
+		this.sunUpMaskBuffer?.destroy();
+		this.sunUpMaskBuffer = null;
 		this.domeVectorsBuffer?.destroy();
 		this.domeVectorsBuffer = null;
 		this.domeWeightsBuffer?.destroy();
@@ -2841,6 +3142,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.skyPipeline = null;
 		this.gatherSlicePipeline = null;
 		this.onDemandPipeline = null;
+		this.shadingIndexPipeline = null;
 		this.rangeReduceValuesPipeline = null;
 		this.rangeReduceRangesPipeline = null;
 		this.rangeReduceBindGroupLayout = null;
@@ -2850,6 +3152,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		this.skyPipelinePromise = null;
 		this.gatherSlicePipelinePromise = null;
 		this.onDemandPipelinePromise = null;
+		this.shadingIndexPipelinePromise = null;
 		this.rangeReduceValuesPipelinePromise = null;
 		this.rangeReduceRangesPipelinePromise = null;
 		this.lastConfig = null;

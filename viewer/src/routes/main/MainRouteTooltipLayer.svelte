@@ -8,11 +8,22 @@
 		createCanvasInteractionController,
 		type CanvasInteractionController
 	} from '$lib/components/viewer/canvasInteractionController';
-	import { getTooltipData } from '$lib/services/tooltipService';
+	import {
+		getTooltipData,
+		getTooltipDataAsync,
+		getTooltipProbeData
+	} from '$lib/services/tooltipService';
+	import {
+		readF32MetricPointValue,
+		sharedMetricPointReadbackCache
+	} from '$lib/compute/gpu/metricPointReadback';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
 	import {
 		createEmptyTooltipInteractionDiagnostics,
 		recordTooltipInteractionMeasurement,
-		type TooltipInteractionDiagnostics
+		type TooltipInteractionDiagnostics,
+		type TooltipInteractionMeasurement,
+		type TooltipMetricPointReadbackMeasurement
 	} from '$lib/services/tooltipService';
 	import {
 		createEmptyCameraInteractionTelemetry,
@@ -34,8 +45,11 @@
 	export let baseMesh: Mesh | null;
 	export let baseDisplayedAnalysis: Analysis | null;
 	export let baseSceneTimeIndex: number | undefined;
+	export let basePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	export let comparisonDisplayedAnalysis: Analysis | null | undefined;
 	export let comparisonSceneTimeIndex: number | undefined;
+	export let comparisonPendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
+	export let rendererDevice: GPUDevice | undefined;
 	export let getComparisonUtciMesh: () => Mesh | null = () => null;
 	export let useLiveUtciOnMainRoute: boolean;
 	export let isComparing: boolean;
@@ -72,6 +86,7 @@
 	let cameraInteractionSequenceActive = false;
 	let cameraInteractionArmedUntilMs = 0;
 	let hasCameraInteractionSnapshot = false;
+	let hoverRequestToken = 0;
 	let previousDiagnosticsEnabled = diagnosticsEnabled;
 	const lastCameraInteractionPosition = new THREE.Vector3();
 	const lastCameraInteractionQuaternion = new THREE.Quaternion();
@@ -90,8 +105,13 @@
 		tooltipHourIndex: number;
 	};
 
+	type MainRouteTooltipProbeSnapshot = Omit<MainRouteTooltipSnapshot, 'value'>;
+
 	type MainRouteTooltipProbeWindow = Window & {
 		__mainRouteTooltipProbe__?: (() => MainRouteTooltipSnapshot | null) | undefined;
+		__mainRouteTooltipProbePosition__?:
+			| (() => MainRouteTooltipProbeSnapshot | null)
+			| undefined;
 		__mainRouteTooltipAt__?:
 			| ((clientX: number, clientY: number) => MainRouteTooltipSnapshot | null)
 			| undefined;
@@ -102,6 +122,7 @@
 	const CAMERA_INTERACTION_POSITION_EPSILON_SQ = 1e-8;
 	const CAMERA_INTERACTION_QUATERNION_EPSILON = 1e-8;
 	const MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS = 900;
+	const METRIC_POINT_READBACK_BYTES = 4;
 
 	function publishTooltipDiagnostics(
 		diagnostics: TooltipInteractionDiagnostics = tooltipInteractionDiagnostics
@@ -109,8 +130,39 @@
 		if (!diagnosticsEnabled) return;
 		tooltipInteractionDiagnostics = {
 			...diagnostics,
-			hoverSampleCount: tooltipHoverSampleCount
+			hoverSampleCount: tooltipHoverSampleCount,
+			metricPointReadbackCacheEntries: sharedMetricPointReadbackCache.size
 		};
+	}
+
+	function recordMetricPointReadback(measurement: TooltipMetricPointReadbackMeasurement): void {
+		if (!diagnosticsEnabled) return;
+		const nextReadbackCount =
+			tooltipInteractionDiagnostics.metricPointReadbackCount +
+			(!measurement.cacheHit && measurement.success ? 1 : 0);
+		const nextReadbackBytes =
+			tooltipInteractionDiagnostics.metricPointReadbackBytes +
+			(!measurement.cacheHit && measurement.success ? measurement.byteLength : 0);
+		publishTooltipDiagnostics({
+			...tooltipInteractionDiagnostics,
+			metricPointReadbackCount: nextReadbackCount,
+			metricPointReadbackBytes: nextReadbackBytes,
+			metricPointReadbackLastBytes:
+				!measurement.cacheHit && measurement.success
+					? measurement.byteLength
+					: tooltipInteractionDiagnostics.metricPointReadbackLastBytes,
+			metricPointReadbackCacheHitCount:
+				tooltipInteractionDiagnostics.metricPointReadbackCacheHitCount +
+				(measurement.cacheHit ? 1 : 0),
+			metricPointReadbackCacheMissCount:
+				tooltipInteractionDiagnostics.metricPointReadbackCacheMissCount +
+				(measurement.cacheHit ? 0 : 1),
+			metricPointReadbackLastLatencyMs: measurement.latencyMs,
+			metricPointReadbackMaxLatencyMs: Math.max(
+				tooltipInteractionDiagnostics.metricPointReadbackMaxLatencyMs,
+				measurement.latencyMs
+			)
+		});
 	}
 
 	function publishCameraDiagnostics(): void {
@@ -212,7 +264,7 @@
 					frameTimeMs,
 					MAIN_ROUTE_TOOLTIP_MOTION_SUPPRESSION_WINDOW_MS
 				);
-				hideTooltip();
+				hideTooltipForCameraMotion();
 				publishCameraDiagnostics();
 			} else if (!cameraChanged) {
 				cameraInteractionSequenceActive = false;
@@ -225,19 +277,60 @@
 		cameraInteractionFrameId = requestAnimationFrame(tick);
 	}
 
-	function getTooltipSnapshotAtPoint(params: {
+	async function getTooltipSnapshotAtPoint(params: {
 		canvas: HTMLCanvasElement | null;
 		camera: PerspectiveCamera | undefined;
 		mesh: Mesh | null;
 		analysis: Analysis | null;
+		acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null;
 		metricType: MetricType;
 		hourIndex: number;
 		clientX: number;
 		clientY: number;
-	}): MainRouteTooltipSnapshot | null {
-		const { canvas, camera, mesh, analysis, metricType, hourIndex, clientX, clientY } = params;
+	}): Promise<MainRouteTooltipSnapshot | null> {
+		const { canvas, camera, mesh, analysis, acceptedGpuResidentOutput, metricType, hourIndex, clientX, clientY } = params;
 		if (!canvas || !camera || !mesh || !analysis) return null;
-		const tooltipData = getTooltipData(
+		const metricPointValueReader =
+			metricType === 'shading_index' &&
+			acceptedGpuResidentOutput?.metricType === 'shading_index' &&
+			acceptedGpuResidentOutput.gpuOutputHandle &&
+			rendererDevice
+				? {
+						monthIndex: acceptedGpuResidentOutput.monthIndex,
+						requestId: acceptedGpuResidentOutput.requestId,
+						ownerId: acceptedGpuResidentOutput.gpuOutputHandle.ownerId,
+						readbackByteLength: METRIC_POINT_READBACK_BYTES,
+						readMetricPointValue: async ({ positionIndex }: { positionIndex: number }) => {
+							const value = await readF32MetricPointValue({
+								device: rendererDevice as GPUDevice,
+								sourceBuffer: acceptedGpuResidentOutput.gpuOutputHandle!.buffer,
+								pointIndex: positionIndex,
+								numPoints: analysis.data.numPositions
+							});
+							return value;
+						}
+				  }
+				: undefined;
+		const tooltipOptions =
+			diagnosticsEnabled || metricPointValueReader
+				? {
+						onDiagnosticsSample: diagnosticsEnabled
+							? (measurement: TooltipInteractionMeasurement) => {
+									publishTooltipDiagnostics(
+										recordTooltipInteractionMeasurement(
+											tooltipInteractionDiagnostics,
+											measurement
+										)
+									);
+							  }
+							: undefined,
+						metricPointValueReader,
+						onMetricPointReadbackSample: diagnosticsEnabled
+							? recordMetricPointReadback
+							: undefined
+				  }
+				: undefined;
+		const tooltipData = await getTooltipDataAsync(
 			{ clientX, clientY } as MouseEvent,
 			camera,
 			mesh,
@@ -245,18 +338,7 @@
 			metricType,
 			hourIndex,
 			canvas.getBoundingClientRect(),
-			diagnosticsEnabled
-				? {
-						onDiagnosticsSample: (measurement) => {
-							publishTooltipDiagnostics(
-								recordTooltipInteractionMeasurement(
-									tooltipInteractionDiagnostics,
-									measurement
-								)
-							);
-						}
-				  }
-				: undefined
+			tooltipOptions
 		);
 		return tooltipData
 			? {
@@ -270,7 +352,57 @@
 			: null;
 	}
 
-	function getTooltipSnapshotForClientPoint(
+	async function getTooltipSnapshotForClientPoint(
+		clientX: number,
+		clientY: number,
+		comparisonMesh: Mesh | null = getComparisonUtciMesh()
+	): Promise<MainRouteTooltipSnapshot | null> {
+		if (
+			!baseMesh ||
+			!baseDisplayedAnalysis ||
+			!utciVisible ||
+			!canvasElement ||
+			!cameraRef
+		) {
+			return null;
+		}
+
+		const tooltipTarget = resolveMainRouteTooltipTarget({
+			baseMesh,
+			baseAnalysis: baseDisplayedAnalysis,
+			baseSceneTimeIndex,
+			comparisonMesh,
+			comparisonAnalysis: comparisonDisplayedAnalysis,
+			comparisonSceneTimeIndex,
+			useLiveUtciOnMainRoute,
+			isComparing,
+			mouseClientX: clientX,
+			mainViewportRect: mainViewportElement
+				? mainViewportElement.getBoundingClientRect()
+				: null,
+			curtainPosition,
+			viewerCurrentHour
+		});
+
+		const usesComparison =
+			tooltipTarget.meshToRaycast === comparisonMesh &&
+			tooltipTarget.analysisToUse === comparisonDisplayedAnalysis;
+		return getTooltipSnapshotAtPoint({
+			canvas: canvasElement,
+			camera: cameraRef,
+			mesh: tooltipTarget.meshToRaycast,
+			analysis: tooltipTarget.analysisToUse,
+			acceptedGpuResidentOutput: usesComparison
+				? comparisonPendingGpuResidentOutput
+				: basePendingGpuResidentOutput,
+			metricType,
+			hourIndex: tooltipTarget.tooltipHourIndex,
+			clientX,
+			clientY
+		});
+	}
+
+	function getTooltipSnapshotForClientPointSync(
 		clientX: number,
 		clientY: number,
 		comparisonMesh: Mesh | null = getComparisonUtciMesh()
@@ -301,28 +433,87 @@
 			curtainPosition,
 			viewerCurrentHour
 		});
-
-		return getTooltipSnapshotAtPoint({
-			canvas: canvasElement,
-			camera: cameraRef,
-			mesh: tooltipTarget.meshToRaycast,
-			analysis: tooltipTarget.analysisToUse,
+		const tooltipData = getTooltipData(
+			{ clientX, clientY } as MouseEvent,
+			cameraRef,
+			tooltipTarget.meshToRaycast,
+			tooltipTarget.analysisToUse,
 			metricType,
-			hourIndex: tooltipTarget.tooltipHourIndex,
-			clientX,
-			clientY
-		});
+			tooltipTarget.tooltipHourIndex,
+			canvasElement.getBoundingClientRect()
+		);
+
+		return tooltipData
+			? {
+					clientX,
+					clientY,
+					positionIndex: tooltipData.positionIndex,
+					value: tooltipData.value,
+					position: tooltipData.position,
+					tooltipHourIndex: tooltipTarget.tooltipHourIndex
+			  }
+			: null;
 	}
 
-	function computeTooltipProbe(params: {
+	function getTooltipProbeSnapshotForClientPointSync(
+		clientX: number,
+		clientY: number,
+		comparisonMesh: Mesh | null = getComparisonUtciMesh()
+	): MainRouteTooltipProbeSnapshot | null {
+		if (
+			!baseMesh ||
+			!baseDisplayedAnalysis ||
+			!utciVisible ||
+			!canvasElement ||
+			!cameraRef
+		) {
+			return null;
+		}
+
+		const tooltipTarget = resolveMainRouteTooltipTarget({
+			baseMesh,
+			baseAnalysis: baseDisplayedAnalysis,
+			baseSceneTimeIndex,
+			comparisonMesh,
+			comparisonAnalysis: comparisonDisplayedAnalysis,
+			comparisonSceneTimeIndex,
+			useLiveUtciOnMainRoute,
+			isComparing,
+			mouseClientX: clientX,
+			mainViewportRect: mainViewportElement
+				? mainViewportElement.getBoundingClientRect()
+				: null,
+			curtainPosition,
+			viewerCurrentHour
+		});
+		const tooltipProbe = getTooltipProbeData(
+			{ clientX, clientY } as MouseEvent,
+			cameraRef,
+			tooltipTarget.meshToRaycast,
+			tooltipTarget.analysisToUse,
+			canvasElement.getBoundingClientRect()
+		);
+
+		return tooltipProbe
+			? {
+					clientX,
+					clientY,
+					positionIndex: tooltipProbe.positionIndex,
+					position: tooltipProbe.position,
+					tooltipHourIndex: tooltipTarget.tooltipHourIndex
+			  }
+			: null;
+	}
+
+	function computeTooltipProbe<T extends MainRouteTooltipProbeSnapshot>(params: {
 		canvas: HTMLCanvasElement | null;
 		camera: PerspectiveCamera | undefined;
 		mesh: Mesh | null;
 		snapshotAtClientPoint: (
 			clientX: number,
 			clientY: number
-		) => MainRouteTooltipSnapshot | null;
-	}): MainRouteTooltipSnapshot | null {
+		) => T | null;
+	}): T | null {
 		const { canvas, camera, mesh, snapshotAtClientPoint } = params;
 		if (!canvas || !camera || !mesh) return null;
 		const positionAttribute = mesh.geometry?.getAttribute?.('position');
@@ -333,17 +524,8 @@
 		const localPoint = new THREE.Vector3();
 		const worldPoint = new THREE.Vector3();
 		const projectedPoint = new THREE.Vector3();
-		let bestProbe:
-			| {
-					clientX: number;
-					clientY: number;
-					positionIndex: number;
-					value: number;
-					position: { x: number; y: number; z: number };
-					tooltipHourIndex: number;
-					distanceToCenter: number;
-			  }
-			| null = null;
+		let bestProbe: T | null = null;
+		let bestProbeDistanceToCenter = Number.POSITIVE_INFINITY;
 
 		for (let index = 0; index < positionAttribute.count; index += sampleStep) {
 			localPoint.fromBufferAttribute(positionAttribute, index);
@@ -376,16 +558,13 @@
 			}
 
 			const distanceToCenter = Math.abs(projectedPoint.x) + Math.abs(projectedPoint.y);
-			if (!bestProbe || distanceToCenter < bestProbe.distanceToCenter) {
+			if (!bestProbe || distanceToCenter < bestProbeDistanceToCenter) {
 				bestProbe = {
+					...tooltipData,
 					clientX,
-					clientY,
-					positionIndex: tooltipData.positionIndex,
-					value: tooltipData.value,
-					position: tooltipData.position,
-					tooltipHourIndex: tooltipData.tooltipHourIndex,
-					distanceToCenter
+					clientY
 				};
+				bestProbeDistanceToCenter = distanceToCenter;
 			}
 		}
 
@@ -393,14 +572,7 @@
 			return null;
 		}
 
-		return {
-			clientX: bestProbe.clientX,
-			clientY: bestProbe.clientY,
-			positionIndex: bestProbe.positionIndex,
-			value: bestProbe.value,
-			position: bestProbe.position,
-			tooltipHourIndex: bestProbe.tooltipHourIndex
-		};
+		return bestProbe;
 	}
 
 	function hideTooltip() {
@@ -411,15 +583,26 @@
 		}
 	}
 
+	function cancelPendingHover() {
+		hoverRequestToken += 1;
+	}
+
+	function hideTooltipForCameraMotion() {
+		cancelPendingHover();
+		hideTooltip();
+	}
+
 	function clearTooltipProbeGlobals() {
 		if (typeof window === 'undefined') return;
 		const probeWindow = window as MainRouteTooltipProbeWindow;
 		probeWindow.__mainRouteTooltipProbe__ = undefined;
+		probeWindow.__mainRouteTooltipProbePosition__ = undefined;
 		probeWindow.__mainRouteTooltipAt__ = undefined;
 		probeWindow.__mainRouteLastTooltip__ = undefined;
 	}
 
 	function handleTooltipMotionPointerDown() {
+		cancelPendingHover();
 		cameraInteractionPointerDown = true;
 		armCameraInteractionTelemetry();
 		tooltipMotionSuppression = setTooltipMotionPointerDown(
@@ -432,6 +615,7 @@
 	}
 
 	function handleTooltipMotionPointerRelease() {
+		cancelPendingHover();
 		const hadCanvasPointerInteraction = tooltipMotionSuppression.pointerDown;
 		tooltipMotionSuppression = releaseTooltipMotionPointer(
 			tooltipMotionSuppression,
@@ -446,6 +630,7 @@
 	}
 
 	function handleTooltipMotionWheel() {
+		cancelPendingHover();
 		cameraWheelEventCount += 1;
 		if (diagnosticsEnabled) {
 			cameraInteractionTelemetry = {
@@ -466,7 +651,8 @@
 		hideTooltip();
 	}
 
-	function handleMouseMove(event: MouseEvent) {
+	async function handleMouseMove(event: MouseEvent) {
+		const requestToken = ++hoverRequestToken;
 		const now = performance.now();
 		if (diagnosticsEnabled) {
 			publishTooltipDiagnostics({
@@ -508,11 +694,14 @@
 		lastTooltipUpdate = hoverPolicy.nextTooltipUpdate;
 
 		const comparisonMesh = getComparisonUtciMesh();
-		const tooltipData = getTooltipSnapshotForClientPoint(
+		const tooltipData = await getTooltipSnapshotForClientPoint(
 			event.clientX,
 			event.clientY,
 			comparisonMesh
 		);
+		if (requestToken !== hoverRequestToken) {
+			return;
+		}
 
 		if (tooltipData) {
 			tooltipVisible = true;
@@ -530,6 +719,7 @@
 	}
 
 	function handleMouseLeave() {
+		cancelPendingHover();
 		hideTooltip();
 	}
 
@@ -557,12 +747,19 @@
 					canvas: canvasElement,
 					camera: cameraRef,
 					mesh: baseMesh,
-					snapshotAtClientPoint: getTooltipSnapshotForClientPoint
+					snapshotAtClientPoint: getTooltipSnapshotForClientPointSync
+				});
+			(window as MainRouteTooltipProbeWindow).__mainRouteTooltipProbePosition__ = () =>
+				computeTooltipProbe({
+					canvas: canvasElement,
+					camera: cameraRef,
+					mesh: baseMesh,
+					snapshotAtClientPoint: getTooltipProbeSnapshotForClientPointSync
 				});
 			(window as MainRouteTooltipProbeWindow).__mainRouteTooltipAt__ = (
 				clientX: number,
 				clientY: number
-			) => getTooltipSnapshotForClientPoint(clientX, clientY);
+			) => getTooltipSnapshotForClientPointSync(clientX, clientY);
 		} else {
 			clearTooltipProbeGlobals();
 		}
@@ -604,6 +801,7 @@
 	}
 
 	onDestroy(() => {
+		cancelPendingHover();
 		clearTooltipProbeGlobals();
 		detachHoverListeners();
 		detachTooltipMotionListeners();

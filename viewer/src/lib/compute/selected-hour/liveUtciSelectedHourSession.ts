@@ -6,13 +6,19 @@ import {
 	runMergeAndBvhInWorker
 } from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 import { ComputeManager } from '$lib/compute/compute-manager';
-import type { OnDemandUtciOutput, SerializedBvhForGpu, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import type {
+	F32MetricOutput,
+	OnDemandUtciOutput,
+	SerializedBvhForGpu,
+	UTCIComputePipeline
+} from '$lib/compute/gpu/gpu-pipeline';
 import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
 import { createWebgpuUtciPipeline } from '$lib/compute/gpu/webgpuUtciPipeline';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import {
+	buildSelectedHourLiveShadingAnalysis,
 	buildSelectedHourLiveAnalysis,
 	resolveLiveGpuResidentUtciRange
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
@@ -28,22 +34,30 @@ import {
 	type OnDemandRuntimeDiagnostics
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
-import { stampRenderPublicationTimeline } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import {
+	stampRenderPublicationTimeline,
+	type SelectedHourRenderPublicationPath
+} from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
 const GRID_RESOLUTION_FALLBACKS = [0.5, 1, 2, 4, 6, 8, 10];
 const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
 const LIVE_SELECTED_HOUR_MAX_GRID_POINTS = Number.MAX_SAFE_INTEGER;
 const LIVE_SELECTED_HOUR_MAX_ESTIMATED_BYTES = Number.POSITIVE_INFINITY;
+export type SelectedHourLiveMetricType = 'utci' | 'shading_index';
 
 function stampSessionRenderTimeline(
 	diagnostics: OnDemandRuntimeDiagnostics,
 	timeline: Parameters<typeof stampRenderPublicationTimeline>[0]['timeline'],
 	renderTransport?: SelectedHourLiveResult['renderTransport']
 ): void {
-	const renderPublicationPath =
-		renderTransport ??
-		diagnostics.timings.renderPublication?.renderPublicationPath ??
-		'cpu-uploaded-selected-hour';
+	const renderPublicationPath: SelectedHourRenderPublicationPath =
+		renderTransport === 'compute-buffer-selected-hour' ||
+		renderTransport === 'cpu-uploaded-selected-hour'
+			? renderTransport
+			: renderTransport === 'live-render-pending'
+				? 'none'
+				: (diagnostics.timings.renderPublication?.renderPublicationPath ??
+					'cpu-uploaded-selected-hour');
 	diagnostics.timings.renderPublication = stampRenderPublicationTimeline({
 		current: diagnostics.timings.renderPublication,
 		timeline,
@@ -57,12 +71,14 @@ function stampSessionRenderTimeline(
 
 export type SelectedHourGpuResidentOutput = {
 	requestId: number;
+	metricType?: SelectedHourLiveMetricType;
 	monthIndex: number;
 	hourIndex: number;
 	timeIndex: number;
-	output: OnDemandUtciOutput;
+	output: OnDemandUtciOutput | F32MetricOutput;
 	gpuOutputHandle?: SelectedHourOutputHandle;
 	utciRange: { min: number; max: number };
+	shadingIndexRange?: { min: number; max: number };
 	tooltipUtciValues?: Float32Array;
 };
 
@@ -82,7 +98,10 @@ export type SelectedHourLiveResult = {
 	loadCpuFallback?: () => Promise<SelectedHourCpuFallbackOutput>;
 	selectedHourVisibleStartedAt?: number;
 	pendingRenderUpdateStartedAt: number;
-	renderTransport: 'cpu-uploaded-selected-hour' | 'compute-buffer-selected-hour';
+	renderTransport:
+		| 'cpu-uploaded-selected-hour'
+		| 'compute-buffer-selected-hour'
+		| 'live-render-pending';
 	sameDeviceForComputeAndRender: boolean | null;
 	diagnostics: OnDemandRuntimeDiagnostics;
 };
@@ -97,6 +116,7 @@ export type SelectedHourLiveSession = {
 		monthIndex: number;
 		hourIndex: number;
 		timeIndex: number;
+		metricType?: SelectedHourLiveMetricType;
 		colorMode: 'normalized' | 'discrete';
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
@@ -289,7 +309,11 @@ function ensureNotAborted(signal: AbortSignal): void {
 	}
 }
 
-function disposeGpuBuffer(output: OnDemandUtciOutput | undefined): void {
+function disposeGpuBuffer(
+	output:
+		| Pick<OnDemandUtciOutput | F32MetricOutput, 'gpuOutputHandle' | 'gpuBuffer'>
+		| undefined
+): void {
 	disposeSelectedHourOutputHandle(output?.gpuOutputHandle);
 	if (!output?.gpuOutputHandle && output?.gpuBuffer) {
 		const buffer = output.gpuBuffer as GPUBuffer;
@@ -689,6 +713,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 		deviceSource: state.deviceSource,
 		async runSelectedHour(params) {
 			const selectedHourVisibleStartedAt = performance.now();
+			const metricType = params.metricType ?? 'utci';
 			const requestReadyStartedAt =
 				state.requestSequence === 0 ? state.coldStartStartedAt : selectedHourVisibleStartedAt;
 			const diagnostics = createEmptyOnDemandDiagnostics();
@@ -708,6 +733,145 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			);
 
 			const requestId = ++state.requestSequence;
+			stampSessionRenderTimeline(diagnostics, {
+				sessionMetricType: metricType
+			});
+
+			if (metricType === 'shading_index') {
+				let shadingOutput: F32MetricOutput | null = null;
+				try {
+					shadingOutput = await state.computeManager.runShadingIndex({
+						numPoints: state.numPoints,
+						numHours: state.numHours,
+						numMonths: state.numMonths,
+						monthIndex: params.monthIndex,
+						startTimeIndex: params.monthIndex * state.numHours,
+						timeCount: state.numHours,
+						signal: state.signal
+					});
+					const sessionComputeOutputReturnedAtMs = performance.now();
+					const afterDispatchDiagnostics = copyRuntimeDiagnosticsSnapshot(
+						state.computeManager.getOnDemandDiagnostics?.()
+					);
+					if (shadingOutput.period.kind !== 'month-index') {
+						throw new Error(
+							'Selected-hour Shading Index publication requires a month-index output period.'
+						);
+					}
+					applyRuntimeDiagnosticsSnapshot(
+						diagnostics,
+						afterDispatchDiagnostics,
+						state.lifecycleTimings
+					);
+					const sessionDiagnosticsAppliedAtMs = performance.now();
+					const shadingIndexOutputBytes =
+						shadingOutput.outputBytes ?? state.numPoints * 4;
+					const shadingIndexSnapshotBytes =
+						diagnostics.timings.shadingIndexSnapshotBytes ??
+						diagnostics.timings.shadingIndexOutputBytes ??
+						shadingIndexOutputBytes;
+					const gpuOutputHandle = shadingOutput.gpuOutputHandle;
+					const sessionGpuOutputHandleReadyAtMs = performance.now();
+					ensureNotAborted(state.signal);
+
+					const sameDeviceForComputeAndRender = resolveSameDevice({
+						computeManager: state.computeManager,
+						rendererDevice: params.rendererDevice
+					});
+					const preferGpuResident =
+						params.preferGpuResident &&
+						sameDeviceForComputeAndRender === true &&
+						Boolean(gpuOutputHandle);
+					const pendingRenderUpdateStartedAt = performance.now();
+					if (!preferGpuResident) {
+						disposeGpuBuffer(shadingOutput);
+						shadingOutput = null;
+						throw new Error(
+							'Selected-hour Shading Index publication requires same-device GPU-resident output; CPU fallback is not available.'
+						);
+					}
+
+					stampSessionRenderTimeline(
+						diagnostics,
+						{
+							sessionMetricType: 'shading_index',
+							sessionMetricPeriodKind: shadingOutput.period.kind,
+							sessionMetricPeriodIndex: shadingOutput.period.index,
+							sessionMetricPeriodStartTimeIndex: shadingOutput.period.startTimeIndex,
+							sessionMetricPeriodTimeCount: shadingOutput.period.timeCount,
+							sessionComputeOutputReturnedAtMs,
+							sessionDiagnosticsAppliedAtMs,
+							sessionGpuOutputHandleReadyAtMs,
+							sessionPreferGpuResidentResolvedAtMs: pendingRenderUpdateStartedAt,
+							sessionOutputBytes: shadingIndexOutputBytes,
+							sessionCompactSummaryBytes: 0,
+							sessionShadingIndexDispatchMs:
+								diagnostics.timings.shadingIndexDispatchMs,
+							sessionShadingIndexQueueWaitMs:
+								diagnostics.timings.shadingIndexQueueWaitMs,
+							sessionShadingIndexOutputBytes: shadingIndexOutputBytes,
+							sessionShadingIndexSnapshotBytes: shadingIndexSnapshotBytes,
+							sessionShadingIndexSource: 'fresh-dispatch',
+							sessionShadingIndexMonthCacheHit: false,
+							sessionFullSolarReadbackCount: 0,
+							sessionTooltipPointReadbackCount: 0,
+							sessionTooltipPointReadbackBytes: 0
+						},
+						'compute-buffer-selected-hour'
+					);
+					const sessionSelectedHourAnalysisBuildStartedAtMs = performance.now();
+					const selectedHourAnalysis = buildSelectedHourLiveShadingAnalysis({
+						base: state.base,
+						shadingOutput,
+						monthIndex: params.monthIndex,
+						timeIndex: params.timeIndex
+					});
+					stampSessionRenderTimeline(diagnostics, {
+						sessionSelectedHourAnalysisBuildStartedAtMs,
+						sessionSelectedHourAnalysisBuildCompletedAtMs: performance.now()
+					});
+
+					recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
+					stampSessionRenderTimeline(diagnostics, {
+						sessionResultReadyAtMs: performance.now()
+					});
+					const shadingIndexRange = { min: 0, max: 1 };
+					const gpuResidentOutput = {
+						requestId,
+						metricType: 'shading_index' as const,
+						monthIndex: params.monthIndex,
+						hourIndex: params.hourIndex,
+						timeIndex: params.timeIndex,
+						output: shadingOutput,
+						gpuOutputHandle: gpuOutputHandle ?? undefined,
+						utciRange: shadingIndexRange,
+						shadingIndexRange
+					};
+					const result: SelectedHourLiveResult = {
+						requestId,
+						monthIndex: params.monthIndex,
+						hourIndex: params.hourIndex,
+						timeIndex: params.timeIndex,
+						analysis: selectedHourAnalysis,
+						gpuResidentOutput,
+						selectedHourVisibleStartedAt,
+						pendingRenderUpdateStartedAt,
+						renderTransport: 'compute-buffer-selected-hour',
+						sameDeviceForComputeAndRender,
+						diagnostics
+					};
+					stampSessionRenderTimeline(diagnostics, {
+						sessionResultReadyAtMs: performance.now(),
+						sessionResultReturnedAtMs: performance.now()
+					});
+					shadingOutput = null;
+					return result;
+				} catch (error) {
+					disposeGpuBuffer(shadingOutput ?? undefined);
+					throw error;
+				}
+			}
+
 			const output = await state.computeManager.runUtciForTimeIndex({
 				timeIndex: params.timeIndex,
 				numPoints: state.numPoints,
@@ -749,10 +913,12 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			stampSessionRenderTimeline(
 				diagnostics,
 				{
+					sessionMetricType: 'utci',
 					sessionComputeOutputReturnedAtMs,
 					sessionDiagnosticsAppliedAtMs,
 					sessionGpuOutputHandleReadyAtMs,
-					sessionPreferGpuResidentResolvedAtMs: pendingRenderUpdateStartedAt
+					sessionPreferGpuResidentResolvedAtMs: pendingRenderUpdateStartedAt,
+					sessionOutputBytes: output.outputBytes
 				},
 				renderTransport
 			);
@@ -918,6 +1084,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 			const sessionTooltipValuesHandoffCompletedAtMs = performance.now();
 			const gpuResidentOutput = {
 				requestId,
+				metricType: 'utci' as const,
 				monthIndex: params.monthIndex,
 				hourIndex: params.hourIndex,
 				timeIndex: params.timeIndex,

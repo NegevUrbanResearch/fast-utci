@@ -297,6 +297,7 @@
 			layout,
 			utciBuffer: sourceBuffer,
 			utciRange: acceptedOutput.utciRange,
+			metricType: acceptedOutput.metricType ?? 'utci',
 			trace,
 			now: performance.now.bind(performance)
 		});
@@ -762,6 +763,7 @@
 					state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
 					previousLayout,
 					nextLayout: previousLayout,
+					metricType: acceptedOutput.metricType ?? 'utci',
 					allowExpensiveMappingComparison: true
 				});
 				refreshedLayoutCompatibilityMs =
@@ -807,6 +809,7 @@
 					state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
 					previousLayout,
 					nextLayout: layout,
+					metricType: acceptedOutput.metricType ?? 'utci',
 					allowExpensiveMappingComparison: true
 				});
 			const renderLayoutCompatibilityMs =
@@ -896,6 +899,7 @@
 					layout,
 					utciBuffer: sourceBuffer,
 					utciRange: acceptedOutput.utciRange,
+					metricType: acceptedOutput.metricType ?? 'utci',
 					compatibilityEvaluation: runtimeLayoutCompatibility,
 					trace: renderSurfaceMeshTrace
 				});

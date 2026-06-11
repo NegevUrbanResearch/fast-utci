@@ -81,6 +81,7 @@
 		updateSceneConfigFromBounds,
 	} from "$lib/stores/sceneConfigStore";
 	import type { Analysis, AnalysisMetadata } from "$lib/types/analysis";
+	import type { MetricType } from "$lib/types/viewer";
 	import { createLiveUtciAnalysisFromCompute } from "$lib/compute/selected-hour/liveUtciAnalysis";
 	import {
 		buildSelectedHourLiveAnalysis,
@@ -231,7 +232,12 @@
 	$: parityMode = debugQueryState.parityMode;
 	/** E2E-only normal-mode export; keeps parityMode false while exposing one app-visible month slice. */
 	$: normalCollectMode = debugQueryState.normalCollectMode;
+	// Full-buffer Shading Index parity collector stays off unless ?shadingIndexParity=1.
+	$: shadingIndexParityCollectorEnabled = debugQueryState.shadingIndexParityCollectorEnabled;
 	$: debugOnDemandMode = debugQueryState.debugOnDemandMode;
+	let debugRouteMetricType: MetricType = "utci";
+	$: debugRouteMetricType =
+		$page.url.searchParams.get("metric") === "shading_index" ? "shading_index" : "utci";
 	let debugDiagnosticsState: DebugRouteSelectedHourPolicy["debugDiagnosticsState"];
 	let onDemandPrototypeEnabled: DebugRouteSelectedHourPolicy["onDemandPrototypeEnabled"] = false;
 	let useDebugSharedSelectedHourHost: DebugRouteSelectedHourPolicy["useDebugSharedSelectedHourHost"] =
@@ -264,6 +270,7 @@
 	let debugSharedBaseSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 	let debugSharedBasePendingGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	let debugSharedBasePendingRenderUpdateStartedAt: number | undefined = undefined;
+	let lastDebugShadingIndexParitySnapshotKey: string | null = null;
 	let legacyDebugSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
 
 	function handleDebugSharedBaseSurfaceDiagnostics(
@@ -431,6 +438,23 @@
 		error?: string;
 	};
 
+	type DebugShadingIndexParitySnapshot = {
+		status: "pending" | "success" | "error";
+		route: "debug";
+		source: "debug-shared-host";
+		metricType: "shading_index";
+		analysisId: string;
+		monthIndex: number;
+		startTimeIndex: number;
+		timeCount: number;
+		numPoints: number;
+		outputBytes?: number;
+		pythonValues?: number[];
+		webgpuValues?: number[];
+		positions?: number[];
+		error?: string;
+	};
+
 	function toNumberArrayOrUndefined(
 		values: Float32Array | number[] | null | undefined,
 	): number[] | undefined {
@@ -454,12 +478,123 @@
 		__onDemandPrototypeComparison__?: OnDemandPrototypeComparison;
 		__onDemandMultiHourComparison__?: OnDemandPrototypeMultiHourComparison;
 		__onDemandMonthHourComparison__?: OnDemandMonthHourComparisonResult;
+		__debugShadingIndexParity__?: DebugShadingIndexParitySnapshot;
 	};
 
 	const getParityWindow = (): ParityWindow =>
 		window as unknown as ParityWindow;
 
 	const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
+
+	async function readF32MetricOutputForDebug(params: {
+		device: GPUDevice;
+		buffer: GPUBuffer;
+		numPoints: number;
+		byteLength?: number;
+	}): Promise<Float32Array> {
+		const bytes = params.numPoints * 4;
+		if ((params.byteLength ?? bytes) < bytes) {
+			throw new Error(
+				`Debug Shading Index parity output is too small: expected ${bytes} bytes, got ${params.byteLength ?? 0}.`,
+			);
+		}
+		const readback = params.device.createBuffer({
+			size: bytes,
+			usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+		});
+		try {
+			const encoder = params.device.createCommandEncoder();
+			encoder.copyBufferToBuffer(params.buffer, 0, readback, 0, bytes);
+			params.device.queue.submit([encoder.finish()]);
+			await readback.mapAsync(GPUMapMode.READ);
+			const mapped = new Float32Array(readback.getMappedRange(0, bytes));
+			const out = new Float32Array(mapped.length);
+			out.set(mapped);
+			readback.unmap();
+			return out;
+		} finally {
+			readback.destroy();
+		}
+	}
+
+	async function collectDebugShadingIndexParitySnapshot(params: {
+		analysisId: string;
+		base: Analysis;
+		output: SelectedHourGpuResidentOutput;
+		device: GPUDevice;
+	}): Promise<void> {
+		const shadingIndex =
+			"shadingIndex" in params.base.data ? params.base.data.shadingIndex : undefined;
+		const gpuOutputHandle = params.output.gpuOutputHandle;
+		const metricOutput = params.output.output;
+		const period = metricOutput.period;
+		if (
+			params.output.metricType !== "shading_index" ||
+			metricOutput.metricType !== "shading_index" ||
+			metricOutput.valueLayout !== "one-f32-per-point" ||
+			period?.kind !== "month-index" ||
+			!gpuOutputHandle ||
+			gpuOutputHandle.disposed
+		) {
+			return;
+		}
+
+		getParityWindow().__debugShadingIndexParity__ = {
+			status: "pending",
+			route: "debug",
+			source: "debug-shared-host",
+			metricType: "shading_index",
+			analysisId: params.analysisId,
+			monthIndex: period.index,
+			startTimeIndex: period.startTimeIndex,
+			timeCount: period.timeCount,
+			numPoints: params.output.output.numPoints,
+			outputBytes: params.output.output.outputBytes,
+		};
+
+		try {
+			if (!shadingIndex || shadingIndex.length !== params.output.output.numPoints) {
+				throw new Error(
+					`Debug-loaded Python .bin Shading Index is unavailable or has wrong length for ${params.analysisId}.`,
+				);
+			}
+			const webgpuValues = await readF32MetricOutputForDebug({
+				device: params.device,
+				buffer: gpuOutputHandle.buffer,
+				numPoints: params.output.output.numPoints,
+				byteLength: params.output.output.outputBytes,
+			});
+			getParityWindow().__debugShadingIndexParity__ = {
+				status: "success",
+				route: "debug",
+				source: "debug-shared-host",
+				metricType: "shading_index",
+				analysisId: params.analysisId,
+				monthIndex: period.index,
+				startTimeIndex: period.startTimeIndex,
+				timeCount: period.timeCount,
+				numPoints: params.output.output.numPoints,
+				outputBytes: params.output.output.outputBytes,
+				pythonValues: Array.from(shadingIndex),
+				webgpuValues: Array.from(webgpuValues),
+				positions: Array.from(params.base.data.positions),
+			};
+		} catch (error) {
+			getParityWindow().__debugShadingIndexParity__ = {
+				status: "error",
+				route: "debug",
+				source: "debug-shared-host",
+				metricType: "shading_index",
+				analysisId: params.analysisId,
+				monthIndex: period.index,
+				startTimeIndex: period.startTimeIndex,
+				timeCount: period.timeCount,
+				numPoints: params.output.output.numPoints,
+				outputBytes: params.output.output.outputBytes,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	}
 
 	function buildSunVectorsFixtureFromMetadata(params: {
 		baseMetadata: AnalysisMetadata;
@@ -858,13 +993,20 @@
 		Boolean($page.url.searchParams.get("compareMonthHours")) &&
 		$page.url.searchParams.get("baseline") === "separateRunAll";
 	$: debugOnDemandMonthIndex = getDebugQueryMonthIndex($viewerStore.currentMonth ?? 7);
-	$: debugOnDemandSelection = getDebugOnDemandSelection({
-		monthIndex: debugOnDemandMonthIndex,
-		hourIndex: $page.url.searchParams.has("timeIndex")
-			? getStrictExposureOnlyTimeIndex()
-			: $viewerStore.currentHour,
-		parityMode,
-	});
+	$: debugOnDemandSelection =
+		debugRouteMetricType === "shading_index"
+			? {
+					monthIndex: debugOnDemandMonthIndex,
+					hourIndex: 0,
+					timeIndex: debugOnDemandMonthIndex * 24,
+				}
+			: getDebugOnDemandSelection({
+					monthIndex: debugOnDemandMonthIndex,
+					hourIndex: $page.url.searchParams.has("timeIndex")
+						? getStrictExposureOnlyTimeIndex()
+						: $viewerStore.currentHour,
+					parityMode,
+				});
 	$: ({
 		debugDiagnosticsState,
 		onDemandPrototypeEnabled,
@@ -894,6 +1036,7 @@
 			monthIndex: debugOnDemandSelection.monthIndex,
 			hourIndex: debugOnDemandSelection.hourIndex,
 			timeIndex: debugOnDemandSelection.timeIndex,
+			metricType: debugRouteMetricType,
 			colorMode: $viewerStore.colorMode,
 			utciRenderMode,
 			rendererBackend,
@@ -914,6 +1057,50 @@
 		baseAnalysis: $analysisStore,
 		liveRouteState: debugSharedRouteState,
 	}));
+	$: {
+		const output = debugSharedBasePendingGpuResidentOutput;
+		const metricOutput = output?.output;
+		const period = metricOutput?.period;
+		const key =
+			shadingIndexParityCollectorEnabled &&
+			debugRouteMetricType === "shading_index" &&
+			useDebugSharedSelectedHourHost &&
+			$analysisStore &&
+			rendererDeviceForDebug &&
+			output?.metricType === "shading_index" &&
+			metricOutput?.metricType === "shading_index" &&
+			period?.kind === "month-index"
+				? [
+						analysisId,
+						output.requestId,
+						metricOutput.ownerId,
+						period.index,
+						period.startTimeIndex,
+						period.timeCount,
+					].join("|")
+				: null;
+		if (!key) {
+			lastDebugShadingIndexParitySnapshotKey = null;
+			if (browser) {
+				getParityWindow().__debugShadingIndexParity__ = undefined;
+			}
+		}
+		if (
+			key &&
+			output &&
+			$analysisStore &&
+			rendererDeviceForDebug &&
+			key !== lastDebugShadingIndexParitySnapshotKey
+		) {
+			lastDebugShadingIndexParitySnapshotKey = key;
+			void collectDebugShadingIndexParitySnapshot({
+				analysisId,
+				base: $analysisStore,
+				output,
+				device: rendererDeviceForDebug,
+			});
+		}
+	}
 	$: debugOnDemandSelectionKey =
 		debugDiagnosticsState.onDemandEnabled
 			? `${debugDiagnosticsState.selection.monthIndex}:${debugDiagnosticsState.selection.timeIndex}`
