@@ -19,13 +19,19 @@ import type {
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import {
 	copyRenderPublicationDiagnostics as copySelectedHourRenderPublicationDiagnostics,
-	type SelectedHourRenderPublicationDiagnostics
+	type SelectedHourRenderAllocationPreflight,
+	type SelectedHourRenderPublicationDiagnostics,
+	type SelectedHourRenderStorageCopyPreflight
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { UtciRendererBackend, UtciRenderMode } from '$lib/utciRenderMode';
 import type { ColorMode } from '$lib/types/viewer';
 import type { TooltipInteractionDiagnostics } from '$lib/services/tooltipService';
 import type { CameraInteractionDiagnostics } from '$lib/services/cameraInteractionTelemetry';
 import type { ExposureSchedulingOptions } from '$lib/compute/gpu/exposureScheduling';
+import {
+	buildKnownActiveMaskUtciSurfaceRenderStrategyDecision,
+	type ActiveMaskUtciSurfaceRenderStrategyDecision
+} from '$lib/services/utciSurfaceRenderStrategy';
 
 type MainRouteUtciDiagnosticsTimings = Omit<OnDemandTimings, 'renderPublication'> & {
 	renderPublication?: SelectedHourRenderPublicationDiagnostics;
@@ -66,6 +72,9 @@ export type MainRouteUtciDiagnosticsPayload = {
 	activePointCount?: number;
 	inactivePointCount?: number;
 	activePointRatio?: number;
+	activeMaskUtciSurfaceBudget?: ActiveMaskUtciSurfaceRenderStrategyDecision;
+	renderAllocationPreflight?: SelectedHourRenderAllocationPreflight;
+	renderStorageCopyPreflight?: SelectedHourRenderStorageCopyPreflight;
 	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
@@ -126,6 +135,9 @@ export type MainRouteUtciDiagnosticsInputs = {
 	activePointCount?: number;
 	inactivePointCount?: number;
 	activePointRatio?: number;
+	activeMaskUtciSurfaceBudget?: ActiveMaskUtciSurfaceRenderStrategyDecision;
+	renderAllocationPreflight?: SelectedHourRenderAllocationPreflight;
+	renderStorageCopyPreflight?: SelectedHourRenderStorageCopyPreflight;
 	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
@@ -243,6 +255,21 @@ export function buildMainRouteUtciDiagnostics(
 		inputs.selectedHourReadbackReasonCounts,
 		inputs.comparisonSelectedHourReadbackReasonCounts
 	);
+	const activeMaskUtciSurfaceBudget =
+		inputs.activeMaskUtciSurfaceBudget ??
+		buildKnownActiveMaskUtciSurfaceRenderStrategyDecision({
+			activePointCount: inputs.activePointCount,
+			canonicalCellCount: inputs.canonicalPointCount,
+			requestedLimits: inputs.rendererRequiredLimits,
+			deviceLimits: inputs.rendererDeviceLimits
+		});
+	const timings = copyDiagnosticsTimings(inputs.timings, inputs.tooltipInteraction);
+	const renderAllocationPreflight =
+		inputs.renderAllocationPreflight ??
+		timings?.renderPublication?.renderAllocationPreflight;
+	const renderStorageCopyPreflight =
+		inputs.renderStorageCopyPreflight ??
+		timings?.renderPublication?.renderStorageCopyPreflight;
 
 	return {
 		utciOnDemand: inputs.utciOnDemand,
@@ -279,6 +306,9 @@ export function buildMainRouteUtciDiagnostics(
 		activePointCount: inputs.activePointCount,
 		inactivePointCount: inputs.inactivePointCount,
 		activePointRatio: inputs.activePointRatio,
+		activeMaskUtciSurfaceBudget,
+		renderAllocationPreflight,
+		renderStorageCopyPreflight,
 		exposureScheduling: inputs.exposureScheduling
 			? { ...inputs.exposureScheduling }
 			: undefined,
@@ -301,7 +331,7 @@ export function buildMainRouteUtciDiagnostics(
 			inputs.comparisonSurfaceDiagnostics.gpuResidentCopyRequestId,
 		tooltipInteraction: inputs.tooltipInteraction,
 		cameraInteraction: inputs.cameraInteraction,
-		timings: copyDiagnosticsTimings(inputs.timings, inputs.tooltipInteraction),
+		timings,
 		trackedGpuAllocationBytes: inputs.trackedGpuAllocationBytes
 			? { ...inputs.trackedGpuAllocationBytes }
 			: undefined,

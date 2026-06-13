@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	buildUtciGridLayout,
-	buildUtciGridLayoutReuseProofDiagnostics
+	buildUtciGridLayoutReuseProofDiagnostics,
+	type DenseUtciGridLayout
 } from '$lib/services/pointCloudService';
 import { clearMetricPointReadbackCache } from '$lib/compute/gpu/metricPointReadback';
 import { createVertexToPointIndexArray } from '$lib/services/gpuUtciRenderBridge';
@@ -20,6 +21,13 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	clearMetricPointReadbackCache();
 });
+
+function expectDenseLayout(layout: ReturnType<typeof buildUtciGridLayout>): asserts layout is DenseUtciGridLayout {
+	expect(layout.renderTopology).toBe('dense-grid');
+	if (layout.renderTopology !== 'dense-grid') {
+		throw new Error(`Expected dense-grid layout, received ${layout.renderTopology}.`);
+	}
+}
 
 describe('resolvePositionIndexFromIntersection', () => {
 	it('returns the expected point index from the hovered UTCI surface cell', () => {
@@ -139,6 +147,53 @@ describe('resolvePositionIndexFromIntersection', () => {
 		const analysis = createActiveMaskAnalysis();
 		const layout = buildUtciGridLayout(analysis);
 		const mesh = createSurfaceTestMesh(layout);
+		const expectedDenseCellCount = layout.width * layout.height;
+		vi.stubGlobal(
+			'Int32Array',
+			new Proxy(Int32Array, {
+				construct(target, args, newTarget) {
+					if (args[0] === expectedDenseCellCount) {
+						throw new Error('active tooltip lookup must not allocate dense cell maps');
+					}
+					return Reflect.construct(target, args, newTarget);
+				}
+			})
+		);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 0),
+			target: new THREE.Vector3(1, layout.baseY, 0)
+		});
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
+
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'utci',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
+		);
+
+		expect(result).toBeNull();
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			hit: false,
+			resolutionPath: 'plane-cell',
+			directCellHit: false,
+			nearestScanUsed: false,
+			directCellMissCount: 1
+		});
+	});
+
+	it('uses sparse inactive-cell lookup directly instead of rechecking active-mask metadata source', () => {
+		const analysis = createActiveMaskAnalysis();
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		analysis.metadata.activeMask.source = 'roads-only-runtime-test';
 		const camera = createHoverCamera({
 			position: new THREE.Vector3(1, 5, 0),
 			target: new THREE.Vector3(1, layout.baseY, 0)
@@ -174,6 +229,7 @@ describe('gpu-native ambiguous cell mapping', () => {
 	it('keeps render-local last-writer mapping for ambiguous cells', () => {
 		const analysis = createAmbiguousCellAnalysis();
 		const layout = buildUtciGridLayout(analysis);
+		expectDenseLayout(layout);
 
 		expect(Array.from(layout.cellToPointIndex ?? [])).toEqual([-2]);
 		expect(Array.from(createVertexToPointIndexArray(layout))).toEqual([1, 1, 1, 1, 1, 1]);
@@ -213,8 +269,11 @@ describe('layout reuse hover lookup proof', () => {
 	it('does not claim lookup safety for ambiguous same-count layouts with different mapping', () => {
 		const analysis = createAmbiguousCellAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		const nextBaseLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(nextBaseLayout);
 		const nextLayout = {
-			...buildUtciGridLayout(analysis),
+			...nextBaseLayout,
 			indexToColumn: new Uint32Array([0, 1])
 		};
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({

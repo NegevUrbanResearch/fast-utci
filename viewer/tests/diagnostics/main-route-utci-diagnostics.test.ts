@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMainRouteUtciDiagnostics } from '$lib/diagnostics/mainRouteUtciDiagnostics';
+import { INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE } from '$lib/services/activeMaskUtciSurfaceGeometry';
 import {
 	createRenderPublicationDiagnostics,
 	mergeRenderPublicationTimeline
@@ -285,6 +286,197 @@ describe('buildMainRouteUtciDiagnostics', () => {
 			visibleSelectedHourReadbackCount: 0,
 			visibleSelectedHourReadbackCountInstrumented: true,
 			strongVisibleGpuPath: true
+		});
+	});
+
+	it('includes the active-mask surface budget decision for the known Innovation District 0.5m shape', () => {
+		const diagnostics = buildMainRouteUtciDiagnostics({
+			enabled: true,
+			utciOnDemand: 'f32',
+			utciRenderRequested: 'auto',
+			utciRenderResolved: 'gpuNative',
+			rendererBackend: 'webgpu',
+			rendererRequiredLimits: {
+				maxStorageBufferBindingSize: 512 * 1024 * 1024,
+				maxBufferSize: 1024 * 1024 * 1024
+			},
+			rendererDeviceLimits: {
+				maxStorageBufferBindingSize: 512 * 1024 * 1024,
+				maxBufferSize: 1024 * 1024 * 1024
+			},
+			baseSurfaceDiagnostics: {
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				selectedHourTransferCount: 0,
+				dataTextureBuildCount: 0
+			},
+			comparisonSurfaceDiagnostics: {},
+			baseRenderTransport: 'compute-buffer-selected-hour',
+			comparisonRenderTransport: 'idle',
+			baseLiveReady: true,
+			comparisonLiveReady: true,
+			baseSameDeviceForComputeAndRender: true,
+			baseSelectedMonthIndex: 7,
+			baseSelectedHourIndex: 12,
+			baseSelectedTimeIndex: 180,
+			baseMetadataGridSize: 0.5,
+			basePointCount:
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.activePointCount,
+			canonicalPointCount:
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.canonicalCellCount,
+			activePointCount:
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.activePointCount,
+			inactivePointCount:
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.canonicalCellCount -
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.activePointCount,
+			activePointRatio:
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.activePointCount /
+				INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE.canonicalCellCount,
+			comparisonSameDeviceForComputeAndRender: null
+		});
+
+		expect(diagnostics?.activeMaskUtciSurfaceBudget).toMatchObject({
+			selectedStrategy: 'active-instanced-quads',
+			planRevisionRequired: false,
+			input: INNOVATION_DISTRICT_05M_ACTIVE_MASK_SURFACE_SHAPE,
+			limits: {
+				maxStorageBufferBindingSize: 512 * 1024 * 1024,
+				maxBufferSize: 1024 * 1024 * 1024,
+				source: {
+					requested: {
+						maxStorageBufferBindingSize: 512 * 1024 * 1024,
+						maxBufferSize: 1024 * 1024 * 1024
+					},
+					device: {
+						maxStorageBufferBindingSize: 512 * 1024 * 1024,
+						maxBufferSize: 1024 * 1024 * 1024
+					}
+				}
+			}
+		});
+		expect(
+			diagnostics?.activeMaskUtciSurfaceBudget?.estimates.find(
+				(estimate) => estimate.strategy === 'active-indexed-quads'
+			)?.largestSingleJsTypedArrayBytes
+		).toBe(490_502_304);
+	});
+
+	it('copies active render preflight and render-storage copy proof into main route diagnostics', () => {
+		const renderPublication = createRenderPublicationDiagnostics({
+			renderPublicationPath: 'compute-buffer-selected-hour',
+			renderPublicationPhase: 'initial',
+			renderPublicationMeshAction: 'skipped',
+			renderPublicationPointCount: 3,
+			renderPublicationSourceByteLength: 12,
+			renderPublicationTargetByteLength: 12,
+			renderAllocationPreflight: {
+				status: 'passed',
+				renderTopology: 'active-cells',
+				renderCellCount: 3,
+				canonicalCellCount: 6,
+				activePointCount: 3,
+				estimatedRenderGeometryBytes: 84,
+				estimatedLargestSingleRenderAllocationBytes: 48,
+				estimatedDenseRectGeometryBytes: 168,
+				rendererMaxBufferSize: 1024,
+				rendererMaxStorageBufferBindingSize: 1024,
+				activeRenderStrategy: 'active-instanced-quads',
+				activeRenderInstanceCount: 3,
+				activeRenderSharedVertexCount: 4,
+				activeRenderSharedIndexCount: 6,
+				activeCanonicalIndexBufferBytes: 12,
+				forbiddenDenseAllocationProof: {
+					noDenseCellToPointStorageAttribute: true,
+					noDenseColorBuffer: true,
+					noWidthHeightRenderGeometry: true,
+					noPerActiveCellDuplicatedVertexBuffer: true,
+					noPerActiveCellDuplicatedIndexBuffer: true,
+					sharedQuadVertexIndexBuffersConstantSize: true,
+					instanceCountEqualsActivePointCount: true,
+					noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting: true
+				}
+			},
+			renderStorageCopyPreflight: {
+				status: 'passed',
+				sourceByteLength: 12,
+				targetByteLength: 12,
+				byteLengthsMatch: true,
+				sourceUsage: 4,
+				targetUsage: 136,
+				sourceHasCopySrcUsage: true,
+				targetHasCopyDstUsage: true,
+				targetHasStorageUsage: true
+			}
+		});
+
+		const diagnostics = buildMainRouteUtciDiagnostics({
+			enabled: true,
+			utciOnDemand: 'f32',
+			utciRenderRequested: 'auto',
+			utciRenderResolved: 'gpuNative',
+			rendererBackend: 'webgpu',
+			baseSurfaceDiagnostics: {
+				utciSurfaceSource: 'compute-buffer-selected-hour',
+				selectedHourTransferCount: 0,
+				dataTextureBuildCount: 0,
+				gpuResidentCopyStatus: 'complete',
+				gpuResidentCopyRequestId: 3
+			},
+			comparisonSurfaceDiagnostics: {},
+			baseRenderTransport: 'compute-buffer-selected-hour',
+			comparisonRenderTransport: 'idle',
+			baseLiveReady: true,
+			comparisonLiveReady: true,
+			baseSameDeviceForComputeAndRender: true,
+			baseSelectedMonthIndex: 7,
+			baseSelectedHourIndex: 12,
+			baseSelectedTimeIndex: 180,
+			comparisonSameDeviceForComputeAndRender: null,
+			timings: {
+				renderPublication
+			}
+		});
+
+		renderPublication.renderAllocationPreflight!.activePointCount = 999;
+		renderPublication.renderStorageCopyPreflight!.byteLengthsMatch = false;
+
+		expect(diagnostics?.timings?.renderPublication).toMatchObject({
+			renderAllocationPreflight: {
+				status: 'passed',
+				renderTopology: 'active-cells',
+				activeRenderStrategy: 'active-instanced-quads',
+				activePointCount: 3,
+				forbiddenDenseAllocationProof: {
+					noDenseCellToPointStorageAttribute: true,
+					noDenseColorBuffer: true,
+					noWidthHeightRenderGeometry: true,
+					noPerActiveCellDuplicatedVertexBuffer: true,
+					noPerActiveCellDuplicatedIndexBuffer: true,
+					sharedQuadVertexIndexBuffersConstantSize: true,
+					instanceCountEqualsActivePointCount: true,
+					noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting: true
+				}
+			},
+			renderStorageCopyPreflight: {
+				status: 'passed',
+				sourceByteLength: 12,
+				targetByteLength: 12,
+				byteLengthsMatch: true,
+				sourceHasCopySrcUsage: true,
+				targetHasCopyDstUsage: true,
+				targetHasStorageUsage: true
+			}
+		});
+		expect(diagnostics?.renderAllocationPreflight).toMatchObject({
+			status: 'passed',
+			renderTopology: 'active-cells',
+			activeRenderStrategy: 'active-instanced-quads',
+			activePointCount: 3
+		});
+		expect(diagnostics?.renderStorageCopyPreflight).toMatchObject({
+			status: 'passed',
+			sourceByteLength: 12,
+			targetByteLength: 12,
+			byteLengthsMatch: true
 		});
 	});
 

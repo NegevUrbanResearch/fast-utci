@@ -11,9 +11,16 @@ import {
 	vec2,
 	vertexIndex
 } from 'three/tsl';
-import type { UtciGridLayout } from './pointCloudService';
+import type {
+	DenseUtciGridLayout,
+	UtciGridLayout
+} from './utciGridLayoutTopology';
 import type { F32MetricType } from '$lib/compute/on-demand/onDemandOutputFormat';
 import type { SelectedHourRenderSurfaceMeshTrace } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+import {
+	createActiveComputeBufferUtciSurfaceMesh,
+	type ActiveComputeBufferUtciSurfaceState
+} from '$lib/services/activeComputeBufferUtciSurfaceMesh';
 import {
 	COMPUTE_BUFFER_COLOR_LUT_BYTES,
 	COMPUTE_BUFFER_COLOR_LUT_SIZE,
@@ -28,6 +35,10 @@ import {
 	type ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot,
 	type GpuNativeUtciSurfaceSource
 } from './gpuUtciSurfaceLayoutCompatibility';
+import {
+	estimateComputeBufferUtciSurfaceRenderStrategy,
+	type UtciSurfaceRenderStrategyEstimate
+} from '$lib/services/utciSurfaceRenderStrategy';
 export {
 	areUtciGridLayoutsPointCompatible,
 	createCellToPointIndexArray,
@@ -64,6 +75,7 @@ export interface ComputeBufferUtciSurfaceMeshOptions {
 	valueRange?: { min: number; max: number };
 	opacity?: number;
 	compatibilityEvaluation?: ComputeBufferUtciSurfaceLayoutCompatibilityEvaluation;
+	renderEstimate?: UtciSurfaceRenderStrategyEstimate;
 	trace?: SelectedHourRenderSurfaceMeshTrace;
 	now?: () => number;
 }
@@ -75,8 +87,7 @@ type ComputeBufferUtciSurfaceUpdateTrace = {
 	updateComputeBufferSurfaceByteAccountingMs?: number;
 };
 
-interface GpuNativeUtciSurfaceState {
-	colorStorageAttribute: StorageBufferAttribute;
+interface UtciSurfaceStateBase {
 	width: number;
 	height: number;
 	gridSize: number;
@@ -84,10 +95,15 @@ interface GpuNativeUtciSurfaceState {
 	source: GpuNativeUtciSurfaceSource;
 }
 
-interface ComputeBufferUtciSurfaceState extends GpuNativeUtciSurfaceState {
+interface GpuNativeUtciSurfaceState extends UtciSurfaceStateBase {
+	source: 'cpu-uploaded-selected-hour';
+	colorStorageAttribute: StorageBufferAttribute;
+}
+
+interface ComputeBufferUtciSurfaceBaseState extends UtciSurfaceStateBase {
 	source: 'compute-buffer-selected-hour';
+	renderTopology: UtciGridLayout['renderTopology'];
 	utciStorageAttribute: StorageBufferAttribute;
-	cellToPointStorageAttribute: StorageBufferAttribute;
 	utciRange: { min: number; max: number };
 	valueRange: { min: number; max: number };
 	metricType: F32MetricType;
@@ -95,7 +111,18 @@ interface ComputeBufferUtciSurfaceState extends GpuNativeUtciSurfaceState {
 	maxUniform: ReturnType<typeof uniform>;
 	colorLutTexture: THREE.DataTexture;
 	colorLutMetricType: F32MetricType;
+	renderEstimate: UtciSurfaceRenderStrategyEstimate;
 }
+
+interface DenseComputeBufferUtciSurfaceState extends ComputeBufferUtciSurfaceBaseState {
+	renderTopology: 'dense-grid';
+	colorStorageAttribute: StorageBufferAttribute;
+	cellToPointStorageAttribute: StorageBufferAttribute;
+}
+
+type ComputeBufferUtciSurfaceState =
+	| DenseComputeBufferUtciSurfaceState
+	| ActiveComputeBufferUtciSurfaceState;
 
 const MIN_SPAN = 12;
 const GRID_SEGMENTS = 14;
@@ -104,6 +131,16 @@ const DEFAULT_SURFACE_OPACITY = 0.9;
 const SURFACE_VERTICES_PER_CELL = 6;
 const SURFACE_COLOR_COMPONENTS = 4;
 const workingColor = new THREE.Color();
+
+function assertDenseSurfaceLayout(
+	layout: UtciGridLayout
+): asserts layout is DenseUtciGridLayout {
+	if (layout.renderTopology !== 'dense-grid') {
+		throw new Error(
+			`UTCI ${layout.renderTopology} layouts cannot use dense compute-buffer surface allocation before Task 3 active render strategy.`
+		);
+	}
+}
 
 function getGeometryGpuAttributeBytes(geometry: THREE.BufferGeometry): number {
 	let total = 0;
@@ -189,6 +226,7 @@ export function createSyntheticGpuUtciBridge(
 export function createGpuNativeUtciSurfaceMesh(
 	options: GpuNativeUtciSurfaceMeshOptions
 ): THREE.Mesh {
+	assertDenseSurfaceLayout(options.layout);
 	const geometry = createGpuNativeSurfaceGeometry(options.layout);
 	const vertexCount = geometry.getAttribute('position').count;
 	const colorArray = new Float32Array(vertexCount * SURFACE_COLOR_COMPONENTS);
@@ -233,6 +271,13 @@ export function createGpuNativeUtciSurfaceMesh(
 export function createComputeBufferUtciSurfaceMesh(
 	options: ComputeBufferUtciSurfaceMeshOptions
 ): THREE.Mesh {
+	if (options.layout.renderTopology === 'active-cells') {
+		return createActiveComputeBufferUtciSurfaceMesh({
+			...options,
+			layout: options.layout
+		});
+	}
+	assertDenseSurfaceLayout(options.layout);
 	const now = options.now ?? performance.now.bind(performance);
 	const { metricType, valueRange } = resolveComputeBufferMetricColorPolicy(options);
 	const geometry = createIndexedGridSurfaceGeometry(options.layout, {
@@ -266,7 +311,7 @@ export function createComputeBufferUtciSurfaceMesh(
 		now() - colorLutStartedAt
 	);
 	const materialStartedAt = now();
-	const { colorNode, opacityNode } = createUtciColorNode(
+	const { colorNode, opacityNode } = createDenseUtciColorNode(
 		options.layout,
 		utciStorageAttribute,
 		cellToPointStorageAttribute,
@@ -297,6 +342,7 @@ export function createComputeBufferUtciSurfaceMesh(
 	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
 	mesh.userData.utciLayout = options.layout;
 	mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] = {
+		renderTopology: 'dense-grid',
 		colorStorageAttribute: utciStorageAttribute,
 		utciStorageAttribute,
 		cellToPointStorageAttribute,
@@ -311,7 +357,13 @@ export function createComputeBufferUtciSurfaceMesh(
 		minUniform,
 		maxUniform,
 		colorLutTexture,
-		colorLutMetricType: metricType
+		colorLutMetricType: metricType,
+		renderEstimate: estimateComputeBufferUtciSurfaceRenderStrategy({
+			layout: options.layout,
+			geometryBytes: getGeometryGpuAttributeBytes(geometry),
+			utciStorageBytes: utciArray.byteLength,
+			cellToPointStorageBytes: cellToPointArray.byteLength
+		})
 	} satisfies ComputeBufferUtciSurfaceState;
 	addCreateSurfaceTraceTiming(
 		options.trace,
@@ -319,23 +371,23 @@ export function createComputeBufferUtciSurfaceMesh(
 		now() - meshConstructStartedAt
 	);
 	const byteAccountingStartedAt = now();
-	const geometryBytes = getGeometryGpuAttributeBytes(geometry);
-	mesh.userData.renderOwnedSelectedHourBytes =
-		geometryBytes +
-		utciArray.byteLength +
-		cellToPointArray.byteLength +
-		COMPUTE_BUFFER_COLOR_LUT_BYTES;
+	const renderEstimate = (
+		mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as ComputeBufferUtciSurfaceState
+	).renderEstimate;
+	mesh.userData.renderOwnedSelectedHourBytes = renderEstimate.totalBytes;
 	addCreateSurfaceTraceTiming(
 		options.trace,
 		'createComputeBufferSurfaceByteAccountingMs',
 		now() - byteAccountingStartedAt
 	);
 	if (options.trace) {
-		options.trace.createComputeBufferSurfaceGeometryBytes = geometryBytes;
-		options.trace.createComputeBufferSurfaceUtciStorageBytes = utciArray.byteLength;
-		options.trace.createComputeBufferSurfaceCellToPointBytes = cellToPointArray.byteLength;
-		options.trace.createComputeBufferSurfaceColorLutBytes =
-			COMPUTE_BUFFER_COLOR_LUT_BYTES;
+		options.trace.createComputeBufferSurfaceGeometryBytes =
+			renderEstimate.geometryBytes;
+		options.trace.createComputeBufferSurfaceUtciStorageBytes =
+			renderEstimate.selectedHourUtciStorageBytes;
+		options.trace.createComputeBufferSurfaceCellToPointBytes =
+			renderEstimate.cellToPointStorageBytes;
+		options.trace.createComputeBufferSurfaceColorLutBytes = renderEstimate.colorLutBytes;
 	}
 
 	return mesh;
@@ -352,10 +404,10 @@ export function updateComputeBufferUtciSurfaceMesh(
 		options.compatibilityEvaluation ??
 		evaluateComputeBufferUtciSurfaceLayoutCompatibility({
 			state: getComputeBufferUtciSurfaceLayoutCompatibilityState(mesh),
-			previousLayout: mesh?.userData.utciLayout as UtciGridLayout | undefined,
+			previousLayout: (mesh?.userData.utciLayout as UtciGridLayout | undefined) ?? null,
 			nextLayout: options.layout,
 			metricType: options.metricType ?? 'utci',
-			allowExpensiveMappingComparison: true
+			allowExpensiveMappingComparison: options.layout.renderTopology === 'dense-grid'
 		});
 	if ((compatibilityEvaluation.compatible ?? false) !== true) {
 		return false;
@@ -390,11 +442,18 @@ export function updateComputeBufferUtciSurfaceMesh(
 			now() - layoutUserDataStartedAt;
 	}
 	const byteAccountingStartedAt = now();
-	mesh.userData.renderOwnedSelectedHourBytes =
-		getGeometryGpuAttributeBytes(mesh.geometry) +
-		state.utciStorageAttribute.array.byteLength +
-		state.cellToPointStorageAttribute.array.byteLength +
-		COMPUTE_BUFFER_COLOR_LUT_BYTES;
+	state.renderEstimate =
+		options.renderEstimate ??
+		estimateComputeBufferUtciSurfaceRenderStrategy({
+			layout: options.layout,
+			geometryBytes: getGeometryGpuAttributeBytes(mesh.geometry),
+			utciStorageBytes: state.utciStorageAttribute.array.byteLength,
+			cellToPointStorageBytes:
+				state.renderTopology === 'dense-grid'
+					? state.cellToPointStorageAttribute.array.byteLength
+					: 0
+		});
+	mesh.userData.renderOwnedSelectedHourBytes = state.renderEstimate.totalBytes;
 	if (options.trace) {
 		options.trace.updateComputeBufferSurfaceByteAccountingMs =
 			now() - byteAccountingStartedAt;
@@ -407,14 +466,14 @@ export function isComputeBufferUtciSurfaceLayoutCompatible(
 	layout: UtciGridLayout,
 	metricType?: F32MetricType
 ): boolean {
-	const previousLayout = mesh?.userData.utciLayout as UtciGridLayout | undefined;
+	const previousLayout = (mesh?.userData.utciLayout as UtciGridLayout | undefined) ?? null;
 	return (
 		evaluateComputeBufferUtciSurfaceLayoutCompatibility({
 			state: getComputeBufferUtciSurfaceLayoutCompatibilityState(mesh),
 			previousLayout,
 			nextLayout: layout,
 			metricType,
-			allowExpensiveMappingComparison: true
+			allowExpensiveMappingComparison: layout.renderTopology === 'dense-grid'
 		}).compatible ?? false
 	);
 }
@@ -431,6 +490,9 @@ export function getComputeBufferUtciSurfaceLayoutCompatibilityState(
 
 	return {
 		source: state.source,
+		renderTopology: state.renderTopology,
+		activeMaskSignature:
+			state.renderTopology === 'active-cells' ? state.activeMaskSignature : undefined,
 		metricType: state.metricType,
 		width: state.width,
 		height: state.height,
@@ -444,6 +506,7 @@ export function updateGpuNativeUtciSurfaceMesh(
 	mesh: THREE.Mesh,
 	options: GpuNativeUtciSurfaceMeshOptions
 ): boolean {
+	assertDenseSurfaceLayout(options.layout);
 	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as GpuNativeUtciSurfaceState | undefined;
 	if (!state) {
 		console.warn('[UTCI] Missing gpuNative surface state. Recreate the mesh.');
@@ -524,8 +587,8 @@ export function getComputeBufferUtciStorageAttribute(
 	return state.utciStorageAttribute;
 }
 
-function createUtciColorNode(
-	layout: UtciGridLayout,
+function createDenseUtciColorNode(
+	layout: DenseUtciGridLayout,
 	utciStorageAttribute: StorageBufferAttribute,
 	cellToPointStorageAttribute: StorageBufferAttribute,
 	minUniform: ReturnType<typeof uniform>,
@@ -568,7 +631,9 @@ function createUtciColorNode(
 	};
 }
 
-function createGpuNativeSurfaceGeometry(layout: UtciGridLayout): THREE.BufferGeometry {
+// Legacy dense CPU-upload surface geometry for createGpuNativeUtciSurfaceMesh().
+// Active compute-buffer UTCI rendering uses activeComputeBufferUtciSurfaceMesh.ts.
+function createGpuNativeSurfaceGeometry(layout: DenseUtciGridLayout): THREE.BufferGeometry {
 	const geometry = new THREE.BufferGeometry();
 	const planeWidth = layout.width * layout.gridSize;
 	const planeHeight = layout.height * layout.gridSize;
@@ -630,7 +695,7 @@ function setIndexedGridSurfaceAnalyticBounds(
 }
 
 function createIndexedGridSurfaceGeometry(
-	layout: UtciGridLayout,
+	layout: DenseUtciGridLayout,
 	options?: {
 		trace?: SelectedHourRenderSurfaceMeshTrace;
 		now?: () => number;
@@ -718,7 +783,7 @@ function createIndexedGridSurfaceGeometry(
 
 function fillGpuNativeSurfaceVertexColors(
 	target: Float32Array,
-	layout: UtciGridLayout,
+	layout: DenseUtciGridLayout,
 	colors: Float32Array,
 	opacity: number
 ): void {

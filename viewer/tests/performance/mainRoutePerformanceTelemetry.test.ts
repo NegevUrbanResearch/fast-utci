@@ -155,6 +155,52 @@ describe('mainRoutePerformanceTelemetry', () => {
 		});
 	});
 
+	it('builds an error snapshot when active render allocation preflight fails', () => {
+		const snapshot = buildMainRoutePerformanceSnapshot({
+			analysisId: 'Innovation-District/0.5m',
+			projectLabel: 'Innovation District',
+			pointCount: 3,
+			gridSizeMeters: 0.5,
+			selectedMonthIndex: 7,
+			selectedHourIndex: 12,
+			diagnostics: {
+				baseLiveReady: false,
+				timings: {
+					renderPublication: {
+						renderPublicationVersion: 1,
+						renderPublicationPath: 'compute-buffer-selected-hour',
+						renderPublicationPhase: 'initial',
+						renderPublicationMeshAction: 'skipped',
+						renderAllocationPreflight: {
+							status: 'failed',
+							renderTopology: 'active-cells',
+							renderCellCount: 3,
+							canonicalCellCount: 6,
+							activePointCount: 3,
+							estimatedRenderGeometryBytes: 84,
+							estimatedLargestSingleRenderAllocationBytes: 48,
+							estimatedDenseRectGeometryBytes: 168,
+							activeRenderStrategy: 'active-instanced-quads',
+							activeRenderInstanceCount: 3,
+							activeRenderSharedVertexCount: 4,
+							activeRenderSharedIndexCount: 6,
+							activeCanonicalIndexBufferBytes: 12,
+							failureReasons: [
+								'selected-hour UTCI storage exceeds renderer maxStorageBufferBindingSize'
+							]
+						}
+					}
+				}
+			},
+			now: 10000
+		});
+
+		expect(snapshot.status).toBe('error');
+		expect(snapshot.error).toContain(
+			'selected-hour UTCI storage exceeds renderer maxStorageBufferBindingSize'
+		);
+	});
+
 	it('formats user-facing durations and memory without jargon', () => {
 		expect(formatDuration(86.49)).toBe('86 ms');
 		expect(formatDuration(86.5)).toBe('87 ms');

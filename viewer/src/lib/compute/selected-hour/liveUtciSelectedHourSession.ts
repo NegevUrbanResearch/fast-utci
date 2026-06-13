@@ -41,6 +41,7 @@ import {
 } from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 import {
+	copyRenderPublicationDiagnostics,
 	stampRenderPublicationTimeline,
 	type SelectedHourRenderPublicationPath
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
@@ -160,7 +161,12 @@ function copyRuntimeDiagnosticsSnapshot(
 ): Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'> | undefined {
 	if (!diagnostics) return undefined;
 	return {
-		timings: { ...diagnostics.timings },
+		timings: {
+			...diagnostics.timings,
+			renderPublication: copyRenderPublicationDiagnostics(
+				diagnostics.timings.renderPublication
+			)
+		},
 		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
 	};
 }

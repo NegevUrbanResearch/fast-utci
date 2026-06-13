@@ -37,6 +37,23 @@ export function getOwnedGpuMemoryBytes(
 	);
 }
 
+function getActiveRenderPreflightError(
+	diagnostics: MainRoutePerformanceDiagnosticsLike
+): string | null {
+	const preflight =
+		diagnostics.timings?.renderPublication?.renderAllocationPreflight;
+	if (
+		preflight?.status !== 'failed' ||
+		preflight.renderTopology !== 'active-cells'
+	) {
+		return null;
+	}
+	const reasonText = preflight.failureReasons?.join('; ');
+	return reasonText
+		? `Active UTCI render allocation preflight failed: ${reasonText}.`
+		: 'Active UTCI render allocation preflight failed.';
+}
+
 export function buildMainRoutePerformanceSnapshot(
 	params: BuildMainRoutePerformanceSnapshotParams
 ): UserFacingPerformanceSnapshot {
@@ -55,7 +72,8 @@ export function buildMainRoutePerformanceSnapshot(
 		};
 	}
 
-	const status = diagnostics.error
+	const error = diagnostics.error ?? getActiveRenderPreflightError(diagnostics);
+	const status = error
 		? 'error'
 		: diagnostics.baseLiveReady
 			? 'ready'
@@ -74,7 +92,7 @@ export function buildMainRoutePerformanceSnapshot(
 		ownedGpuMemoryBytes: getOwnedGpuMemoryBytes(diagnostics.trackedGpuAllocationBytes),
 		memoryScope: diagnostics.trackedGpuAllocationBytes?.trackingScope ?? null,
 		measuredAt: params.now,
-		error: diagnostics.error ?? null
+		error
 	};
 }
 

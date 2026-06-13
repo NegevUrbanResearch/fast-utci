@@ -236,6 +236,14 @@ function areRenderPublicationEqual(
 		left.renderPublicationTargetByteLength === right.renderPublicationTargetByteLength &&
 		left.renderPublicationRenderOwnedBytes ===
 			right.renderPublicationRenderOwnedBytes &&
+		areRenderAllocationPreflightsEqual(
+			left.renderAllocationPreflight,
+			right.renderAllocationPreflight
+		) &&
+		areRenderStorageCopyPreflightsEqual(
+			left.renderStorageCopyPreflight,
+			right.renderStorageCopyPreflight
+		) &&
 		left.renderPublicationTimeline?.computeCompletedAtMs ===
 			right.renderPublicationTimeline?.computeCompletedAtMs &&
 		left.renderPublicationTimeline?.controllerSessionRunStartedAtMs ===
@@ -471,6 +479,98 @@ function areRenderPublicationEqual(
 			right.renderPublicationTimeline?.sceneSyncActiveWindowResetHistory
 		)
 	);
+}
+
+function areRenderAllocationPreflightsEqual(
+	left:
+		| NonNullable<
+				LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		  >['renderAllocationPreflight']
+		| undefined,
+	right:
+		| NonNullable<
+				LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		  >['renderAllocationPreflight']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.status === right.status &&
+		left.renderTopology === right.renderTopology &&
+		left.renderCellCount === right.renderCellCount &&
+		left.canonicalCellCount === right.canonicalCellCount &&
+		left.activePointCount === right.activePointCount &&
+		left.estimatedRenderGeometryBytes === right.estimatedRenderGeometryBytes &&
+		left.estimatedLargestSingleRenderAllocationBytes ===
+			right.estimatedLargestSingleRenderAllocationBytes &&
+		left.estimatedDenseRectGeometryBytes === right.estimatedDenseRectGeometryBytes &&
+		left.estimatedLargestJsTypedArrayBytes ===
+			right.estimatedLargestJsTypedArrayBytes &&
+		left.jsLargestTypedArrayByteLimit === right.jsLargestTypedArrayByteLimit &&
+		left.rendererMaxBufferSize === right.rendererMaxBufferSize &&
+		left.rendererMaxStorageBufferBindingSize ===
+			right.rendererMaxStorageBufferBindingSize &&
+		left.activeRenderStrategy === right.activeRenderStrategy &&
+		left.activeRenderInstanceCount === right.activeRenderInstanceCount &&
+		left.activeRenderSharedVertexCount === right.activeRenderSharedVertexCount &&
+		left.activeRenderSharedIndexCount === right.activeRenderSharedIndexCount &&
+		left.activeCanonicalIndexBufferBytes === right.activeCanonicalIndexBufferBytes &&
+		areStringArraysEqual(left.failureReasons, right.failureReasons) &&
+		left.forbiddenDenseAllocationProof?.noDenseCellToPointStorageAttribute ===
+			right.forbiddenDenseAllocationProof?.noDenseCellToPointStorageAttribute &&
+		left.forbiddenDenseAllocationProof?.noDenseColorBuffer ===
+			right.forbiddenDenseAllocationProof?.noDenseColorBuffer &&
+		left.forbiddenDenseAllocationProof?.noWidthHeightRenderGeometry ===
+			right.forbiddenDenseAllocationProof?.noWidthHeightRenderGeometry &&
+		left.forbiddenDenseAllocationProof?.noPerActiveCellDuplicatedVertexBuffer ===
+			right.forbiddenDenseAllocationProof?.noPerActiveCellDuplicatedVertexBuffer &&
+		left.forbiddenDenseAllocationProof?.noPerActiveCellDuplicatedIndexBuffer ===
+			right.forbiddenDenseAllocationProof?.noPerActiveCellDuplicatedIndexBuffer &&
+		left.forbiddenDenseAllocationProof?.sharedQuadVertexIndexBuffersConstantSize ===
+			right.forbiddenDenseAllocationProof?.sharedQuadVertexIndexBuffersConstantSize &&
+		left.forbiddenDenseAllocationProof?.instanceCountEqualsActivePointCount ===
+			right.forbiddenDenseAllocationProof?.instanceCountEqualsActivePointCount &&
+		left.forbiddenDenseAllocationProof
+			?.noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting ===
+			right.forbiddenDenseAllocationProof
+				?.noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting
+	);
+}
+
+function areRenderStorageCopyPreflightsEqual(
+	left:
+		| NonNullable<
+				LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		  >['renderStorageCopyPreflight']
+		| undefined,
+	right:
+		| NonNullable<
+				LiveSelectedHourControllerSurfaceDiagnostics['renderPublication']
+		  >['renderStorageCopyPreflight']
+		| undefined
+): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return (
+		left.status === right.status &&
+		left.sourceByteLength === right.sourceByteLength &&
+		left.targetByteLength === right.targetByteLength &&
+		left.requestedByteLength === right.requestedByteLength &&
+		left.byteLengthsMatch === right.byteLengthsMatch &&
+		left.sourceUsage === right.sourceUsage &&
+		left.targetUsage === right.targetUsage &&
+		left.sourceHasCopySrcUsage === right.sourceHasCopySrcUsage &&
+		left.targetHasCopyDstUsage === right.targetHasCopyDstUsage &&
+		left.targetHasStorageUsage === right.targetHasStorageUsage &&
+		areStringArraysEqual(left.failureReasons, right.failureReasons)
+	);
+}
+
+function areStringArraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+	if (left === right) return true;
+	if (left == null || right == null) return left === right;
+	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function areRenderLayoutBuildTracesEqual(
@@ -1734,6 +1834,12 @@ export function createLiveSelectedHourController(
 				diagnostics.gpuResidentCopyStatus === 'failed' &&
 				requestId !== undefined &&
 				deferredCpuFallback?.requestId === requestId;
+			const shouldHandleActivePreflightFailure =
+				shouldHandleGpuFallback &&
+				diagnostics.renderPublication?.renderAllocationPreflight?.status ===
+					'failed' &&
+				diagnostics.renderPublication.renderAllocationPreflight.renderTopology ===
+					'active-cells';
 			const acceptsCpuPublication =
 				hasAcceptedCpuRenderSurface({
 					renderTransport: state.renderTransport,
@@ -1748,9 +1854,32 @@ export function createLiveSelectedHourController(
 				state.acceptedVisibleSurface.visibleAtMs !== undefined;
 			if (
 				areDiagnosticsEqual(nextDiagnostics, state.renderSurfaceDiagnostics) &&
+				!shouldHandleActivePreflightFailure &&
 				!shouldHandleGpuFallback &&
 				(!acceptsCpuPublication || cpuPublicationAlreadyVisible)
 			) {
+				return;
+			}
+
+			if (shouldHandleActivePreflightFailure) {
+				deferredCpuFallback = null;
+				setState({
+					runtimeDiagnostics: mergeRuntimeDiagnosticsWithRenderSurface({
+						runtimeDiagnostics: state.runtimeDiagnostics,
+						renderSurfaceDiagnostics: nextDiagnostics,
+						pendingRenderUpdateStartedAt: state.pendingRenderUpdateStartedAt,
+						selectedHourVisibleStartedAt: undefined,
+						visibleAtMs: undefined,
+						visibleAcknowledgementEligible: false
+					}),
+					renderSurfaceDiagnostics: nextDiagnostics,
+					loading: false,
+					error:
+						diagnostics.gpuResidentCopyError ??
+						'Active UTCI render allocation preflight failed.',
+					renderTransport: 'compute-buffer-selected-hour',
+					pendingRenderUpdateStartedAt: undefined
+				});
 				return;
 			}
 

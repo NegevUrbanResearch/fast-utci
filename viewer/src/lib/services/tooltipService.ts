@@ -11,6 +11,10 @@ import { getUTCIForHour, getShadingIndex } from '$lib/services/dataLoader';
 import { createRaycaster } from '$lib/utils/raycaster';
 import { getNormalizedMousePosition } from '$lib/utils/mouse';
 import type { UtciGridLayout } from './pointCloudService';
+import {
+	getCachedActiveMaskUtciSurfaceLookup,
+	resolveActiveMaskUtciSurfaceCellLookup
+} from './activeMaskUtciSurfaceLookup';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { sharedMetricPointReadbackCache } from '$lib/compute/gpu/metricPointReadback';
@@ -297,15 +301,19 @@ function getPositionIndexFromSurfaceCell(
 	}
 
 	const { column, row } = cellCoordinates;
-	const pointIndex = getTooltipCellPointIndex(layout, analysis.data.numPositions, row, column, expectedCellCount);
+	const cellLookup = getTooltipCellPointIndex(
+		layout,
+		analysis.data.numPositions,
+		row,
+		column,
+		expectedCellCount
+	);
+	const pointIndex = cellLookup.positionIndex;
 	if (pointIndex === -1) {
-		const activeMaskSource = analysis.metadata?.activeMask?.source;
-		const isActiveMaskNoDataCell =
-			activeMaskSource === 'base' || activeMaskSource === 'base+road';
 		return {
 			positionIndex: null,
 			mappingMs: performance.now() - mappingStartedAt,
-			inactiveCell: isActiveMaskNoDataCell
+			inactiveCell: cellLookup.inactiveCell
 		};
 	}
 	if (pointIndex < 0 || pointIndex >= analysis.data.numPositions) {
@@ -366,7 +374,18 @@ function getTooltipCellPointIndex(
 	row: number,
 	column: number,
 	expectedCellCount: number
-): number {
+): { positionIndex: number; inactiveCell: boolean } {
+	if (layout.renderTopology === 'active-cells') {
+		const lookupResult = resolveActiveMaskUtciSurfaceCellLookup(
+			getCachedActiveMaskUtciSurfaceLookup(layout),
+			{ row, column }
+		);
+		return {
+			positionIndex: lookupResult.positionIndex ?? -1,
+			inactiveCell: lookupResult.inactiveCell
+		};
+	}
+
 	const cellIndex = row * layout.width + column;
 	const mappedPointIndex = layout.cellToPointIndex?.[cellIndex];
 	if (
@@ -376,10 +395,17 @@ function getTooltipCellPointIndex(
 		mappedPointIndex >= -1 &&
 		mappedPointIndex < numPositions
 	) {
-		return mappedPointIndex;
+		return {
+			positionIndex: mappedPointIndex,
+			inactiveCell: false
+		};
 	}
 
-	return getRebuiltCellToPointIndex(layout, numPositions, expectedCellCount)?.[cellIndex] ?? -1;
+	return {
+		positionIndex:
+			getRebuiltCellToPointIndex(layout, numPositions, expectedCellCount)?.[cellIndex] ?? -1,
+		inactiveCell: false
+	};
 }
 
 function getRebuiltCellToPointIndex(
@@ -387,15 +413,24 @@ function getRebuiltCellToPointIndex(
 	numPositions: number,
 	expectedCellCount: number
 ): Int32Array | null {
+	if (layout.renderTopology !== 'dense-grid') {
+		return null;
+	}
+
 	const cached = rebuiltCellToPointIndexCache.get(layout);
 	if (cached !== undefined) {
 		return cached;
 	}
 
 	if (
-		layout.indexToRow.length < numPositions ||
-		layout.indexToColumn.length < numPositions ||
 		expectedCellCount <= 0
+	) {
+		rebuiltCellToPointIndexCache.set(layout, null);
+		return null;
+	}
+	if (
+		layout.indexToRow.length < numPositions ||
+		layout.indexToColumn.length < numPositions
 	) {
 		rebuiltCellToPointIndexCache.set(layout, null);
 		return null;

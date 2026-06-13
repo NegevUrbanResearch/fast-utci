@@ -1,3 +1,5 @@
+import type { SelectedHourRenderStorageCopyPreflight } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
+
 export interface RenderStorageBufferRef {
 	device: GPUDevice;
 	targetBuffer: GPUBuffer;
@@ -161,6 +163,116 @@ export interface CopyComputeBufferToRenderStorageParams {
 	isSuperseded?: () => boolean;
 }
 
+const GPU_BUFFER_COPY_SRC = globalThis.GPUBufferUsage?.COPY_SRC ?? 4;
+const GPU_BUFFER_COPY_DST = globalThis.GPUBufferUsage?.COPY_DST ?? 8;
+const GPU_BUFFER_STORAGE = globalThis.GPUBufferUsage?.STORAGE ?? 128;
+
+function hasUsageFlag(usage: number | undefined, flag: number): boolean | undefined {
+	return usage === undefined ? undefined : (usage & flag) === flag;
+}
+
+export class RenderStorageCopyPreflightError extends Error {
+	constructor(readonly copyPreflight: SelectedHourRenderStorageCopyPreflight) {
+		super(
+			`Render storage copy preflight failed: ${copyPreflight.failureReasons?.join('; ')}.`
+		);
+		this.name = 'RenderStorageCopyPreflightError';
+	}
+}
+
+export function buildRenderStorageCopyPreflight(
+	params: CopyComputeBufferToRenderStorageParams
+): SelectedHourRenderStorageCopyPreflight {
+	const sourceWithDiagnostics = params.sourceBuffer as GPUBuffer & {
+		size?: number;
+		usage?: number;
+	};
+	const targetWithDiagnostics = params.targetBuffer as GPUBuffer & {
+		size?: number;
+		usage?: number;
+	};
+	const sourceByteLength = sourceWithDiagnostics.size ?? params.byteLength;
+	const targetByteLength = targetWithDiagnostics.size;
+	const sourceHasCopySrcUsage = hasUsageFlag(
+		sourceWithDiagnostics.usage,
+		GPU_BUFFER_COPY_SRC
+	);
+	const targetHasCopyDstUsage = hasUsageFlag(
+		targetWithDiagnostics.usage,
+		GPU_BUFFER_COPY_DST
+	);
+	const targetHasStorageUsage = hasUsageFlag(
+		targetWithDiagnostics.usage,
+		GPU_BUFFER_STORAGE
+	);
+	const failureReasons: string[] = [];
+	if (sourceWithDiagnostics.size === undefined) {
+		failureReasons.push('source buffer size is unknown');
+	}
+	if (targetByteLength === undefined) {
+		failureReasons.push('target buffer size is unknown');
+	}
+	if (!Number.isFinite(params.byteLength) || params.byteLength < 0) {
+		failureReasons.push('requested copy byteLength is invalid');
+	}
+	if (
+		sourceWithDiagnostics.size !== undefined &&
+		sourceWithDiagnostics.size !== params.byteLength
+	) {
+		failureReasons.push(
+			'source buffer size does not match requested copy byteLength'
+		);
+	}
+	if (targetByteLength !== undefined && targetByteLength !== params.byteLength) {
+		failureReasons.push(
+			'target buffer size does not match requested copy byteLength'
+		);
+	}
+	if (
+		sourceWithDiagnostics.size !== undefined &&
+		targetByteLength !== undefined &&
+		targetByteLength !== sourceByteLength
+	) {
+		failureReasons.push('source/target byte lengths differ');
+	}
+	if (sourceHasCopySrcUsage === undefined) {
+		failureReasons.push('source buffer usage is unknown');
+	}
+	if (
+		targetHasCopyDstUsage === undefined ||
+		targetHasStorageUsage === undefined
+	) {
+		failureReasons.push('target buffer usage is unknown');
+	}
+	if (sourceHasCopySrcUsage === false) {
+		failureReasons.push('source buffer is missing COPY_SRC usage');
+	}
+	if (targetHasCopyDstUsage === false) {
+		failureReasons.push('target buffer is missing COPY_DST usage');
+	}
+	if (targetHasStorageUsage === false) {
+		failureReasons.push('target buffer is missing STORAGE usage');
+	}
+
+	return {
+		status: failureReasons.length === 0 ? 'passed' : 'failed',
+		sourceByteLength,
+		targetByteLength,
+		requestedByteLength: params.byteLength,
+		byteLengthsMatch:
+			sourceWithDiagnostics.size !== undefined &&
+			targetByteLength !== undefined &&
+			sourceByteLength === params.byteLength &&
+			targetByteLength === params.byteLength,
+		sourceUsage: sourceWithDiagnostics.usage,
+		targetUsage: targetWithDiagnostics.usage,
+		sourceHasCopySrcUsage,
+		targetHasCopyDstUsage,
+		targetHasStorageUsage,
+		failureReasons: failureReasons.length > 0 ? failureReasons : undefined
+	};
+}
+
 export async function copyComputeBufferToRenderStorage(
 	params: CopyComputeBufferToRenderStorageParams
 ): Promise<{
@@ -171,9 +283,11 @@ export async function copyComputeBufferToRenderStorage(
 	copyEncoderCreateMs: number;
 	copyCommandRecordMs: number;
 	copySubmitMs: number;
+	copyPreflight: SelectedHourRenderStorageCopyPreflight;
 }> {
-	if (params.targetBuffer.size !== undefined && params.targetBuffer.size < params.byteLength) {
-		throw new Error('Three storage buffer is smaller than the accepted compute output buffer.');
+	const copyPreflight = buildRenderStorageCopyPreflight(params);
+	if (copyPreflight.status === 'failed') {
+		throw new RenderStorageCopyPreflightError(copyPreflight);
 	}
 	const copyStartedAt = params.now();
 	const encoderStartedAt = params.now();
@@ -200,6 +314,7 @@ export async function copyComputeBufferToRenderStorage(
 		queueDrainCompletedAtMs,
 		copyEncoderCreateMs,
 		copyCommandRecordMs,
-		copySubmitMs
+		copySubmitMs,
+		copyPreflight
 	};
 }

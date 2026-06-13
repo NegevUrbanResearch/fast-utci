@@ -16,6 +16,7 @@ import {
 	planUtciLayoutReuseCandidate,
 	resetUtciLayoutFrameCachesForTest,
 	resolveUtciLayoutReusePublicationStateAfterSync,
+	type DenseUtciGridLayout,
 	type UtciLayoutReuseKeyDiagnostics,
 	type UtciSurfaceMeshOptions,
 	updateUtciSurfaceMesh
@@ -29,6 +30,7 @@ import {
 	isComputeBufferUtciSurfaceLayoutCompatible,
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
+import { getActiveMaskPointGridCell } from '$lib/services/utciGridLayoutTopology';
 import { resolveComputeBufferMetricColorPolicy } from '$lib/services/computeBufferMetricColorPolicy';
 import { updateViewerConfig } from '$lib/config/viewerConfig';
 import type {
@@ -36,6 +38,27 @@ import type {
 	SelectedHourRenderSurfaceMeshTrace
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 import type { Analysis, SingleHourData } from '$lib/types/analysis';
+
+type DenseTestLayoutInput = Omit<
+	DenseUtciGridLayout,
+	'renderTopology' | 'renderCellCount' | 'canonicalCellCount'
+>;
+
+function createDenseLayout(layout: DenseTestLayoutInput): DenseUtciGridLayout {
+	return {
+		...layout,
+		renderTopology: 'dense-grid',
+		renderCellCount: layout.width * layout.height,
+		canonicalCellCount: layout.width * layout.height
+	};
+}
+
+function expectDenseLayout(layout: ReturnType<typeof buildUtciGridLayout>): asserts layout is DenseUtciGridLayout {
+	expect(layout.renderTopology).toBe('dense-grid');
+	if (layout.renderTopology !== 'dense-grid') {
+		throw new Error(`Expected dense-grid layout, received ${layout.renderTopology}.`);
+	}
+}
 
 function createAnalysis(params?: {
 	positions?: number[];
@@ -291,30 +314,27 @@ describe('pointCloudService UTCI surface seam', () => {
 			activeCanonicalIndices: new Uint32Array([0, 4, 8])
 		};
 
-		const mesh = createUtciSurfaceMesh(analysis);
-		const layout = mesh.userData.utciLayout;
+		const layout = buildUtciGridLayout(analysis);
 
+		expect(layout.renderTopology).toBe('active-cells');
+		if (layout.renderTopology !== 'active-cells') {
+			throw new Error(`Expected active-cells layout, received ${layout.renderTopology}.`);
+		}
 		expect(layout.width).toBe(3);
 		expect(layout.height).toBe(3);
 		expect(layout.numPositions).toBe(3);
-		expect(Array.from(layout.indexToRow)).toEqual([0, 1, 2]);
-		expect(Array.from(layout.indexToColumn)).toEqual([0, 1, 2]);
-		expect(Array.from(layout.cellToPointIndex)).toEqual([
-			0, -1, -1,
-			-1, 1, -1,
-			-1, -1, 2
+		expect([0, 1, 2].map((pointIndex) => getActiveMaskPointGridCell({ layout, pointIndex }))).toEqual([
+			{ row: 0, col: 0 },
+			{ row: 1, col: 1 },
+			{ row: 2, col: 2 }
 		]);
-		expect(Array.from(createCellToPointIndexArray(layout))).toEqual([
-			0, 3, 3,
-			3, 1, 3,
-			3, 3, 2
-		]);
-
-		const activeTexels = new Set(Array.from(layout.indexToTexel));
-		for (let texel = 0; texel < layout.width * layout.height; texel += 1) {
-			const alpha = layout.colorBuffer[texel * 4 + 3];
-			expect(alpha).toBe(activeTexels.has(texel) ? 255 : 0);
-		}
+		expect(layout.renderCellCount).toBe(3);
+		expect(layout.canonicalCellCount).toBe(9);
+		expect(layout).not.toHaveProperty('cellToPointIndex');
+		expect(layout).not.toHaveProperty('colorBuffer');
+		expect(layout).not.toHaveProperty('indexToTexel');
+		expect(layout).not.toHaveProperty('indexToRow');
+		expect(layout).not.toHaveProperty('indexToColumn');
 	});
 
 	it('applies normalization offset to active-mask metadata bounds placement', () => {
@@ -367,26 +387,27 @@ describe('pointCloudService UTCI surface seam', () => {
 			activeCanonicalIndices: new Uint32Array([0, 1, 5])
 		};
 
-		const mesh = createUtciSurfaceMesh(analysis);
-		const layout = mesh.userData.utciLayout;
+		const layout = buildUtciGridLayout(analysis);
 
+		expect(layout.renderTopology).toBe('active-cells');
+		if (layout.renderTopology !== 'active-cells') {
+			throw new Error(`Expected active-cells layout, received ${layout.renderTopology}.`);
+		}
 		expect(layout.width).toBe(3);
 		expect(layout.height).toBe(3);
 		expect(layout.numPositions).toBe(3);
-		expect(Array.from(layout.indexToRow)).toEqual([2, 1, 0]);
-		expect(Array.from(layout.indexToColumn)).toEqual([0, 0, 1]);
-		expect(Array.from(layout.cellToPointIndex)).toEqual([
-			-1, 2, -1,
-			1, -1, -1,
-			0, -1, -1
+		expect([0, 1, 2].map((pointIndex) => getActiveMaskPointGridCell({ layout, pointIndex }))).toEqual([
+			{ row: 2, col: 0 },
+			{ row: 1, col: 0 },
+			{ row: 0, col: 1 }
 		]);
-
-		const activeTexels = new Set(Array.from(layout.indexToTexel));
-		expect(activeTexels).toEqual(new Set([0, 3, 7]));
-		for (let texel = 0; texel < layout.width * layout.height; texel += 1) {
-			const alpha = layout.colorBuffer[texel * 4 + 3];
-			expect(alpha).toBe(activeTexels.has(texel) ? 255 : 0);
-		}
+		expect(layout.renderCellCount).toBe(3);
+		expect(layout.canonicalCellCount).toBe(9);
+		expect(layout).not.toHaveProperty('cellToPointIndex');
+		expect(layout).not.toHaveProperty('colorBuffer');
+		expect(layout).not.toHaveProperty('indexToTexel');
+		expect(layout).not.toHaveProperty('indexToRow');
+		expect(layout).not.toHaveProperty('indexToColumn');
 	});
 
 	it('uses canonical active-mask dimensions for non-grid-aligned Innovation District bounds', () => {
@@ -422,12 +443,19 @@ describe('pointCloudService UTCI surface seam', () => {
 		};
 
 		const layout = buildUtciGridLayout(analysis);
+		if (layout.renderTopology !== 'active-cells') {
+			throw new Error(`Expected active-cells layout, received ${layout.renderTopology}.`);
+		}
 
 		expect(layout.width).toBe(width);
 		expect(layout.height).toBe(height);
 		expect(layout.width * layout.height).toBe(analysis.metadata.activeMask.canonicalPointCount);
-		expect(Array.from(layout.indexToColumn)).toEqual([0, 0, 1, width - 1]);
-		expect(Array.from(layout.indexToRow)).toEqual([height - 1, 0, height - 1, 0]);
+		expect([0, 1, 2, 3].map((pointIndex) => getActiveMaskPointGridCell({ layout, pointIndex }))).toEqual([
+			{ row: height - 1, col: 0 },
+			{ row: 0, col: 0 },
+			{ row: height - 1, col: 1 },
+			{ row: 0, col: width - 1 }
+		]);
 	});
 
 	it('records layout-build diagnostic substeps without changing the layout output', () => {
@@ -443,6 +471,7 @@ describe('pointCloudService UTCI surface seam', () => {
 		} = {};
 
 		const layout = buildUtciGridLayout(analysis, { diagnostics });
+		expectDenseLayout(layout);
 
 		expect(layout.width).toBe(2);
 		expect(layout.height).toBe(2);
@@ -464,6 +493,8 @@ describe('pointCloudService UTCI surface seam', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
 		const nextLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		expectDenseLayout(nextLayout);
 
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({
 			previousLayout,
@@ -494,10 +525,10 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('reports rebuild-required when the effective cell mapping changes', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
-		const nextLayout = {
-			...buildUtciGridLayout(analysis),
-			cellToPointIndex: new Int32Array([1, 0, 3, 2])
-		};
+		const nextLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		expectDenseLayout(nextLayout);
+		nextLayout.cellToPointIndex = new Int32Array([1, 0, 3, 2]);
 
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({
 			previousLayout,
@@ -515,8 +546,11 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('uses the full compute-buffer compatibility predicate for canonical runtime reuse', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		const baseLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(baseLayout);
 		const nextLayout = {
-			...buildUtciGridLayout(analysis),
+			...baseLayout,
 			width: previousLayout.width + 1
 		};
 
@@ -534,11 +568,14 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('reports rebuild-required when placement changes in centerX, centerZ, or baseY', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		const baseLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(baseLayout);
 
 		for (const nextLayout of [
-			{ ...buildUtciGridLayout(analysis), centerX: previousLayout.centerX + 1 },
-			{ ...buildUtciGridLayout(analysis), centerZ: previousLayout.centerZ + 1 },
-			{ ...buildUtciGridLayout(analysis), baseY: previousLayout.baseY + 1 }
+			{ ...baseLayout, centerX: previousLayout.centerX + 1 },
+			{ ...baseLayout, centerZ: previousLayout.centerZ + 1 },
+			{ ...baseLayout, baseY: previousLayout.baseY + 1 }
 		]) {
 			const proof = buildUtciGridLayoutReuseProofDiagnostics({
 				previousLayout,
@@ -561,6 +598,8 @@ describe('pointCloudService UTCI surface seam', () => {
 				source: 'webgpu'
 			})
 		);
+		expectDenseLayout(previousLayout);
+		expectDenseLayout(nextLayout);
 
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({
 			previousLayout,
@@ -577,8 +616,11 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('reports rebuild-required when normalization signature changes', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		const baseLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(baseLayout);
 		const nextLayout = {
-			...buildUtciGridLayout(analysis),
+			...baseLayout,
 			normalizationSignature: {
 				enabled: true,
 				offset: { x: 10, y: 0, z: 0 },
@@ -599,7 +641,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('reports proof-inconclusive when expensive mapping comparison is skipped', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 1,
 			height: 1,
 			gridSize: 1,
@@ -617,7 +659,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			cellToPointIndex: new Int32Array([-2]),
 			indexToTexel: new Uint32Array([0, 0]),
 			colorBuffer: new Uint8Array(4)
-		};
+		});
 		const nextLayout = {
 			...layout,
 			indexToColumn: new Uint32Array([0, 1])
@@ -639,8 +681,11 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('never reports reuse-safe when the proof and canonical runtime compatibility disagree', () => {
 		const analysis = createAnalysis();
 		const previousLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		const baseLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(baseLayout);
 		const nextLayout = {
-			...buildUtciGridLayout(analysis),
+			...baseLayout,
 			baseY: previousLayout.baseY + 1
 		};
 
@@ -658,9 +703,12 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('returns reuse-candidate when the proof is safe and the stable key matches', () => {
 		const analysis = createAnalysis({ sourceAnalysisId: 'Ben-Gurion/base' });
 		const previousLayout = buildUtciGridLayout(analysis);
+		const nextLayout = buildUtciGridLayout(analysis);
+		expectDenseLayout(previousLayout);
+		expectDenseLayout(nextLayout);
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({
 			previousLayout,
-			nextLayout: buildUtciGridLayout(analysis),
+			nextLayout,
 			canonicalRuntimeCompatibilityWouldReuse: true
 		});
 
@@ -936,6 +984,8 @@ describe('pointCloudService UTCI surface seam', () => {
 
 		const originalLayout = buildUtciGridLayout(analysis);
 		const shiftedLayout = buildUtciGridLayout(shiftedAnalysis);
+		expectDenseLayout(originalLayout);
+		expectDenseLayout(shiftedLayout);
 		const originalKey = createReuseKey(analysis);
 		const shiftedKey = createReuseKey(shiftedAnalysis);
 		const proof = buildUtciGridLayoutReuseProofDiagnostics({
@@ -1682,7 +1732,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('maps each surface vertex back to the shuffled source point index', () => {
-		const cellToPoint = createCellToPointIndexArray({
+		const cellToPoint = createCellToPointIndexArray(createDenseLayout({
 			width: 2,
 			height: 2,
 			gridSize: 1,
@@ -1699,8 +1749,8 @@ describe('pointCloudService UTCI surface seam', () => {
 			indexToColumn: new Uint32Array([1, 0, 0, 1]),
 			indexToTexel: new Uint32Array([0, 1, 2, 3]),
 			colorBuffer: new Uint8Array(2 * 2 * 4)
-		});
-		const vertexToPoint = createVertexToPointIndexArray({
+		}));
+		const vertexToPoint = createVertexToPointIndexArray(createDenseLayout({
 			width: 2,
 			height: 2,
 			gridSize: 1,
@@ -1717,7 +1767,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			indexToColumn: new Uint32Array([1, 0, 0, 1]),
 			indexToTexel: new Uint32Array([1, 2, 0, 3]),
 			colorBuffer: new Uint8Array(2 * 2 * 4)
-		});
+		}));
 
 		expect(Array.from(cellToPoint)).toEqual([1, 3, 2, 0]);
 		expect(Array.from(vertexToPoint)).toEqual([
@@ -1731,7 +1781,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	it('creates compute-buffer surfaces without uploading selected-hour UTCI from CPU readback', () => {
 		const computeBuffer = {} as GPUBuffer;
 		const mesh = createComputeBufferUtciSurfaceMesh({
-			layout: {
+			layout: createDenseLayout({
 				width: 1,
 				height: 1,
 				gridSize: 1,
@@ -1748,7 +1798,7 @@ describe('pointCloudService UTCI surface seam', () => {
 				indexToColumn: new Uint32Array([0]),
 				indexToTexel: new Uint32Array([0]),
 				colorBuffer: new Uint8Array(4)
-			},
+			}),
 			utciBuffer: computeBuffer,
 			utciRange: { min: 10, max: 40 }
 		});
@@ -1767,9 +1817,43 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1104);
 	});
 
+	it('creates active layouts with compute-buffer active instanced allocation', () => {
+		const activeLayout = buildUtciGridLayout(
+			withActiveMask(createAnalysis({
+				positions: [
+					0, 0, 0,
+					1, 0, 1,
+					2, 0, 2
+				],
+				utciValues: [10, 20, 30],
+				coordinateSystem: 'xz_ground',
+				bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 },
+				source: 'webgpu'
+			}), {
+				activeCanonicalIndices: [0, 4, 8],
+				checksum: 'active-compute-buffer-reject'
+			})
+		);
+		expect(activeLayout.renderTopology).toBe('active-cells');
+
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: activeLayout as Parameters<typeof createComputeBufferUtciSurfaceMesh>[0]['layout'],
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+
+		expect(mesh.geometry).toBeInstanceOf(THREE.InstancedBufferGeometry);
+		expect(mesh.geometry.getAttribute('position').count).toBe(4);
+		expect(mesh.geometry.index?.count).toBe(6);
+		expect(mesh.userData.gpuNativeUtciSurfaceState.renderTopology).toBe('active-cells');
+		expect(
+			mesh.userData.gpuNativeUtciSurfaceState.cellToPointStorageAttribute
+		).toBeUndefined();
+	});
+
 	it('maps inactive compute-buffer surface cells to the GPU opacity sentinel', () => {
 		const mesh = createComputeBufferUtciSurfaceMesh({
-			layout: {
+			layout: createDenseLayout({
 				width: 2,
 				height: 2,
 				gridSize: 1,
@@ -1790,7 +1874,7 @@ describe('pointCloudService UTCI surface seam', () => {
 					-1, 1
 				]),
 				colorBuffer: new Uint8Array(16)
-			},
+			}),
 			utciBuffer: {} as GPUBuffer,
 			utciRange: { min: 10, max: 40 }
 		});
@@ -1807,7 +1891,7 @@ describe('pointCloudService UTCI surface seam', () => {
 
 	it('creates compute-buffer Shading Index surfaces with metric-aware range and color policy', () => {
 		const mesh = createComputeBufferUtciSurfaceMesh({
-			layout: {
+			layout: createDenseLayout({
 				width: 1,
 				height: 1,
 				gridSize: 1,
@@ -1824,7 +1908,7 @@ describe('pointCloudService UTCI surface seam', () => {
 				indexToColumn: new Uint32Array([0]),
 				indexToTexel: new Uint32Array([0]),
 				colorBuffer: new Uint8Array(4)
-			},
+			}),
 			utciBuffer: {} as GPUBuffer,
 			utciRange: { min: 10, max: 40 },
 			metricType: 'shading_index',
@@ -1862,7 +1946,7 @@ describe('pointCloudService UTCI surface seam', () => {
 
 	it('uses indexed shared-grid geometry for compute-buffer surfaces', () => {
 		const mesh = createComputeBufferUtciSurfaceMesh({
-			layout: {
+			layout: createDenseLayout({
 				width: 2,
 				height: 1,
 				gridSize: 1,
@@ -1879,7 +1963,7 @@ describe('pointCloudService UTCI surface seam', () => {
 				indexToColumn: new Uint32Array([0, 1]),
 				indexToTexel: new Uint32Array([0, 1]),
 				colorBuffer: new Uint8Array(8)
-			},
+			}),
 			utciBuffer: {} as GPUBuffer,
 			utciRange: { min: 10, max: 40 }
 		});
@@ -1893,6 +1977,7 @@ describe('pointCloudService UTCI surface seam', () => {
 
 	it('sets analytic bounds for indexed compute-buffer surfaces', () => {
 		const layout = buildUtciGridLayout(createAnalysis());
+		expectDenseLayout(layout);
 		const trace: SelectedHourRenderSurfaceMeshTrace = { action: 'created', totalMs: 0 };
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout,
@@ -1923,6 +2008,7 @@ describe('pointCloudService UTCI surface seam', () => {
 				utciValues: [10, 11, 12, 13, 14, 15]
 			})
 		);
+		expectDenseLayout(layout);
 		const trace: SelectedHourRenderSurfaceMeshTrace = { action: 'created', totalMs: 0 };
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout,
@@ -1941,7 +2027,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('updates compute-buffer surfaces by storing pending GPU source and refreshing uniforms only', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 2,
 			height: 1,
 			gridSize: 1,
@@ -1958,7 +2044,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			indexToColumn: new Uint32Array([0, 1]),
 			indexToTexel: new Uint32Array([0, 1]),
 			colorBuffer: new Uint8Array(2 * 4)
-		};
+		});
 		const initialBuffer = {} as GPUBuffer;
 		const nextBuffer = {} as GPUBuffer;
 		const mesh = createComputeBufferUtciSurfaceMesh({
@@ -1987,7 +2073,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('expects compute-buffer compatibility to use shared-grid position vertices', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 2,
 			height: 1,
 			gridSize: 1,
@@ -2005,7 +2091,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			cellToPointIndex: new Int32Array([0, 1]),
 			indexToTexel: new Uint32Array([0, 1]),
 			colorBuffer: new Uint8Array(2 * 4)
-		};
+		});
 		const sharedGridVertexCount = (layout.width + 1) * (layout.height + 1);
 		const nonIndexedVertexCount = layout.width * layout.height * 6;
 
@@ -2048,7 +2134,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('respects a precomputed incompatible update result without recomputing the live predicate', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 2,
 			height: 1,
 			gridSize: 1,
@@ -2066,7 +2152,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			cellToPointIndex: new Int32Array([0, 1]),
 			indexToTexel: new Uint32Array([0, 1]),
 			colorBuffer: new Uint8Array(2 * 4)
-		};
+		});
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout,
 			utciBuffer: {} as GPUBuffer,
@@ -2098,7 +2184,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('reports compute-buffer layout compatibility without mutating surface state', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 2,
 			height: 1,
 			gridSize: 1,
@@ -2116,7 +2202,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			cellToPointIndex: new Int32Array([0, 1]),
 			indexToTexel: new Uint32Array([0, 1]),
 			colorBuffer: new Uint8Array(2 * 4)
-		};
+		});
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout,
 			utciBuffer: {} as GPUBuffer,
@@ -2154,7 +2240,7 @@ describe('pointCloudService UTCI surface seam', () => {
 	});
 
 	it('rejects compute-buffer layout reuse when ambiguous cells rebuild to a different effective mapping', () => {
-		const layout = {
+		const layout = createDenseLayout({
 			width: 1,
 			height: 1,
 			gridSize: 1,
@@ -2172,7 +2258,7 @@ describe('pointCloudService UTCI surface seam', () => {
 			cellToPointIndex: new Int32Array([-2]),
 			indexToTexel: new Uint32Array([0, 0]),
 			colorBuffer: new Uint8Array(4)
-		};
+		});
 		const mesh = createComputeBufferUtciSurfaceMesh({
 			layout,
 			utciBuffer: {} as GPUBuffer,
@@ -2226,7 +2312,7 @@ describe('pointCloudService UTCI surface seam', () => {
 
 	it('rejects compute-buffer surface updates when the layout changes', () => {
 		const mesh = createComputeBufferUtciSurfaceMesh({
-			layout: {
+			layout: createDenseLayout({
 				width: 1,
 				height: 1,
 				gridSize: 1,
@@ -2243,14 +2329,14 @@ describe('pointCloudService UTCI surface seam', () => {
 				indexToColumn: new Uint32Array([0]),
 				indexToTexel: new Uint32Array([0]),
 				colorBuffer: new Uint8Array(4)
-			},
+			}),
 			utciBuffer: {} as GPUBuffer,
 			utciRange: { min: 10, max: 40 }
 		});
 
 		expect(
 			updateComputeBufferUtciSurfaceMesh(mesh, {
-				layout: {
+				layout: createDenseLayout({
 					width: 2,
 					height: 1,
 					gridSize: 1,
@@ -2267,7 +2353,7 @@ describe('pointCloudService UTCI surface seam', () => {
 					indexToColumn: new Uint32Array([0, 1]),
 					indexToTexel: new Uint32Array([0, 1]),
 					colorBuffer: new Uint8Array(8)
-				},
+				}),
 				utciBuffer: {} as GPUBuffer,
 				utciRange: { min: 5, max: 55 }
 			})

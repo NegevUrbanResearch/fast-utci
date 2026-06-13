@@ -7,7 +7,6 @@
 import * as THREE from 'three';
 import type {
 	Analysis,
-	AnalysisActiveMask,
 	AnalysisMetadata,
 	AnalysisRectangularBounds,
 	UTCIData
@@ -18,10 +17,8 @@ import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
-import { resolveCanonicalGridAxes } from '$lib/compute/core/canonicalGridAxes';
 import type {
 	SelectedHourRenderLayoutBuildTrace,
-	SelectedHourRenderLayoutConstructionMode,
 	SelectedHourRenderLayoutNormalizationSignature,
 	SelectedHourRenderLayoutReuseProofTrace
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
@@ -34,6 +31,13 @@ import {
 	type UtciGridLayoutPointCompatibilityEvaluation,
 	updateGpuNativeUtciSurfaceMesh
 } from './gpuUtciRenderBridge';
+import {
+	buildActiveMaskUtciGridLayout,
+	getRenderableActiveMask,
+	resolveActiveMaskViewerLayout,
+	type DenseUtciGridLayout,
+	type UtciGridLayout
+} from './utciGridLayoutTopology';
 
 // Vertical separation between the UTCI overlay and underlying geometry.
 // Use a small negative offset so the UTCI plane sits just below the sampled
@@ -44,29 +48,7 @@ const DEFAULT_OPACITY = 0.9;
 const TEXTURE_ALPHA = 255;
 const AMBIGUOUS_CELL_POINT_INDEX = -2;
 
-export interface UtciGridLayout {
-	width: number;
-	height: number;
-	gridSize: number;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
-	numPositions: number;
-	minX: number;
-	minZ: number;
-	minY: number;
-	maxY: number;
-	centerX: number;
-	centerZ: number;
-	baseY: number;
-	indexToRow: Uint32Array;
-	indexToColumn: Uint32Array;
-	cellToPointIndex?: Int32Array;
-	indexToTexel: Uint32Array;
-	colorBuffer: Uint8Array;
-	positionsIdentityId?: number;
-	constructionMode?: SelectedHourRenderLayoutConstructionMode;
-	normalizationSignature?: SelectedHourRenderLayoutNormalizationSignature;
-	texture?: THREE.DataTexture;
-}
+export type { ActiveCellsUtciGridLayout, DenseUtciGridLayout, UtciGridLayout } from './utciGridLayoutTopology';
 
 export type UtciGridLayoutBuildDiagnostics = Partial<SelectedHourRenderLayoutBuildTrace>;
 export type UtciGridLayoutReuseProofDiagnostics = SelectedHourRenderLayoutReuseProofTrace;
@@ -205,12 +187,20 @@ interface ResolvedUtciSurfaceMeshOptions {
 
 interface UtciSurfaceBackend {
 	type: UtciSurfaceBackendType;
-	createMesh: (layout: UtciGridLayout, colors: Float32Array) => THREE.Mesh;
-	updateMesh: (mesh: THREE.Mesh, layout: UtciGridLayout, colors: Float32Array) => boolean;
+	createMesh: (layout: DenseUtciGridLayout, colors: Float32Array) => THREE.Mesh;
+	updateMesh: (mesh: THREE.Mesh, layout: DenseUtciGridLayout, colors: Float32Array) => boolean;
 	disposeMesh: (mesh: THREE.Mesh) => void;
 }
 
 const DEFAULT_UTCI_SURFACE_BACKEND: UtciSurfaceBackendType = 'dataTexture';
+
+function assertDenseUtciGridLayout(layout: UtciGridLayout): asserts layout is DenseUtciGridLayout {
+	if (layout.renderTopology !== 'dense-grid') {
+		throw new Error(
+			`UTCI ${layout.renderTopology} layouts require the compute-buffer surface path.`
+		);
+	}
+}
 
 /**
  * Create UTCI point cloud geometry and material
@@ -271,6 +261,7 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 	dataTexture: {
 		type: 'dataTexture',
 		createMesh(layout, colors) {
+			assertDenseUtciGridLayout(layout);
 			fillColorBuffer(layout, colors);
 
 			const texture = new THREE.DataTexture(
@@ -308,6 +299,7 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 			return mesh;
 		},
 		updateMesh(mesh, layout, colors) {
+			assertDenseUtciGridLayout(layout);
 			const material = mesh.material as THREE.MeshBasicMaterial;
 			const texture = layout.texture ?? (material.map as THREE.DataTexture | null);
 			if (!texture) {
@@ -329,6 +321,7 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 	gpuNative: {
 		type: 'gpuNative',
 		createMesh(layout, colors) {
+			assertDenseUtciGridLayout(layout);
 			const mesh = createGpuNativeUtciSurfaceMesh({ layout, colors, opacity: DEFAULT_OPACITY });
 			applySurfaceMeshState(mesh, layout, 'gpuNative');
 			incrementSelectedHourTransferCount(mesh);
@@ -336,6 +329,7 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 			return mesh;
 		},
 		updateMesh(mesh, layout, colors) {
+			assertDenseUtciGridLayout(layout);
 			const updated = updateGpuNativeUtciSurfaceMesh(mesh, {
 				layout,
 				colors,
@@ -517,6 +511,7 @@ export function updateUtciSurfaceMesh(mesh: THREE.Mesh, options: UtciSurfaceMesh
 		return false;
 	}
 
+	assertDenseUtciGridLayout(nextLayout);
 	nextLayout.texture = layout.texture;
 	const colors = createColors(
 		resolved.analysis,
@@ -570,6 +565,7 @@ export function disposeUtciSurfaceMesh(mesh: THREE.Mesh | null): void {
 
 function createUtciSurfaceMeshInternal(options: ResolvedUtciSurfaceMeshOptions): THREE.Mesh {
 	const layout = buildUtciGridLayout(options.analysis);
+	assertDenseUtciGridLayout(layout);
 	const colors = createColors(
 		options.analysis,
 		options.hourIndex,
@@ -648,7 +644,7 @@ function canReuseUtciSurfaceLayout(current: UtciGridLayout, next: UtciGridLayout
 	);
 }
 
-function createUtciSurfacePlaneGeometry(layout: UtciGridLayout): THREE.PlaneGeometry {
+function createUtciSurfacePlaneGeometry(layout: DenseUtciGridLayout): THREE.PlaneGeometry {
 	const planeWidth = layout.width * layout.gridSize;
 	const planeHeight = layout.height * layout.gridSize;
 	const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
@@ -740,12 +736,15 @@ function normalizationSignaturesMatch(
 }
 
 function estimateRetainedCpuLayoutBytes(layout: UtciGridLayout): number {
+	if (layout.renderTopology === 'active-cells') {
+		return layout.activeCanonicalIndices.byteLength;
+	}
 	return (
 		layout.indexToRow.byteLength +
 		layout.indexToColumn.byteLength +
 		(layout.cellToPointIndex?.byteLength ?? 0) +
-		layout.indexToTexel.byteLength +
-		layout.colorBuffer.byteLength
+		(layout.indexToTexel?.byteLength ?? 0) +
+		(layout.colorBuffer?.byteLength ?? 0)
 	);
 }
 
@@ -809,18 +808,6 @@ type UtciLayoutBaseParams = {
 	normalizationOffset: THREE.Vector3;
 };
 
-type ActiveMaskViewerLayout = {
-	activeMask: AnalysisActiveMask;
-	minX: number;
-	maxX: number;
-	minZ: number;
-	maxZ: number;
-	minY: number;
-	maxY: number;
-	width: number;
-	height: number;
-};
-
 function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
 	const coordinateSystem = analysis.metadata.coordinate_system || 'xy_ground';
 	const gridSize = analysis.metadata.grid_size || 1;
@@ -829,7 +816,7 @@ function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
 
 	if (normalizationEnabled) {
-		const scenarioOrigin = calculateScenarioOrigin(analysis.metadata as any);
+		const scenarioOrigin = calculateScenarioOrigin(analysis.metadata);
 		const anchorOffset = getAnchorOffset();
 
 		let transformedOrigin: THREE.Vector3;
@@ -854,77 +841,6 @@ function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
 		coordinateSystem,
 		numPositions,
 		normalizationOffset
-	};
-}
-
-function getRenderableActiveMask(
-	metadata: AnalysisMetadata,
-	numPositions: number
-): AnalysisActiveMask | null {
-	const activeMask = metadata.activeMask;
-	if (
-		(activeMask?.source !== 'base' && activeMask?.source !== 'base+road') ||
-		activeMask.activeCanonicalIndices.length !== numPositions ||
-		activeMask.activePointCount !== numPositions
-	) {
-		return null;
-	}
-	return activeMask;
-}
-
-function resolveActiveMaskViewerLayout(params: {
-	bounds: AnalysisRectangularBounds | undefined;
-	activeMask: AnalysisActiveMask | null;
-	gridSize: number;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
-	normalizationOffset: THREE.Vector3;
-}): ActiveMaskViewerLayout | null {
-	const { bounds, activeMask, gridSize, coordinateSystem, normalizationOffset } =
-		params;
-	if (!bounds || !activeMask) {
-		return null;
-	}
-
-	const axes = resolveCanonicalGridAxes({
-		bounds,
-		gridSize,
-		coordinateSystem
-	});
-	const minX = axes.minX + normalizationOffset.x;
-	const maxX = axes.maxX + normalizationOffset.x;
-	const minZ = axes.minZ + normalizationOffset.z;
-	const maxZ = axes.maxZ + normalizationOffset.z;
-	const minY = (bounds.z ?? 0) + normalizationOffset.y;
-	const maxY = minY;
-
-	return {
-		activeMask,
-		minX,
-		maxX,
-		minZ,
-		maxZ,
-		minY,
-		maxY,
-		width: axes.width,
-		height: axes.height
-	};
-}
-
-function getActiveMaskGridCell(params: {
-	canonicalIndex: number;
-	width: number;
-	height: number;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
-}): { row: number; col: number } {
-	const canonicalRow = params.canonicalIndex % params.height;
-	return {
-		col: Math.min(params.width - 1, Math.floor(params.canonicalIndex / params.height)),
-		row: Math.min(
-			params.height - 1,
-			params.coordinateSystem === 'xy_ground'
-				? params.height - 1 - canonicalRow
-				: canonicalRow
-		)
 	};
 }
 
@@ -1694,31 +1610,10 @@ export function buildUtciGridLayout(
 	const startedAt = diagnostics ? performance.now() : undefined;
 	const normalizationEnabled = isNormalizationEnabled();
 
-	const allocationStartedAt = diagnostics ? performance.now() : undefined;
-	const xs = new Float32Array(numPositions);
-	const ys = new Float32Array(numPositions);
-	const zs = new Float32Array(numPositions);
-
-	const indexToTexel = new Uint32Array(numPositions);
-	const rows = new Uint32Array(numPositions);
-	const cols = new Uint32Array(numPositions);
-	if (diagnostics && allocationStartedAt !== undefined) {
-		diagnostics.arrayAllocationMs = performance.now() - allocationStartedAt;
-	}
-
-	let minX = Infinity;
-	let minZ = Infinity;
-	let maxX = -Infinity;
-	let maxZ = -Infinity;
-	let minY = Infinity;
-	let maxY = -Infinity;
-
-	const transformed = new THREE.Vector3();
-
 	// Calculate normalization offset if enabled
 	let normalizationOffset = new THREE.Vector3(0, 0, 0);
 	if (normalizationEnabled) {
-		const scenarioOrigin = calculateScenarioOrigin(metadata as any);
+		const scenarioOrigin = calculateScenarioOrigin(metadata);
 		const anchorOffset = getAnchorOffset();
 		
 		// Transform scenario origin to world space to match the coordinate system
@@ -1740,6 +1635,54 @@ export function buildUtciGridLayout(
 			normalizationOffset.set(0, 0, 0);
 		}
 	}
+
+	const normalizationSignature = createNormalizationSignature({
+		enabled: normalizationEnabled,
+		offset: normalizationOffset
+	});
+	const bounds = metadata.bounds as AnalysisRectangularBounds | undefined;
+	const activeMaskLayout = resolveActiveMaskViewerLayout({
+		bounds,
+		activeMask: getRenderableActiveMask(metadata, numPositions),
+		gridSize,
+		coordinateSystem,
+		normalizationOffset
+	});
+	if (activeMaskLayout) {
+		if (diagnostics && startedAt !== undefined) {
+			diagnostics.totalMs = performance.now() - startedAt;
+		}
+		return buildActiveMaskUtciGridLayout({
+			activeMaskLayout,
+			gridSize,
+			coordinateSystem,
+			numPositions,
+			positionsIdentityId: getPositionsIdentityId(data.positions),
+			normalizationSignature,
+			visualLayerOffset: VISUAL_LAYER_OFFSET
+		});
+	}
+
+	const allocationStartedAt = diagnostics ? performance.now() : undefined;
+	const xs = new Float32Array(numPositions);
+	const ys = new Float32Array(numPositions);
+	const zs = new Float32Array(numPositions);
+
+	const indexToTexel = new Uint32Array(numPositions);
+	const rows = new Uint32Array(numPositions);
+	const cols = new Uint32Array(numPositions);
+	if (diagnostics && allocationStartedAt !== undefined) {
+		diagnostics.arrayAllocationMs = performance.now() - allocationStartedAt;
+	}
+
+	let minX = Infinity;
+	let minZ = Infinity;
+	let maxX = -Infinity;
+	let maxZ = -Infinity;
+	let minY = Infinity;
+	let maxY = -Infinity;
+
+	const transformed = new THREE.Vector3();
 
 	const transformBoundsStartedAt = diagnostics ? performance.now() : undefined;
 	for (let i = 0; i < numPositions; i++) {
@@ -1770,7 +1713,6 @@ export function buildUtciGridLayout(
 	let width = 1;
 	let height = 1;
 	let usingBoundsFallback = false;
-	let usingActiveMaskLayout = false;
 
 	// Guard against invalid layout (e.g. NaN positions or wrong coordinate space)
 	let layoutValid =
@@ -1782,28 +1724,7 @@ export function buildUtciGridLayout(
 		Number.isFinite(maxY);
 
 	// Fallback for live/WebGPU rectangular grid: use metadata.bounds so overlay is placed in scene
-	const bounds = metadata.bounds as AnalysisRectangularBounds | undefined;
-	const activeMask = getRenderableActiveMask(metadata, numPositions);
-	const activeMaskLayout = resolveActiveMaskViewerLayout({
-		bounds,
-		activeMask,
-		gridSize,
-		coordinateSystem,
-		normalizationOffset
-	});
-	if (activeMaskLayout) {
-		usingBoundsFallback = true;
-		usingActiveMaskLayout = true;
-		minX = activeMaskLayout.minX;
-		maxX = activeMaskLayout.maxX;
-		minZ = activeMaskLayout.minZ;
-		maxZ = activeMaskLayout.maxZ;
-		minY = activeMaskLayout.minY;
-		maxY = activeMaskLayout.maxY;
-		width = activeMaskLayout.width;
-		height = activeMaskLayout.height;
-		layoutValid = true;
-	} else if (!layoutValid && bounds && (analysis as any).__source === 'webgpu') {
+	if (!layoutValid && bounds && (analysis as { __source?: string }).__source === 'webgpu') {
 		usingBoundsFallback = true;
 		if (coordinateSystem === 'xy_ground') {
 			minX = bounds.x_min;
@@ -1826,7 +1747,7 @@ export function buildUtciGridLayout(
 		layoutValid = true;
 		console.log('[UTCI] Using metadata.bounds fallback for live overlay placement.', { minX, maxX, minZ, maxZ, width, height });
 	} else if (!layoutValid) {
-		const source = (analysis as any).__source;
+		const source = (analysis as { __source?: string }).__source;
 		console.warn(
 			'[UTCI] Invalid grid layout (non-finite bounds) – overlay may not show. Source:',
 			source ?? 'unknown',
@@ -1836,17 +1757,7 @@ export function buildUtciGridLayout(
 
 	if (layoutValid) {
 		const coordinateAssignmentStartedAt = diagnostics ? performance.now() : undefined;
-		if (usingActiveMaskLayout && activeMaskLayout) {
-			assignActiveMaskGridCoordinates(
-				rows,
-				cols,
-				numPositions,
-				width,
-				height,
-				activeMaskLayout.activeMask.activeCanonicalIndices,
-				coordinateSystem
-			);
-		} else if (usingBoundsFallback) {
+		if (usingBoundsFallback) {
 			assignFallbackGridCoordinates(rows, cols, numPositions, width, height);
 		} else {
 			const dimensions = assignGridCoordinatesFromWorldPositions({
@@ -1867,11 +1778,6 @@ export function buildUtciGridLayout(
 				performance.now() - coordinateAssignmentStartedAt;
 		}
 	}
-	const normalizationSignature = createNormalizationSignature({
-		enabled: normalizationEnabled,
-		offset: normalizationOffset
-	});
-
 	const indexToTexelStartedAt = diagnostics ? performance.now() : undefined;
 	for (let i = 0; i < numPositions; i++) {
 		const flippedRow = height - 1 - rows[i];
@@ -1911,6 +1817,7 @@ export function buildUtciGridLayout(
 	const baseY = layoutValid ? minY + VISUAL_LAYER_OFFSET : 0;
 
 	return {
+		renderTopology: 'dense-grid',
 		width,
 		height,
 		gridSize,
@@ -1925,6 +1832,8 @@ export function buildUtciGridLayout(
 		baseY,
 		indexToRow: rows,
 		indexToColumn: cols,
+		renderCellCount: width * height,
+		canonicalCellCount: width * height,
 		cellToPointIndex,
 		indexToTexel,
 		colorBuffer,
@@ -1990,28 +1899,6 @@ function assignFallbackGridCoordinates(
 	}
 }
 
-function assignActiveMaskGridCoordinates(
-	rows: Uint32Array,
-	cols: Uint32Array,
-	numPositions: number,
-	width: number,
-	height: number,
-	activeCanonicalIndices: Uint32Array,
-	coordinateSystem: 'xy_ground' | 'xz_ground'
-): void {
-	for (let pointIndex = 0; pointIndex < numPositions; pointIndex += 1) {
-		const canonicalIndex = activeCanonicalIndices[pointIndex];
-		const cell = getActiveMaskGridCell({
-			canonicalIndex,
-			width,
-			height,
-			coordinateSystem
-		});
-		cols[pointIndex] = cell.col;
-		rows[pointIndex] = cell.row;
-	}
-}
-
 function createCellToPointIndex(params: {
 	rows: Uint32Array;
 	cols: Uint32Array;
@@ -2050,7 +1937,7 @@ function createCellToPointIndex(params: {
 	return cellToPointIndex;
 }
 
-function fillColorBuffer(layout: UtciGridLayout, colors: Float32Array): void {
+function fillColorBuffer(layout: DenseUtciGridLayout, colors: Float32Array): void {
 	layout.colorBuffer.fill(0);
 
 	for (let i = 0; i < layout.numPositions; i++) {

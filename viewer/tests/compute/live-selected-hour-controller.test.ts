@@ -2848,6 +2848,93 @@ describe('liveSelectedHourController', () => {
 		nowSpy.mockRestore();
 	});
 
+	it('keeps active instance-proof preflight failures graceful without falling back to CPU dense publication', async () => {
+		const gpu = createGpuResidentOutput(99, 99);
+		const loadCpuFallback = vi.fn(async () => ({
+			analysis: createSelectionAnalysis('cpu-fallback-should-not-load', [18, 22]),
+			cpuFallbackValues: new Float32Array([18, 22])
+		}));
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const sessionMock = createSessionMock([
+			async () =>
+				createLiveResult({
+					requestId: 99,
+					timeIndex: 99,
+					analysis: createSelectionAnalysis('active-preflight-failure', [18, 22]),
+					gpuResidentOutput: gpu.accepted,
+					loadCpuFallback,
+					renderTransport: 'compute-buffer-selected-hour',
+					sameDeviceForComputeAndRender: true,
+					pendingRenderUpdateStartedAt: 9900,
+					diagnostics
+				})
+		]);
+		const controller = createLiveSelectedHourController({
+			prepareSession: vi.fn(async () => sessionMock.session)
+		});
+
+		await controller.requestSelection(createRequestParams(99));
+		await controller.handleRenderSurfaceDiagnostics({
+			...createCurrentGpuCopyDiagnostics(
+				controller,
+				'failed',
+				'Active UTCI render allocation preflight failed: active instanced rendering requires Three TSL instanceIndex support: Three TSL instanceIndex is unavailable or not an instance uint node.'
+			),
+			renderPublication: createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: 'initial',
+				renderPublicationMeshAction: 'skipped',
+				renderPublicationPointCount: 3,
+				renderAllocationPreflight: {
+					status: 'failed',
+					renderTopology: 'active-cells',
+					renderCellCount: 3,
+					canonicalCellCount: 6,
+					activePointCount: 3,
+					estimatedRenderGeometryBytes: 84,
+					estimatedLargestSingleRenderAllocationBytes: 48,
+					estimatedDenseRectGeometryBytes: 168,
+					estimatedLargestJsTypedArrayBytes: 48,
+					jsLargestTypedArrayByteLimit: 268_435_456,
+					rendererMaxBufferSize: 1024,
+					rendererMaxStorageBufferBindingSize: 1024,
+					activeRenderStrategy: 'active-instanced-quads',
+					activeRenderInstanceCount: 3,
+					activeRenderSharedVertexCount: 4,
+					activeRenderSharedIndexCount: 6,
+					activeCanonicalIndexBufferBytes: 12,
+					failureReasons: [
+						'active instanced rendering requires Three TSL instanceIndex support: Three TSL instanceIndex is unavailable or not an instance uint node.'
+					],
+					forbiddenDenseAllocationProof: {
+						noDenseCellToPointStorageAttribute: true,
+						noDenseColorBuffer: true,
+						noWidthHeightRenderGeometry: true,
+						noPerActiveCellDuplicatedVertexBuffer: true,
+						noPerActiveCellDuplicatedIndexBuffer: true,
+						sharedQuadVertexIndexBuffersConstantSize: true,
+						instanceCountEqualsActivePointCount: true,
+						noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting: true
+					}
+				}
+			})
+		});
+
+		const state = controller.getState();
+		expect(loadCpuFallback).not.toHaveBeenCalled();
+		expect(state.loading).toBe(false);
+		expect(state.renderTransport).toBe('compute-buffer-selected-hour');
+		expect(state.error).toMatch(/allocation preflight failed/i);
+		expect(state.runtimeDiagnostics?.timings.renderPublication).toMatchObject({
+			renderAllocationPreflight: {
+				status: 'failed',
+				renderTopology: 'active-cells',
+				activeRenderStrategy: 'active-instanced-quads'
+			}
+		});
+		expect(state.acceptedVisibleSurface).toBeNull();
+	});
+
 	it('clears render-owned GPU memory diagnostics when the surface is disposed', async () => {
 		const gpu = createGpuResidentOutput(95, 95);
 		const diagnostics = createEmptyOnDemandDiagnostics();

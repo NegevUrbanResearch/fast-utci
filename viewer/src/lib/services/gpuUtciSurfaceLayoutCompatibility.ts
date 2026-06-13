@@ -1,5 +1,5 @@
 import type { F32MetricType } from '$lib/compute/on-demand/onDemandOutputFormat';
-import type { UtciGridLayout } from './pointCloudService';
+import type { DenseUtciGridLayout, UtciGridLayout } from './utciGridLayoutTopology';
 
 export type GpuNativeUtciSurfaceSource =
 	| 'cpu-uploaded-selected-hour'
@@ -14,6 +14,8 @@ export type UtciGridLayoutPointCompatibilityEvaluation = {
 
 export type ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot = {
 	source: GpuNativeUtciSurfaceSource;
+	renderTopology?: UtciGridLayout['renderTopology'];
+	activeMaskSignature?: string;
 	metricType?: F32MetricType;
 	width: number;
 	height: number;
@@ -76,6 +78,7 @@ export function evaluateComputeBufferUtciSurfaceLayoutCompatibility(params: {
 		};
 	}
 
+	const stateRenderTopology = state.renderTopology ?? 'dense-grid';
 	const expectedVertexCount = getComputeBufferSurfaceVertexCount(params.nextLayout);
 	const widthMatch = state.width === params.nextLayout.width;
 	const metricTypeMatch =
@@ -84,6 +87,10 @@ export function evaluateComputeBufferUtciSurfaceLayoutCompatibility(params: {
 	const gridSizeMatch = state.gridSize === params.nextLayout.gridSize;
 	const vertexCountMatch = state.vertexCount === expectedVertexCount;
 	const storageCountMatch = state.storageCount === params.nextLayout.numPositions;
+	const topologyMatch = stateRenderTopology === params.nextLayout.renderTopology;
+	const activeMaskSignatureMatch =
+		params.nextLayout.renderTopology !== 'active-cells' ||
+		state.activeMaskSignature === params.nextLayout.activeMaskSignature;
 
 	if (!params.previousLayout) {
 		return {
@@ -110,6 +117,8 @@ export function evaluateComputeBufferUtciSurfaceLayoutCompatibility(params: {
 
 	return {
 		compatible:
+			topologyMatch &&
+			activeMaskSignatureMatch &&
 			widthMatch &&
 			metricTypeMatch &&
 			heightMatch &&
@@ -141,6 +150,7 @@ export function evaluateUtciGridLayoutsPointCompatibility(
 		options?.allowExpensiveMappingComparison ?? true;
 
 	if (
+		previousLayout.renderTopology !== nextLayout.renderTopology ||
 		previousLayout.numPositions !== nextLayout.numPositions ||
 		previousLayout.coordinateSystem !== nextLayout.coordinateSystem ||
 		previousLayout.minX !== nextLayout.minX ||
@@ -150,6 +160,19 @@ export function evaluateUtciGridLayoutsPointCompatibility(
 		return {
 			compatible: false,
 			cellToPointMappingMatch: null,
+			requiredExpensiveMappingComparison: false,
+			performedExpensiveMappingComparison: false
+		};
+	}
+
+	if (previousLayout.renderTopology === 'active-cells' || nextLayout.renderTopology === 'active-cells') {
+		const mappingMatch =
+			previousLayout.renderTopology === 'active-cells' &&
+			nextLayout.renderTopology === 'active-cells' &&
+			previousLayout.activeMaskSignature === nextLayout.activeMaskSignature;
+		return {
+			compatible: mappingMatch,
+			cellToPointMappingMatch: mappingMatch,
 			requiredExpensiveMappingComparison: false,
 			performedExpensiveMappingComparison: false
 		};
@@ -240,6 +263,7 @@ export function areUtciGridLayoutsPointCompatible(
 }
 
 export function createCellToPointIndexArray(layout: UtciGridLayout): Uint32Array {
+	assertDenseComputeBufferLayout(layout);
 	const cellCount = layout.width * layout.height;
 	const inactivePointIndex = layout.numPositions;
 	const cellToPoint = getCellToPointIndex(layout, cellCount);
@@ -253,6 +277,7 @@ export function createCellToPointIndexArray(layout: UtciGridLayout): Uint32Array
 }
 
 export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Array {
+	assertDenseComputeBufferLayout(layout);
 	const cellCount = layout.width * layout.height;
 	const cellToPoint = createCellToPointIndexArray(layout);
 	const indices = new Uint32Array(cellCount * SURFACE_VERTICES_PER_CELL);
@@ -268,10 +293,13 @@ export function createVertexToPointIndexArray(layout: UtciGridLayout): Uint32Arr
 }
 
 export function getComputeBufferSurfaceVertexCount(layout: UtciGridLayout): number {
+	if (layout.renderTopology === 'active-cells') {
+		return 4;
+	}
 	return (layout.width + 1) * (layout.height + 1);
 }
 
-function getCellToPointIndex(layout: UtciGridLayout, cellCount: number): Int32Array {
+function getCellToPointIndex(layout: DenseUtciGridLayout, cellCount: number): Int32Array {
 	if (
 		layout.cellToPointIndex?.length === cellCount &&
 		!hasAmbiguousCellEntries(layout.cellToPointIndex)
@@ -293,6 +321,16 @@ function getCellToPointIndex(layout: UtciGridLayout, cellCount: number): Int32Ar
 	}
 
 	return cellToPoint;
+}
+
+function assertDenseComputeBufferLayout(
+	layout: UtciGridLayout
+): asserts layout is DenseUtciGridLayout {
+	if (layout.renderTopology !== 'dense-grid') {
+		throw new Error(
+			`UTCI ${layout.renderTopology} layouts cannot use dense compute-buffer surface allocation before Task 3 active render strategy.`
+		);
+	}
 }
 
 function hasAmbiguousCellEntries(cellToPointIndex: Int32Array): boolean {

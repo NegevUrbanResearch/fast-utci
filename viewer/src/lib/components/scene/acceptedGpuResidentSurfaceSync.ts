@@ -231,6 +231,7 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 		run: AcceptedGpuResidentSurfaceSyncRun,
 		paramsForFailure: AcceptedGpuResidentSurfaceSyncLiveState & {
 			errorMessage: string;
+			renderTimings?: SelectedHourRenderTimingSubsteps;
 		}
 	): AcceptedGpuResidentSurfaceSyncTerminalResult {
 		if (
@@ -245,7 +246,8 @@ export function createAcceptedGpuResidentSurfaceSync(params: {
 		}
 		params.setCopyDiagnostics('failed', {
 			error: paramsForFailure.errorMessage,
-			requestId: run.requestId
+			requestId: run.requestId,
+			renderTimings: paramsForFailure.renderTimings
 		});
 		return 'failed';
 	}

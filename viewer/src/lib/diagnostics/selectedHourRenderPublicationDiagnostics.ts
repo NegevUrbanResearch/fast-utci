@@ -16,6 +16,53 @@ export type SelectedHourRenderSurfaceMeshTraceAction =
 	| 'updated'
 	| 'update-failed-created';
 
+export type SelectedHourForbiddenDenseAllocationProof = {
+	noDenseCellToPointStorageAttribute: boolean;
+	noDenseColorBuffer: boolean;
+	noWidthHeightRenderGeometry: boolean;
+	noPerActiveCellDuplicatedVertexBuffer: boolean;
+	noPerActiveCellDuplicatedIndexBuffer: boolean;
+	sharedQuadVertexIndexBuffersConstantSize: boolean;
+	instanceCountEqualsActivePointCount: boolean;
+	noFullDenseTooltipReverseMapWithoutExplicitApprovalAndByteAccounting: boolean;
+};
+
+export type SelectedHourRenderAllocationPreflight = {
+	status: 'passed' | 'failed';
+	renderTopology: 'dense-grid' | 'active-cells';
+	renderCellCount: number;
+	canonicalCellCount: number;
+	activePointCount?: number;
+	estimatedRenderGeometryBytes: number;
+	estimatedLargestSingleRenderAllocationBytes: number;
+	estimatedDenseRectGeometryBytes?: number;
+	estimatedLargestJsTypedArrayBytes?: number;
+	jsLargestTypedArrayByteLimit?: number;
+	rendererMaxBufferSize?: number;
+	rendererMaxStorageBufferBindingSize?: number;
+	activeRenderStrategy?: 'active-instanced-quads';
+	activeRenderInstanceCount?: number;
+	activeRenderSharedVertexCount?: number;
+	activeRenderSharedIndexCount?: number;
+	activeCanonicalIndexBufferBytes?: number;
+	failureReasons?: string[];
+	forbiddenDenseAllocationProof?: SelectedHourForbiddenDenseAllocationProof;
+};
+
+export type SelectedHourRenderStorageCopyPreflight = {
+	status: 'passed' | 'failed';
+	sourceByteLength: number;
+	targetByteLength?: number;
+	requestedByteLength?: number;
+	byteLengthsMatch: boolean;
+	sourceUsage?: number;
+	targetUsage?: number;
+	sourceHasCopySrcUsage?: boolean;
+	targetHasCopyDstUsage?: boolean;
+	targetHasStorageUsage?: boolean;
+	failureReasons?: string[];
+};
+
 export type SelectedHourRenderLayoutBuildTrace = {
 	totalMs: number;
 	arrayAllocationMs?: number;
@@ -288,8 +335,39 @@ export type SelectedHourRenderPublicationDiagnostics = {
 	renderPublicationSourceByteLength?: number;
 	renderPublicationTargetByteLength?: number;
 	renderPublicationRenderOwnedBytes?: number;
+	renderAllocationPreflight?: SelectedHourRenderAllocationPreflight;
+	renderStorageCopyPreflight?: SelectedHourRenderStorageCopyPreflight;
 	renderPublicationTimeline?: SelectedHourRenderPublicationTimeline;
 };
+
+function copyRenderAllocationPreflight(
+	preflight: SelectedHourRenderAllocationPreflight | undefined
+): SelectedHourRenderAllocationPreflight | undefined {
+	return preflight
+		? {
+				...preflight,
+				failureReasons: preflight.failureReasons
+					? [...preflight.failureReasons]
+					: undefined,
+				forbiddenDenseAllocationProof: preflight.forbiddenDenseAllocationProof
+					? { ...preflight.forbiddenDenseAllocationProof }
+					: undefined
+			}
+		: preflight;
+}
+
+function copyRenderStorageCopyPreflight(
+	preflight: SelectedHourRenderStorageCopyPreflight | undefined
+): SelectedHourRenderStorageCopyPreflight | undefined {
+	return preflight
+		? {
+				...preflight,
+				failureReasons: preflight.failureReasons
+					? [...preflight.failureReasons]
+					: undefined
+			}
+		: preflight;
+}
 
 export function copyRenderPublicationTimeline(
 	timeline: SelectedHourRenderPublicationTimeline | undefined
@@ -444,6 +522,12 @@ export function copyRenderPublicationDiagnostics(
 	if (!diagnostics) return diagnostics;
 	return {
 		...diagnostics,
+		renderAllocationPreflight: copyRenderAllocationPreflight(
+			diagnostics.renderAllocationPreflight
+		),
+		renderStorageCopyPreflight: copyRenderStorageCopyPreflight(
+			diagnostics.renderStorageCopyPreflight
+		),
 		renderPublicationTimeline: copyRenderPublicationTimeline(
 			diagnostics.renderPublicationTimeline
 		)

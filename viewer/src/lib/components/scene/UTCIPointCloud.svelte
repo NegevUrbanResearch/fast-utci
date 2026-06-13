@@ -66,8 +66,14 @@
 	} from '$lib/components/scene/acceptedGpuResidentSurfaceSync';
 	import {
 		copyComputeBufferToRenderStorage,
+		RenderStorageCopyPreflightError,
 		waitForRenderStorageBuffer
 	} from './utciComputeBufferRenderBridge';
+	import {
+		buildUtciRenderAllocationPreflight,
+		estimateComputeBufferUtciSurfaceRenderStrategy,
+		type UtciSurfaceRenderStrategyEstimate
+	} from '$lib/services/utciSurfaceRenderStrategy';
 	import type { Group, Mesh } from 'three';
 
 	export let analysis: Analysis | null = null;
@@ -195,7 +201,10 @@
 		gpuResidentCopyStatus = status;
 		gpuResidentCopyError = options?.error;
 		gpuResidentCopyRequestId = options?.requestId;
-		gpuResidentRenderTimings = status === 'complete' ? options?.renderTimings : undefined;
+		gpuResidentRenderTimings =
+			status === 'complete' || status === 'failed'
+				? options?.renderTimings
+				: undefined;
 		publishUtciSurfaceDiagnostics();
 	}
 
@@ -265,10 +274,39 @@
 		trace[key] = (trace[key] ?? 0) + durationMs;
 	}
 
+	function getRendererBufferLimits(): {
+		maxBufferSize?: number;
+		maxStorageBufferBindingSize?: number;
+	} {
+		const limits = (
+			renderer as unknown as {
+				backend?: {
+					device?: {
+						limits?: {
+							maxBufferSize?: number;
+							maxStorageBufferBindingSize?: number;
+						};
+					};
+				};
+			}
+		).backend?.device?.limits;
+		return {
+			maxBufferSize:
+				typeof limits?.maxBufferSize === 'number'
+					? limits.maxBufferSize
+					: undefined,
+			maxStorageBufferBindingSize:
+				typeof limits?.maxStorageBufferBindingSize === 'number'
+					? limits.maxStorageBufferBindingSize
+					: undefined
+		};
+	}
+
 	function recreateComputeBufferSurface(
 		activeAnalysis: Analysis,
 		acceptedOutput: SelectedHourGpuResidentOutput,
 		layout: ReturnType<typeof extractUtciLayout>,
+		renderEstimate: UtciSurfaceRenderStrategyEstimate,
 		trace?: SelectedHourRenderSurfaceMeshTrace
 	): void {
 		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
@@ -298,6 +336,7 @@
 			utciBuffer: sourceBuffer,
 			utciRange: acceptedOutput.utciRange,
 			metricType: acceptedOutput.metricType ?? 'utci',
+			renderEstimate,
 			trace,
 			now: performance.now.bind(performance)
 		});
@@ -470,15 +509,53 @@
 			return acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
 		}
 
-		const copyTimings = await copyComputeBufferToRenderStorage({
-			device,
-			queue: device.queue,
-			sourceBuffer,
-			targetBuffer,
-			byteLength: sourceBuffer.size,
-			now: performance.now.bind(performance),
-			isSuperseded
-		});
+		let copyTimings: Awaited<ReturnType<typeof copyComputeBufferToRenderStorage>>;
+		try {
+			copyTimings = await copyComputeBufferToRenderStorage({
+				device,
+				queue: device.queue,
+				sourceBuffer,
+				targetBuffer,
+				byteLength: sourceBuffer.size,
+				now: performance.now.bind(performance),
+				isSuperseded
+			});
+		} catch (error) {
+			const copyPreflight =
+				error instanceof RenderStorageCopyPreflightError
+					? error.copyPreflight
+					: undefined;
+			if (copyPreflight) {
+				renderTimings.renderPublication = createRenderPublicationDiagnostics({
+					renderPublicationPath: 'compute-buffer-selected-hour',
+					renderPublicationPhase:
+						selectedHourRenderContext?.publicationPhase ??
+						(activeUtciLayoutReuseState != null ? 'scrub' : 'initial'),
+					renderPublicationMeshAction: meshAction,
+					renderPublicationPointCount: layout.numPositions,
+					renderPublicationVertexCount:
+						mesh.geometry.getAttribute('position')?.count ?? undefined,
+					renderPublicationIndexCount: mesh.geometry.index?.count ?? undefined,
+					renderPublicationDrawIndexCount:
+						mesh.geometry.index?.count ??
+						mesh.geometry.getAttribute('position')?.count ??
+						undefined,
+					renderPublicationGridWidth: layout.width,
+					renderPublicationGridHeight: layout.height,
+					renderPublicationGridSize: layout.gridSize,
+					renderPublicationSourceByteLength: sourceBuffer.size,
+					renderPublicationTargetByteLength: lastRenderTargetByteLength.value,
+					renderPublicationRenderOwnedBytes:
+						mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
+					renderAllocationPreflight:
+						renderTimings.renderPublication?.renderAllocationPreflight,
+					renderStorageCopyPreflight: copyPreflight,
+					renderPublicationTimeline:
+						renderTimings.renderPublication?.renderPublicationTimeline
+				});
+			}
+			throw error;
+		}
 		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
 		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
 		if (isSuperseded()) {
@@ -514,6 +591,9 @@
 			renderPublicationTargetByteLength: lastRenderTargetByteLength.value,
 			renderPublicationRenderOwnedBytes:
 				mesh.userData.renderOwnedSelectedHourBytes as number | undefined,
+			renderAllocationPreflight:
+				renderTimings.renderPublication?.renderAllocationPreflight,
+			renderStorageCopyPreflight: copyTimings.copyPreflight,
 			renderPublicationTimeline: {
 					scenePendingSurfaceObservedAtMs,
 					sceneReactiveBlockEnteredAtMs:
@@ -707,12 +787,13 @@
 			return;
 		}
 
+		let renderTimings: SelectedHourRenderTimingSubsteps | undefined;
 		try {
 			const sceneSyncAttemptStartedAtMs = performance.now();
 			const sceneSyncAttemptToken = activeSyncRun.copyRunToken;
 			const publicationEffectStartedAtMs = performance.now();
 			const syncStartedAt = sceneSyncAttemptStartedAtMs;
-			const renderTimings: SelectedHourRenderTimingSubsteps = {};
+			renderTimings = {};
 			if (pendingRenderUpdateStartedAt !== undefined) {
 				renderTimings.renderSceneSyncStartDelayMs = Math.max(
 					0,
@@ -804,6 +885,10 @@
 							activeAnalysis,
 							layoutBuildTrace ?? undefined
 						);
+			const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
+			if (!sourceBuffer) {
+				throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
+			}
 			const layoutCompatibilityStartedAt = performance.now();
 			runtimeLayoutCompatibility ??= evaluateComputeBufferUtciSurfaceLayoutCompatibility({
 					state: getComputeBufferUtciSurfaceLayoutCompatibilityState(utciSurface),
@@ -847,6 +932,88 @@
 			const renderLayoutReuseDecisionMs =
 				performance.now() - layoutReuseDecisionStartedAt;
 			const scenePublicationPlanReadyAtMs = performance.now();
+			const renderEstimate = estimateComputeBufferUtciSurfaceRenderStrategy({
+				layout,
+				utciStorageBytes: sourceBuffer.size
+			});
+			const renderAllocationPreflight = buildUtciRenderAllocationPreflight({
+				layout,
+				utciStorageBytes: sourceBuffer.size,
+				renderEstimate,
+				rendererLimits: getRendererBufferLimits()
+			});
+			renderTimings.renderPublication = createRenderPublicationDiagnostics({
+				renderPublicationPath: 'compute-buffer-selected-hour',
+				renderPublicationPhase: publicationPhase,
+				renderPublicationMeshAction: 'skipped',
+				renderPublicationPointCount: layout.numPositions,
+				renderPublicationGridWidth: layout.width,
+				renderPublicationGridHeight: layout.height,
+				renderPublicationGridSize: layout.gridSize,
+				renderPublicationSourceByteLength: sourceBuffer.size,
+				renderPublicationRenderOwnedBytes: renderEstimate.totalBytes,
+				renderAllocationPreflight,
+				renderPublicationTimeline: {
+					sceneLayoutKeyStartedAtMs,
+					sceneLayoutKeyCompletedAtMs,
+					scenePublicationPlanReadyAtMs,
+					renderLayoutBuildTrace: layoutBuildTrace,
+					renderLayoutReuseProofTrace: layoutReuseProofTrace,
+					renderLayoutReuseAction:
+						layoutPublicationPlan.action === 'reuse-existing'
+							? 'reused'
+							: 'build-required',
+					renderLayoutReuseReason: layoutPublicationPlan.reason,
+					renderLayoutReuseDecisionMs,
+					renderLayoutReuseKeyMs: layoutReuseKeyDiagnostics.keyBuildMs,
+					renderLayoutReuseSourceSignatureMs:
+						layoutReuseKeyDiagnostics.layoutSourceSignatureMs,
+					renderLayoutReusePositionsSignatureMs:
+						layoutReuseKeyDiagnostics.positionsSourceSignatureMs,
+					renderLayoutReusePositionsSignatureCacheHit:
+						layoutReuseKeyDiagnostics.positionsSourceSignatureCacheHit,
+					renderLayoutReuseFrameCacheLookupMs:
+						layoutReuseKeyDiagnostics.frameCacheLookupMs,
+					renderLayoutReuseFrameDerivationMs:
+						layoutReuseKeyDiagnostics.frameDerivationMs,
+					renderLayoutReuseFrameCacheHit:
+						layoutReuseKeyDiagnostics.frameCacheHit,
+					renderLayoutReuseFrameCacheKind:
+						layoutReuseKeyDiagnostics.frameCacheKind,
+					renderLayoutPublicationPlanMs,
+					renderLayoutCompatibilityMs,
+					renderLayoutCompatibilityRequiredExpensiveMappingComparison:
+						runtimeLayoutCompatibility.pointCompatibility
+							?.requiredExpensiveMappingComparison,
+					renderLayoutCompatibilityPerformedExpensiveMappingComparison:
+						runtimeLayoutCompatibility.pointCompatibility
+							?.performedExpensiveMappingComparison,
+					renderLayoutReuseProofMs,
+					renderLayoutReuseKeyMatch: layoutPublicationPlan.keyMatch,
+					renderLayoutReuseProofSource:
+						acceptedRefreshedLayoutReuseProof
+							? 'refreshed-runtime-proof'
+							: layoutPublicationPlan.action === 'reuse-existing'
+							? 'previous-publication-proof'
+							: 'fresh-build-proof',
+					renderLayoutReusePreviousKey:
+						previousReuseState?.layoutIdentity ??
+						(previousKey ? getUtciLayoutIdentity(previousKey) : null),
+					renderLayoutReusePreviousRequestId:
+						layoutPublicationPlan.action === 'reuse-existing'
+							? previousReuseState?.requestId ?? null
+							: null,
+					renderLayoutReusePreviousSelectionKey:
+						layoutPublicationPlan.action === 'reuse-existing'
+							? previousReuseState?.selectionKey ?? null
+							: null
+				}
+			});
+			if (renderAllocationPreflight.status === 'failed') {
+				throw new Error(
+					`Active UTCI render allocation preflight failed: ${renderAllocationPreflight.failureReasons?.join('; ')}.`
+				);
+			}
 			let meshAction: 'created' | 'reused' = 'reused';
 			let renderSurfaceMeshTrace: SelectedHourRenderSurfaceMeshTrace | undefined;
 			const lastRenderTargetByteLength: { value: number | undefined } = {
@@ -878,13 +1045,10 @@
 					activeAnalysis,
 					acceptedOutput,
 					layout,
+					renderEstimate,
 					renderSurfaceMeshTrace
 				);
 			} else {
-				const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
-				if (!sourceBuffer) {
-					throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
-				}
 				const existingSurface = utciSurface;
 				if (!existingSurface) {
 					throw new Error('Compute-buffer UTCI surface was unavailable for update.');
@@ -901,6 +1065,7 @@
 					utciRange: acceptedOutput.utciRange,
 					metricType: acceptedOutput.metricType ?? 'utci',
 					compatibilityEvaluation: runtimeLayoutCompatibility,
+					renderEstimate,
 					trace: renderSurfaceMeshTrace
 				});
 				addSurfaceTraceTiming(
@@ -921,6 +1086,7 @@
 						activeAnalysis,
 						acceptedOutput,
 						layout,
+						renderEstimate,
 						renderSurfaceMeshTrace
 					);
 				} else {
@@ -979,6 +1145,13 @@
 					renderPublicationPath: 'compute-buffer-selected-hour',
 					renderPublicationPhase: publicationPhase,
 					renderPublicationMeshAction: meshAction,
+					renderPublicationPointCount: layout.numPositions,
+					renderPublicationGridWidth: layout.width,
+					renderPublicationGridHeight: layout.height,
+					renderPublicationGridSize: layout.gridSize,
+					renderPublicationSourceByteLength: sourceBuffer.size,
+					renderPublicationRenderOwnedBytes: renderEstimate.totalBytes,
+					renderAllocationPreflight,
 					renderPublicationTimeline: {
 						sceneLayoutKeyStartedAtMs,
 						sceneLayoutKeyCompletedAtMs,
@@ -1076,7 +1249,8 @@
 			if (
 				acceptedGpuResidentSurfaceSync.failSync(activeSyncRun, {
 					...getCurrentGpuResidentSyncLiveState(),
-					errorMessage
+					errorMessage,
+					renderTimings
 				}) === 'superseded'
 			) {
 				return;
