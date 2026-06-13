@@ -13,6 +13,7 @@
 
 	/** When set (e.g. debug page showing only live layer), use this for legend range instead of analysisStore. */
 	export let displayAnalysis: Analysis | null = null;
+	export let liveShadingMetricAvailable = false;
 	export let utciRangeOverride: { min: number; max: number } | null | undefined = undefined;
 
 	let utciMin = 0;
@@ -60,7 +61,9 @@
 	// Make these reactive to ensure updates
 	$: isUTCI = $viewerStore.metricType === "utci";
 	$: isShadingIndex = $viewerStore.metricType === "shading_index";
-	$: hasShadingIndex = effectiveAnalysis?.metadata.has_shading_index ?? false;
+	$: hasShadingIndex =
+		(effectiveAnalysis?.metadata.has_shading_index ?? false) ||
+		liveShadingMetricAvailable;
 
 	function selectUTCI() {
 		if (!isUTCI) {

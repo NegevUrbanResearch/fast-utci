@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ComputeManager } from '$lib/compute/compute-manager';
 import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { getEpwUrlForAnalysis } from '$lib/compute/weather/projectWeather';
 
 function buildDeterministicEpwForJan1ToJan15(): string {
 	const header = [
@@ -39,6 +40,56 @@ function createSerializedBvhFixture() {
 }
 
 describe('weather index alignment', () => {
+	it('maps Innovation District analyses to the Beer Sheva EPW', () => {
+		expect(
+			getEpwUrlForAnalysis({
+				analysisId: 'Innovation-District/innovation_district_webgpu',
+				dataBasePath: '/viewer'
+			})
+		).toBe(
+			'/viewer/data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw'
+		);
+	});
+
+	it('prefers the metadata epw_file when an analysis provides one', () => {
+		expect(
+			getEpwUrlForAnalysis({
+				analysisId: 'Innovation-District/innovation_district_webgpu',
+				dataBasePath: '/viewer',
+				metadata: {
+					analysis_type: 'full_day',
+					num_positions: 1,
+					hours: Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, '0')}:00`),
+					utci_range: { min: 0, max: 1 },
+					grid_size: 2,
+					coordinate_system: 'xy_ground',
+					model_file: 'innovation.glb',
+					epw_file: 'data/weather/custom/custom.epw'
+				}
+			})
+		).toBe('/viewer/data/weather/custom/custom.epw');
+	});
+
+	it('falls back to the project mapping when legacy metadata has no epw_file', () => {
+		expect(
+			getEpwUrlForAnalysis({
+				analysisId: 'Innovation-District/innovation_district_webgpu',
+				dataBasePath: '/viewer',
+				metadata: {
+					analysis_type: 'full_day',
+					num_positions: 1,
+					hours: Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, '0')}:00`),
+					utci_range: { min: 0, max: 1 },
+					grid_size: 2,
+					coordinate_system: 'xy_ground',
+					model_file: 'innovation.glb'
+				}
+			})
+		).toBe(
+			'/viewer/data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw'
+		);
+	});
+
 	it('packs weather to match Ladybug day-period semantics (hour0 uses previous day hour24)', async () => {
 		const uploadStaticData = vi.fn().mockResolvedValue(undefined);
 		const runAll = vi.fn().mockResolvedValue(undefined);

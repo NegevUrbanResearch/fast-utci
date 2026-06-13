@@ -1,10 +1,13 @@
+import type { AnalysisMetadata } from '$lib/types/analysis';
 import { resolveProjectId } from '$lib/utils/analysisPaths';
 
 const PROJECT_EPW_PATHS: Record<string, string> = {
 	'Ben-Gurion':
 		'/data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw',
 	'Ness-Tziona':
-		'/data/weather/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx.epw'
+		'/data/weather/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx.epw',
+	'Innovation-District':
+		'/data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw'
 };
 
 export function getEpwUrlForProject(params: {
@@ -24,7 +27,14 @@ export function getEpwUrlForAnalysis(params: {
 	analysisId?: string | null;
 	dataBasePath: string;
 	fallbackProjectId?: string | null;
+	metadata?: AnalysisMetadata | null;
 }): string {
+	const metadataPath = params.metadata?.epw_file?.trim();
+	if (metadataPath) {
+		const normalizedPath = metadataPath.startsWith('/') ? metadataPath : `/${metadataPath}`;
+		return `${params.dataBasePath}${normalizedPath}`;
+	}
+
 	const projectId = resolveProjectId(params.analysisId) ?? params.fallbackProjectId;
 	if (!projectId) {
 		throw new Error('Unable to resolve a project id for EPW weather selection.');

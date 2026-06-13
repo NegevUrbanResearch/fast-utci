@@ -182,6 +182,7 @@
 	let comparisonRendererDisplayAnalysis: Analysis | null | undefined = undefined;
 	let useLiveMetricOnMainRoute = false;
 	let liveRouteEnabled = false;
+	let liveShadingMetricAvailable = false;
 	let liveMetricSelectionKey = "";
 	let liveMetricUnavailableError: string | null = null;
 	let showTimeSection = false;
@@ -382,6 +383,7 @@
 	$: ({
 		useLiveMetricOnMainRoute,
 		liveRouteEnabled,
+		liveShadingMetricAvailable,
 		selectedMonthIndex,
 		selectedHourIndex,
 		selectedTimeIndex,
@@ -726,6 +728,7 @@
 	<svelte:fragment slot="legend">
 		<ColorLegend
 			displayAnalysis={useLiveMetricOnMainRoute ? baseDisplayedAnalysis : null}
+			liveShadingMetricAvailable={liveShadingMetricAvailable}
 			utciRangeOverride={$viewerStore.metricType === "utci" && useLiveMetricOnMainRoute
 				? (basePendingGpuResidentOutput?.utciRange ?? null)
 				: undefined}

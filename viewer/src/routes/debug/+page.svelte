@@ -49,6 +49,7 @@
 		resolveProjectId,
 	} from "$lib/utils/analysisPaths";
 	import { getInitialAnalysisId } from "$lib/utils/analysisQuery";
+	import { getEpwUrlForAnalysis } from "$lib/compute/weather/projectWeather";
 	import * as THREE from "three";
 	import type { Group, Mesh, PerspectiveCamera } from "three";
 	import {
@@ -169,16 +170,6 @@
 		return basePath.replace(/\/viewer\/build$/, "");
 	};
 
-	// Hard-coded EPW mapping for current projects.
-	const getEpwUrlForProject = (projectId: string): string => {
-		const basePath = getDataBasePath();
-		if (projectId === "Ben-Gurion") {
-			return `${basePath}/data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw`;
-		}
-		// Default to Tel Aviv / Bet Dagan for Ness-Tziona and others.
-		return `${basePath}/data/weather/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx/ISR_TA_Tel.Aviv-Bet.Dagan.401790_TMYx.epw`;
-	};
-
 	let model: Group | null = null;
 	let gridVisible = false;
 
@@ -257,6 +248,11 @@
 		utciRenderMode,
 		rendererBackend,
 	);
+	$: liveShadingMetricAvailable =
+		$analysisStore?.metadata.analysis_type === "full_day" &&
+		rendererBackend === "webgpu" &&
+		rendererDeviceForDebug != null &&
+		resolvedUtciSurfaceBackend === "gpuNative";
 	const debugSharedRouteHost = createDebugSharedRouteHost(getDataBasePath());
 	let debugSharedRouteState = debugSharedRouteHost.getState();
 	const unsubscribeDebugSharedRouteHost = debugSharedRouteHost.subscribe((state) => {
@@ -3343,8 +3339,12 @@
 		const { base, signal, runId, zHeight } = params;
 		const coldStartStartedAt = performance.now();
 		resetOnDemandPrototypeColdStartTimings();
-		const projectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
-		const epwUrl = getEpwUrlForProject(projectId);
+		const epwUrl = getEpwUrlForAnalysis({
+			analysisId,
+			dataBasePath: getDataBasePath(),
+			metadata: base.metadata,
+			fallbackProjectId: resolveProjectId(analysisId) ?? "Ben-Gurion",
+		});
 		const baseGrid = base.metadata.grid_size || 2;
 		const numHours = base.data.numHours ?? base.metadata.hours.length ?? 24;
 		const numMonths = debugOnDemandMode === "f32" ? 12 : parityMode ? 1 : 12;
@@ -3430,7 +3430,7 @@
 		const response = await fetch(epwUrl);
 		if (!response.ok) {
 			throw new Error(
-				`Failed to load EPW file for project ${projectId}: ${response.status}`,
+				`Failed to load EPW file for analysis ${analysisId}: ${response.status}`,
 			);
 		}
 		const epwContent = await response.text();
@@ -4636,6 +4636,7 @@
 			displayAnalysis={
 				$comparisonStore.isComparing ? null : liveAnalysis
 			}
+			{liveShadingMetricAvailable}
 		/>
 	</svelte:fragment>
 

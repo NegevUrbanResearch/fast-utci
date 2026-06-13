@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { resolveAnalysisModelPath } from '../../src/lib/utils/analysisPaths';
 import {
 	buildProjectSelectionHref,
 	getAnalysisSyncAfterMount,
@@ -12,6 +13,15 @@ describe('main route model selection helpers', () => {
 		expect(
 			getMountedAnalysisId('?analysis=Ben-Gurion%2Fscenario-a', 'Ben-Gurion/default')
 		).toBe('Ben-Gurion/scenario-a');
+	});
+
+	it('resolves Innovation District from the initial query string', () => {
+		expect(
+			getMountedAnalysisId(
+				'?analysis=Innovation-District%2Finnovation_district_webgpu',
+				'Ben-Gurion/default'
+			)
+		).toBe('Innovation-District/innovation_district_webgpu');
 	});
 
 	it('keeps the current analysis stable when the URL stays unchanged after mount', () => {
@@ -49,5 +59,14 @@ describe('main route model selection helpers', () => {
 			shouldResetModel: true,
 			nextLastModelFile: 'data/3d_models/BGU/scenario.glb'
 		});
+	});
+
+	it('preserves the Innovation District model path from analysis metadata', () => {
+		expect(
+			resolveAnalysisModelPath({
+				model_file: 'data/3d_models/Innovation-District/innovation_district.glb',
+				source_analysis_id: 'Innovation-District/innovation_district_webgpu'
+			})
+		).toBe('data/3d_models/Innovation-District/innovation_district.glb');
 	});
 });

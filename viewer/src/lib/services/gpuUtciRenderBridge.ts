@@ -549,7 +549,9 @@ function createUtciColorNode(
 	);
 	const cellIndex = row.mul(uint(layout.width)).add(column);
 	const pointIndex = cellToPointStorage.element(cellIndex);
-	const value = utciStorage.element(pointIndex);
+	const hasPoint = pointIndex.lessThan(uint(layout.numPositions));
+	const safePointIndex = hasPoint.select(pointIndex, uint(0));
+	const value = utciStorage.element(safePointIndex);
 	const t = clamp(
 		value.sub(minUniform).div(maxUniform.sub(minUniform).max(float(0.001))),
 		0,
@@ -562,7 +564,7 @@ function createUtciColorNode(
 
 	return {
 		colorNode,
-		opacityNode: t.mul(0).add(DEFAULT_SURFACE_OPACITY)
+		opacityNode: hasPoint.select(float(DEFAULT_SURFACE_OPACITY), float(0))
 	};
 }
 

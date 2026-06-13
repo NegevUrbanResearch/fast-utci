@@ -132,13 +132,51 @@ export interface SunPosition {
 /**
  * Analysis metadata
  */
+export type AnalysisCoordinateSystem = 'xy_ground' | 'xz_ground';
+
+export interface AnalysisRectangularBounds {
+	x_min: number;
+	x_max: number;
+	y_min: number;
+	y_max: number;
+	z?: number;
+}
+
+export type ProjectedTriangle2D = readonly [number, number, number, number, number, number];
+
+export interface StudyAreaMaskSummary {
+	canonicalPointCount: number;
+	activePointCount: number;
+	width: number;
+	height: number;
+	footprintChecksum: string;
+	maskChecksum: string;
+	signature: string;
+}
+
+export interface StudyAreaMask extends StudyAreaMaskSummary {
+	mask: Uint8Array;
+	activeCanonicalIndices: Uint32Array;
+}
+
+export interface AnalysisActiveMask {
+	source: 'base' | 'base+road';
+	canonicalPointCount: number;
+	activePointCount: number;
+	inactivePointCount: number;
+	activePointRatio: number;
+	activeMaskChecksum: string;
+	activeCanonicalIndices: Uint32Array;
+	signature?: string;
+}
+
 export interface AnalysisMetadata {
 	analysis_type: 'single_hour' | 'full_day';
 	num_positions: number;
 	hours: string[]; // Array of hour strings like ["00:00", "01:00", ...]
 	utci_range: UTCIRange;
 	grid_size: number;
-	coordinate_system: 'xy_ground' | 'xz_ground';
+	coordinate_system: AnalysisCoordinateSystem;
 	model_file: string;
 	/** Analysis id used to load this metadata, including project prefix when available. */
 	source_analysis_id?: string;
@@ -148,11 +186,14 @@ export interface AnalysisMetadata {
 		latitude: number;
 		longitude: number;
 	};
+	epw_file?: string;
 	date?: string;
 	has_shading_index?: boolean; // Whether Shading Index data is available
 	shading_index_range?: ShadingIndexRange; // Shading Index value range
 	/** Analysis bounds for grid generation (x_min, x_max, y_min, y_max, z). Grid is always built from these bounds. */
-	bounds?: { x_min: number; x_max: number; y_min: number; y_max: number; z?: number };
+	bounds?: AnalysisRectangularBounds;
+	/** Runtime active study-area mask for compact live WebGPU outputs mapped into canonical cells. */
+	activeMask?: AnalysisActiveMask;
 	/** Number of representative months when analysis has multi-month data (e.g. 12 for full year). */
 	num_months?: number;
 }

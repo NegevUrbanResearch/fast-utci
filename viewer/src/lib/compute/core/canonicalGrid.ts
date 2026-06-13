@@ -1,12 +1,10 @@
-import type { AnalysisBounds } from '$lib/compute/core/analysisGridFromBounds';
-import { analysisBoundsToViewerRectangularBounds } from '$lib/compute/core/analysisGridFromBounds';
-
-const EPSILON = 1e-9;
+import type { AnalysisRectangularBounds } from '$lib/types/analysis';
+import { resolveCanonicalGridAxes } from '$lib/compute/core/canonicalGridAxes';
 const FNV32_OFFSET = 0x811c9dc5;
 const FNV32_PRIME = 0x01000193;
 
 export interface CanonicalGridParams {
-	bounds: AnalysisBounds;
+	bounds: AnalysisRectangularBounds;
 	gridSize: number;
 	coordinateSystem: 'xy_ground' | 'xz_ground';
 	zHeight?: number;
@@ -32,36 +30,46 @@ function fnv1a32Hash(values: readonly number[]): string {
 }
 
 export function canonicalGridPoints(params: CanonicalGridParams): CanonicalGridResult {
-	const { bounds, gridSize, coordinateSystem, zHeight, originOffset } = params;
-	if (gridSize <= 0) {
-		throw new Error('gridSize must be positive');
-	}
-
-	const { minX, maxX, minZ, maxZ } = analysisBoundsToViewerRectangularBounds({
-		bounds,
-		coordinateSystem
-	});
-	const y = zHeight ?? bounds.z ?? 0;
-	const ox = originOffset?.x ?? 0;
-	const oy = originOffset?.y ?? 0;
-	const oz = originOffset?.z ?? 0;
-
+	const { xValues, zValues, y, ox, oy, oz } = resolveCanonicalGridAxes(params);
 	const values: number[] = [];
-	for (let x = minX; x <= maxX + EPSILON; x += gridSize) {
-		if (coordinateSystem === 'xy_ground') {
-			for (let z = maxZ; z >= minZ - EPSILON; z -= gridSize) {
-				values.push(x + ox, y + oy, z + oz);
-			}
-		} else {
-			for (let z = minZ; z <= maxZ + EPSILON; z += gridSize) {
-				values.push(x + ox, y + oy, z + oz);
-			}
+	for (const x of xValues) {
+		for (const z of zValues) {
+			values.push(x + ox, y + oy, z + oz);
 		}
 	}
 
 	return {
 		points: new Float32Array(values),
 		numPoints: values.length / 3
+	};
+}
+
+export function canonicalGridPointsForActiveIndices(
+	params: CanonicalGridParams & { activeCanonicalIndices: Uint32Array }
+): CanonicalGridResult {
+	const { activeCanonicalIndices } = params;
+	const { xValues, zValues, y, ox, oy, oz } = resolveCanonicalGridAxes(params);
+	const rowCount = zValues.length;
+	const canonicalPointCount = xValues.length * rowCount;
+	const values = new Float32Array(activeCanonicalIndices.length * 3);
+
+	for (let i = 0; i < activeCanonicalIndices.length; i++) {
+		const canonicalIndex = activeCanonicalIndices[i];
+		if (canonicalIndex >= canonicalPointCount) {
+			throw new Error(`active canonical index ${canonicalIndex} is out of range`);
+		}
+
+		const xIndex = Math.floor(canonicalIndex / rowCount);
+		const zIndex = canonicalIndex % rowCount;
+		const offset = i * 3;
+		values[offset] = xValues[xIndex] + ox;
+		values[offset + 1] = y + oy;
+		values[offset + 2] = zValues[zIndex] + oz;
+	}
+
+	return {
+		points: values,
+		numPoints: activeCanonicalIndices.length
 	};
 }
 

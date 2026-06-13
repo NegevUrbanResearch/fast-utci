@@ -112,6 +112,7 @@ export type LiveSelectedHourRouteHostDeps = {
 	resolveEpwUrl?: (params: {
 		analysisId?: string | null;
 		fallbackProjectId?: string | null;
+		analysisMetadata?: Analysis['metadata'] | null;
 	}) => string;
 	dataBasePath?: string;
 };
@@ -188,7 +189,12 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 						timings: copyRuntimeDiagnosticsTimings(state.base.runtimeDiagnostics.timings),
 						trackedGpuAllocationBytes: {
 							...state.base.runtimeDiagnostics.trackedGpuAllocationBytes
-						}
+						},
+						activeMaskSource: state.base.runtimeDiagnostics.activeMaskSource,
+						canonicalPointCount: state.base.runtimeDiagnostics.canonicalPointCount,
+						activePointCount: state.base.runtimeDiagnostics.activePointCount,
+						inactivePointCount: state.base.runtimeDiagnostics.inactivePointCount,
+						activePointRatio: state.base.runtimeDiagnostics.activePointRatio
 					}
 				: state.base.runtimeDiagnostics,
 			renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(
@@ -214,7 +220,13 @@ function cloneState(state: LiveSelectedHourRouteState): LiveSelectedHourRouteSta
 						),
 						trackedGpuAllocationBytes: {
 							...state.comparison.runtimeDiagnostics.trackedGpuAllocationBytes
-						}
+						},
+						activeMaskSource: state.comparison.runtimeDiagnostics.activeMaskSource,
+						canonicalPointCount:
+							state.comparison.runtimeDiagnostics.canonicalPointCount,
+						activePointCount: state.comparison.runtimeDiagnostics.activePointCount,
+						inactivePointCount: state.comparison.runtimeDiagnostics.inactivePointCount,
+						activePointRatio: state.comparison.runtimeDiagnostics.activePointRatio
 					}
 				: state.comparison.runtimeDiagnostics,
 			renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(
@@ -486,10 +498,15 @@ export function createLiveSelectedHourRouteHost(
 			}));
 	const resolveEpwUrl =
 		deps.resolveEpwUrl ??
-		((params: { analysisId?: string | null; fallbackProjectId?: string | null }) =>
+		((params: {
+			analysisId?: string | null;
+			fallbackProjectId?: string | null;
+			analysisMetadata?: Analysis['metadata'] | null;
+		}) =>
 			getEpwUrlForAnalysis({
 				analysisId: params.analysisId,
 				fallbackProjectId: params.fallbackProjectId,
+				metadata: params.analysisMetadata,
 				dataBasePath: deps.dataBasePath ?? ''
 			}));
 
@@ -1077,7 +1094,8 @@ export function createLiveSelectedHourRouteHost(
 			model: params.model,
 			epwUrl: resolveEpwUrl({
 				analysisId: params.analysisId,
-				fallbackProjectId: params.fallbackProjectId
+				fallbackProjectId: params.fallbackProjectId,
+				analysisMetadata: params.analysis.metadata
 			}),
 			preferredDevice: params.preferredDevice,
 			gridResolution: params.gridResolutionMeters,

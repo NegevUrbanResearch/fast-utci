@@ -54,7 +54,13 @@ export type LiveSelectedHourAcceptedVisibleSurface = {
 
 export type LiveSelectedHourRuntimeDiagnostics = Pick<
 	OnDemandRuntimeDiagnostics,
-	'timings' | 'trackedGpuAllocationBytes'
+	| 'timings'
+	| 'trackedGpuAllocationBytes'
+	| 'activeMaskSource'
+	| 'canonicalPointCount'
+	| 'activePointCount'
+	| 'inactivePointCount'
+	| 'activePointRatio'
 >;
 
 export type LiveSelectedHourControllerState = {
@@ -746,7 +752,12 @@ function cloneState(state: LiveSelectedHourControllerState): LiveSelectedHourCon
 					timings: copyRuntimeDiagnosticsTimings(state.runtimeDiagnostics.timings),
 					trackedGpuAllocationBytes: {
 						...state.runtimeDiagnostics.trackedGpuAllocationBytes
-					}
+					},
+					activeMaskSource: state.runtimeDiagnostics.activeMaskSource,
+					canonicalPointCount: state.runtimeDiagnostics.canonicalPointCount,
+					activePointCount: state.runtimeDiagnostics.activePointCount,
+					inactivePointCount: state.runtimeDiagnostics.inactivePointCount,
+					activePointRatio: state.runtimeDiagnostics.activePointRatio
 				}
 			: state.runtimeDiagnostics,
 		renderSurfaceDiagnostics: copyRenderSurfaceDiagnostics(state.renderSurfaceDiagnostics)
@@ -869,11 +880,16 @@ function createInitialState(): LiveSelectedHourControllerState {
 }
 
 function copyRuntimeDiagnostics(
-	diagnostics: Pick<OnDemandRuntimeDiagnostics, 'timings' | 'trackedGpuAllocationBytes'>
+	diagnostics: LiveSelectedHourRuntimeDiagnostics
 ): LiveSelectedHourRuntimeDiagnostics {
 	return {
 		timings: copyRuntimeDiagnosticsTimings(diagnostics.timings),
-		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes }
+		trackedGpuAllocationBytes: { ...diagnostics.trackedGpuAllocationBytes },
+		activeMaskSource: diagnostics.activeMaskSource,
+		canonicalPointCount: diagnostics.canonicalPointCount,
+		activePointCount: diagnostics.activePointCount,
+		inactivePointCount: diagnostics.inactivePointCount,
+		activePointRatio: diagnostics.activePointRatio
 	};
 }
 

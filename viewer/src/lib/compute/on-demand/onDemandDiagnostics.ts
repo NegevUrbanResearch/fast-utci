@@ -280,6 +280,12 @@ export interface OnDemandRuntimeDiagnostics {
 	visibleSelectedHourReadbackCount?: number;
 	selectedHourReadbackReasons?: SelectedHourReadbackReason[];
 	selectedHourReadbackReasonCounts?: Partial<Record<SelectedHourReadbackReason, number>>;
+	activeMaskSource?: 'base' | 'base+road';
+	canonicalPointCount?: number;
+	activePointCount?: number;
+	inactivePointCount?: number;
+	activePointRatio?: number;
+	activeMaskChecksum?: string;
 	debugReadbackCount: number;
 	dataTextureBuildCount: number;
 	timings: OnDemandTimings;

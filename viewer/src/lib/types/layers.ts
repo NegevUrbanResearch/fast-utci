@@ -18,6 +18,14 @@ export interface LayerMaterialConfig {
 	emissive?: string;
 	emissiveIntensity?: number;
 	polygonOffset?: boolean;
+	renderOrder?: number;
+	outlineOnly?: boolean;
+	outlineColor?: string;
+	outlineOpacity?: number;
+	outlineThresholdAngle?: number;
+	outlineDepthTest?: boolean;
+	outlineDepthWrite?: boolean;
+	outlineToneMapped?: boolean;
 }
 
 /**

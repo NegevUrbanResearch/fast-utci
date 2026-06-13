@@ -61,6 +61,11 @@ export type MainRouteUtciDiagnosticsPayload = {
 	baseColorMode?: ColorMode;
 	basePointCount?: number | null;
 	baseMetadataGridSize?: number | null;
+	activeMaskSource?: 'base' | 'base+road';
+	canonicalPointCount?: number;
+	activePointCount?: number;
+	inactivePointCount?: number;
+	activePointRatio?: number;
 	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
@@ -116,6 +121,11 @@ export type MainRouteUtciDiagnosticsInputs = {
 	baseColorMode?: ColorMode;
 	basePointCount?: number | null;
 	baseMetadataGridSize?: number | null;
+	activeMaskSource?: 'base' | 'base+road';
+	canonicalPointCount?: number;
+	activePointCount?: number;
+	inactivePointCount?: number;
+	activePointRatio?: number;
 	exposureScheduling?: ExposureSchedulingOptions;
 	baseRenderContextTimeIndex?: number;
 	baseAcceptedUtciRange?: { min: number; max: number };
@@ -264,6 +274,11 @@ export function buildMainRouteUtciDiagnostics(
 		baseColorMode: inputs.baseColorMode,
 		basePointCount: inputs.basePointCount,
 		baseMetadataGridSize: inputs.baseMetadataGridSize,
+		activeMaskSource: inputs.activeMaskSource,
+		canonicalPointCount: inputs.canonicalPointCount,
+		activePointCount: inputs.activePointCount,
+		inactivePointCount: inputs.inactivePointCount,
+		activePointRatio: inputs.activePointRatio,
 		exposureScheduling: inputs.exposureScheduling
 			? { ...inputs.exposureScheduling }
 			: undefined,

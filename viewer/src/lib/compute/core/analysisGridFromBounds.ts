@@ -1,42 +1,14 @@
 import * as THREE from 'three';
 import { createRectangularGridFromBounds } from '$lib/compute/core/grid-generator';
+import {
+	analysisBoundsToViewerRectangularBounds,
+	type ViewerRectangularBounds
+} from '$lib/compute/core/canonicalGridAxes';
+import type { AnalysisCoordinateSystem, AnalysisRectangularBounds } from '$lib/types/analysis';
 
-export interface AnalysisBounds {
-	x_min: number;
-	x_max: number;
-	y_min: number;
-	y_max: number;
-	z?: number;
-}
-
-export interface ViewerRectangularBounds {
-	minX: number;
-	maxX: number;
-	minZ: number;
-	maxZ: number;
-}
-
-export function analysisBoundsToViewerRectangularBounds(params: {
-	bounds: AnalysisBounds;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
-}): ViewerRectangularBounds {
-	const { bounds, coordinateSystem } = params;
-	if (coordinateSystem === 'xy_ground') {
-		return {
-			minX: bounds.x_min,
-			maxX: bounds.x_max,
-			minZ: -bounds.y_max,
-			maxZ: -bounds.y_min
-		};
-	}
-
-	return {
-		minX: bounds.x_min,
-		maxX: bounds.x_max,
-		minZ: bounds.y_min,
-		maxZ: bounds.y_max
-	};
-}
+export type AnalysisBounds = AnalysisRectangularBounds;
+export type { ViewerRectangularBounds };
+export { analysisBoundsToViewerRectangularBounds };
 
 /**
  * Map analysis metadata bounds to a rectangular grid in viewer Y-up world coordinates.
@@ -46,7 +18,7 @@ export function analysisBoundsToViewerRectangularBounds(params: {
 export function analysisBoundsToRectangularGrid(params: {
 	bounds: AnalysisBounds;
 	gridSize: number;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
+	coordinateSystem: AnalysisCoordinateSystem;
 	gridZHeight?: number;
 }): { points: THREE.Vector3[]; normals: THREE.Vector3[] } {
 	const { bounds, gridSize, coordinateSystem, gridZHeight } = params;

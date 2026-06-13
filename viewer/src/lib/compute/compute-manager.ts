@@ -16,7 +16,11 @@ import type {
 import { parseEPW } from '$lib/compute/weather/epw-parser';
 import { getSunVectors } from '$lib/compute/core/sunpath';
 import { getTregenzaDome } from '$lib/compute/core/tregenza';
-import { canonicalGridPoints } from '$lib/compute/core/canonicalGrid';
+import {
+	canonicalGridPoints,
+	canonicalGridPointsForActiveIndices
+} from '$lib/compute/core/canonicalGrid';
+import { resolveCanonicalGridAxes } from '$lib/compute/core/canonicalGridAxes';
 
 /**
  * Rotate a direction vector from the Python/ladybug Z-up convention
@@ -102,8 +106,10 @@ export class ComputeManager {
 		coordinateSystem?: 'xy_ground' | 'xz_ground';
 		/** Add to each grid point so rays use the same viewer world as the BVH (displayed model at this offset). */
 		gridOriginOffset?: { x: number; y: number; z: number };
+		activeCanonicalIndices?: Uint32Array;
 	}): Promise<{
 		numPoints: number;
+		canonicalPointCount: number;
 		numMonths: number;
 		numHours: number;
 		gridPoints: Float32Array;
@@ -118,7 +124,8 @@ export class ComputeManager {
 			useRectangularGridFromBounds,
 			analysisBounds,
 			coordinateSystem = 'xy_ground',
-			gridOriginOffset
+			gridOriginOffset,
+			activeCanonicalIndices
 		} = params;
 		const numMonths = this.config.numMonths;
 		const numHours = this.config.numHoursPerDay;
@@ -133,16 +140,37 @@ export class ComputeManager {
 				'initFromModelAndWeather: rectangular parity path requires useRectangularGridFromBounds=true, analysisBounds, and serializedBvh.'
 			);
 		}
-		const canonicalGrid = canonicalGridPoints({
+		const canonicalAxes = resolveCanonicalGridAxes({
 			bounds: analysisBounds,
 			gridSize: gridResolution,
 			coordinateSystem,
 			zHeight,
 			originOffset: gridOriginOffset
 		});
+		const canonicalPointCount = canonicalAxes.width * canonicalAxes.height;
+		const canonicalGrid = activeCanonicalIndices
+			? canonicalGridPointsForActiveIndices({
+					bounds: analysisBounds,
+					gridSize: gridResolution,
+					coordinateSystem,
+					zHeight,
+					originOffset: gridOriginOffset,
+					activeCanonicalIndices
+			  })
+			: canonicalGridPoints({
+					bounds: analysisBounds,
+					gridSize: gridResolution,
+					coordinateSystem,
+					zHeight,
+					originOffset: gridOriginOffset
+			  });
 		numPoints = canonicalGrid.numPoints;
 		if (numPoints === 0) {
-			throw new Error('Rectangular grid from bounds produced 0 points; check analysis bounds and gridResolution.');
+			throw new Error(
+				activeCanonicalIndices
+					? 'Active study-area mask produced 0 points; check base footprint and analysis bounds.'
+					: 'Rectangular grid from bounds produced 0 points; check analysis bounds and gridResolution.'
+			);
 		}
 		gridPoints = canonicalGrid.points;
 
@@ -307,6 +335,7 @@ export class ComputeManager {
 
 		return {
 			numPoints,
+			canonicalPointCount,
 			numMonths,
 			numHours,
 			gridPoints

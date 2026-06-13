@@ -225,6 +225,29 @@ describe('main route live selected-hour helper', () => {
 		expect(selection.liveMetricUnavailableError).toMatch(/requires WebGPU/i);
 	});
 
+	it('advertises live shading metric availability on the main route without pretending baked shading metadata exists', () => {
+		const analysis = createFullDayAnalysis({
+			label: 'innovation-district',
+			sourceAnalysisId: 'Innovation-District/innovation_district_webgpu'
+		});
+		analysis.metadata.has_shading_index = false;
+		analysis.metadata.shading_index_range = undefined;
+
+		const selection = resolveMainRouteLiveMetricSelection({
+			analysis,
+			analysisId: 'Innovation-District/innovation_district_webgpu',
+			metricType: 'utci',
+			currentMonth: 7,
+			currentHour: 12,
+			rendererBackend: 'webgpu',
+			rendererDevice: { label: 'renderer' } as unknown as GPUDevice,
+			utciSurfaceBackend: 'gpuNative'
+		});
+
+		expect(selection.liveShadingMetricAvailable).toBe(true);
+		expect(analysis.metadata.has_shading_index).toBe(false);
+	});
+
 	it('forwards metric type into live route controller requests and invalidates same selection on metric switch', async () => {
 		const factory = createMetricRecordingControllerFactory();
 		const host = createLiveSelectedHourRouteHost({

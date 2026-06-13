@@ -35,6 +35,18 @@ export const projects: ProjectConfig[] = [
 				analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2'
 			}
 		]
+	},
+	{
+		id: 'Innovation-District',
+		label: 'Innovation District',
+		defaultAnalysisId: 'Innovation-District/innovation_district_webgpu',
+		models: [
+			{
+				id: 'base',
+				label: 'Base',
+				analysisId: 'Innovation-District/innovation_district_webgpu'
+			}
+		]
 	}
 ];
 

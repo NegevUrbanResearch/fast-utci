@@ -43,9 +43,25 @@ export const LAYER_MATERIALS: Record<string, LayerMaterialConfig> = {
 	},
 	road: {
 		color: '#34495E',
-		opacity: 0.7,
+		opacity: 0,
 		displayName: 'Roads',
-		materialType: 'standard'
+		materialType: 'standard',
+		renderOrder: 3,
+		outlineOnly: true,
+		outlineColor: '#f5f7fa',
+		outlineOpacity: 1,
+		outlineThresholdAngle: 15,
+		outlineDepthTest: true,
+		outlineDepthWrite: false,
+		outlineToneMapped: false
+	},
+	train_track: {
+		color: '#2f3437',
+		opacity: 0.85,
+		displayName: 'Train Tracks',
+		materialType: 'standard',
+		polygonOffset: true,
+		renderOrder: 3
 	},
 	sidewalk: {
 		color: '#95a5a6',
@@ -64,6 +80,12 @@ export const LAYER_MATERIALS: Record<string, LayerMaterialConfig> = {
 		color: '#3498DB',
 		opacity: 0.6,
 		displayName: 'Water',
+		materialType: 'standard'
+	},
+	ignored: {
+		color: '#000000',
+		opacity: 0,
+		displayName: 'Ignored',
 		materialType: 'standard'
 	},
 	default: {
@@ -89,10 +111,14 @@ export const LAYER_NAME_MAPPING: Record<string, string> = {
 	'street': 'road',
 	'streets': 'road',
 	'highway': 'road',
+	'train_tracks': 'train_track',
+	'train track': 'train_track',
+	'train tracks': 'train_track',
 	
 	// Building variants
 	'building': 'building',
 	'buildings': 'building',
+	'existing_buildings': 'building',
 	'existing_building - copy': 'building',
 	'structure': 'building',
 	'facade': 'building',
@@ -108,6 +134,9 @@ export const LAYER_NAME_MAPPING: Record<string, string> = {
 	// Vegetation variants
 	'treesurface': 'vegetation',
 	'trees': 'vegetation',
+	'trees_canopy': 'vegetation',
+	'trees_camopy': 'vegetation',
+	'tree_canopy': 'vegetation',
 	'vegetation': 'vegetation',
 	'plants': 'vegetation',
 	'greenery': 'vegetation',
@@ -119,7 +148,7 @@ export const LAYER_NAME_MAPPING: Record<string, string> = {
 	'new_tree': 'new_vegetation',
 	'proposed trees': 'new_vegetation',
 	'proposed vegetation': 'new_vegetation',
-	
+
 	// Sidewalk/Parking variants
 	'sidewalk': 'sidewalk',
 	'sidewalks': 'sidewalk',
@@ -132,7 +161,12 @@ export const LAYER_NAME_MAPPING: Record<string, string> = {
 	'water': 'water',
 	'pond': 'water',
 	'lake': 'water',
-	'river': 'water'
+	'river': 'water',
+
+	// Non-visual/control variants
+	'district_outline': 'ignored',
+	'trees_point': 'ignored',
+	'tree_point': 'ignored'
 };
 
 // Standard layer types for UI controls
@@ -142,11 +176,10 @@ export const STANDARD_LAYER_TYPES: StandardLayerType[] = [
 	{ id: 'new_building', displayName: 'New Buildings', defaultVisible: true },
 	{ id: 'vegetation', displayName: 'Trees', defaultVisible: true },
 	{ id: 'new_vegetation', displayName: 'New Trees', defaultVisible: true },
-	{ id: 'road', displayName: 'Roads', defaultVisible: false },
+	{ id: 'road', displayName: 'Roads', defaultVisible: true },
+	{ id: 'train_track', displayName: 'Train Tracks', defaultVisible: true },
 	{ id: 'sidewalk', displayName: 'Sidewalks', defaultVisible: false },
 	{ id: 'base', displayName: 'Ground', defaultVisible: false },
 	{ id: 'water', displayName: 'Water', defaultVisible: true },
 	{ id: 'unknown', displayName: 'Unknown', defaultVisible: false }
 ];
-
-

@@ -277,29 +277,43 @@ function getPositionIndexFromSurfaceCell(
 	layout: UtciGridLayout,
 	analysis: Analysis,
 	options?: { enforceDistanceThreshold?: boolean }
-): { positionIndex: number | null; mappingMs: number } {
+): { positionIndex: number | null; mappingMs: number; inactiveCell: boolean } {
 	const mappingStartedAt = performance.now();
 	const worldPoint = intersection.point;
-	if (!worldPoint) return { positionIndex: null, mappingMs: 0 };
+	if (!worldPoint) return { positionIndex: null, mappingMs: 0, inactiveCell: false };
 
 	const object = intersection.object;
-	if (!object) return { positionIndex: null, mappingMs: 0 };
+	if (!object) return { positionIndex: null, mappingMs: 0, inactiveCell: false };
 
 	const expectedCellCount = layout.width * layout.height;
 	const localPoint = getSurfaceLocalPoint(worldPoint, object);
 	if (!localPoint) {
-		return { positionIndex: null, mappingMs: 0 };
+		return { positionIndex: null, mappingMs: 0, inactiveCell: false };
 	}
 
 	const cellCoordinates = getSurfaceCellCoordinates(localPoint, layout);
 	if (!cellCoordinates) {
-		return { positionIndex: null, mappingMs: 0 };
+		return { positionIndex: null, mappingMs: 0, inactiveCell: false };
 	}
 
 	const { column, row } = cellCoordinates;
 	const pointIndex = getTooltipCellPointIndex(layout, analysis.data.numPositions, row, column, expectedCellCount);
+	if (pointIndex === -1) {
+		const activeMaskSource = analysis.metadata?.activeMask?.source;
+		const isActiveMaskNoDataCell =
+			activeMaskSource === 'base' || activeMaskSource === 'base+road';
+		return {
+			positionIndex: null,
+			mappingMs: performance.now() - mappingStartedAt,
+			inactiveCell: isActiveMaskNoDataCell
+		};
+	}
 	if (pointIndex < 0 || pointIndex >= analysis.data.numPositions) {
-		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
+		return {
+			positionIndex: null,
+			mappingMs: performance.now() - mappingStartedAt,
+			inactiveCell: false
+		};
 	}
 
 	const transformed = new THREE.Vector3();
@@ -314,20 +328,36 @@ function getPositionIndexFromSurfaceCell(
 		!Number.isFinite(transformed.y) ||
 		!Number.isFinite(transformed.z)
 	) {
-		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
+		return {
+			positionIndex: null,
+			mappingMs: performance.now() - mappingStartedAt,
+			inactiveCell: false
+		};
 	}
 	if (options?.enforceDistanceThreshold === false) {
-		return { positionIndex: pointIndex, mappingMs: performance.now() - mappingStartedAt };
+		return {
+			positionIndex: pointIndex,
+			mappingMs: performance.now() - mappingStartedAt,
+			inactiveCell: false
+		};
 	}
 
 	const dx = worldPoint.x - transformed.x;
 	const dz = worldPoint.z - transformed.z;
 	const distance = Math.sqrt(dx * dx + dz * dz);
 	if (!Number.isFinite(distance) || distance > getTooltipDistanceThreshold(analysis)) {
-		return { positionIndex: null, mappingMs: performance.now() - mappingStartedAt };
+		return {
+			positionIndex: null,
+			mappingMs: performance.now() - mappingStartedAt,
+			inactiveCell: false
+		};
 	}
 
-	return { positionIndex: pointIndex, mappingMs: performance.now() - mappingStartedAt };
+	return {
+		positionIndex: pointIndex,
+		mappingMs: performance.now() - mappingStartedAt,
+		inactiveCell: false
+	};
 }
 
 function getTooltipCellPointIndex(
@@ -485,6 +515,7 @@ function resolveTooltipPositionIndex(
 	nearestPointMs: number;
 	directCellHit: boolean;
 	nearestScanUsed: boolean;
+	inactiveCell: boolean;
 } {
 	const directResolution = getPositionIndexFromSurfaceCell(intersection, layout, analysis, {
 		enforceDistanceThreshold: options?.enforceDistanceThreshold
@@ -494,7 +525,17 @@ function resolveTooltipPositionIndex(
 			positionIndex: directResolution.positionIndex,
 			nearestPointMs: diagnosticsEnabled ? directResolution.mappingMs : 0,
 			directCellHit: true,
-			nearestScanUsed: false
+			nearestScanUsed: false,
+			inactiveCell: false
+		};
+	}
+	if (directResolution.inactiveCell) {
+		return {
+			positionIndex: null,
+			nearestPointMs: diagnosticsEnabled ? directResolution.mappingMs : 0,
+			directCellHit: false,
+			nearestScanUsed: false,
+			inactiveCell: true
 		};
 	}
 
@@ -504,7 +545,8 @@ function resolveTooltipPositionIndex(
 		positionIndex,
 		nearestPointMs: diagnosticsEnabled ? performance.now() - nearestPointStart : 0,
 		directCellHit: false,
-		nearestScanUsed: true
+		nearestScanUsed: true,
+		inactiveCell: false
 	};
 }
 
@@ -673,6 +715,18 @@ function resolveTooltipHit(
 		directCellHit ||= planeResolution.directCellHit;
 		nearestScanUsed ||= planeResolution.nearestScanUsed;
 		directCellMissCount += planeResolution.directCellHit ? 0 : 1;
+		if (planeResolution.inactiveCell) {
+			emitMeasurement(
+				false,
+				raycastMs,
+				nearestPointMs,
+				resolutionPath,
+				directCellHit,
+				nearestScanUsed,
+				directCellMissCount
+			);
+			return null;
+		}
 	}
 
 	if (positionIndex === null) {
@@ -705,6 +759,18 @@ function resolveTooltipHit(
 		directCellHit ||= meshResolution.directCellHit;
 		nearestScanUsed ||= meshResolution.nearestScanUsed;
 		directCellMissCount += meshResolution.directCellHit ? 0 : 1;
+		if (meshResolution.inactiveCell) {
+			emitMeasurement(
+				false,
+				raycastMs,
+				nearestPointMs,
+				resolutionPath,
+				directCellHit,
+				nearestScanUsed,
+				directCellMissCount
+			);
+			return null;
+		}
 	}
 
 	if (positionIndex === null || positionIndex < 0 || positionIndex >= analysis.data.numPositions) {

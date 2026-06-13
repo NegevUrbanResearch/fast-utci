@@ -134,6 +134,40 @@ describe('resolvePositionIndexFromIntersection', () => {
 		expect(samples[0]?.nearestPointMs).toEqual(expect.any(Number));
 		expect(samples[0]?.nearestPointMs).toBeGreaterThanOrEqual(0);
 	});
+
+	it('returns no tooltip value for inactive canonical cells in an active-mask layout', () => {
+		const analysis = createActiveMaskAnalysis();
+		const layout = buildUtciGridLayout(analysis);
+		const mesh = createSurfaceTestMesh(layout);
+		const camera = createHoverCamera({
+			position: new THREE.Vector3(1, 5, 0),
+			target: new THREE.Vector3(1, layout.baseY, 0)
+		});
+		const samples: Array<Parameters<typeof recordTooltipInteractionMeasurement>[1]> = [];
+
+		const result = getTooltipData(
+			{ clientX: 50, clientY: 50 } as MouseEvent,
+			camera,
+			mesh,
+			analysis,
+			'utci',
+			0,
+			createDomRect(),
+			{
+				onDiagnosticsSample: (measurement) => samples.push(measurement)
+			}
+		);
+
+		expect(result).toBeNull();
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			hit: false,
+			resolutionPath: 'plane-cell',
+			directCellHit: false,
+			nearestScanUsed: false,
+			directCellMissCount: 1
+		});
+	});
 });
 
 describe('gpu-native ambiguous cell mapping', () => {
@@ -1035,6 +1069,40 @@ function createNearCornerAmbiguousCellAnalysis() {
 		metadata: {
 			grid_size: 0.5,
 			coordinate_system: 'xz_ground'
+		}
+	} as any;
+}
+
+function createActiveMaskAnalysis() {
+	return {
+		data: {
+			numPositions: 3,
+			numHours: 1,
+			positions: new Float32Array([
+				0, 0, 0,
+				1, 0, 1,
+				2, 0, 2
+			]),
+			utciValues: new Float32Array([20, 21, 22])
+		},
+		metadata: {
+			analysis_type: 'single_hour',
+			num_positions: 3,
+			hours: ['00:00'],
+			utci_range: { min: 20, max: 22 },
+			grid_size: 1,
+			coordinate_system: 'xz_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 },
+			activeMask: {
+				source: 'base+road',
+				canonicalPointCount: 9,
+				activePointCount: 3,
+				inactivePointCount: 6,
+				activePointRatio: 1 / 3,
+				activeMaskChecksum: 'mask123',
+				activeCanonicalIndices: new Uint32Array([0, 4, 8])
+			}
 		}
 	} as any;
 }

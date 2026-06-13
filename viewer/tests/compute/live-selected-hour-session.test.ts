@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Group } from 'three';
+import * as THREE from 'three';
 import type { Analysis } from '$lib/types/analysis';
 import {
 	disposeSelectedHourGpuResidentOutput,
@@ -10,6 +10,7 @@ import {
 	prepareMeshPayloadForWorkerAsync,
 	runMergeAndBvhInWorker
 } from '$lib/compute/gpu/mergeAndBvhWorkerClient';
+import { updateViewerConfig } from '$lib/config/viewerConfig';
 
 const mockState = vi.hoisted(() => ({
 	pipeline: null as any,
@@ -123,9 +124,130 @@ function createFullDayBaseAnalysis(): Analysis {
 	};
 }
 
+function createActiveMaskBaseAnalysis(): Analysis {
+	return {
+		...createBaseAnalysis(),
+		metadata: {
+			...createBaseAnalysis().metadata,
+			num_positions: 9,
+			grid_size: 1,
+			coordinate_system: 'xz_ground',
+			bounds: {
+				x_min: 0,
+				x_max: 2,
+				y_min: 0,
+				y_max: 2,
+				z: 0
+			}
+		},
+		data: {
+			numPositions: 9,
+			numHours: 1,
+			positions: new Float32Array(9 * 3),
+			utciValues: new Float32Array(9)
+		}
+	};
+}
+
+function createLayerTriangleMesh(params: {
+	layerType: string;
+	layerName: string;
+	points: [number, number, number][];
+}): THREE.Mesh {
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute(
+		'position',
+		new THREE.Float32BufferAttribute(params.points.flat(), 3)
+	);
+	const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+	mesh.userData.layerType = params.layerType;
+	mesh.userData.layerName = params.layerName;
+	mesh.updateMatrixWorld(true);
+	return mesh;
+}
+
+function createActiveMaskModel(): THREE.Group {
+	const model = new THREE.Group();
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'base',
+			layerName: 'ground',
+			points: [
+				[0, 0, 0],
+				[1, 0, 0],
+				[0, 0, 1]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'road',
+			layerName: 'street',
+			points: [
+				[2, 0, 2],
+				[2, 0, 0],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createBaseWithNonSamplingLayersActiveMaskModel(): THREE.Group {
+	const model = new THREE.Group();
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'base',
+			layerName: 'ground',
+			points: [
+				[0, 0, 0],
+				[1, 0, 0],
+				[0, 0, 1]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'building',
+			layerName: 'existing_buildings',
+			points: [
+				[2, 0, 2],
+				[2, 0, 0],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'vegetation',
+			layerName: 'trees_canopy',
+			points: [
+				[2, 0, 2],
+				[2, 0, 0],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createNormalizationTranslatedActiveMaskModel(): THREE.Group {
+	const model = createActiveMaskModel();
+	model.position.set(-1, -1, 0);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createEmptyModel(): THREE.Group {
+	return new THREE.Group();
+}
+
 describe('selected-hour live session', () => {
 	beforeEach(() => {
 		vi.restoreAllMocks();
+		updateViewerConfig({ anchorOffset: new THREE.Vector3(0, 0, 0), enableNormalization: true });
 		mockState.rendererDevice = {} as GPUDevice;
 		mockState.gpuBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
 		mockState.shadingBuffer = { destroy: vi.fn() } as unknown as GPUBuffer;
@@ -220,7 +342,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -246,6 +368,173 @@ describe('selected-hour live session', () => {
 		expect(result.diagnostics.timings.firstSelectedHourReadyMs ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
+	it('includes street geometry in the active mask and reports active-count diagnostics', async () => {
+		updateViewerConfig({ enableNormalization: false });
+		mockState.initResult = {
+			numPoints: 9,
+			canonicalPointCount: 9,
+			gridPoints: new Float32Array([
+				0, 0.9, 0,
+				0, 0.9, 1,
+				0, 0.9, 2,
+				1, 0.9, 0,
+				1, 0.9, 1,
+				1, 0.9, 2,
+				2, 0.9, 0,
+				2, 0.9, 1,
+				2, 0.9, 2
+			])
+		};
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(
+			async () => new Float32Array([11, 13, 15, 17, 19, 21, 23, 25, 29])
+		);
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createActiveMaskBaseAnalysis(),
+			model: createActiveMaskModel(),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			timeIndex: 0,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({
+				activeCanonicalIndices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8])
+			})
+		);
+		expect(mockState.constructors[1].runExposurePrecompute).toHaveBeenCalledWith(
+			expect.objectContaining({ numPoints: 9 })
+		);
+		expect(mockState.constructors[1].runUtciForTimeIndex).toHaveBeenCalledWith(
+			expect.objectContaining({ numPoints: 9 })
+		);
+		expect(result.diagnostics).toMatchObject({
+			activeMaskSource: 'base+road',
+			canonicalPointCount: 9,
+			activePointCount: 9,
+			inactivePointCount: 0,
+			activePointRatio: 1,
+			activeMaskChecksum: expect.stringMatching(/^[0-9a-f]{8}$/)
+		});
+		expect(result.analysis?.metadata.activeMask).toMatchObject({
+			source: 'base+road',
+			canonicalPointCount: 9,
+			activePointCount: 9,
+			activeCanonicalIndices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8])
+		});
+		expect(result.gpuResidentOutput?.tooltipUtciValues).toHaveLength(9);
+	});
+
+	it('does not expand the active mask from building or vegetation geometry', async () => {
+		updateViewerConfig({ enableNormalization: false });
+		mockState.initResult = {
+			numPoints: 3,
+			canonicalPointCount: 9,
+			gridPoints: new Float32Array([
+				0, 0.9, 0,
+				0, 0.9, 1,
+				1, 0.9, 0
+			])
+		};
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(async () => new Float32Array([11, 21, 29]));
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createActiveMaskBaseAnalysis(),
+			model: createBaseWithNonSamplingLayersActiveMaskModel(),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			timeIndex: 0,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({
+				activeCanonicalIndices: new Uint32Array([0, 1, 3])
+			})
+		);
+		expect(result.diagnostics).toMatchObject({
+			activeMaskSource: 'base+road',
+			canonicalPointCount: 9,
+			activePointCount: 3,
+			inactivePointCount: 6,
+			activePointRatio: 3 / 9,
+			activeMaskChecksum: expect.stringMatching(/^[0-9a-f]{8}$/)
+		});
+	});
+
+	it('extracts the normalized base and street footprint in canonical metadata coordinates', async () => {
+		mockState.initResult = {
+			numPoints: 9,
+			canonicalPointCount: 9,
+			gridPoints: new Float32Array([
+				-1, -0.1, 0,
+				-1, -0.1, 1,
+				-1, -0.1, 2,
+				0, -0.1, 0,
+				0, -0.1, 1,
+				0, -0.1, 2,
+				1, -0.1, 0,
+				1, -0.1, 1,
+				1, -0.1, 2
+			])
+		};
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(
+			async () => new Float32Array([11, 13, 15, 17, 19, 21, 23, 25, 29])
+		);
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createActiveMaskBaseAnalysis(),
+			model: createNormalizationTranslatedActiveMaskModel(),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			timeIndex: 0,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gridOriginOffset: { x: -1, y: -1, z: 0 },
+				activeCanonicalIndices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8])
+			})
+		);
+		expect(result.diagnostics).toMatchObject({
+			activeMaskSource: 'base+road',
+			canonicalPointCount: 9,
+			activePointCount: 9,
+			inactivePointCount: 0,
+			activeMaskChecksum: expect.stringMatching(/^[0-9a-f]{8}$/)
+		});
+		expect(result.analysis?.metadata.activeMask?.activeCanonicalIndices).toEqual(
+			new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8])
+		);
+	});
+
 	it('passes exposure scheduler options and session abort signal to exposure precompute', async () => {
 		const abortController = new AbortController();
 		const exposureScheduling = {
@@ -256,7 +545,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: abortController.signal,
 			preferredDevice: mockState.rendererDevice,
@@ -286,7 +575,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -325,7 +614,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -355,7 +644,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -454,7 +743,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base,
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -493,7 +782,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: abort.signal,
 			preferredDevice: mockState.rendererDevice,
@@ -541,7 +830,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -569,7 +858,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -632,7 +921,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -670,7 +959,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -704,7 +993,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -764,7 +1053,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -817,7 +1106,7 @@ describe('selected-hour live session', () => {
 		await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -868,7 +1157,7 @@ describe('selected-hour live session', () => {
 			prepareSelectedHourLiveSession({
 				analysisId: 'analysis-a',
 				base: createFullDayBaseAnalysis(),
-				model: {} as Group,
+				model: createEmptyModel(),
 				epwUrl: '/weather.epw',
 				signal: new AbortController().signal,
 				preferredDevice: mockState.rendererDevice,
@@ -904,7 +1193,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -925,7 +1214,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -975,7 +1264,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1022,7 +1311,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1056,7 +1345,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1106,7 +1395,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createFullDayBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice,
@@ -1144,7 +1433,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1182,7 +1471,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1214,7 +1503,7 @@ describe('selected-hour live session', () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
-			model: {} as Group,
+			model: createEmptyModel(),
 			epwUrl: '/weather.epw',
 			signal: new AbortController().signal,
 			preferredDevice: mockState.rendererDevice
@@ -1239,3 +1528,4 @@ describe('selected-hour live session', () => {
 		expect(result.diagnostics.selectedHourReadbackReasonCounts?.['visible-fallback']).toBeGreaterThan(0);
 	});
 });
+

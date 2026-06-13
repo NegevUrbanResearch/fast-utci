@@ -99,7 +99,7 @@
 			initializeLayerManager(gltfGroup);
 			
 			// CRITICAL: Apply current layer visibility state from store to meshes
-			// This ensures default-hidden layers (roads, sidewalks, etc.) are actually hidden
+			// This ensures default-hidden layers are actually hidden.
 			const currentLayerState = get(layerStore);
 			applyLayerVisibilityState(currentLayerState);
 			

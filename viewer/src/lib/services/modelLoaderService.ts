@@ -19,6 +19,7 @@ function yieldToMain(): Promise<void> {
 }
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { getMaterial } from './materialPool';
+import { applyLayerRenderPolicy } from './layerOutlineService';
 import { LAYER_NAME_MAPPING } from '$lib/types/layerMaterials';
 
 /** Above this triangle count per layer we skip merge on the main thread to avoid freeze/crash. */
@@ -99,6 +100,31 @@ export function mapLayerNameToType(layerName: string): string {
 	return 'unknown';
 }
 
+export function resolveComputeBvhEligibility(params: {
+	rawLayerName: string;
+	layerType: string;
+}): boolean | undefined {
+	const raw = params.rawLayerName.trim().toLowerCase().replace(/\s+/g, '_');
+	if (
+		params.layerType === 'road' ||
+		params.layerType === 'train_track' ||
+		params.layerType === 'ignored' ||
+		raw === 'ground' ||
+		raw === 'district_outline'
+	) {
+		return false;
+	}
+	if (
+		params.layerType === 'building' ||
+		params.layerType === 'new_building' ||
+		params.layerType === 'vegetation' ||
+		params.layerType === 'new_vegetation'
+	) {
+		return true;
+	}
+	return undefined;
+}
+
 /**
  * Apply layer materials to loaded model
  * 
@@ -129,6 +155,10 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 			// Extract layer name from scene graph
 			const layerName = getLayerName(child);
 			const layerType = mapLayerNameToType(layerName);
+			const computeEligibility = resolveComputeBvhEligibility({
+				rawLayerName: layerName,
+				layerType
+			});
 			
 			// Apply material based on layer type (from pool)
 			child.material = getMaterial(layerType);
@@ -136,6 +166,14 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 			// Store layer info in userData for later use (visibility toggles, etc.)
 			child.userData.layerType = layerType;
 			child.userData.layerName = layerName;
+			if (computeEligibility !== undefined) {
+				child.userData.includeInComputeBvh = computeEligibility;
+			}
+
+			if (layerType === 'ignored') {
+				itemsToRemove.push(child);
+				return;
+			}
 			
 			// Track layer statistics
 			if (!layerStats[layerType]) {
@@ -225,6 +263,12 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 		}
 	}
 
+	for (const [layerType, meshes] of finalMeshesByLayer.entries()) {
+		for (const mesh of meshes) {
+			applyLayerRenderPolicy(mesh, layerType);
+		}
+	}
+
 	// If the model only has a base layer, make it fully visible
 	if (onlyBaseLayer) {
 		const baseMaterial = getMaterial('base').clone();
@@ -241,6 +285,15 @@ export async function applyLayerMaterials(model: THREE.Group): Promise<THREE.Gro
 	}
 	
 	return model;
+}
+
+function applyMergedComputeBvhEligibility(mergedMesh: THREE.Mesh, meshes: THREE.Mesh[]): void {
+	const eligibilityValues = meshes
+		.map((mesh) => mesh.userData.includeInComputeBvh)
+		.filter((value): value is boolean => value !== undefined);
+	if (eligibilityValues.length > 0) {
+		mergedMesh.userData.includeInComputeBvh = eligibilityValues.some(Boolean);
+	}
 }
 
 /**
@@ -299,6 +352,7 @@ export function mergeLayerMeshes(
 		mergedMesh.name = `${layerType}_merged`;
 		mergedMesh.userData.layerType = layerType;
 		mergedMesh.userData.layerName = layerType;
+		applyMergedComputeBvhEligibility(mergedMesh, meshes);
 		
 		// Shadow settings based on layer type
 		if (layerType === 'vegetation') {
@@ -397,6 +451,7 @@ async function mergeLayerMeshesBatched(
 	mergedMesh.name = `${layerType}_merged`;
 	mergedMesh.userData.layerType = layerType;
 	mergedMesh.userData.layerName = layerType;
+	applyMergedComputeBvhEligibility(mergedMesh, meshes);
 
 	if (layerType === 'vegetation') {
 		mergedMesh.castShadow = false;

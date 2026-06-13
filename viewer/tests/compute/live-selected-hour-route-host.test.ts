@@ -440,6 +440,35 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(factory.records[0].requests[0]?.selectionKey).toBe('Ben-Gurion/base|7|12|180');
 	});
 
+	it('uses metadata epw_file for the base live session when present', async () => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost({
+			createController: factory.createController,
+			dataBasePath: '/viewer'
+		});
+		const baseAnalysis = createFullDayAnalysis({
+			label: 'innovation-base',
+			sourceAnalysisId: 'Innovation-District/base'
+		});
+		baseAnalysis.metadata.epw_file = 'data/weather/custom/innovation.epw';
+
+		host.setRouteInputs(
+			makeBaseInputs({
+				analysisId: 'Innovation-District/base',
+				baseAnalysis,
+				utciRenderMode: 'data',
+				rendererBackend: 'unknown',
+				rendererDevice: undefined,
+				utciSurfaceBackend: 'dataTexture'
+			})
+		);
+		await host.flush();
+
+		expect(factory.records[0].requests[0]?.sessionConfig.epwUrl).toBe(
+			'/viewer/data/weather/custom/innovation.epw'
+		);
+	});
+
 	it('defers auto-mode base startup until the route surface is GPU-native', async () => {
 		const factory = createControllerFactory();
 		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));

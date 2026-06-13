@@ -5,13 +5,20 @@
  */
 
 import * as THREE from 'three';
-import type { Analysis, AnalysisMetadata, UTCIData } from '$lib/types/analysis';
+import type {
+	Analysis,
+	AnalysisActiveMask,
+	AnalysisMetadata,
+	AnalysisRectangularBounds,
+	UTCIData
+} from '$lib/types/analysis';
 import type { MetricType } from '$lib/types/viewer';
 import { getUTCIForHour, getShadingIndex } from '$lib/services/dataLoader';
 import { mapUTCIToColor, mapShadingIndexToColor } from '$lib/services/colorScale';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
+import { resolveCanonicalGridAxes } from '$lib/compute/core/canonicalGridAxes';
 import type {
 	SelectedHourRenderLayoutBuildTrace,
 	SelectedHourRenderLayoutConstructionMode,
@@ -802,6 +809,18 @@ type UtciLayoutBaseParams = {
 	normalizationOffset: THREE.Vector3;
 };
 
+type ActiveMaskViewerLayout = {
+	activeMask: AnalysisActiveMask;
+	minX: number;
+	maxX: number;
+	minZ: number;
+	maxZ: number;
+	minY: number;
+	maxY: number;
+	width: number;
+	height: number;
+};
+
 function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
 	const coordinateSystem = analysis.metadata.coordinate_system || 'xy_ground';
 	const gridSize = analysis.metadata.grid_size || 1;
@@ -838,10 +857,111 @@ function resolveUtciLayoutBaseParams(analysis: Analysis): UtciLayoutBaseParams {
 	};
 }
 
+function getRenderableActiveMask(
+	metadata: AnalysisMetadata,
+	numPositions: number
+): AnalysisActiveMask | null {
+	const activeMask = metadata.activeMask;
+	if (
+		(activeMask?.source !== 'base' && activeMask?.source !== 'base+road') ||
+		activeMask.activeCanonicalIndices.length !== numPositions ||
+		activeMask.activePointCount !== numPositions
+	) {
+		return null;
+	}
+	return activeMask;
+}
+
+function resolveActiveMaskViewerLayout(params: {
+	bounds: AnalysisRectangularBounds | undefined;
+	activeMask: AnalysisActiveMask | null;
+	gridSize: number;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+	normalizationOffset: THREE.Vector3;
+}): ActiveMaskViewerLayout | null {
+	const { bounds, activeMask, gridSize, coordinateSystem, normalizationOffset } =
+		params;
+	if (!bounds || !activeMask) {
+		return null;
+	}
+
+	const axes = resolveCanonicalGridAxes({
+		bounds,
+		gridSize,
+		coordinateSystem
+	});
+	const minX = axes.minX + normalizationOffset.x;
+	const maxX = axes.maxX + normalizationOffset.x;
+	const minZ = axes.minZ + normalizationOffset.z;
+	const maxZ = axes.maxZ + normalizationOffset.z;
+	const minY = (bounds.z ?? 0) + normalizationOffset.y;
+	const maxY = minY;
+
+	return {
+		activeMask,
+		minX,
+		maxX,
+		minZ,
+		maxZ,
+		minY,
+		maxY,
+		width: axes.width,
+		height: axes.height
+	};
+}
+
+function getActiveMaskGridCell(params: {
+	canonicalIndex: number;
+	width: number;
+	height: number;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+}): { row: number; col: number } {
+	const canonicalRow = params.canonicalIndex % params.height;
+	return {
+		col: Math.min(params.width - 1, Math.floor(params.canonicalIndex / params.height)),
+		row: Math.min(
+			params.height - 1,
+			params.coordinateSystem === 'xy_ground'
+				? params.height - 1 - canonicalRow
+				: canonicalRow
+		)
+	};
+}
+
 function deriveUtciLayoutFrame(analysis: Analysis): DerivedUtciLayoutFrame {
 	const { data, metadata } = analysis;
 	const { gridSize, coordinateSystem, numPositions, normalizationOffset } =
 		resolveUtciLayoutBaseParams(analysis);
+	const activeMaskLayout = resolveActiveMaskViewerLayout({
+		bounds: metadata.bounds,
+		activeMask: getRenderableActiveMask(metadata, numPositions),
+		gridSize,
+		coordinateSystem,
+		normalizationOffset
+	});
+	const normalizationSignature = createNormalizationSignature({
+		enabled: isNormalizationEnabled(),
+		offset: normalizationOffset
+	});
+
+	if (activeMaskLayout) {
+		return {
+			gridSize,
+			coordinateSystem,
+			pointCount: numPositions,
+			width: activeMaskLayout.width,
+			height: activeMaskLayout.height,
+			minX: activeMaskLayout.minX,
+			minZ: activeMaskLayout.minZ,
+			minY: activeMaskLayout.minY,
+			maxY: activeMaskLayout.maxY,
+			centerX: activeMaskLayout.minX + ((activeMaskLayout.width - 1) * gridSize) / 2,
+			centerZ: activeMaskLayout.minZ + ((activeMaskLayout.height - 1) * gridSize) / 2,
+			baseY: activeMaskLayout.minY + VISUAL_LAYER_OFFSET,
+			constructionMode: 'metadata-bounds-fallback',
+			normalizationSignature
+		};
+	}
 	const transformed = new THREE.Vector3();
 
 	let minX = Infinity;
@@ -937,10 +1057,7 @@ function deriveUtciLayoutFrame(analysis: Analysis): DerivedUtciLayoutFrame {
 		constructionMode: usingBoundsFallback
 			? 'metadata-bounds-fallback'
 			: 'world-positions',
-		normalizationSignature: createNormalizationSignature({
-			enabled: isNormalizationEnabled(),
-			offset: normalizationOffset
-		})
+		normalizationSignature
 	};
 }
 
@@ -996,6 +1113,16 @@ function getLayoutSourceSignature(
 		hash = appendHashNumber(hash, bounds.y_min);
 		hash = appendHashNumber(hash, bounds.y_max);
 		hash = appendHashNumber(hash, bounds.z ?? 0);
+	}
+	const activeMask = analysis.metadata.activeMask;
+	if (activeMask) {
+		hash = appendHashString(hash, activeMask.source);
+		hash = appendHashNumber(hash, activeMask.canonicalPointCount);
+		hash = appendHashNumber(hash, activeMask.activePointCount);
+		hash = appendHashNumber(hash, activeMask.inactivePointCount);
+		hash = appendHashString(hash, activeMask.activeMaskChecksum);
+		hash = appendHashString(hash, activeMask.signature ?? '');
+		hash = appendHashUint32Array(hash, activeMask.activeCanonicalIndices);
 	}
 	const signature = `v1:${hash.toString(16)}`;
 	if (diagnostics && startedAt !== undefined) {
@@ -1643,6 +1770,7 @@ export function buildUtciGridLayout(
 	let width = 1;
 	let height = 1;
 	let usingBoundsFallback = false;
+	let usingActiveMaskLayout = false;
 
 	// Guard against invalid layout (e.g. NaN positions or wrong coordinate space)
 	let layoutValid =
@@ -1654,8 +1782,28 @@ export function buildUtciGridLayout(
 		Number.isFinite(maxY);
 
 	// Fallback for live/WebGPU rectangular grid: use metadata.bounds so overlay is placed in scene
-	const bounds = metadata.bounds as { x_min: number; x_max: number; y_min: number; y_max: number; z?: number } | undefined;
-	if (!layoutValid && bounds && (analysis as any).__source === 'webgpu') {
+	const bounds = metadata.bounds as AnalysisRectangularBounds | undefined;
+	const activeMask = getRenderableActiveMask(metadata, numPositions);
+	const activeMaskLayout = resolveActiveMaskViewerLayout({
+		bounds,
+		activeMask,
+		gridSize,
+		coordinateSystem,
+		normalizationOffset
+	});
+	if (activeMaskLayout) {
+		usingBoundsFallback = true;
+		usingActiveMaskLayout = true;
+		minX = activeMaskLayout.minX;
+		maxX = activeMaskLayout.maxX;
+		minZ = activeMaskLayout.minZ;
+		maxZ = activeMaskLayout.maxZ;
+		minY = activeMaskLayout.minY;
+		maxY = activeMaskLayout.maxY;
+		width = activeMaskLayout.width;
+		height = activeMaskLayout.height;
+		layoutValid = true;
+	} else if (!layoutValid && bounds && (analysis as any).__source === 'webgpu') {
 		usingBoundsFallback = true;
 		if (coordinateSystem === 'xy_ground') {
 			minX = bounds.x_min;
@@ -1688,7 +1836,17 @@ export function buildUtciGridLayout(
 
 	if (layoutValid) {
 		const coordinateAssignmentStartedAt = diagnostics ? performance.now() : undefined;
-		if (usingBoundsFallback) {
+		if (usingActiveMaskLayout && activeMaskLayout) {
+			assignActiveMaskGridCoordinates(
+				rows,
+				cols,
+				numPositions,
+				width,
+				height,
+				activeMaskLayout.activeMask.activeCanonicalIndices,
+				coordinateSystem
+			);
+		} else if (usingBoundsFallback) {
 			assignFallbackGridCoordinates(rows, cols, numPositions, width, height);
 		} else {
 			const dimensions = assignGridCoordinatesFromWorldPositions({
@@ -1829,6 +1987,28 @@ function assignFallbackGridCoordinates(
 		const row = Math.min(height - 1, i % height);
 		cols[i] = col;
 		rows[i] = row;
+	}
+}
+
+function assignActiveMaskGridCoordinates(
+	rows: Uint32Array,
+	cols: Uint32Array,
+	numPositions: number,
+	width: number,
+	height: number,
+	activeCanonicalIndices: Uint32Array,
+	coordinateSystem: 'xy_ground' | 'xz_ground'
+): void {
+	for (let pointIndex = 0; pointIndex < numPositions; pointIndex += 1) {
+		const canonicalIndex = activeCanonicalIndices[pointIndex];
+		const cell = getActiveMaskGridCell({
+			canonicalIndex,
+			width,
+			height,
+			coordinateSystem
+		});
+		cols[pointIndex] = cell.col;
+		rows[pointIndex] = cell.row;
 	}
 }
 

@@ -241,12 +241,12 @@ export function areUtciGridLayoutsPointCompatible(
 
 export function createCellToPointIndexArray(layout: UtciGridLayout): Uint32Array {
 	const cellCount = layout.width * layout.height;
-	const fallbackPointIndex = 0;
+	const inactivePointIndex = layout.numPositions;
 	const cellToPoint = getCellToPointIndex(layout, cellCount);
 	const indices = new Uint32Array(cellCount);
 	for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
 		const mappedPointIndex = cellToPoint[cellIndex] ?? -1;
-		indices[cellIndex] = mappedPointIndex >= 0 ? mappedPointIndex : fallbackPointIndex;
+		indices[cellIndex] = mappedPointIndex >= 0 ? mappedPointIndex : inactivePointIndex;
 	}
 
 	return indices;

@@ -887,6 +887,14 @@
 					child.material.dispose();
 				}
 			}
+			if (child instanceof THREE.LineSegments) {
+				child.geometry?.dispose();
+				if (Array.isArray(child.material)) {
+					child.material.forEach((mat) => mat.dispose());
+				} else if (child.material) {
+					child.material.dispose();
+				}
+			}
 		});
 	}
 

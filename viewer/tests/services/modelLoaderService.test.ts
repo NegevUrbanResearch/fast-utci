@@ -4,9 +4,25 @@ import {
 	getLayerName,
 	mapLayerNameToType,
 	applyLayerMaterials,
-	mergeLayerMeshes
+	mergeLayerMeshes,
+	resolveComputeBvhEligibility
 } from '$lib/services/modelLoaderService';
+import { discoverLayers } from '$lib/services/layerManagerService';
+import { prepareMeshPayloadForWorker } from '$lib/compute/gpu/mergeAndBvhWorkerClient';
 import { LAYER_NAME_MAPPING } from '$lib/types/layerMaterials';
+
+function addLayerMesh(
+	model: THREE.Group,
+	layerName: string,
+	geometry: THREE.BufferGeometry = new THREE.BoxGeometry(1, 1, 1)
+): THREE.Mesh {
+	const parent = new THREE.Group();
+	parent.name = layerName;
+	const mesh = new THREE.Mesh(geometry);
+	parent.add(mesh);
+	model.add(parent);
+	return mesh;
+}
 
 describe('Model Loader Service', () => {
 	describe('getLayerName', () => {
@@ -118,8 +134,19 @@ describe('Model Loader Service', () => {
 		it('should map known layer names using LAYER_NAME_MAPPING', () => {
 			expect(mapLayerNameToType('building')).toBe('building');
 			expect(mapLayerNameToType('buildings')).toBe('building');
+			expect(mapLayerNameToType('existing_buildings')).toBe('building');
 			expect(mapLayerNameToType('vegetation')).toBe('vegetation');
 			expect(mapLayerNameToType('trees')).toBe('vegetation');
+			expect(mapLayerNameToType('trees_canopy')).toBe('vegetation');
+			expect(mapLayerNameToType('trees_camopy')).toBe('vegetation');
+			expect(mapLayerNameToType('tree_canopy')).toBe('vegetation');
+			expect(mapLayerNameToType('street')).toBe('road');
+			expect(mapLayerNameToType('train track')).toBe('train_track');
+			expect(mapLayerNameToType('train tracks')).toBe('train_track');
+			expect(mapLayerNameToType('train_tracks')).toBe('train_track');
+			expect(mapLayerNameToType('district_outline')).toBe('ignored');
+			expect(mapLayerNameToType('trees_point')).toBe('ignored');
+			expect(mapLayerNameToType('tree_point')).toBe('ignored');
 		});
 
 		it('should handle case-insensitive matching', () => {
@@ -140,6 +167,22 @@ describe('Model Loader Service', () => {
 
 		it('should return "unknown" for empty string', () => {
 			expect(mapLayerNameToType('')).toBe('unknown');
+		});
+	});
+
+	describe('resolveComputeBvhEligibility', () => {
+		it('separates Innovation District visual ground-family layers from compute occluders', () => {
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'existing_buildings', layerType: 'building' })).toBe(true);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'trees_canopy', layerType: 'vegetation' })).toBe(true);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'street', layerType: 'road' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'road', layerType: 'road' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'roads', layerType: 'road' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'highway', layerType: 'road' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'train track', layerType: 'train_track' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'train tracks', layerType: 'train_track' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'train_tracks', layerType: 'train_track' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'ground', layerType: 'base' })).toBe(false);
+			expect(resolveComputeBvhEligibility({ rawLayerName: 'legacy_unknown', layerType: 'base' })).toBeUndefined();
 		});
 	});
 
@@ -229,6 +272,111 @@ describe('Model Loader Service', () => {
 
 			expect(buildingMesh.userData.layerType).toBe('building');
 			expect(vegetationMesh.userData.layerType).toBe('vegetation');
+		});
+
+		it('stores compute BVH eligibility only for explicit layer metadata decisions', async () => {
+			const buildingMesh = addLayerMesh(model, 'existing_buildings');
+			const treeCanopyMesh = addLayerMesh(model, 'trees_canopy');
+			const streetMesh = addLayerMesh(model, 'street');
+			const trainTrackMesh = addLayerMesh(model, 'train_tracks');
+			const groundMesh = addLayerMesh(model, 'ground');
+			const legacyUnknownRemappedToBase = addLayerMesh(model, 'legacy_unknown');
+
+			await applyLayerMaterials(model);
+
+			expect(buildingMesh.userData.includeInComputeBvh).toBe(true);
+			expect(treeCanopyMesh.userData.includeInComputeBvh).toBe(true);
+			expect(streetMesh.userData.includeInComputeBvh).toBe(false);
+			expect(trainTrackMesh.userData.includeInComputeBvh).toBe(false);
+			expect(groundMesh.userData.includeInComputeBvh).toBe(false);
+			expect(legacyUnknownRemappedToBase.userData.includeInComputeBvh).toBeUndefined();
+		});
+
+		it('renders merged roads as an outline-only context layer above UTCI', async () => {
+			addLayerMesh(model, 'street', new THREE.PlaneGeometry(10, 4));
+			addLayerMesh(model, 'street', new THREE.PlaneGeometry(6, 3));
+
+			await applyLayerMaterials(model);
+
+			const mergedRoad = model.children.find((child) => child.userData.layerType === 'road') as THREE.Mesh;
+			const roadMaterial = mergedRoad.material as THREE.MeshStandardMaterial;
+			const roadOutline = mergedRoad.children.find((child) => child.name === 'road_outline') as THREE.LineSegments;
+			const outlineMaterial = roadOutline.material as THREE.LineBasicMaterial;
+
+			expect(mergedRoad.name).toBe('road_merged');
+			expect(mergedRoad.userData.includeInComputeBvh).toBe(false);
+			expect(mergedRoad.renderOrder).toBeGreaterThan(2);
+			expect(roadMaterial.opacity).toBe(0);
+			expect(roadMaterial.transparent).toBe(true);
+			expect(roadMaterial.depthWrite).toBe(false);
+			expect(roadOutline).toBeInstanceOf(THREE.LineSegments);
+			expect(roadOutline.renderOrder).toBe(mergedRoad.renderOrder);
+			expect(outlineMaterial.color.getHexString()).toBe('f5f7fa');
+			expect(outlineMaterial.toneMapped).toBe(false);
+			expect(outlineMaterial.depthWrite).toBe(false);
+		});
+
+		it('keeps train tracks as geometry rendered above UTCI instead of converting them to outlines', async () => {
+			addLayerMesh(model, 'train_tracks', new THREE.PlaneGeometry(10, 1));
+			addLayerMesh(model, 'train_tracks', new THREE.PlaneGeometry(8, 1));
+
+			await applyLayerMaterials(model);
+
+			const mergedTracks = model.children.find((child) => child.userData.layerType === 'train_track') as THREE.Mesh;
+			const trackMaterial = mergedTracks.material as THREE.MeshStandardMaterial;
+
+			expect(mergedTracks.name).toBe('train_track_merged');
+			expect(mergedTracks.userData.includeInComputeBvh).toBe(false);
+			expect(mergedTracks.renderOrder).toBeGreaterThan(2);
+			expect(trackMaterial.opacity).toBeGreaterThan(0);
+			expect(trackMaterial.depthWrite).toBe(true);
+			expect(
+				mergedTracks.children.some((child) => child.name === 'road_outline')
+			).toBe(false);
+		});
+
+		it('preserves compute BVH eligibility through processed scene clones', async () => {
+			addLayerMesh(model, 'existing_buildings');
+			addLayerMesh(model, 'trees_canopy');
+			addLayerMesh(model, 'street');
+			addLayerMesh(model, 'train_tracks');
+			addLayerMesh(model, 'ground');
+
+			await applyLayerMaterials(model);
+			const cloned = model.clone(true);
+			const eligibilityByLayer = new Map<string, unknown>();
+			cloned.traverse((child) => {
+				if (child instanceof THREE.Mesh && child.userData.layerType) {
+					eligibilityByLayer.set(child.userData.layerType, child.userData.includeInComputeBvh);
+				}
+			});
+
+			expect(eligibilityByLayer.get('building')).toBe(true);
+			expect(eligibilityByLayer.get('vegetation')).toBe(true);
+			expect(eligibilityByLayer.get('road')).toBe(false);
+			expect(eligibilityByLayer.get('train_track')).toBe(false);
+			expect(eligibilityByLayer.get('base')).toBe(false);
+		});
+
+		it('removes ignored district outline primitives before layer discovery and compute payloads', async () => {
+			const outlineParent = new THREE.Group();
+			outlineParent.name = 'district_outline';
+			const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+				new THREE.Vector3(0, 0, 0),
+				new THREE.Vector3(10, 0, 0)
+			]);
+			const outlineLine = new THREE.Line(lineGeometry);
+			outlineParent.add(outlineLine);
+			model.add(outlineParent);
+			addLayerMesh(model, 'existing_buildings');
+
+			await applyLayerMaterials(model);
+
+			expect(outlineParent.children).not.toContain(outlineLine);
+			const discoveredLayers = discoverLayers(model);
+			expect(discoveredLayers.has('ignored')).toBe(false);
+			const payload = prepareMeshPayloadForWorker(model);
+			expect(payload.meshes).toHaveLength(1);
 		});
 	});
 
@@ -331,6 +479,70 @@ describe('Model Loader Service', () => {
 			expect(mergedMesh.castShadow).toBe(true);
 			expect(mergedMesh.receiveShadow).toBe(true);
 		});
+
+		it('preserves explicit compute BVH eligibility when merging meshes', () => {
+			const model = new THREE.Group();
+			const meshes = [new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)), new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))];
+			meshes[0].userData.includeInComputeBvh = false;
+			meshes[1].userData.includeInComputeBvh = false;
+			meshes.forEach((mesh) => model.add(mesh));
+
+			mergeLayerMeshes(model, 'road', meshes);
+
+			const mergedMesh = model.children.find((child) => child.userData.layerType === 'road') as THREE.Mesh;
+			expect(mergedMesh.userData.includeInComputeBvh).toBe(false);
+		});
+
+		it('leaves merged compute BVH eligibility undefined when every source mesh is missing metadata', () => {
+			const model = new THREE.Group();
+			const meshes = [new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)), new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))];
+			meshes.forEach((mesh) => model.add(mesh));
+
+			mergeLayerMeshes(model, 'building', meshes);
+
+			const mergedMesh = model.children.find((child) => child.userData.layerType === 'building') as THREE.Mesh;
+			expect(mergedMesh.userData.includeInComputeBvh).toBeUndefined();
+		});
+
+		it('keeps merged compute BVH eligibility true when any source mesh is eligible', () => {
+			const model = new THREE.Group();
+			const meshes = [new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)), new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))];
+			meshes[0].userData.includeInComputeBvh = false;
+			meshes[1].userData.includeInComputeBvh = true;
+			meshes.forEach((mesh) => model.add(mesh));
+
+			mergeLayerMeshes(model, 'building', meshes);
+
+			const mergedMesh = model.children.find((child) => child.userData.layerType === 'building') as THREE.Mesh;
+			expect(mergedMesh.userData.includeInComputeBvh).toBe(true);
+		});
+
+		it('preserves compute BVH eligibility through batched layer merges in applyLayerMaterials', async () => {
+			const model = new THREE.Group();
+			const makeGeometry = () => new THREE.PlaneGeometry(1, 1, 100, 100);
+
+			addLayerMesh(model, 'existing_buildings', makeGeometry());
+			addLayerMesh(model, 'existing_buildings', makeGeometry());
+			addLayerMesh(model, 'existing_buildings', makeGeometry());
+			addLayerMesh(model, 'street', makeGeometry());
+			addLayerMesh(model, 'street', makeGeometry());
+			addLayerMesh(model, 'street', makeGeometry());
+			addLayerMesh(model, 'legacy_unknown', makeGeometry());
+			addLayerMesh(model, 'legacy_unknown', makeGeometry());
+			addLayerMesh(model, 'legacy_unknown', makeGeometry());
+
+			await applyLayerMaterials(model);
+
+			const mergedBuilding = model.children.find((child) => child.userData.layerType === 'building') as THREE.Mesh;
+			const mergedRoad = model.children.find((child) => child.userData.layerType === 'road') as THREE.Mesh;
+			const mergedBase = model.children.find((child) => child.userData.layerType === 'base') as THREE.Mesh;
+
+			expect(mergedBuilding.name).toBe('building_merged');
+			expect(mergedBuilding.userData.includeInComputeBvh).toBe(true);
+			expect(mergedRoad.name).toBe('road_merged');
+			expect(mergedRoad.userData.includeInComputeBvh).toBe(false);
+			expect(mergedBase.name).toBe('base_merged');
+			expect(mergedBase.userData.includeInComputeBvh).toBeUndefined();
+		});
 	});
 });
-

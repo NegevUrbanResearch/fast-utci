@@ -11,7 +11,7 @@
 	export let placement: "header" | "sidebar" = "header";
 
 	// Layers to hide from UI (we don't care about them currently)
-	const HIDDEN_LAYERS = ["base", "road", "sidewalk", "unknown"];
+	const HIDDEN_LAYERS = ["base", "sidewalk", "unknown", "ignored"];
 
 	$: onlyBaseLayer =
 		$discoveredLayersStore.length === 1 &&

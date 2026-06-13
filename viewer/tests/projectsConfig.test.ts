@@ -10,4 +10,19 @@ describe('projects config', () => {
 		const nt = projects.find((p) => p.id === 'Ness-Tziona');
 		expect(nt?.models.length).toBe(1);
 	});
+
+	it('includes Innovation District as a live WebGPU project', () => {
+		const project = projects.find((p) => p.id === 'Innovation-District');
+		expect(project?.label).toBe('Innovation District');
+		expect(project?.defaultAnalysisId).toBe(
+			'Innovation-District/innovation_district_webgpu'
+		);
+		expect(project?.models).toEqual([
+			{
+				id: 'base',
+				label: 'Base',
+				analysisId: 'Innovation-District/innovation_district_webgpu'
+			}
+		]);
+	});
 });

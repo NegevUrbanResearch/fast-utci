@@ -30,6 +30,7 @@ import {
 	updateComputeBufferUtciSurfaceMesh
 } from '$lib/services/gpuUtciRenderBridge';
 import { resolveComputeBufferMetricColorPolicy } from '$lib/services/computeBufferMetricColorPolicy';
+import { updateViewerConfig } from '$lib/config/viewerConfig';
 import type {
 	SelectedHourRenderLayoutNormalizationSignature,
 	SelectedHourRenderSurfaceMeshTrace
@@ -117,6 +118,36 @@ function cloneAnalysisWithSelectedHourValues(
 	};
 }
 
+function withActiveMask(
+	analysis: Analysis,
+	params: {
+		activeCanonicalIndices: number[];
+		checksum?: string;
+		source?: 'base' | 'base+road';
+	}
+): Analysis {
+	const canonicalPointCount = Math.max(...params.activeCanonicalIndices) + 1;
+	return {
+		...analysis,
+		data: {
+			...analysis.data
+		},
+		metadata: {
+			...analysis.metadata,
+			activeMask: {
+				source: params.source ?? 'base',
+				canonicalPointCount,
+				activePointCount: params.activeCanonicalIndices.length,
+				inactivePointCount:
+					canonicalPointCount - params.activeCanonicalIndices.length,
+				activePointRatio: params.activeCanonicalIndices.length / canonicalPointCount,
+				activeMaskChecksum: params.checksum ?? 'mask-test',
+				activeCanonicalIndices: new Uint32Array(params.activeCanonicalIndices)
+			}
+		}
+	};
+}
+
 function serializeExpectedNormalizationSignature(
 	signature: SelectedHourRenderLayoutNormalizationSignature
 ): string {
@@ -141,6 +172,10 @@ function toLinearColor(r: number, g: number, b: number): THREE.Color {
 
 describe('pointCloudService UTCI surface seam', () => {
 	beforeEach(() => {
+		updateViewerConfig({
+			anchorOffset: new THREE.Vector3(0, 0, 0),
+			enableNormalization: true
+		});
 		resetUtciLayoutFrameCachesForTest();
 	});
 
@@ -232,6 +267,167 @@ describe('pointCloudService UTCI surface seam', () => {
 		expect(Array.from(layout.indexToRow)).toEqual([0, 1, 0, 1]);
 		expect(Array.from(layout.indexToColumn)).toEqual([0, 0, 1, 1]);
 		expect(Array.from(layout.indexToTexel)).toEqual([2, 0, 3, 1]);
+	});
+
+	it('places compact active values back into canonical bounds cells and leaves inactive cells transparent', () => {
+		const analysis = createAnalysis({
+			positions: [
+				0, 0, 0,
+				1, 0, 1,
+				2, 0, 2
+			],
+			utciValues: [10, 20, 30],
+			coordinateSystem: 'xz_ground',
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 },
+			source: 'webgpu'
+		});
+		analysis.metadata.activeMask = {
+			source: 'base',
+			canonicalPointCount: 9,
+			activePointCount: 3,
+			inactivePointCount: 6,
+			activePointRatio: 1 / 3,
+			activeMaskChecksum: 'mask123',
+			activeCanonicalIndices: new Uint32Array([0, 4, 8])
+		};
+
+		const mesh = createUtciSurfaceMesh(analysis);
+		const layout = mesh.userData.utciLayout;
+
+		expect(layout.width).toBe(3);
+		expect(layout.height).toBe(3);
+		expect(layout.numPositions).toBe(3);
+		expect(Array.from(layout.indexToRow)).toEqual([0, 1, 2]);
+		expect(Array.from(layout.indexToColumn)).toEqual([0, 1, 2]);
+		expect(Array.from(layout.cellToPointIndex)).toEqual([
+			0, -1, -1,
+			-1, 1, -1,
+			-1, -1, 2
+		]);
+		expect(Array.from(createCellToPointIndexArray(layout))).toEqual([
+			0, 3, 3,
+			3, 1, 3,
+			3, 3, 2
+		]);
+
+		const activeTexels = new Set(Array.from(layout.indexToTexel));
+		for (let texel = 0; texel < layout.width * layout.height; texel += 1) {
+			const alpha = layout.colorBuffer[texel * 4 + 3];
+			expect(alpha).toBe(activeTexels.has(texel) ? 255 : 0);
+		}
+	});
+
+	it('applies normalization offset to active-mask metadata bounds placement', () => {
+		const analysis = withActiveMask(
+			createAnalysis({
+				positions: [
+					10, 3, 20,
+					11, 3, 21,
+					12, 3, 22
+				],
+				utciValues: [10, 20, 30],
+				coordinateSystem: 'xz_ground',
+				bounds: { x_min: 10, x_max: 12, y_min: 20, y_max: 22, z: 3 },
+				source: 'webgpu'
+			}),
+			{
+				activeCanonicalIndices: [0, 4, 8],
+				checksum: 'shifted-mask'
+			}
+		);
+
+		const layout = buildUtciGridLayout(analysis);
+
+		expect(layout.width).toBe(3);
+		expect(layout.height).toBe(3);
+		expect(layout.centerX).toBe(0);
+		expect(layout.centerZ).toBe(18);
+		expect(layout.baseY).toBeCloseTo(-18.05, 6);
+	});
+
+	it('maps xy_ground active-mask cells into the same canonical render cells without vertical mirroring', () => {
+		const analysis = createAnalysis({
+			positions: [
+				0, 0, 0,
+				0, 0, 1,
+				1, 0, 2
+			],
+			utciValues: [10, 20, 30],
+			coordinateSystem: 'xy_ground',
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 },
+			source: 'webgpu'
+		});
+		analysis.metadata.activeMask = {
+			source: 'base',
+			canonicalPointCount: 9,
+			activePointCount: 3,
+			inactivePointCount: 6,
+			activePointRatio: 1 / 3,
+			activeMaskChecksum: 'mask-xy-ground',
+			activeCanonicalIndices: new Uint32Array([0, 1, 5])
+		};
+
+		const mesh = createUtciSurfaceMesh(analysis);
+		const layout = mesh.userData.utciLayout;
+
+		expect(layout.width).toBe(3);
+		expect(layout.height).toBe(3);
+		expect(layout.numPositions).toBe(3);
+		expect(Array.from(layout.indexToRow)).toEqual([2, 1, 0]);
+		expect(Array.from(layout.indexToColumn)).toEqual([0, 0, 1]);
+		expect(Array.from(layout.cellToPointIndex)).toEqual([
+			-1, 2, -1,
+			1, -1, -1,
+			0, -1, -1
+		]);
+
+		const activeTexels = new Set(Array.from(layout.indexToTexel));
+		expect(activeTexels).toEqual(new Set([0, 3, 7]));
+		for (let texel = 0; texel < layout.width * layout.height; texel += 1) {
+			const alpha = layout.colorBuffer[texel * 4 + 3];
+			expect(alpha).toBe(activeTexels.has(texel) ? 255 : 0);
+		}
+	});
+
+	it('uses canonical active-mask dimensions for non-grid-aligned Innovation District bounds', () => {
+		const width = 1299;
+		const height = 1149;
+		const analysis = createAnalysis({
+			positions: [
+				0, 0, 0,
+				0, 0, 0,
+				0, 0, 0,
+				0, 0, 0
+			],
+			utciValues: [10, 20, 30, 40],
+			gridSize: 2,
+			coordinateSystem: 'xy_ground',
+			bounds: {
+				x_min: 180591.05,
+				x_max: 183188.48,
+				y_min: 573608.4,
+				y_max: 575905.44,
+				z: 1.5
+			},
+			source: 'webgpu'
+		});
+		analysis.metadata.activeMask = {
+			source: 'base+road',
+			canonicalPointCount: width * height,
+			activePointCount: 4,
+			inactivePointCount: width * height - 4,
+			activePointRatio: 4 / (width * height),
+			activeMaskChecksum: 'innovation-district-mask',
+			activeCanonicalIndices: new Uint32Array([0, height - 1, height, width * height - 1])
+		};
+
+		const layout = buildUtciGridLayout(analysis);
+
+		expect(layout.width).toBe(width);
+		expect(layout.height).toBe(height);
+		expect(layout.width * layout.height).toBe(analysis.metadata.activeMask.canonicalPointCount);
+		expect(Array.from(layout.indexToColumn)).toEqual([0, 0, 1, width - 1]);
+		expect(Array.from(layout.indexToRow)).toEqual([height - 1, 0, height - 1, 0]);
 	});
 
 	it('records layout-build diagnostic substeps without changing the layout output', () => {
@@ -875,6 +1071,80 @@ describe('pointCloudService UTCI surface seam', () => {
 		});
 	});
 
+	it('derives active-mask prebuild keys from the same canonical layout as the runtime build', () => {
+		const analysis = withActiveMask(
+			createAnalysis({
+				positions: [
+					0, 0, 0,
+					1, 0, 1,
+					2, 0, 2
+				],
+				utciValues: [10, 20, 30],
+				coordinateSystem: 'xz_ground',
+				bounds: { x_min: 0, x_max: 4, y_min: 0, y_max: 4, z: 0 },
+				source: 'webgpu',
+				sourceAnalysisId: 'active/base'
+			}),
+			{
+				activeCanonicalIndices: [0, 12, 24],
+				checksum: 'sparse-mask'
+			}
+		);
+
+		const runtimeKey = createUtciLayoutReuseKey({
+			analysis,
+			layout: buildUtciGridLayout(analysis),
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu'
+		});
+		const prebuildKey = createUtciLayoutReuseKeyForAnalysis({
+			analysis,
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu'
+		});
+
+		expect(prebuildKey).toEqual(runtimeKey);
+	});
+
+	it('includes active-mask signature in prebuild layout reuse keys', () => {
+		const base = createAnalysis({
+			positions: [
+				0, 0, 0,
+				1, 0, 1,
+				2, 0, 2
+			],
+			utciValues: [10, 20, 30],
+			coordinateSystem: 'xz_ground',
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 },
+			source: 'webgpu',
+			sourceAnalysisId: 'active/base'
+		});
+		const first = withActiveMask(base, {
+			activeCanonicalIndices: [0, 4, 8],
+			checksum: 'mask-a'
+		});
+		const second = withActiveMask(base, {
+			activeCanonicalIndices: [1, 4, 7],
+			checksum: 'mask-b'
+		});
+
+		const firstKey = createUtciLayoutReuseKeyForAnalysis({
+			analysis: first,
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu'
+		});
+		const secondKey = createUtciLayoutReuseKeyForAnalysis({
+			analysis: second,
+			utciSurfaceSource: 'compute-buffer-selected-hour',
+			rendererBackend: 'webgpu'
+		});
+
+		expect(secondKey.layoutSourceSignature).not.toBe(
+			firstKey.layoutSourceSignature
+		);
+		expect(secondKey).not.toEqual(firstKey);
+	});
+
 	it.each([
 		[
 			'grid size',
@@ -1495,6 +1765,44 @@ describe('pointCloudService UTCI surface seam', () => {
 		).toEqual([0]);
 		expect(mesh.userData.gpuNativeUtciSurfaceState.utciRange).toEqual({ min: 10, max: 40 });
 		expect(mesh.userData.renderOwnedSelectedHourBytes).toBe(1104);
+	});
+
+	it('maps inactive compute-buffer surface cells to the GPU opacity sentinel', () => {
+		const mesh = createComputeBufferUtciSurfaceMesh({
+			layout: {
+				width: 2,
+				height: 2,
+				gridSize: 1,
+				numPositions: 2,
+				centerX: 1,
+				centerZ: 1,
+				minX: 0,
+				minZ: 0,
+				baseY: 0,
+				coordinateSystem: 'xz_ground' as const,
+				minY: 0,
+				maxY: 0,
+				indexToRow: new Uint32Array([0, 1]),
+				indexToColumn: new Uint32Array([0, 1]),
+				indexToTexel: new Uint32Array([0, 3]),
+				cellToPointIndex: new Int32Array([
+					0, -1,
+					-1, 1
+				]),
+				colorBuffer: new Uint8Array(16)
+			},
+			utciBuffer: {} as GPUBuffer,
+			utciRange: { min: 10, max: 40 }
+		});
+		const state = mesh.userData.gpuNativeUtciSurfaceState;
+
+		expect(Array.from(state.cellToPointStorageAttribute.array)).toEqual([
+			0, 2,
+			2, 1
+		]);
+		expect(state.cellToPointStorageAttribute.array[1]).toBe(state.utciStorageAttribute.count);
+		expect(state.cellToPointStorageAttribute.array[2]).toBe(state.utciStorageAttribute.count);
+		expect((mesh.material as { opacityNode?: unknown }).opacityNode).toBeDefined();
 	});
 
 	it('creates compute-buffer Shading Index surfaces with metric-aware range and color policy', () => {

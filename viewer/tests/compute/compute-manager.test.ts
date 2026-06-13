@@ -367,6 +367,42 @@ describe('ComputeManager', () => {
 		expect(result.gridPoints!.length).toBe(result.numPoints * 3);
 	});
 
+	it('uploads and dispatches only active canonical grid cells when active indices are provided', async () => {
+		const { pipeline, uploadStaticData, runAll } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
+			activeCanonicalIndices: new Uint32Array([0, 4, 8])
+		});
+
+		expect(result).toMatchObject({
+			numPoints: 3,
+			canonicalPointCount: 9
+		});
+		expect(Array.from(result.gridPoints)).toEqual([
+			-2, 1.5, 2,
+			0, 1.5, 0,
+			2, 1.5, -2
+		]);
+		expect(uploadStaticData).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gridPoints: result.gridPoints
+			})
+		);
+		expect(runAll).toHaveBeenCalledWith({
+			numPoints: 3,
+			numHours: 24,
+			numMonths: 1
+		});
+	});
+
 	it('uses provided zHeight for generated rectangular grid points', async () => {
 		const { pipeline } = createFakePipeline();
 		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });

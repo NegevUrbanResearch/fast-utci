@@ -33,6 +33,7 @@ export type MainRouteWindow = Window & {
 export type MainRouteLiveMetricSelection = {
 	useLiveMetricOnMainRoute: boolean;
 	liveRouteEnabled: boolean;
+	liveShadingMetricAvailable: boolean;
 	selectedMonthIndex: number;
 	selectedHourIndex: number;
 	selectedTimeIndex: number;
@@ -66,6 +67,7 @@ export function resolveMainRouteLiveMetricSelection(params: {
 		params.rendererBackend === 'webgpu' &&
 		params.rendererDevice != null &&
 		params.utciSurfaceBackend === 'gpuNative';
+	const liveShadingMetricAvailable = isFullDayAnalysis && webgpuLiveReady;
 	const liveRouteEnabled =
 		useLiveMetricOnMainRoute &&
 		(params.metricType === 'utci' || webgpuLiveReady);
@@ -88,6 +90,7 @@ export function resolveMainRouteLiveMetricSelection(params: {
 	return {
 		useLiveMetricOnMainRoute,
 		liveRouteEnabled,
+		liveShadingMetricAvailable,
 		selectedMonthIndex,
 		selectedHourIndex,
 		selectedTimeIndex,
@@ -358,6 +361,11 @@ export function buildMainRouteLiveSelectedHourDiagnosticsInputs(
 		baseColorMode: params.baseColorMode,
 		basePointCount: params.basePointCount,
 		baseMetadataGridSize: params.baseMetadataGridSize,
+		activeMaskSource: params.liveRouteState.base.runtimeDiagnostics?.activeMaskSource,
+		canonicalPointCount: params.liveRouteState.base.runtimeDiagnostics?.canonicalPointCount,
+		activePointCount: params.liveRouteState.base.runtimeDiagnostics?.activePointCount,
+		inactivePointCount: params.liveRouteState.base.runtimeDiagnostics?.inactivePointCount,
+		activePointRatio: params.liveRouteState.base.runtimeDiagnostics?.activePointRatio,
 		exposureScheduling: params.exposureScheduling,
 		baseRenderContextTimeIndex: params.baseSceneRenderContextTimeIndex,
 		baseAcceptedUtciRange: params.baseAcceptedUtciRange,

@@ -5,6 +5,8 @@
 
 import type * as THREE from 'three';
 import { emitComputeTelemetry } from '$lib/compute/telemetry';
+import type { AnalysisBounds } from '$lib/compute/core/analysisGridFromBounds';
+import { analysisBoundsToViewerRectangularBounds } from '$lib/compute/core/analysisGridFromBounds';
 
 export interface MeshPayload {
 	position: Float32Array;
@@ -55,6 +57,8 @@ interface PreparePayloadOptions {
 	maxGridPoints?: number;
 	maxEstimatedBytes?: number;
 	hasWorkerSupport?: boolean;
+	analysisBounds?: AnalysisBounds;
+	coordinateSystem?: 'xy_ground' | 'xz_ground';
 }
 
 interface WorkerProgressMessage {
@@ -107,6 +111,32 @@ function accumulateBounds(target: { min: [number, number, number]; max: [number,
 	target.max[0] = Math.max(target.max[0], box.max.x);
 	target.max[1] = Math.max(target.max[1], box.max.y);
 	target.max[2] = Math.max(target.max[2], box.max.z);
+}
+
+function shouldIncludeMeshInComputeBvh(mesh: THREE.Mesh): boolean {
+	return mesh.userData.includeInComputeBvh !== false;
+}
+
+function getTriangleCount(geom: THREE.BufferGeometry): number {
+	const posAttr = geom.getAttribute('position');
+	if (!posAttr) return 0;
+	const idxAttr = geom.getIndex();
+	return idxAttr ? idxAttr.count / 3 : posAttr.count / 3;
+}
+
+function createBoundsFromAnalysisMetadata(params: {
+	analysisBounds: AnalysisBounds;
+	coordinateSystem: 'xy_ground' | 'xz_ground';
+}): { min: [number, number, number]; max: [number, number, number] } {
+	const rectangularBounds = analysisBoundsToViewerRectangularBounds({
+		bounds: params.analysisBounds,
+		coordinateSystem: params.coordinateSystem
+	});
+	const y = params.analysisBounds.z ?? 0;
+	return {
+		min: [rectangularBounds.minX, y, rectangularBounds.minZ],
+		max: [rectangularBounds.maxX, y, rectangularBounds.maxZ]
+	};
 }
 
 function estimateBudget(params: {
@@ -170,7 +200,9 @@ export async function prepareMeshPayloadForWorkerAsync(
 		numMonths = 1,
 		maxGridPoints = MAX_GRID_POINTS_GUARD,
 		maxEstimatedBytes = DEFAULT_MAX_ESTIMATED_BYTES,
-		hasWorkerSupport = typeof Worker !== 'undefined'
+		hasWorkerSupport = typeof Worker !== 'undefined',
+		analysisBounds,
+		coordinateSystem = 'xy_ground'
 	} = options;
 	const t0 = performance.now();
 	await yieldToMain();
@@ -189,20 +221,22 @@ export async function prepareMeshPayloadForWorkerAsync(
 	group.traverse((child: THREE.Object3D) => {
 		if (!(child as THREE.Mesh).isMesh || !(child as THREE.Mesh).geometry) return;
 		const mesh = child as THREE.Mesh;
+		if (!shouldIncludeMeshInComputeBvh(mesh)) return;
 		const geom = mesh.geometry;
 		const posAttr = geom.getAttribute('position');
 		if (!posAttr) return;
 
 		meshList.push({ mesh, geom });
-		const idxAttr = geom.getIndex();
-		totalTriangles += idxAttr ? idxAttr.count / 3 : posAttr.count / 3;
+		totalTriangles += getTriangleCount(geom);
 
-		if (!geom.boundingBox) {
-			geom.computeBoundingBox();
-		}
-		if (geom.boundingBox) {
-			const worldBox = geom.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
-			accumulateBounds(bounds, worldBox);
+		if (!analysisBounds) {
+			if (!geom.boundingBox) {
+				geom.computeBoundingBox();
+			}
+			if (geom.boundingBox) {
+				const worldBox = geom.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
+				accumulateBounds(bounds, worldBox);
+			}
 		}
 	});
 
@@ -221,8 +255,12 @@ export async function prepareMeshPayloadForWorkerAsync(
 		);
 	}
 
-	const width = Math.max(0, bounds.max[0] - bounds.min[0]);
-	const depth = Math.max(0, bounds.max[2] - bounds.min[2]);
+	const preflightBounds = analysisBounds
+		? createBoundsFromAnalysisMetadata({ analysisBounds, coordinateSystem })
+		: bounds;
+
+	const width = Math.max(0, preflightBounds.max[0] - preflightBounds.min[0]);
+	const depth = Math.max(0, preflightBounds.max[2] - preflightBounds.min[2]);
 	const estimatedGridPoints = Math.max(1, Math.ceil((width * depth) / Math.max(0.25, gridResolution * gridResolution)));
 	if (estimatedGridPoints > maxGridPoints) {
 		throw new Error(
@@ -288,7 +326,7 @@ export async function prepareMeshPayloadForWorkerAsync(
 		meshCount: meshList.length,
 		estimatedGridPoints,
 		estimatedBytes,
-		bounds
+		bounds: preflightBounds
 	};
 
 	emitComputeTelemetry('payload.prepare.done', {
@@ -318,6 +356,7 @@ export function prepareMeshPayloadForWorker(
 	group.traverse((child: THREE.Object3D) => {
 		if (!(child as THREE.Mesh).isMesh || !(child as THREE.Mesh).geometry) return;
 		const mesh = child as THREE.Mesh;
+		if (!shouldIncludeMeshInComputeBvh(mesh)) return;
 		const geom = mesh.geometry;
 		const posAttr = geom.getAttribute('position');
 		if (!posAttr) return;

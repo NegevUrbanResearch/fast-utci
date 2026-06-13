@@ -1,8 +1,19 @@
 # WebGPU Strategy Analysis
 
-Updated: 2026-06-01
+Updated: 2026-06-11
 
 > **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
+
+## 2026-06-11 Innovation District Live WebGPU Contract
+
+Innovation District is now a GLB-backed live WebGPU project, not a Python-exported analysis path. The strategy boundary for this class of project is:
+
+- no Python or `.bin` payload is part of the product path; generated metadata plus the GLB are the source of truth for live analysis setup
+- metadata `bounds` and grid resolution define the sample grid and preflight estimate; filtered occluder bounds must not shrink grid sizing or budget checks
+- compute-BVH eligibility is carried on loaded mesh `userData.includeInComputeBvh`: known ground-family/context layers such as `ground`, `street`, `train_tracks`, and `district_outline` are excluded; known occluders such as `existing_buildings` and `trees_canopy` are included; an unset flag preserves legacy behavior instead of silently opting meshes out
+- `has_shading_index: false` in generated metadata does not mean the main route lacks live Shading Index support; it only means there is no baked Shading Index binary, while live WebGPU may still publish Shading Index on the same-device GPU path
+
+Proof boundary for future performance claims: do not treat Innovation District as proof that dense live GLB-backed startup is broadly safe at scale without citing a browser-measured run for the exact route and hardware. Startup and publication cost remains a runtime risk to keep measuring, not a resolved performance fact.
 
 ## Decision Snapshot
 
