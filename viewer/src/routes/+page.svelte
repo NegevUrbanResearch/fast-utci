@@ -87,6 +87,10 @@
 		getModelReloadState,
 		getMountedAnalysisId,
 	} from "./main/modelSelection";
+	import {
+		installFastUtciCollectorExport,
+		type FastUtciCollectorExportWindow,
+	} from "./main/collectorExportSeam";
 	import { getMainRouteModelLoadedEffects } from "./main/modelLifecycle";
 	import MainRouteOverlays from "./main/MainRouteOverlays.svelte";
 	import MainRouteTooltipLayer from "./main/MainRouteTooltipLayer.svelte";
@@ -162,7 +166,7 @@
 		__mainRouteDiagnosticsSetGridResolution?:
 			| ((resolutionMeters: number) => boolean)
 			| undefined;
-	};
+	} & FastUtciCollectorExportWindow;
 
 	let rendererRequiredLimits: WebgpuLargeBufferRequiredLimits | undefined = undefined;
 	let rendererDeviceLimits: WebgpuLargeBufferDeviceLimits | undefined = undefined;
@@ -231,6 +235,7 @@
 		createEmptyCameraInteractionTelemetry().diagnostics;
 	const mainRouteRenderPublicationProjectionTracker =
 		createMainRouteRenderPublicationProjectionTracker();
+	let cleanupFastUtciCollectorExport: (() => void) | null = null;
 
 	function updateUtciRenderDiagnostics(
 		params: MainRouteLiveSelectedHourDiagnosticsParams,
@@ -589,6 +594,19 @@
 			utciRenderDiagnosticsEnabled
 				? handleDiagnosticsGridResolutionChange
 				: undefined;
+		cleanupFastUtciCollectorExport?.();
+		cleanupFastUtciCollectorExport = installFastUtciCollectorExport({
+			win: window as MainRouteDiagnosticsWindow,
+			searchParams: $page.url.searchParams,
+			getCurrent: () => ({
+				analysis:
+					baseSceneAnalysis ??
+					liveRouteState.base.analysis ??
+					$analysisStore,
+				output: basePendingGpuResidentOutput,
+				device: rendererDeviceForMain,
+			}),
+		});
 		updateUtciRenderDiagnostics({
 			enabled: utciRenderDiagnosticsEnabled,
 			utciOnDemand: utciOnDemandMode,
@@ -657,6 +675,8 @@
 			const win = window as MainRouteDiagnosticsWindow;
 			win.__utciRenderDiagnostics__ = undefined;
 			win.__mainRouteDiagnosticsSetGridResolution = undefined;
+			cleanupFastUtciCollectorExport?.();
+			cleanupFastUtciCollectorExport = null;
 		}
 		performanceStore.set(EMPTY_PERFORMANCE_SNAPSHOT);
 

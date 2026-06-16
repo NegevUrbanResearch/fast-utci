@@ -22,6 +22,7 @@
 		"parity:diagnose-mrt": "tsx scripts/diagnose-mrt-worst-cell.ts",
 		"parity:diagnose-flips": "tsx scripts/diagnose-solar-flips.ts",
 		"parity:diagnose-ray-oracle": "playwright test --config=playwright.collect.config.ts tests/e2e/diagnose-solar-ray-oracle.spec.ts --project=chromium --workers=1",
+		"gis:export-innovation-district": "node --import tsx ./scripts/export-innovation-district-gis.ts",
 		"summarize:main-route-performance": "tsx scripts/summarize-main-route-performance.ts"
 	},
 	"devDependencies": {
