@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("pyproj")
+pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
 from fast_utci.innovation_district_gis.orchestrator import postprocess_active_cells
@@ -45,6 +46,7 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
         canonical_count=12,
         utci=utci,
         shading=np.array([0.25, 0.75, 0.5], dtype="<f4"),
+        surface_flags=np.array([1, 6, 5], dtype=np.uint8),
         hours=hours,
     )
     out_dir = tmp_path / "out"
@@ -78,10 +80,22 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
         "x",
         "y",
         "z",
+        "surface_flags",
+        "surface_class",
+        "is_street_surface",
+        "is_building_footprint",
+        "include_in_public_realm_stats",
+        "include_in_outdoor_surface_stats",
         "shading_index",
         *[f"utci_{hour:02d}" for hour in hours],
     ]
-    assert table.schema.field("geometry").type == pytest.importorskip("pyarrow").binary()
+    assert table.schema.field("geometry").type == pa.binary()
+    assert table.schema.field("surface_flags").type == pa.uint8()
+    assert table.schema.field("surface_class").type == pa.string()
+    assert table.schema.field("is_street_surface").type == pa.bool_()
+    assert table.schema.field("is_building_footprint").type == pa.bool_()
+    assert table.schema.field("include_in_public_realm_stats").type == pa.bool_()
+    assert table.schema.field("include_in_outdoor_surface_stats").type == pa.bool_()
 
     geo = _geo_metadata(table)
     assert geo["primary_column"] == "geometry"
@@ -97,6 +111,16 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
     assert payload["x"] == pytest.approx([180723.5, 180725.5, 180727.5])
     assert payload["y"] == pytest.approx([575888.0, 575890.0, 575892.0])
     assert payload["z"] == pytest.approx([1.5, 1.5, 1.5])
+    assert payload["surface_flags"] == [1, 6, 5]
+    assert payload["surface_class"] == [
+        "ground",
+        "building_footprint",
+        "building_footprint",
+    ]
+    assert payload["is_street_surface"] == [False, True, False]
+    assert payload["is_building_footprint"] == [False, True, True]
+    assert payload["include_in_public_realm_stats"] == [False, False, False]
+    assert payload["include_in_outdoor_surface_stats"] == [True, False, False]
     assert payload["shading_index"] == pytest.approx([0.25, 0.75, 0.5])
     assert payload["utci_00"] == pytest.approx([20.0, 44.0, 68.0])
     assert payload["utci_22"] == pytest.approx([42.0, 66.0, 90.0])
@@ -116,6 +140,12 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
     feature = debug_geojson["features"][0]
     assert feature["geometry"]["type"] == "Point"
     assert feature["properties"]["canonical_index"] == 2
+    assert feature["properties"]["surface_flags"] == 1
+    assert feature["properties"]["surface_class"] == "ground"
+    assert feature["properties"]["is_street_surface"] is False
+    assert feature["properties"]["is_building_footprint"] is False
+    assert feature["properties"]["include_in_public_realm_stats"] is False
+    assert feature["properties"]["include_in_outdoor_surface_stats"] is True
     assert feature["properties"]["utci_by_hour"]["0"] == pytest.approx(20.0)
     assert feature["properties"]["utci_by_hour"]["23"] is None
     assert feature["properties"]["shading_index"] == pytest.approx(0.25)
@@ -134,6 +164,12 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
     assert manifest["raw"]["arrays"]["utci"]["path"].endswith(
         "2025-08-15_2m_active-cells.utci.f32.bin"
     )
+    assert manifest["raw"]["arrays"]["surfaceFlags"]["path"].endswith(
+        "2025-08-15_2m_active-cells.surface-flags.u8.bin"
+    )
+    assert manifest["raw"]["arrays"]["surfaceFlags"]["dtype"] == "u8"
+    assert manifest["raw"]["arrays"]["surfaceFlags"]["shape"] == [3]
+    assert manifest["raw"]["arrays"]["surfaceFlags"]["layout"] == "point-major"
     assert manifest["crs"] == {
         "sourceProjected": "EPSG:2039",
         "geometry": "EPSG:4326",
@@ -145,17 +181,72 @@ def test_postprocess_active_cells_writes_combined_geoparquet_manifest_and_debug_
     assert manifest["geoParquet"]["geometryTypes"] == ["Point"]
     assert "GeoParquet metadata" in manifest["geoParquet"]["note"]
     assert manifest["geoParquet"]["schema"] == manifest["outputs"]["cellsGeoparquet"]["schema"]
+    assert manifest["surfaceClassification"] == {
+        "rawField": "surfaceFlags",
+        "pythonField": "surface_flags",
+        "bitFlags": {
+            "ground": 1,
+            "street_surface": 2,
+            "building_footprint": 4,
+        },
+        "semanticNotes": {
+            "streetSurfaceFamily": (
+                "Street, road, and sidewalk-family sampled surfaces are grouped as street_surface."
+            ),
+            "buildingFootprintOverlay": (
+                "Building footprint is an exclusion flag for downstream maps and stats."
+            ),
+            "outdoorSurfaceStats": (
+                "include_in_outdoor_surface_stats includes active rows excluding building footprints."
+            ),
+            "publicRealmStats": (
+                "include_in_public_realm_stats includes street_surface rows excluding "
+                "building footprints."
+            ),
+            "classifiedActiveRows": (
+                "Classified active export rows always have sampled-surface provenance; "
+                "unknown is not a legal active-row class in this contract."
+            ),
+        },
+    }
     assert manifest["outputs"]["cellsGeoparquet"]["path"] == str(outputs.cells_geoparquet_path)
     assert manifest["outputs"]["cellsGeoparquet"]["rows"] == 3
     assert manifest["outputs"]["manifest"]["path"] == str(outputs.manifest_path)
     assert manifest["outputs"]["qaDebugSampleGeojson"]["path"] == str(outputs.debug_geojson_path)
     assert manifest["qa"]["debugSampleGeojson"]["rows"] == 2
+    assert manifest["qa"]["spatialCoverageExpectations"] == [
+        {
+            "key": "street_surface_family_sample",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "street, road, or sidewalk-family sample."
+            ),
+        },
+        {
+            "key": "building_footprint_overlap_sample",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "building-footprint overlap sample."
+            ),
+        },
+        {
+            "key": "building_only_non_active_location",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "building-only non-active location proving no classified export row was created."
+            ),
+        },
+    ]
     assert manifest["counts"]["activeRows"] == 3
     assert manifest["counts"]["canonicalRows"] == 12
     assert manifest["counts"]["rowCount"] == 3
     assert manifest["counts"]["rowCountEqualsActiveRows"] is True
     assert manifest["counts"]["hourCount"] == 24
     assert manifest["counts"]["activeRatio"] == pytest.approx(0.25)
+    assert manifest["counts"]["streetSurfaceRows"] == 1
+    assert manifest["counts"]["buildingFootprintRows"] == 2
+    assert manifest["counts"]["publicRealmRows"] == 0
+    assert manifest["counts"]["outdoorSurfaceRows"] == 1
     assert manifest["activeMask"] == {
         "source": "base+road",
         "checksum": "active-mask-checksum",
@@ -199,11 +290,93 @@ def test_postprocess_active_cells_writes_null_float_columns_for_absent_hours(tmp
 
     payload = pq.read_table(outputs.cells_geoparquet_path).to_pydict()
 
+    assert payload["surface_flags"] == [1, 6]
+    assert payload["surface_class"] == ["ground", "building_footprint"]
+    assert payload["is_street_surface"] == [False, True]
+    assert payload["is_building_footprint"] == [False, True]
+    assert payload["include_in_public_realm_stats"] == [False, False]
+    assert payload["include_in_outdoor_surface_stats"] == [True, False]
     assert payload["utci_00"] == [None, None]
     assert payload["utci_09"] == [None, None]
     assert payload["utci_10"] == pytest.approx([32.5, 40.25])
     assert payload["utci_11"] == [None, pytest.approx(28.0)]
     assert payload["utci_12"] == [None, None]
+
+
+def test_postprocess_active_cells_preserves_street_family_overlap_flags_and_excludes_overlap_rows_from_public_realm_stats(
+    tmp_path,
+):
+    metadata_path, georef_path = write_tiny_raw_fixture(
+        tmp_path,
+        positions=np.array(
+            [
+                [180723.5, 575888.0, 1.5],
+                [180725.5, 575890.0, 1.5],
+                [180727.5, 575892.0, 1.5],
+            ],
+            dtype="<f4",
+        ),
+        canonical=np.array([2, 5, 8], dtype="<u4"),
+        canonical_count=12,
+        utci=np.array(
+            [
+                [32.5, np.nan],
+                [40.25, 28.0],
+                [35.0, 31.5],
+            ],
+            dtype="<f4",
+        ),
+        shading=np.array([0.25, 0.75, 0.5], dtype="<f4"),
+        surface_flags=np.array(
+            [
+                1,
+                3,
+                6,
+            ],
+            dtype=np.uint8,
+        ),
+        hours=[10, 11],
+    )
+
+    outputs = postprocess_active_cells(
+        metadata_path=metadata_path,
+        georef_path=georef_path,
+        out_dir=tmp_path / "out",
+    )
+
+    payload = pq.read_table(outputs.cells_geoparquet_path).to_pydict()
+    manifest = json.loads(outputs.manifest_path.read_text(encoding="utf-8"))
+
+    assert payload["surface_flags"] == [1, 3, 6]
+    assert payload["surface_class"] == [
+        "ground",
+        "street_surface",
+        "building_footprint",
+    ]
+    assert payload["is_street_surface"] == [False, True, True]
+    assert payload["is_building_footprint"] == [False, False, True]
+    assert payload["include_in_public_realm_stats"] == [False, True, False]
+    assert payload["include_in_outdoor_surface_stats"] == [True, True, False]
+    assert manifest["counts"]["streetSurfaceRows"] == 2
+    assert manifest["counts"]["buildingFootprintRows"] == 1
+    assert manifest["counts"]["publicRealmRows"] == 1
+    assert manifest["counts"]["outdoorSurfaceRows"] == 2
+
+
+def test_postprocess_active_cells_rejects_zero_sampled_surface_flags_instead_of_emitting_unknown_surface_class(
+    tmp_path,
+):
+    metadata_path, georef_path = write_tiny_raw_fixture(
+        tmp_path,
+        surface_flags=np.array([1, 0], dtype=np.uint8),
+    )
+
+    with pytest.raises(ValueError, match="sampled-surface|surface_flags|unknown"):
+        postprocess_active_cells(
+            metadata_path=metadata_path,
+            georef_path=georef_path,
+            out_dir=tmp_path / "out",
+        )
 
 
 def test_postprocess_active_cells_writes_legacy_geojson_only_when_explicitly_requested(tmp_path):

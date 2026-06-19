@@ -53,6 +53,7 @@ function createActiveMask(
 		activeMaskChecksum: 'mask-sha256',
 		activeCanonicalIndices,
 		signature: 'mask-signature',
+		surfaceFlagsByActiveCell: new Uint8Array([1, 6]),
 		...overrides
 	};
 }
@@ -196,6 +197,7 @@ describe('buildFastUtciCollectorExport', () => {
 		expect(result.metadata.metricType).toBe('utci');
 		expect(result.values).toEqual(new Float32Array([30, 31]));
 		expect(result.positions.length).toBe(6);
+		expect(result.surfaceFlags).toEqual(new Uint8Array([1, 6]));
 	});
 
 	it('preserves supplied live active-row Analysis.data.positions exactly', async () => {

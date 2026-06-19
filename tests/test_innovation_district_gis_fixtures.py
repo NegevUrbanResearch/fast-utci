@@ -16,6 +16,7 @@ def write_tiny_raw_fixture(
     canonical: np.ndarray | None = None,
     utci: np.ndarray | None = None,
     shading: np.ndarray | None = None,
+    surface_flags: np.ndarray | None = None,
     hours: list[int] | None = None,
     canonical_count: int | None = None,
 ) -> tuple[Path, Path]:
@@ -40,6 +41,8 @@ def write_tiny_raw_fixture(
         )
     if shading is None:
         shading = np.array([0.25, 0.75], dtype="<f4")
+    if surface_flags is None:
+        surface_flags = np.array([1, 6], dtype=np.uint8)
     if hours is None:
         hours = [10, 11]
 
@@ -47,17 +50,20 @@ def write_tiny_raw_fixture(
     canonical = np.asarray(canonical, dtype="<u4")
     utci = np.asarray(utci, dtype="<f4")
     shading = np.asarray(shading, dtype="<f4")
+    surface_flags = np.asarray(surface_flags, dtype=np.uint8)
 
     files = {
         "positions": base.with_suffix(".positions.f32.bin"),
         "canonicalIndices": base.with_suffix(".canonical.u32.bin"),
         "utci": base.with_suffix(".utci.f32.bin"),
         "shadingIndex": base.with_suffix(".shading.f32.bin"),
+        "surfaceFlags": base.with_suffix(".surface-flags.u8.bin"),
     }
     positions.tofile(files["positions"])
     canonical.tofile(files["canonicalIndices"])
     utci.tofile(files["utci"])
     shading.tofile(files["shadingIndex"])
+    surface_flags.tofile(files["surfaceFlags"])
 
     active_count = int(positions.shape[0])
     hour_count = len(hours)
@@ -86,6 +92,7 @@ def write_tiny_raw_fixture(
             "positions": "point-major-xyz",
             "utci": "point-major-hour",
             "shadingIndex": "point-major",
+            "surfaceFlags": "point-major",
         },
         "arrays": {
             "canonicalIndices": {
@@ -111,6 +118,12 @@ def write_tiny_raw_fixture(
                 "endianness": "little",
                 "shape": [active_count],
                 "byteLength": files["shadingIndex"].stat().st_size,
+            },
+            "surfaceFlags": {
+                "dtype": "u8",
+                "endianness": "little",
+                "shape": [active_count],
+                "byteLength": files["surfaceFlags"].stat().st_size,
             },
         },
         "files": {

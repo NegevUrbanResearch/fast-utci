@@ -3,9 +3,8 @@ import type { Group } from 'three';
 import type {
 	Analysis,
 	AnalysisActiveMask,
-	AnalysisMetadata,
-	ProjectedTriangle2D,
-	StudyAreaMask
+	ClassifiedAnalysisActiveMask,
+	AnalysisMetadata
 } from '$lib/types/analysis';
 import {
 	prepareMeshPayloadForWorkerAsync,
@@ -45,7 +44,7 @@ import {
 	stampRenderPublicationTimeline,
 	type SelectedHourRenderPublicationPath
 } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
-import { buildStudyAreaMaskFromProjectedTriangles } from '$lib/compute/core/studyAreaMask';
+import { buildClassifiedAnalysisActiveMask } from '$lib/compute/selected-hour/activeMaskSurfaceClassification';
 
 const GRID_RESOLUTION_FALLBACKS = [0.5, 1, 2, 4, 6, 8, 10];
 const PARITY_SAMPLE_HEIGHT_OFFSET_M = 0.9;
@@ -148,7 +147,7 @@ type PreparedSessionState = {
 	exposurePrecomputePromise: Promise<void> | null;
 	requestSequence: number;
 	selectedDayRangeCache: Map<string, { min: number; max: number }>;
-	activeMask?: AnalysisActiveMask;
+	activeMask?: ClassifiedAnalysisActiveMask;
 	lifecycleTimings: Pick<
 		OnDemandTimings,
 		'payloadPrepareMs' | 'workerBvhMs' | 'pipelineUploadMs'
@@ -233,162 +232,6 @@ function worldToAnalysisCoords(
 	return [x, y, z];
 }
 
-function normalizeRawLayerName(value: unknown): string {
-	return String(value ?? '')
-		.trim()
-		.toLowerCase()
-		.replace(/\s+/g, '_');
-}
-
-function isActiveMaskSourceMesh(mesh: THREE.Mesh): boolean {
-	const layerType = mesh.userData.layerType;
-	const rawLayerName = normalizeRawLayerName(mesh.userData.layerName ?? mesh.name);
-	return (
-		layerType === 'base' ||
-		layerType === 'road' ||
-		rawLayerName === 'ground' ||
-		rawLayerName === 'street' ||
-		rawLayerName === 'streets' ||
-		rawLayerName === 'road' ||
-		rawLayerName === 'roads'
-	);
-}
-
-function pushProjectedTriangle(params: {
-	triangles: ProjectedTriangle2D[];
-	positions: THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
-	matrixWorld: THREE.Matrix4;
-	originOffset?: { x: number; y: number; z: number };
-	va: THREE.Vector3;
-	vb: THREE.Vector3;
-	vc: THREE.Vector3;
-	a: number;
-	b: number;
-	c: number;
-}): void {
-	const va = params.va.fromBufferAttribute(params.positions, params.a).applyMatrix4(params.matrixWorld);
-	const vb = params.vb.fromBufferAttribute(params.positions, params.b).applyMatrix4(params.matrixWorld);
-	const vc = params.vc.fromBufferAttribute(params.positions, params.c).applyMatrix4(params.matrixWorld);
-	if (
-		!Number.isFinite(va.x) ||
-		!Number.isFinite(va.z) ||
-		!Number.isFinite(vb.x) ||
-		!Number.isFinite(vb.z) ||
-		!Number.isFinite(vc.x) ||
-		!Number.isFinite(vc.z)
-	) {
-		return;
-	}
-	const originOffset = params.originOffset ?? { x: 0, y: 0, z: 0 };
-	params.triangles.push([
-		va.x - originOffset.x,
-		va.z - originOffset.z,
-		vb.x - originOffset.x,
-		vb.z - originOffset.z,
-		vc.x - originOffset.x,
-		vc.z - originOffset.z
-	]);
-}
-
-function extractBaseProjectedTriangles(
-	model: Group,
-	originOffset?: { x: number; y: number; z: number }
-): ProjectedTriangle2D[] {
-	const triangles: ProjectedTriangle2D[] = [];
-
-	model.updateWorldMatrix?.(true, true);
-	model.traverse((child) => {
-		if (!(child instanceof THREE.Mesh) || !isActiveMaskSourceMesh(child)) {
-			return;
-		}
-		const geometry = child.geometry;
-		const positions = geometry.getAttribute('position');
-		if (!positions) {
-			return;
-		}
-		child.updateWorldMatrix(true, false);
-		const index = geometry.getIndex();
-		const va = new THREE.Vector3();
-		const vb = new THREE.Vector3();
-		const vc = new THREE.Vector3();
-		if (index) {
-			for (let offset = 0; offset + 2 < index.count; offset += 3) {
-				pushProjectedTriangle({
-					triangles,
-					positions,
-					matrixWorld: child.matrixWorld,
-					originOffset,
-					va,
-					vb,
-					vc,
-					a: index.getX(offset),
-					b: index.getX(offset + 1),
-					c: index.getX(offset + 2)
-				});
-			}
-			return;
-		}
-
-		for (let offset = 0; offset + 2 < positions.count; offset += 3) {
-			pushProjectedTriangle({
-				triangles,
-				positions,
-				matrixWorld: child.matrixWorld,
-				originOffset,
-				va,
-				vb,
-				vc,
-				a: offset,
-				b: offset + 1,
-				c: offset + 2
-			});
-		}
-	});
-
-	return triangles;
-}
-
-function createAnalysisActiveMask(mask: StudyAreaMask): AnalysisActiveMask {
-	const inactivePointCount = mask.canonicalPointCount - mask.activePointCount;
-	return {
-		source: 'base+road',
-		canonicalPointCount: mask.canonicalPointCount,
-		activePointCount: mask.activePointCount,
-		inactivePointCount,
-		activePointRatio:
-			mask.canonicalPointCount > 0 ? mask.activePointCount / mask.canonicalPointCount : 0,
-		activeMaskChecksum: mask.maskChecksum,
-		activeCanonicalIndices: mask.activeCanonicalIndices,
-		signature: mask.signature
-	};
-}
-
-function buildBaseActiveMask(params: {
-	model: Group;
-	bounds: AnalysisMetadata['bounds'];
-	gridResolution: number;
-	coordinateSystem: 'xy_ground' | 'xz_ground';
-	gridOriginOffset?: { x: number; y: number; z: number };
-}): AnalysisActiveMask | undefined {
-	const { bounds } = params;
-	if (!bounds) return undefined;
-	const triangles = extractBaseProjectedTriangles(params.model, params.gridOriginOffset);
-	if (triangles.length === 0) {
-		return undefined;
-	}
-
-	const mask = buildStudyAreaMaskFromProjectedTriangles({
-		bounds,
-		gridSize: params.gridResolution,
-		coordinateSystem: params.coordinateSystem,
-		triangles
-	});
-	if (mask.activePointCount === 0) {
-		return undefined;
-	}
-	return createAnalysisActiveMask(mask);
-}
-
 function applyActiveMaskDiagnostics(
 	diagnostics: OnDemandRuntimeDiagnostics,
 	activeMask: AnalysisActiveMask | undefined
@@ -420,7 +263,7 @@ function buildGeneratedGridBaseAnalysis(params: {
 	numPoints: number;
 	gridPoints: Float32Array | undefined;
 	gridOriginOffset: { x: number; y: number; z: number } | undefined;
-	activeMask?: AnalysisActiveMask;
+	activeMask?: ClassifiedAnalysisActiveMask;
 }): Analysis {
 	const expectedLength = params.numPoints * 3;
 	const coordinateSystem =
@@ -1465,7 +1308,7 @@ export async function prepareSelectedHourLiveSession(params: {
 			(base.metadata.coordinate_system as 'xy_ground' | 'xz_ground') ?? 'xy_ground';
 		const gridOriginOffset = getGridOriginOffset(base.metadata);
 		const computeGridHeight = (bounds.z ?? zHeight) + PARITY_SAMPLE_HEIGHT_OFFSET_M;
-		const activeMask = buildBaseActiveMask({
+		const activeMask = buildClassifiedAnalysisActiveMask({
 			model,
 			bounds,
 			gridResolution: effectiveGridResolution,

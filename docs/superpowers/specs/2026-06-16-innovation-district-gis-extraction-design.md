@@ -79,6 +79,18 @@ The shape-aware export should not export every canonical cell in the rectangular
 
 Train tracks or other context layers must not become GIS UTCI cells merely because they participated in metadata bounds or visual context. They should become valid result surfaces only if the runtime active-mask policy explicitly includes them.
 
+For the classified Innovation District export contract, active rows remain sampled-surface rows only. Sampled-surface membership comes from `ground` plus street-family geometry when present (`street`, `streets`, `road`, `roads`, `sidewalk`, `sidewalks`). Building footprints are an overlapping classification/exclusion overlay only; they must never create active rows on their own, and building-only cells must stay outside the exported active set.
+
+Triangle inclusion must be defined once using the shared sample-center point-in-triangle rule and reused for both sampled-surface rasterization and building-footprint overlays so boundary behavior cannot drift across phases.
+
+Durable classification contract for classified active exports:
+
+- the classified export is sampled-surface-only
+- building footprints are overlay/exclusion flags, not active-row creators
+- street/road/sidewalk-family classification depends on matching sampled geometry
+- `unknown` is not legal for classified active export rows
+- shared sample-center boundary semantics apply to both sampled-surface and building-footprint rasterization
+
 For GIS display this can become downstream derivations:
 
 - point samples for debug and validation
@@ -112,6 +124,16 @@ The future export table should include enough identity to join values back to bo
 - no-data/valid flag
 - source layer or surface classification when available
 
+If surface classification is present in the classified export, it should be derived from raw multi-hot flags rather than a raw primary enum/class array. The durable contract is:
+
+- every classified active row has at least one sampled-surface flag (`ground` or `street_surface`)
+- raw classification is `surfaceFlags` bitflags only; there is no raw primary enum/class array
+- `surface_class = unknown` is not legal for classified active export rows
+- `surface_class` priority is display convenience only: `building_footprint > street_surface > ground`
+- street/building overlap is preserved in flags/booleans, while public-realm stats exclude building-footprint rows
+- `include_in_outdoor_surface_stats` means active sampled rows excluding building footprints
+- `include_in_public_realm_stats` means street/road/sidewalk-family rows excluding building footprints
+
 The export must keep active and inactive semantics aligned with the viewer: inactive cells should be no-data, absent from tooltips, absent from statistics, and absent from dashboard histograms.
 
 ## Output Formats And Ownership
@@ -136,22 +158,9 @@ The final reusable bundle produced by `fast-utci` should be:
 
 This repo should not make PMTiles, raster tiles, vector tiles, `geometry.parquet`, `values.parquet`, or required summary JSON part of the default contract.
 
-### Downstream Display Derivations
-
-`innovation_dashboard` or another downstream GIS pipeline may derive display products from `cells.geoparquet`.
-
-The dashboard should load only visible map tiles, not a giant in-memory GeoJSON feature collection. PMTiles is attractive because it can be hosted as a static file and consumed by MapLibre with a protocol adapter.
-
-Likely downstream display products:
-
-- raster PMTiles for UTCI and shading surfaces
-- vector PMTiles for contours, masks, or simplified classes
-- summary JSON for cards and charts
-- small GeoJSON for debug/control overlays only
-
 ## Dashboard Integration Handoff
 
-`innovation_dashboard` already has MapLibre, Chart.js, D3, and deep-dive overlay patterns, but implementation in that repo is out of scope for `fast-utci`.
+`innovation_dashboard` already has MapLibre, Chart.js, D3, and deep-dive overlay patterns.
 
 This repo should produce the reusable handoff bundle and a handoff note that another agent can consume in `D:\Projects\Nur\innovation_dashboard`.
 
@@ -221,10 +230,8 @@ Before trusting any UTCI-to-GIS export, validate:
 
 Only after those checks should the live WebGPU UTCI/shading export be wired to GIS artifacts.
 
-## Open Questions
+## Downstream Boundary
 
-- Is the Rhino source CRS definitely EPSG:2039, or did the model use another projected/local coordinate system?
-- Did `Extract with origin` move the GLB to a local origin while the `.3dm` still retains world/projected coordinates?
-- Which Rhino layers are the authoritative sampling surface for GIS values?
-- Should the production GIS surface be cell-centered points, raster cells, or polygonized cells before tiling?
-- Which downstream tiling or chart derivations are still worth generating once `cells.geoparquet` is handed off to `innovation_dashboard`?
+`fast-utci` produces the source-of-truth GIS handoff for this flow: the exported artifact set centered on `cells.geoparquet`, plus `manifest.json` and `qa/debug-sample.geojson`. Downstream repositories and consumers, including `innovation_dashboard`, derive PMTiles, map payloads, chart JSON, and other display-oriented products from `cells.geoparquet` outside this repo.
+
+Georeferencing validation and authoritative source-layer identification remain implementation tasks for this export flow, but they do not change the artifact boundary or move downstream tiling/chart derivation into `fast-utci`.

@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+	buildClassifiedStudyAreaMaskFromProjectedTriangles,
 	buildStudyAreaMaskFromProjectedTriangles
 } from '$lib/compute/core/studyAreaMask';
 import {
 	canonicalGridPoints,
 	canonicalGridPointsForActiveIndices
 } from '$lib/compute/core/canonicalGrid';
-import type { ProjectedTriangle2D } from '$lib/types/analysis';
+import {
+	parseSurfaceFlags,
+	SURFACE_FLAGS,
+	type ClassifiedProjectedTriangle2D,
+	type ProjectedTriangle2D
+} from '$lib/types/analysis';
 
 describe('buildStudyAreaMaskFromProjectedTriangles', () => {
 	it('marks the full canonical grid active when the footprint covers the full bounds', () => {
@@ -163,5 +169,146 @@ describe('canonicalGridPointsForActiveIndices', () => {
 			2, 1.5, 0,
 			4, 1.5, -4
 		]);
+	});
+});
+
+describe('buildClassifiedStudyAreaMaskFromProjectedTriangles', () => {
+	it('keeps [0,1,2] active and treats a sample center on the shared triangle edge as inside both sampled-surface and building-footprint rasterization', () => {
+		const result = buildClassifiedStudyAreaMaskFromProjectedTriangles({
+			bounds: { x_min: 0, x_max: 6, y_min: 0, y_max: 0, z: 1.5 },
+			gridSize: 2,
+			coordinateSystem: 'xz_ground',
+			triangles: [
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [0, 0, 4, 0, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [4, 0, 4, 2, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.streetSurface,
+					triangle: [1, 0, 3, 0, 2, 1]
+				},
+				{
+					flags: SURFACE_FLAGS.buildingFootprint,
+					triangle: [3, 0, 5, 0, 4, 1]
+				}
+			]
+		});
+
+		expect(Array.from(result.activeMask.activeCanonicalIndices)).toEqual([0, 1, 2]);
+		expect(Array.from(result.surfaceFlagsByActiveCell)).toEqual([
+			SURFACE_FLAGS.ground,
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface,
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.buildingFootprint
+		]);
+	});
+
+	it('keeps building-only cells outside sampled ground or street geometry inactive and never leaves a classified active row without a sampled-surface flag', () => {
+		const result = buildClassifiedStudyAreaMaskFromProjectedTriangles({
+			bounds: { x_min: 0, x_max: 6, y_min: 0, y_max: 0, z: 1.5 },
+			gridSize: 2,
+			coordinateSystem: 'xz_ground',
+			triangles: [
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [0, 0, 4, 0, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [4, 0, 4, 2, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.streetSurface,
+					triangle: [3, 0, 5, 0, 4, 1]
+				},
+				{
+					flags: SURFACE_FLAGS.buildingFootprint,
+					triangle: [3, 0, 5, 0, 4, 1]
+				},
+				{
+					flags: SURFACE_FLAGS.buildingFootprint,
+					triangle: [5, 0, 7, 0, 6, 1]
+				}
+			]
+		});
+
+		expect(Array.from(result.activeMask.activeCanonicalIndices)).toEqual([0, 1, 2]);
+		expect(Array.from(result.surfaceFlagsByActiveCell)).toEqual([
+			SURFACE_FLAGS.ground,
+			SURFACE_FLAGS.ground,
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface | SURFACE_FLAGS.buildingFootprint
+		]);
+		expect(
+			Array.from(result.surfaceFlagsByActiveCell).every((flags) => {
+				const sampledSurfaceFlags = flags & (SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface);
+				return sampledSurfaceFlags !== 0;
+			})
+		).toBe(true);
+	});
+
+	it('preserves street-family plus building-footprint overlap as multi-hot flags', () => {
+		const result = buildClassifiedStudyAreaMaskFromProjectedTriangles({
+			bounds: { x_min: 0, x_max: 6, y_min: 0, y_max: 0, z: 1.5 },
+			gridSize: 2,
+			coordinateSystem: 'xz_ground',
+			triangles: [
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [0, 0, 4, 0, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.ground,
+					triangle: [4, 0, 4, 2, 0, 2]
+				},
+				{
+					flags: SURFACE_FLAGS.streetSurface,
+					triangle: [1, 0, 3, 0, 2, 1]
+				},
+				{
+					flags: SURFACE_FLAGS.streetSurface,
+					triangle: [3, 0, 5, 0, 4, 1]
+				},
+				{
+					flags: SURFACE_FLAGS.buildingFootprint,
+					triangle: [3, 0, 5, 0, 4, 1]
+				}
+			]
+		});
+
+		expect(Array.from(result.activeMask.activeCanonicalIndices)).toEqual([0, 1, 2]);
+		expect(Array.from(result.surfaceFlagsByActiveCell)).toEqual([
+			SURFACE_FLAGS.ground,
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface,
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface | SURFACE_FLAGS.buildingFootprint
+		]);
+		const includeInPublicRealmStats = Array.from(result.surfaceFlagsByActiveCell).map((flags) => {
+			return (
+				(flags & SURFACE_FLAGS.streetSurface) !== 0 &&
+				(flags & SURFACE_FLAGS.buildingFootprint) === 0
+			);
+		});
+		expect(includeInPublicRealmStats).toEqual([false, true, false]);
+	});
+
+	it('rejects arbitrary surface flag numbers before they enter classified rasterization', () => {
+		expect(() => parseSurfaceFlags(1 << 7)).toThrowError(/unknown bits/i);
+
+		const triangles: ClassifiedProjectedTriangle2D[] = [
+			{
+				flags: SURFACE_FLAGS.ground,
+				triangle: [0, 0, 2, 0, 0, 2]
+			}
+		];
+		expect(
+			buildClassifiedStudyAreaMaskFromProjectedTriangles({
+				bounds: { x_min: 0, x_max: 0, y_min: 0, y_max: 0, z: 1.5 },
+				gridSize: 2,
+				coordinateSystem: 'xz_ground',
+				triangles
+			}).surfaceFlagsByActiveCell
+		).toEqual(new Uint8Array([SURFACE_FLAGS.ground]));
 	});
 });

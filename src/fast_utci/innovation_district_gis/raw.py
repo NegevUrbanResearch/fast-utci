@@ -16,11 +16,20 @@ _LAYOUTS = {
     "positions": "point-major-xyz",
     "utci": "point-major-hour",
     "shadingIndex": "point-major",
+    "surfaceFlags": "point-major",
 }
 _DTYPES = {
     "u32": np.dtype("<u4"),
     "f32": np.dtype("<f4"),
+    "u8": np.dtype("u1"),
 }
+SURFACE_FLAG_GROUND = 1
+SURFACE_FLAG_STREET_SURFACE = 2
+SURFACE_FLAG_BUILDING_FOOTPRINT = 4
+_SURFACE_FLAG_ALLOWED_MASK = (
+    SURFACE_FLAG_GROUND | SURFACE_FLAG_STREET_SURFACE | SURFACE_FLAG_BUILDING_FOOTPRINT
+)
+_SURFACE_FLAG_SAMPLED_SURFACE_MASK = SURFACE_FLAG_GROUND | SURFACE_FLAG_STREET_SURFACE
 
 
 @dataclass(frozen=True)
@@ -33,6 +42,16 @@ class ActiveCellArtifacts:
     positions: np.ndarray
     utci: np.ndarray
     shading_index: np.ndarray
+    surface_flags: np.ndarray
+
+
+@dataclass(frozen=True)
+class SurfaceClassification:
+    surface_class: np.ndarray
+    is_street_surface: np.ndarray
+    is_building_footprint: np.ndarray
+    include_in_public_realm_stats: np.ndarray
+    include_in_outdoor_surface_stats: np.ndarray
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -189,6 +208,54 @@ def _validate_positions_are_projected_epsg2039(positions: np.ndarray) -> None:
         raise ValueError("positions are outside the expected projected EPSG:2039 Israel range")
 
 
+def classify_surface_flags(
+    surface_flags: np.ndarray,
+    *,
+    validate: bool = False,
+) -> SurfaceClassification:
+    flags = np.asarray(surface_flags)
+    if validate:
+        if flags.dtype != np.dtype("u1"):
+            raise ValueError("surface_flags must load as uint8")
+        if flags.ndim != 1:
+            raise ValueError("surface_flags must be a 1D point-major array")
+
+        unsupported_mask = (flags & np.uint8(~_SURFACE_FLAG_ALLOWED_MASK & 0xFF)) != 0
+        if np.any(unsupported_mask):
+            unsupported_values = sorted({int(value) for value in flags[unsupported_mask].tolist()})
+            raise ValueError(
+                "surface_flags contains unsupported values outside "
+                "ground|street_surface|building_footprint bitflags: "
+                f"{unsupported_values}"
+            )
+
+        missing_sampled_surface = (flags & np.uint8(_SURFACE_FLAG_SAMPLED_SURFACE_MASK)) == 0
+        if np.any(missing_sampled_surface):
+            row_indices = np.flatnonzero(missing_sampled_surface)[:5].tolist()
+            raise ValueError(
+                "surface_flags rows must include sampled-surface provenance "
+                "(ground or street_surface); unknown is not a legal active-row class. "
+                f"Invalid active rows: {row_indices}"
+            )
+
+    is_street_surface = (flags & np.uint8(SURFACE_FLAG_STREET_SURFACE)) != 0
+    is_building_footprint = (flags & np.uint8(SURFACE_FLAG_BUILDING_FOOTPRINT)) != 0
+    surface_class = np.where(
+        is_building_footprint,
+        "building_footprint",
+        np.where(is_street_surface, "street_surface", "ground"),
+    )
+    include_in_public_realm_stats = is_street_surface & ~is_building_footprint
+    include_in_outdoor_surface_stats = ~is_building_footprint
+    return SurfaceClassification(
+        surface_class=np.asarray(surface_class),
+        is_street_surface=np.asarray(is_street_surface),
+        is_building_footprint=np.asarray(is_building_footprint),
+        include_in_public_realm_stats=np.asarray(include_in_public_realm_stats),
+        include_in_outdoor_surface_stats=np.asarray(include_in_outdoor_surface_stats),
+    )
+
+
 def load_active_cell_artifacts(metadata_path: str | Path, georef_path: str | Path) -> ActiveCellArtifacts:
     metadata_path = Path(metadata_path)
     georef_path = Path(georef_path)
@@ -203,10 +270,12 @@ def load_active_cell_artifacts(metadata_path: str | Path, georef_path: str | Pat
     positions = _load_array(metadata_path, metadata, "positions", "f32", (active_count, 3))
     utci = _load_array(metadata_path, metadata, "utci", "f32", (active_count, hour_count))
     shading_index = _load_array(metadata_path, metadata, "shadingIndex", "f32", (active_count,))
+    surface_flags = _load_array(metadata_path, metadata, "surfaceFlags", "u8", (active_count,))
 
     _validate_positions_are_projected_epsg2039(positions)
     if not np.all(np.isfinite(canonical_indices)):
         raise ValueError("canonicalIndices must contain finite values")
+    classify_surface_flags(surface_flags, validate=True)
 
     return ActiveCellArtifacts(
         metadata_path=metadata_path,
@@ -217,4 +286,5 @@ def load_active_cell_artifacts(metadata_path: str | Path, georef_path: str | Pat
         positions=positions,
         utci=utci,
         shading_index=shading_index,
+        surface_flags=surface_flags,
     )

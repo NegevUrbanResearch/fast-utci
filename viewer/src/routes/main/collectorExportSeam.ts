@@ -37,6 +37,7 @@ export interface FastUtciCollectorExportResult {
 	canonicalIndices: Uint32Array;
 	positions: Float32Array;
 	values: Float32Array;
+	surfaceFlags: Uint8Array;
 }
 
 export type ReadF32MetricOutput = (params: {
@@ -142,7 +143,8 @@ export async function buildFastUtciCollectorExport(params: {
 		},
 		canonicalIndices: spatial.canonicalIndices,
 		positions: spatial.positions,
-		values
+		values,
+		surfaceFlags: spatial.surfaceFlags
 	};
 }
 

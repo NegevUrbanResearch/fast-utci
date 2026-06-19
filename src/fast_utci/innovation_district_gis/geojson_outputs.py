@@ -7,13 +7,14 @@ from typing import Any, Sequence
 import numpy as np
 
 from .contracts import LEGACY_ALL_HOURS_GEOJSON_DEFAULT_MAX_ROWS
-from .raw import ActiveCellArtifacts
+from .raw import ActiveCellArtifacts, SurfaceClassification, classify_surface_flags
 from .summary import json_metric_value
 from .transforms import DerivedTables
 
 
 def _feature_for_active_row(
     artifacts: ActiveCellArtifacts,
+    surface_classification: SurfaceClassification,
     active_index: int,
     lon: float,
     lat: float,
@@ -37,6 +38,18 @@ def _feature_for_active_row(
             "projected_x": float(x),
             "projected_y": float(y),
             "projected_z": float(z),
+            "surface_flags": int(artifacts.surface_flags[active_index]),
+            "surface_class": str(surface_classification.surface_class[active_index]),
+            "is_street_surface": bool(surface_classification.is_street_surface[active_index]),
+            "is_building_footprint": bool(
+                surface_classification.is_building_footprint[active_index]
+            ),
+            "include_in_public_realm_stats": bool(
+                surface_classification.include_in_public_realm_stats[active_index]
+            ),
+            "include_in_outdoor_surface_stats": bool(
+                surface_classification.include_in_outdoor_surface_stats[active_index]
+            ),
             "shading_index": json_metric_value(artifacts.shading_index[active_index]),
             "utci_by_hour": utci_by_hour,
             **{
@@ -69,6 +82,7 @@ def write_geojson_stream(
     path.parent.mkdir(parents=True, exist_ok=True)
     active_count = len(artifacts.canonical_indices)
     indices = list(range(active_count)) if row_indices is None else [int(index) for index in row_indices]
+    surface_classification = classify_surface_flags(artifacts.surface_flags)
     with path.open("w", encoding="utf-8") as file:
         file.write('{"type":"FeatureCollection","name":')
         json.dump(name, file, allow_nan=False)
@@ -83,6 +97,7 @@ def write_geojson_stream(
             json.dump(
                 _feature_for_active_row(
                     artifacts,
+                    surface_classification,
                     active_index,
                     tables.lon[active_index],
                     tables.lat[active_index],

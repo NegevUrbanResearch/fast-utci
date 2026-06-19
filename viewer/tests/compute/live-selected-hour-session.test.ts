@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import type { Analysis } from '$lib/types/analysis';
+import {
+	SURFACE_FLAGS,
+	type Analysis,
+	type ClassifiedAnalysisActiveMask
+} from '$lib/types/analysis';
 import {
 	disposeSelectedHourGpuResidentOutput,
 	prepareSelectedHourLiveSession
@@ -124,6 +128,13 @@ function createFullDayBaseAnalysis(): Analysis {
 	};
 }
 
+function expectClassifiedActiveMask(
+	activeMask: Analysis['metadata']['activeMask'] | undefined
+): asserts activeMask is ClassifiedAnalysisActiveMask {
+	expect(activeMask).toBeDefined();
+	expect(activeMask).toHaveProperty('surfaceFlagsByActiveCell');
+}
+
 function createActiveMaskBaseAnalysis(): Analysis {
 	return {
 		...createBaseAnalysis(),
@@ -226,6 +237,93 @@ function createBaseWithNonSamplingLayersActiveMaskModel(): THREE.Group {
 				[2, 0, 2],
 				[2, 0, 0],
 				[0, 0, 2]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'rail',
+			layerName: 'train_tracks',
+			points: [
+				[2, 0, 2],
+				[2, 0, 0],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createSidewalkBuildingOverlapActiveMaskModel(): THREE.Group {
+	const model = new THREE.Group();
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'base',
+			layerName: 'ground',
+			points: [
+				[0, 0, 0],
+				[2, 0, 0],
+				[0, 0, 2],
+				[2, 0, 0],
+				[2, 0, 2],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'surface',
+			layerName: 'sidewalks',
+			points: [
+				[0, 0, 0],
+				[1, 0, 0],
+				[0, 0, 1]
+			]
+		})
+	);
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'building',
+			layerName: 'existing_buildings',
+			points: [
+				[0, 0, 0],
+				[1, 0, 0],
+				[0, 0, 1]
+			]
+		})
+	);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createExcludedOnlyActiveMaskModel(layerType: string, layerName: string): THREE.Group {
+	const model = new THREE.Group();
+	model.add(
+		createLayerTriangleMesh({
+			layerType,
+			layerName,
+			points: [
+				[0, 0, 0],
+				[2, 0, 0],
+				[0, 0, 2]
+			]
+		})
+	);
+	model.updateMatrixWorld(true);
+	return model;
+}
+
+function createOutOfBoundsSampledActiveMaskModel(): THREE.Group {
+	const model = new THREE.Group();
+	model.add(
+		createLayerTriangleMesh({
+			layerType: 'base',
+			layerName: 'ground',
+			points: [
+				[10, 0, 10],
+				[12, 0, 10],
+				[10, 0, 12]
 			]
 		})
 	);
@@ -431,10 +529,21 @@ describe('selected-hour live session', () => {
 			activePointCount: 9,
 			activeCanonicalIndices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8])
 		});
+		const activeMask = result.analysis?.metadata.activeMask;
+		expectClassifiedActiveMask(activeMask);
+		const surfaceFlags = activeMask.surfaceFlagsByActiveCell;
+		expect(surfaceFlags).toBeInstanceOf(Uint8Array);
+		expect(surfaceFlags).toHaveLength(9);
+		expect(Array.from(surfaceFlags).some((flags) => (flags & SURFACE_FLAGS.streetSurface) !== 0)).toBe(true);
+		expect(
+			Array.from(surfaceFlags).every(
+				(flags) => (flags & (SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface)) !== 0
+			)
+		).toBe(true);
 		expect(result.gpuResidentOutput?.tooltipUtciValues).toHaveLength(9);
 	});
 
-	it('does not expand the active mask from building or vegetation geometry', async () => {
+	it('does not expand the active mask from building, vegetation, or train-track geometry', async () => {
 		updateViewerConfig({ enableNormalization: false });
 		mockState.initResult = {
 			numPoints: 3,
@@ -477,6 +586,128 @@ describe('selected-hour live session', () => {
 			activePointRatio: 3 / 9,
 			activeMaskChecksum: expect.stringMatching(/^[0-9a-f]{8}$/)
 		});
+		const activeMask = result.analysis?.metadata.activeMask;
+		expectClassifiedActiveMask(activeMask);
+		const surfaceFlags = Array.from(activeMask.surfaceFlagsByActiveCell);
+		expect(surfaceFlags).toHaveLength(3);
+		expect(
+			surfaceFlags.every(
+				(flags) => (flags & (SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface)) !== 0
+			)
+		).toBe(true);
+	});
+
+	it('preserves sidewalk-family and building-footprint overlap flags on active rows', async () => {
+		updateViewerConfig({ enableNormalization: false });
+		mockState.initResult = {
+			numPoints: 9,
+			canonicalPointCount: 9,
+			gridPoints: new Float32Array([
+				0, 0.9, 0,
+				0, 0.9, 1,
+				0, 0.9, 2,
+				1, 0.9, 0,
+				1, 0.9, 1,
+				1, 0.9, 2,
+				2, 0.9, 0,
+				2, 0.9, 1,
+				2, 0.9, 2
+			])
+		};
+		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(
+			async () => new Float32Array([11, 13, 15, 17, 19, 21, 23, 25, 29])
+		);
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createActiveMaskBaseAnalysis(),
+			model: createSidewalkBuildingOverlapActiveMaskModel(),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		const result = await session.runSelectedHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			timeIndex: 0,
+			colorMode: 'discrete',
+			preferGpuResident: true,
+			rendererDevice: mockState.rendererDevice
+		});
+
+		const activeMask = result.analysis?.metadata.activeMask;
+		expectClassifiedActiveMask(activeMask);
+		const surfaceFlags = Array.from(activeMask.surfaceFlagsByActiveCell);
+		expect(surfaceFlags).toHaveLength(9);
+		expect(surfaceFlags[0]).toBe(
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface | SURFACE_FLAGS.buildingFootprint
+		);
+		expect(surfaceFlags[1]).toBe(
+			SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface | SURFACE_FLAGS.buildingFootprint
+		);
+		const includeInPublicRealmStats = surfaceFlags.map((flags) => {
+			return (
+				(flags & SURFACE_FLAGS.streetSurface) !== 0 &&
+				(flags & SURFACE_FLAGS.buildingFootprint) === 0
+			);
+		});
+		expect(includeInPublicRealmStats[0]).toBe(false);
+		expect(includeInPublicRealmStats[1]).toBe(false);
+	});
+
+	it('passes an explicit empty active mask when sampled surfaces produce zero active cells', async () => {
+		updateViewerConfig({ enableNormalization: false });
+		mockState.initResult = {
+			numPoints: 0,
+			canonicalPointCount: 9,
+			gridPoints: new Float32Array()
+		};
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'analysis-a',
+			base: createActiveMaskBaseAnalysis(),
+			model: createOutOfBoundsSampledActiveMaskModel(),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({
+				activeCanonicalIndices: new Uint32Array()
+			})
+		);
+		expect(session.base.metadata.activeMask).toMatchObject({
+			source: 'base+road',
+			canonicalPointCount: 9,
+			activePointCount: 0,
+			inactivePointCount: 9,
+			activePointRatio: 0,
+			activeCanonicalIndices: new Uint32Array()
+		});
+		const activeMask = session.base.metadata.activeMask;
+		expectClassifiedActiveMask(activeMask);
+		expect(activeMask.surfaceFlagsByActiveCell).toEqual(new Uint8Array());
+	});
+
+	it.each([
+		['building-only', 'building', 'existing_buildings'],
+		['train-track-only', 'rail', 'train_tracks']
+	])('rejects %s active-mask classification instead of falling through to the full grid', async (_label, layerType, layerName) => {
+		updateViewerConfig({ enableNormalization: false });
+
+		await expect(
+			prepareSelectedHourLiveSession({
+				analysisId: 'analysis-a',
+				base: createActiveMaskBaseAnalysis(),
+				model: createExcludedOnlyActiveMaskModel(layerType, layerName),
+				epwUrl: '/weather.epw',
+				signal: new AbortController().signal,
+				preferredDevice: mockState.rendererDevice
+			})
+		).rejects.toThrow(/sampled ground\/street surface/i);
+		expect(mockState.constructors).toHaveLength(0);
 	});
 
 	it('extracts the normalized base and street footprint in canonical metadata coordinates', async () => {

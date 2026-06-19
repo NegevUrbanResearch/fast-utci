@@ -12,7 +12,13 @@ from typing import Any
 import numpy as np
 
 from .contracts import GEOPARQUET_CONTRACT
-from .raw import ActiveCellArtifacts
+from .raw import (
+    ActiveCellArtifacts,
+    SURFACE_FLAG_BUILDING_FOOTPRINT,
+    SURFACE_FLAG_GROUND,
+    SURFACE_FLAG_STREET_SURFACE,
+    classify_surface_flags,
+)
 
 
 _EXPECTED_ACTIVE_MASK_SOURCE = "base+road"
@@ -185,7 +191,7 @@ def _active_ratio(active_count: int, canonical_count: int) -> float | None:
 
 def _raw_arrays_inventory(metadata_path: Path, artifacts: ActiveCellArtifacts) -> dict[str, Any]:
     raw_arrays: dict[str, Any] = {}
-    for key in ("canonicalIndices", "positions", "utci", "shadingIndex"):
+    for key in ("canonicalIndices", "positions", "utci", "shadingIndex", "surfaceFlags"):
         raw_path = _raw_file_path(metadata_path, artifacts.metadata, key)
         descriptor = artifacts.metadata["arrays"][key]
         raw_arrays[key] = {
@@ -209,6 +215,63 @@ def _optional_inventory(outputs: PostprocessOutputs, artifacts: ActiveCellArtifa
     return optional
 
 
+def _surface_classification_manifest() -> dict[str, Any]:
+    return {
+        "rawField": "surfaceFlags",
+        "pythonField": "surface_flags",
+        "bitFlags": {
+            "ground": SURFACE_FLAG_GROUND,
+            "street_surface": SURFACE_FLAG_STREET_SURFACE,
+            "building_footprint": SURFACE_FLAG_BUILDING_FOOTPRINT,
+        },
+        "semanticNotes": {
+            "streetSurfaceFamily": (
+                "Street, road, and sidewalk-family sampled surfaces are grouped as street_surface."
+            ),
+            "buildingFootprintOverlay": (
+                "Building footprint is an exclusion flag for downstream maps and stats."
+            ),
+            "outdoorSurfaceStats": (
+                "include_in_outdoor_surface_stats includes active rows excluding building footprints."
+            ),
+            "publicRealmStats": (
+                "include_in_public_realm_stats includes street_surface rows excluding "
+                "building footprints."
+            ),
+            "classifiedActiveRows": (
+                "Classified active export rows always have sampled-surface provenance; "
+                "unknown is not a legal active-row class in this contract."
+            ),
+        },
+    }
+
+
+def _spatial_qa_coverage_expectations() -> list[dict[str, str]]:
+    return [
+        {
+            "key": "street_surface_family_sample",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "street, road, or sidewalk-family sample."
+            ),
+        },
+        {
+            "key": "building_footprint_overlap_sample",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "building-footprint overlap sample."
+            ),
+        },
+        {
+            "key": "building_only_non_active_location",
+            "expectation": (
+                "If source geometry makes it available, spatial QA should include at least one "
+                "building-only non-active location proving no classified export row was created."
+            ),
+        },
+    ]
+
+
 def build_manifest(
     *,
     artifacts: ActiveCellArtifacts,
@@ -221,6 +284,7 @@ def build_manifest(
 ) -> dict[str, Any]:
     active_count = int(artifacts.metadata["activeCount"])
     canonical_count = _canonical_count(artifacts)
+    surface_classification = classify_surface_flags(artifacts.surface_flags)
     copied_collector_timings = collector_timings(artifacts.metadata)
     collector_total_runtime_ms = copied_collector_timings.get("total")
     if collector_total_runtime_ms is None:
@@ -240,6 +304,7 @@ def build_manifest(
             **GEOPARQUET_CONTRACT.manifest_note(),
             "schema": copy.deepcopy(geoparquet_schema),
         },
+        "surfaceClassification": _surface_classification_manifest(),
         "raw": {
             "sourceLayout": _raw_source_layout(metadata_path),
             "metadata": _file_inventory(metadata_path),
@@ -269,7 +334,8 @@ def build_manifest(
                 **_file_inventory(outputs.debug_geojson_path),
                 "rows": debug_count,
                 "sampleStrategy": "evenly-spaced-active-rows",
-            }
+            },
+            "spatialCoverageExpectations": _spatial_qa_coverage_expectations(),
         },
         "optional": _optional_inventory(outputs, artifacts),
         "counts": {
@@ -280,6 +346,16 @@ def build_manifest(
             "hourCount": int(artifacts.metadata["hourCount"]),
             "activeRatio": _active_ratio(active_count, canonical_count),
             "debugRows": debug_count,
+            "streetSurfaceRows": int(np.count_nonzero(surface_classification.is_street_surface)),
+            "buildingFootprintRows": int(
+                np.count_nonzero(surface_classification.is_building_footprint)
+            ),
+            "publicRealmRows": int(
+                np.count_nonzero(surface_classification.include_in_public_realm_stats)
+            ),
+            "outdoorSurfaceRows": int(
+                np.count_nonzero(surface_classification.include_in_outdoor_surface_stats)
+            ),
         },
         "activeMask": {
             "source": artifacts.metadata["activeMask"]["source"],

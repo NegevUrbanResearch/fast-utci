@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { join, resolve } from 'node:path';
 
 import {
+	type ActiveCellArrayBuildParams,
+	type RawExportMetadataBuildParams,
 	buildActiveCellArrays,
 	buildRawExportMetadata
 } from '$lib/gis/innovationDistrictExport';
@@ -25,9 +27,106 @@ const RAW_SOURCE_FIELDS = {
 
 const repoRoot = resolve('tmp', 'fast-utci-repo');
 const viewerRoot = join(repoRoot, 'viewer');
+const familyOutDirArg = join('..', 'data', 'gis', 'Innovation-District');
+const bundleOutDirArg = join('..', 'data', 'gis', 'Innovation-District', '2025-08-15_2m');
 const dataOutDirArg = join('data', 'gis', 'Innovation-District', '2025-08-15_2m', 'raw');
 const parentRelativeDataOutDirArg = join('..', 'data', 'gis', 'Innovation-District', '2025-08-15_2m', 'raw');
 const relativeOutDirArg = join('tmp-gis-smoke');
+const canonicalFamilyOutDir = join(repoRoot, 'data', 'gis', 'Innovation-District');
+const canonicalBundleOutDir = join(canonicalFamilyOutDir, '2025-08-15_2m');
+const canonicalRawOutDir = join(canonicalBundleOutDir, 'raw');
+const customAbsoluteFamilySuffixOutDir = resolve(
+	repoRoot,
+	'..',
+	'custom-exports',
+	'data',
+	'gis',
+	'Innovation-District'
+);
+
+function buildRuntimeInvalidActiveCellParams(
+	overrides: Partial<Record<string, unknown>>
+): ActiveCellArrayBuildParams {
+	return {
+		activeCanonicalIndices: new Uint32Array([5, 2, 9]),
+		positions: new Float32Array([
+			180605, 573605, 1.5,
+			180602, 573602, 1.5,
+			180609, 573609, 1.5
+		]),
+		utciByHour: [new Float32Array([35, 32, 40])],
+		shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+		surfaceFlags: new Uint8Array([1, 3, 6]),
+		hours: [0],
+		activeMaskSource: 'base+road',
+		...(overrides as Partial<ActiveCellArrayBuildParams>)
+	};
+}
+
+function buildRuntimeInvalidRawMetadataParams(
+	overrides: Partial<Record<string, unknown>>
+): RawExportMetadataBuildParams {
+	return {
+		schemaVersion: 'innovation-district-raw-export/v1',
+		analysisId: 'Innovation-District/2025-08-15_2m_fullday',
+		...RAW_SOURCE_FIELDS,
+		coordinateSystem: 'projected-analysis',
+		hours: [0],
+		canonicalIndices: new Uint32Array([5, 2, 9]),
+		positions: new Float32Array([
+			180605, 573605, 1.5,
+			180602, 573602, 1.5,
+			180609, 573609, 1.5
+		]),
+		utci: new Float32Array([35, 32, 40]),
+		shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+		surfaceFlags: new Uint8Array([1, 3, 6]),
+		activeMask: {
+			source: 'base+road',
+			canonicalPointCount: 12,
+			checksum: 'mask-sha256',
+			signature: 'mask-signature'
+		},
+		...(overrides as Partial<RawExportMetadataBuildParams>)
+	};
+}
+
+// @ts-expect-error surfaceFlags is required on trusted classified export builder params.
+const _missingSurfaceFlagsActiveBuilderParams: ActiveCellArrayBuildParams = {
+	activeCanonicalIndices: new Uint32Array([5, 2, 9]),
+	positions: new Float32Array([
+		180605, 573605, 1.5,
+		180602, 573602, 1.5,
+		180609, 573609, 1.5
+	]),
+	utciByHour: [new Float32Array([35, 32, 40])],
+	shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+	hours: [0],
+	activeMaskSource: 'base+road'
+};
+
+// @ts-expect-error surfaceFlags is required on trusted raw metadata builder params.
+const _missingSurfaceFlagsRawMetadataParams: RawExportMetadataBuildParams = {
+	schemaVersion: 'innovation-district-raw-export/v1',
+	analysisId: 'Innovation-District/2025-08-15_2m_fullday',
+	...RAW_SOURCE_FIELDS,
+	coordinateSystem: 'projected-analysis',
+	hours: [0],
+	canonicalIndices: new Uint32Array([5, 2, 9]),
+	positions: new Float32Array([
+		180605, 573605, 1.5,
+		180602, 573602, 1.5,
+		180609, 573609, 1.5
+	]),
+	utci: new Float32Array([35, 32, 40]),
+	shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+	activeMask: {
+		source: 'base+road',
+		canonicalPointCount: 12,
+		checksum: 'mask-sha256',
+		signature: 'mask-signature'
+	}
+};
 
 describe('parseExportArgs', () => {
 	it('recovers npm package-script flags when npm 11 strips option names into config env', () => {
@@ -96,6 +195,36 @@ describe('parseExportArgs', () => {
 		);
 	});
 
+	it('expands the canonical Innovation District bundle out-dir to its raw directory', () => {
+		const args = parseExportArgs({
+			argv: ['--out-dir', bundleOutDirArg],
+			cwd: viewerRoot,
+			env: {}
+		});
+
+		expect(args.outDir).toBe(canonicalRawOutDir);
+	});
+
+	it('expands the documented Innovation District family out-dir to the dated raw bundle directory', () => {
+		const args = parseExportArgs({
+			argv: ['--out-dir', familyOutDirArg],
+			cwd: viewerRoot,
+			env: {}
+		});
+
+		expect(args.outDir).toBe(canonicalRawOutDir);
+	});
+
+	it('does not rewrite a custom absolute path that only ends with the Innovation District family suffix', () => {
+		const args = parseExportArgs({
+			argv: ['--out-dir', customAbsoluteFamilySuffixOutDir],
+			cwd: viewerRoot,
+			env: {}
+		});
+
+		expect(args.outDir).toBe(customAbsoluteFamilySuffixOutDir);
+	});
+
 	it('keeps repo-root georef lookup stable from both viewer and repo-root cwd policies', () => {
 		const expected = resolve(
 			repoRoot,
@@ -130,7 +259,8 @@ describe('buildRawExportFileNames', () => {
 			canonicalIndices: '2025-08-15_2m_active-cells.canonical.u32.bin',
 			positions: '2025-08-15_2m_active-cells.positions.f32.bin',
 			utci: '2025-08-15_2m_active-cells.utci.f32.bin',
-			shadingIndex: '2025-08-15_2m_active-cells.shading.f32.bin'
+			shadingIndex: '2025-08-15_2m_active-cells.shading.f32.bin',
+			surfaceFlags: '2025-08-15_2m_active-cells.surface-flags.u8.bin'
 		});
 	});
 });
@@ -186,6 +316,7 @@ describe('buildActiveCellArrays', () => {
 			]),
 			utciByHour: [new Float32Array([30, 32]), new Float32Array([31, 33])],
 			shadingIndex: new Float32Array([0.25, 0.75]),
+			surfaceFlags: new Uint8Array([1, 6]),
 			hours: [0, 1],
 			activeMaskSource: 'base+road'
 		});
@@ -196,6 +327,7 @@ describe('buildActiveCellArrays', () => {
 		]);
 		expect(Array.from(result.utci)).toEqual([30, 31, 32, 33]);
 		expect(Array.from(result.shadingIndex)).toEqual([0.25, 0.75]);
+		expect(Array.from(result.surfaceFlags)).toEqual([1, 6]);
 		expect(result.layout.utci).toBe('point-major-hour');
 		expect(result).not.toHaveProperty('metadata');
 	});
@@ -210,6 +342,7 @@ describe('buildActiveCellArrays', () => {
 				]),
 				utciByHour: [new Float32Array([30, 32]), new Float32Array([31])],
 				shadingIndex: new Float32Array([0.25, 0.75]),
+				surfaceFlags: new Uint8Array([1, 6]),
 				hours: [0, 1],
 				activeMaskSource: 'base+road'
 			})
@@ -226,6 +359,7 @@ describe('buildActiveCellArrays', () => {
 				]),
 				utciByHour: [new Float32Array([30, 32]), new Float32Array([31, 33])],
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1, 6]),
 				hours: [0, 1],
 				activeMaskSource: 'base+road'
 			})
@@ -241,6 +375,7 @@ describe('buildActiveCellArrays', () => {
 				]),
 				utciByHour: [new Float32Array([30, 32])],
 				shadingIndex: new Float32Array([0.25, 0.75]),
+				surfaceFlags: new Uint8Array([1, 6]),
 				hours: [0],
 				activeMaskSource: 'base+road'
 			})
@@ -254,6 +389,7 @@ describe('buildActiveCellArrays', () => {
 				positions: new Float32Array([180600, Number.NaN, 1.5]),
 				utciByHour: [new Float32Array([30])],
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				hours: [0],
 				activeMaskSource: 'base+road'
 			})
@@ -265,6 +401,7 @@ describe('buildActiveCellArrays', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utciByHour: [new Float32Array([Number.POSITIVE_INFINITY])],
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				hours: [0],
 				activeMaskSource: 'base+road'
 			})
@@ -276,6 +413,7 @@ describe('buildActiveCellArrays', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utciByHour: [new Float32Array([30])],
 				shadingIndex: new Float32Array([Number.NaN]),
+				surfaceFlags: new Uint8Array([1]),
 				hours: [0],
 				activeMaskSource: 'base+road'
 			})
@@ -289,6 +427,7 @@ describe('buildActiveCellArrays', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utciByHour: [new Float32Array([30])],
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				hours: [0]
 			})
 		).toThrowError(/activeMaskSource/i);
@@ -299,10 +438,65 @@ describe('buildActiveCellArrays', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utciByHour: [new Float32Array([30])],
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				hours: [0],
 				activeMaskSource: 'base'
 			})
 		).toThrowError(/base\+road/i);
+	});
+
+	it('requires classified surfaceFlags for the Innovation District classified export path and preserves active row order', () => {
+		const params = buildRuntimeInvalidActiveCellParams({ surfaceFlags: undefined });
+
+		expect(() => buildActiveCellArrays(params)).toThrowError(/surfaceFlags/i);
+	});
+
+	it('validates surfaceFlags length equals active row count and returns the aligned raw array plus layout metadata', () => {
+		const paramsWithWrongSurfaceFlagLength = {
+			activeCanonicalIndices: new Uint32Array([5, 2, 9]),
+			positions: new Float32Array([
+				180605, 573605, 1.5,
+				180602, 573602, 1.5,
+				180609, 573609, 1.5
+			]),
+			utciByHour: [new Float32Array([35, 32, 40])],
+			shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+			surfaceFlags: new Uint8Array([1, 3]),
+			hours: [0],
+			activeMaskSource: 'base+road' as const
+		};
+
+		expect(() => buildActiveCellArrays(paramsWithWrongSurfaceFlagLength)).toThrowError(
+			/surfaceFlags/i
+		);
+
+		const params = {
+			...paramsWithWrongSurfaceFlagLength,
+			surfaceFlags: new Uint8Array([1, 3, 6])
+		};
+		const result = buildActiveCellArrays(params);
+
+		expect(Array.from(result.canonicalIndices)).toEqual([5, 2, 9]);
+		expect(Array.from(result.surfaceFlags)).toEqual([1, 3, 6]);
+		expect(result.layout).toHaveProperty('surfaceFlags', 'point-major');
+	});
+
+	it('rejects classified active rows whose surfaceFlags omit both sampled-surface bits', () => {
+		const params: Parameters<typeof buildActiveCellArrays>[0] = {
+			activeCanonicalIndices: new Uint32Array([5, 2, 9]),
+			positions: new Float32Array([
+				180605, 573605, 1.5,
+				180602, 573602, 1.5,
+				180609, 573609, 1.5
+			]),
+			utciByHour: [new Float32Array([35, 32, 40])],
+			shadingIndex: new Float32Array([0.5, 0.25, 0.75]),
+			surfaceFlags: new Uint8Array([1, 0, 6]),
+			hours: [0],
+			activeMaskSource: 'base+road' as const
+		};
+
+		expect(() => buildActiveCellArrays(params)).toThrowError(/sampled-surface|surfaceFlags|unknown/i);
 	});
 });
 
@@ -315,6 +509,7 @@ describe('buildRawExportMetadata', () => {
 		]);
 		const utci = new Float32Array([30, 31, 32, 33]);
 		const shadingIndex = new Float32Array([0.25, 0.75]);
+		const surfaceFlags = new Uint8Array([1, 6]);
 
 		const metadata = buildRawExportMetadata({
 			schemaVersion: 'innovation-district-raw-export/v1',
@@ -326,6 +521,7 @@ describe('buildRawExportMetadata', () => {
 			positions,
 			utci,
 			shadingIndex,
+			surfaceFlags,
 			activeMask: {
 				source: 'base+road',
 				canonicalPointCount: 4,
@@ -348,6 +544,10 @@ describe('buildRawExportMetadata', () => {
 				shadingIndex: {
 					fileName: '2025-08-15_2m_active-cells.shading.f32.bin',
 					checksum: 'shading-sha256'
+				},
+				surfaceFlags: {
+					fileName: '2025-08-15_2m_active-cells.surface-flags.u8.bin',
+					checksum: 'surface-flags-sha256'
 				}
 			},
 			timingsMs: {
@@ -381,7 +581,8 @@ describe('buildRawExportMetadata', () => {
 			canonicalIndices: 'point-major',
 			positions: 'point-major-xyz',
 			utci: 'point-major-hour',
-			shadingIndex: 'point-major'
+			shadingIndex: 'point-major',
+			surfaceFlags: 'point-major'
 		});
 		expect(metadata.arrays.canonicalIndices).toEqual({
 			dtype: 'u32',
@@ -407,28 +608,21 @@ describe('buildRawExportMetadata', () => {
 			shape: [2],
 			byteLength: shadingIndex.byteLength
 		});
+		expect(metadata.arrays.surfaceFlags).toEqual({
+			dtype: 'u8',
+			endianness: 'little',
+			shape: [2],
+			byteLength: surfaceFlags.byteLength
+		});
 		expect(metadata.files.utci?.checksum).toBe('utci-sha256');
+		expect(metadata.files.surfaceFlags?.checksum).toBe('surface-flags-sha256');
 		expect(metadata.timingsMs?.serialization).toBe(50);
 	});
 
 	it('throws when metadata lengths, policy fields, or byte counts do not match', () => {
 		expect(() =>
 			buildRawExportMetadata({
-				schemaVersion: undefined as unknown as string,
-				analysisId: 'Innovation-District/2025-08-15_2m_fullday',
-				...RAW_SOURCE_FIELDS,
-				coordinateSystem: 'projected-analysis',
-				hours: [0],
-				canonicalIndices: new Uint32Array([2]),
-				positions: new Float32Array([180600, 573600, 1.5]),
-				utci: new Float32Array([30]),
-				shadingIndex: new Float32Array([0.25]),
-				activeMask: {
-					source: 'base+road',
-					canonicalPointCount: 1,
-					checksum: 'mask-sha256',
-					signature: 'mask-signature'
-				}
+				...buildRuntimeInvalidRawMetadataParams({ schemaVersion: undefined }),
 			})
 		).toThrowError(/schemaVersion/i);
 
@@ -443,6 +637,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -466,6 +661,7 @@ describe('buildRawExportMetadata', () => {
 				]),
 				utci: new Float32Array([30, 31, 32, 33]),
 				shadingIndex: new Float32Array([0.25, 0.75]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 2,
@@ -486,6 +682,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base',
 					canonicalPointCount: 1,
@@ -506,6 +703,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -526,6 +724,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -536,23 +735,21 @@ describe('buildRawExportMetadata', () => {
 		).toThrowError(/signature/i);
 
 		expect(() =>
-			buildRawExportMetadata({
-				schemaVersion: 'innovation-district-raw-export/v1',
-				analysisId: 'Innovation-District/2025-08-15_2m_fullday',
-				...RAW_SOURCE_FIELDS,
-				coordinateSystem: 'projected-analysis',
-				hours: [0],
-				canonicalIndices: new Uint32Array([2]),
-				positions: new Float32Array([180600, 573600, 1.5]),
-				utci: new Float32Array([30]),
-				shadingIndex: new Float32Array([0.25]),
-				activeMask: {
-					source: 'base+road',
-					canonicalPointCount: 1,
-					checksum: 'mask-sha256',
-					signature: undefined as unknown as string
-				}
-			})
+			buildRawExportMetadata(
+				buildRuntimeInvalidRawMetadataParams({
+					canonicalIndices: new Uint32Array([2]),
+					positions: new Float32Array([180600, 573600, 1.5]),
+					utci: new Float32Array([30]),
+					shadingIndex: new Float32Array([0.25]),
+					surfaceFlags: new Uint8Array([1]),
+					activeMask: {
+						source: 'base+road',
+						canonicalPointCount: 1,
+						checksum: 'mask-sha256',
+						signature: undefined
+					}
+				})
+			)
 		).toThrowError(/signature/i);
 
 		expect(() =>
@@ -566,6 +763,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -592,6 +790,7 @@ describe('buildRawExportMetadata', () => {
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -611,12 +810,14 @@ describe('buildRawExportMetadata', () => {
 				schemaVersion: 'innovation-district-raw-export/v1',
 				analysisId: 'Innovation-District/2025-08-15_2m_fullday',
 				...RAW_SOURCE_FIELDS,
-				coordinateSystem: 'xy_ground' as unknown as 'projected-analysis',
+				coordinateSystem: buildRuntimeInvalidRawMetadataParams({ coordinateSystem: 'xy_ground' })
+					.coordinateSystem,
 				hours: [0],
 				canonicalIndices: new Uint32Array([2]),
 				positions: new Float32Array([180600, 573600, 1.5]),
 				utci: new Float32Array([30]),
 				shadingIndex: new Float32Array([0.25]),
+				surfaceFlags: new Uint8Array([1]),
 				activeMask: {
 					source: 'base+road',
 					canonicalPointCount: 1,
@@ -625,5 +826,126 @@ describe('buildRawExportMetadata', () => {
 				}
 			})
 		).toThrowError(/coordinateSystem/i);
+	});
+
+	it('includes raw metadata descriptors for surfaceFlags and rejects any parallel raw primary class array', () => {
+		const canonicalIndices = new Uint32Array([5, 2, 9]);
+		const positions = new Float32Array([
+			180605, 573605, 1.5,
+			180602, 573602, 1.5,
+			180609, 573609, 1.5
+		]);
+		const utci = new Float32Array([35, 32, 40]);
+		const shadingIndex = new Float32Array([0.5, 0.25, 0.75]);
+		const paramsWithPrimaryClass = {
+			schemaVersion: 'innovation-district-raw-export/v1',
+			analysisId: 'Innovation-District/2025-08-15_2m_fullday',
+			...RAW_SOURCE_FIELDS,
+			coordinateSystem: 'projected-analysis' as const,
+			hours: [0],
+			canonicalIndices,
+			positions,
+			utci,
+			shadingIndex,
+			surfaceFlags: new Uint8Array([1, 3, 6]),
+			activeMask: {
+				source: 'base+road' as const,
+				canonicalPointCount: 12,
+				checksum: 'mask-sha256',
+				signature: 'mask-signature'
+			},
+			files: {
+				canonicalIndices: {
+					fileName: '2025-08-15_2m_active-cells.canonical.u32.bin',
+					checksum: 'canonical-sha256'
+				},
+				positions: {
+					fileName: '2025-08-15_2m_active-cells.positions.f32.bin',
+					checksum: 'positions-sha256'
+				},
+				utci: {
+					fileName: '2025-08-15_2m_active-cells.utci.f32.bin',
+					checksum: 'utci-sha256'
+				},
+				shadingIndex: {
+					fileName: '2025-08-15_2m_active-cells.shading.f32.bin',
+					checksum: 'shading-sha256'
+				},
+				surfaceFlags: {
+					fileName: '2025-08-15_2m_active-cells.surface-flags.u8.bin',
+					checksum: 'surface-flags-sha256'
+				},
+				surfaceClass: {
+					fileName: '2025-08-15_2m_active-cells.surface-class.u8.bin',
+					checksum: 'surface-class-sha256'
+				}
+			}
+		};
+
+		expect(() => buildRawExportMetadata(paramsWithPrimaryClass)).toThrowError(/surfaceClass/i);
+
+		const params = {
+			...paramsWithPrimaryClass,
+			files: {
+				...paramsWithPrimaryClass.files,
+				surfaceClass: undefined
+			}
+		};
+		const metadata = buildRawExportMetadata(params);
+		expect(metadata.layout).toHaveProperty('surfaceFlags', 'point-major');
+		expect(metadata.arrays.surfaceFlags).toEqual({
+			dtype: 'u8',
+			endianness: 'little',
+			shape: [3],
+			byteLength: 3
+		});
+		expect(Reflect.has(metadata.files, 'surfaceFlags')).toBe(true);
+		expect(Reflect.has(metadata.files, 'surfaceClass')).toBe(false);
+	});
+
+	it('rejects classified raw metadata when a row would need to emit surface_class = unknown from zero sampled-surface flags', () => {
+		const canonicalIndices = new Uint32Array([5, 2, 9]);
+		const positions = new Float32Array([
+			180605, 573605, 1.5,
+			180602, 573602, 1.5,
+			180609, 573609, 1.5
+		]);
+		const utci = new Float32Array([35, 32, 40]);
+		const shadingIndex = new Float32Array([0.5, 0.25, 0.75]);
+
+		const params: Parameters<typeof buildRawExportMetadata>[0] = {
+			schemaVersion: 'innovation-district-raw-export/v1',
+			analysisId: 'Innovation-District/2025-08-15_2m_fullday',
+			...RAW_SOURCE_FIELDS,
+			coordinateSystem: 'projected-analysis',
+			hours: [0],
+			canonicalIndices,
+			positions,
+			utci,
+			shadingIndex,
+			surfaceFlags: new Uint8Array([1, 0, 6]),
+			activeMask: {
+				source: 'base+road',
+				canonicalPointCount: 12,
+				checksum: 'mask-sha256',
+				signature: 'mask-signature'
+			},
+			files: {
+				surfaceFlags: {
+					fileName: '2025-08-15_2m_active-cells.surface-flags.u8.bin',
+					checksum: 'surface-flags-sha256'
+				}
+			}
+		};
+
+		expect(() =>
+			buildRawExportMetadata(params)
+		).toThrowError(/sampled-surface|surfaceFlags|unknown/i);
+	});
+
+	it('requires classified surfaceFlags for raw metadata when external input bypasses trusted typing', () => {
+		const params = buildRuntimeInvalidRawMetadataParams({ surfaceFlags: undefined });
+
+		expect(() => buildRawExportMetadata(params)).toThrowError(/surfaceFlags/i);
 	});
 });

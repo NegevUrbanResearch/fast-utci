@@ -1,4 +1,4 @@
-import type { Analysis } from '$lib/types/analysis';
+import { SURFACE_FLAGS, parseSurfaceFlags, type Analysis } from '$lib/types/analysis';
 
 const EXPECTED_ACTIVE_MASK_SOURCE = 'base+road' as const;
 const LITTLE_ENDIAN = 'little' as const;
@@ -6,7 +6,13 @@ const LITTLE_ENDIAN = 'little' as const;
 type InnovationDistrictActiveMaskSource = typeof EXPECTED_ACTIVE_MASK_SOURCE;
 type RawExportCoordinateSystem = 'projected-analysis';
 type RawLayout = 'point-major' | 'point-major-xyz' | 'point-major-hour';
-type RawArrayDtype = 'u32' | 'f32';
+type RawArrayDtype = 'u32' | 'f32' | 'u8';
+type RawExportFileKey =
+	| 'canonicalIndices'
+	| 'positions'
+	| 'utci'
+	| 'shadingIndex'
+	| 'surfaceFlags';
 
 type AnalysisActiveMaskSource = NonNullable<Analysis['metadata']['activeMask']>['source'];
 
@@ -15,6 +21,7 @@ export interface ActiveCellArrayBuildParams {
 	positions: Float32Array;
 	utciByHour: readonly Float32Array[];
 	shadingIndex: Float32Array;
+	surfaceFlags: Uint8Array;
 	hours: readonly number[];
 	activeMaskSource?: AnalysisActiveMaskSource;
 }
@@ -44,7 +51,8 @@ export interface RawExportMetadataBuildParams {
 		checksum: string;
 		signature: string;
 	};
-	files?: Partial<Record<'canonicalIndices' | 'positions' | 'utci' | 'shadingIndex', RawExportFileDescriptorInput>>;
+	surfaceFlags: Uint8Array;
+	files?: Partial<Record<RawExportFileKey, RawExportFileDescriptorInput>>;
 	timingsMs?: Record<string, number>;
 }
 
@@ -78,14 +86,16 @@ export interface RawExportMetadata {
 		positions: RawLayout;
 		utci: RawLayout;
 		shadingIndex: RawLayout;
+		surfaceFlags: RawLayout;
 	};
 	arrays: {
 		canonicalIndices: RawExportArrayDescriptor;
 		positions: RawExportArrayDescriptor;
 		utci: RawExportArrayDescriptor;
 		shadingIndex: RawExportArrayDescriptor;
+		surfaceFlags: RawExportArrayDescriptor;
 	};
-	files: Partial<Record<'canonicalIndices' | 'positions' | 'utci' | 'shadingIndex', RawExportFileDescriptorInput>>;
+	files: Partial<Record<RawExportFileKey, RawExportFileDescriptorInput>>;
 	timingsMs?: Record<string, number>;
 }
 
@@ -94,11 +104,13 @@ export interface ActiveCellArraysResult {
 	positions: Float32Array;
 	utci: Float32Array;
 	shadingIndex: Float32Array;
+	surfaceFlags: Uint8Array;
 	layout: {
 		canonicalIndices: RawLayout;
 		positions: RawLayout;
 		utci: RawLayout;
 		shadingIndex: RawLayout;
+		surfaceFlags: RawLayout;
 	};
 }
 
@@ -114,6 +126,7 @@ export interface ActiveCellSpatialArraysResult {
 		checksum: string;
 		signature: string;
 	};
+	surfaceFlags: Uint8Array;
 }
 
 function assertTypedArrayPresent<T extends ArrayLike<number>>(
@@ -224,8 +237,32 @@ function assertShadingLength(shadingIndex: Float32Array, activeCount: number): v
 	}
 }
 
+function assertSurfaceFlagsArray(surfaceFlags: Uint8Array, activeCount: number): void {
+	if (!(surfaceFlags instanceof Uint8Array)) {
+		throw new Error('surfaceFlags must be a Uint8Array');
+	}
+	if (surfaceFlags.length !== activeCount) {
+		throw new Error(
+			`surfaceFlags length ${surfaceFlags.length} does not match active row count ${activeCount}`
+		);
+	}
+}
+
+function assertKnownSurfaceFlags(surfaceFlags: Uint8Array): void {
+	const sampledSurfaceMask = SURFACE_FLAGS.ground | SURFACE_FLAGS.streetSurface;
+	for (let index = 0; index < surfaceFlags.length; index += 1) {
+		const value = surfaceFlags[index];
+		parseSurfaceFlags(value);
+		if ((value & sampledSurfaceMask) === 0) {
+			throw new Error(
+				`surfaceFlags[${index}] must include at least one sampled-surface bit (ground or streetSurface)`
+			);
+		}
+	}
+}
+
 function assertByteLength(
-	array: Uint32Array | Float32Array,
+	array: Uint32Array | Float32Array | Uint8Array,
 	bytesPerElement: number,
 	expectedElements: number,
 	name: string
@@ -236,12 +273,17 @@ function assertByteLength(
 }
 
 function buildArrayDescriptor(
-	array: Uint32Array | Float32Array,
+	array: Uint32Array | Float32Array | Uint8Array,
 	dtype: RawArrayDtype,
 	shape: number[]
 ): RawExportArrayDescriptor {
 	const expectedElements = shape.reduce((product, dimension) => product * dimension, 1);
-	const bytesPerElement = dtype === 'u32' ? Uint32Array.BYTES_PER_ELEMENT : Float32Array.BYTES_PER_ELEMENT;
+	const bytesPerElement =
+		dtype === 'u32'
+			? Uint32Array.BYTES_PER_ELEMENT
+			: dtype === 'u8'
+				? Uint8Array.BYTES_PER_ELEMENT
+				: Float32Array.BYTES_PER_ELEMENT;
 	assertByteLength(array, bytesPerElement, expectedElements, `${dtype} array`);
 
 	return {
@@ -265,6 +307,15 @@ function cloneFiles(
 		]
 	>) {
 		if (descriptor == null) continue;
+		if (
+			key !== 'canonicalIndices' &&
+			key !== 'positions' &&
+			key !== 'utci' &&
+			key !== 'shadingIndex' &&
+			key !== 'surfaceFlags'
+		) {
+			throw new Error(`files.${String(key)} is not supported for Innovation District raw export`);
+		}
 		assertString(descriptor.fileName, `files.${key}.fileName`);
 		assertString(descriptor.checksum, `files.${key}.checksum`);
 		next[key] = {
@@ -294,10 +345,12 @@ function validateRawArrayInputs(params: {
 	positions: Float32Array;
 	utci: Float32Array;
 	shadingIndex: Float32Array;
+	surfaceFlags: Uint8Array;
 	hours: readonly number[];
 	activeMaskSource?: AnalysisActiveMaskSource;
 }): { activeCount: number; hourCount: number } {
-	const { canonicalIndices, positions, utci, shadingIndex, hours, activeMaskSource } = params;
+	const { canonicalIndices, positions, utci, shadingIndex, surfaceFlags, hours, activeMaskSource } =
+		params;
 	const activeCount = canonicalIndices.length;
 	const hourCount = hours.length;
 	const positionActiveCount = positions.length / 3;
@@ -315,10 +368,12 @@ function validateRawArrayInputs(params: {
 	assertPositionsLength(positions, activeCount);
 	assertPointMajorUtciLength(utci, activeCount, hourCount);
 	assertShadingLength(shadingIndex, activeCount);
+	assertSurfaceFlagsArray(surfaceFlags, activeCount);
 	assertFiniteArrayValues(canonicalIndices, 'canonicalIndices');
 	assertFiniteArrayValues(positions, 'positions');
 	assertFiniteArrayValues(utci, 'utci');
 	assertFiniteArrayValues(shadingIndex, 'shadingIndex');
+	assertKnownSurfaceFlags(surfaceFlags);
 
 	return { activeCount, hourCount };
 }
@@ -332,6 +387,11 @@ export function buildActiveCellSpatialArrays(analysis: Analysis): ActiveCellSpat
 		activeMask.activeCanonicalIndices,
 		'metadata.activeMask.activeCanonicalIndices'
 	);
+	if (!('surfaceFlagsByActiveCell' in activeMask)) {
+		throw new Error(
+			'metadata.activeMask.surfaceFlagsByActiveCell is required for Innovation District classified export'
+		);
+	}
 	assertExpectedActiveMaskSource(activeMask.source, 'metadata.activeMask.source');
 	if (activeMask.inactivePointCount <= 0 || activeMask.activePointRatio >= 1) {
 		throw new Error('Innovation District export refuses rectangular-only/canonical-only data');
@@ -347,11 +407,14 @@ export function buildActiveCellSpatialArrays(analysis: Analysis): ActiveCellSpat
 	assertString(activeMask.signature, 'metadata.activeMask.signature');
 
 	const canonicalIndices = new Uint32Array(activeMask.activeCanonicalIndices);
+	const surfaceFlags = new Uint8Array(activeMask.surfaceFlagsByActiveCell);
 	if (analysis.data.numPositions !== activeMask.activePointCount) {
 		throw new Error('analysis.data.numPositions does not match metadata.activeMask.activePointCount');
 	}
 	assertPositionsLength(analysis.data.positions, activeMask.activePointCount);
 	assertFiniteArrayValues(analysis.data.positions, 'analysis.data.positions');
+	assertSurfaceFlagsArray(surfaceFlags, activeMask.activePointCount);
+	assertKnownSurfaceFlags(surfaceFlags);
 
 	return {
 		canonicalIndices,
@@ -364,7 +427,8 @@ export function buildActiveCellSpatialArrays(analysis: Analysis): ActiveCellSpat
 			activePointRatio: activeMask.activePointRatio,
 			checksum: activeMask.activeMaskChecksum,
 			signature: activeMask.signature
-		}
+		},
+		surfaceFlags
 	};
 }
 
@@ -374,6 +438,7 @@ export function buildActiveCellArrays(params: ActiveCellArrayBuildParams): Activ
 		positions,
 		utciByHour,
 		shadingIndex,
+		surfaceFlags,
 		hours,
 		activeMaskSource
 	} = params;
@@ -386,13 +451,16 @@ export function buildActiveCellArrays(params: ActiveCellArrayBuildParams): Activ
 	assertPositionsLength(positions, activeCount);
 	assertUtciSlices(utciByHour, hours, activeCount);
 	assertShadingLength(shadingIndex, activeCount);
+	assertSurfaceFlagsArray(surfaceFlags, activeCount);
 	assertFiniteArrayValues(activeCanonicalIndices, 'activeCanonicalIndices');
 	assertFiniteArrayValues(positions, 'positions');
 	assertFiniteArrayValues(shadingIndex, 'shadingIndex');
+	assertKnownSurfaceFlags(surfaceFlags);
 
 	const canonicalIndices = new Uint32Array(activeCanonicalIndices);
 	const nextPositions = new Float32Array(positions);
 	const nextShadingIndex = new Float32Array(shadingIndex);
+	const nextSurfaceFlags = new Uint8Array(surfaceFlags);
 	const utci = new Float32Array(activeCount * hours.length);
 
 	let offset = 0;
@@ -407,11 +475,13 @@ export function buildActiveCellArrays(params: ActiveCellArrayBuildParams): Activ
 		positions: nextPositions,
 		utci,
 		shadingIndex: nextShadingIndex,
+		surfaceFlags: nextSurfaceFlags,
 		layout: {
 			canonicalIndices: 'point-major',
 			positions: 'point-major-xyz',
 			utci: 'point-major-hour',
-			shadingIndex: 'point-major'
+			shadingIndex: 'point-major',
+			surfaceFlags: 'point-major'
 		}
 	};
 }
@@ -431,6 +501,7 @@ export function buildRawExportMetadata(params: RawExportMetadataBuildParams): Ra
 		positions,
 		utci,
 		shadingIndex,
+		surfaceFlags,
 		activeMask,
 		files,
 		timingsMs
@@ -452,6 +523,7 @@ export function buildRawExportMetadata(params: RawExportMetadataBuildParams): Ra
 		positions,
 		utci,
 		shadingIndex,
+		surfaceFlags,
 		hours,
 		activeMaskSource: activeMask.source
 	});
@@ -478,13 +550,15 @@ export function buildRawExportMetadata(params: RawExportMetadataBuildParams): Ra
 			canonicalIndices: 'point-major',
 			positions: 'point-major-xyz',
 			utci: 'point-major-hour',
-			shadingIndex: 'point-major'
+			shadingIndex: 'point-major',
+			surfaceFlags: 'point-major'
 		},
 		arrays: {
 			canonicalIndices: buildArrayDescriptor(canonicalIndices, 'u32', [activeCount]),
 			positions: buildArrayDescriptor(positions, 'f32', [activeCount, 3]),
 			utci: buildArrayDescriptor(utci, 'f32', [activeCount, hourCount]),
-			shadingIndex: buildArrayDescriptor(shadingIndex, 'f32', [activeCount])
+			shadingIndex: buildArrayDescriptor(shadingIndex, 'f32', [activeCount]),
+			surfaceFlags: buildArrayDescriptor(surfaceFlags, 'u8', [activeCount])
 		},
 		files: cloneFiles(files),
 		timingsMs: cloneTimings(timingsMs)

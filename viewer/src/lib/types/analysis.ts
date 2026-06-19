@@ -144,6 +144,37 @@ export interface AnalysisRectangularBounds {
 
 export type ProjectedTriangle2D = readonly [number, number, number, number, number, number];
 
+declare const surfaceFlagsBrand: unique symbol;
+
+export type SurfaceFlags = number & { readonly [surfaceFlagsBrand]: true };
+
+const ALL_SURFACE_FLAGS_MASK = (1 << 3) - 1;
+
+export function parseSurfaceFlags(value: number): SurfaceFlags {
+	if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+		throw new Error(`SurfaceFlags must be an unsigned 8-bit integer, got ${value}.`);
+	}
+	if ((value & ~ALL_SURFACE_FLAGS_MASK) !== 0) {
+		throw new Error(`SurfaceFlags contains unknown bits: ${value}.`);
+	}
+	return value as SurfaceFlags;
+}
+
+export const SURFACE_FLAGS = {
+	ground: parseSurfaceFlags(1 << 0),
+	streetSurface: parseSurfaceFlags(1 << 1),
+	buildingFootprint: parseSurfaceFlags(1 << 2)
+} as const;
+
+export function combineSurfaceFlags(flags: readonly SurfaceFlags[]): SurfaceFlags {
+	return parseSurfaceFlags(flags.reduce((combined, flag) => combined | flag, 0));
+}
+
+export interface ClassifiedProjectedTriangle2D {
+	triangle: ProjectedTriangle2D;
+	flags: SurfaceFlags;
+}
+
 export interface StudyAreaMaskSummary {
 	canonicalPointCount: number;
 	activePointCount: number;
@@ -170,6 +201,10 @@ export interface AnalysisActiveMask {
 	signature?: string;
 }
 
+export interface ClassifiedAnalysisActiveMask extends AnalysisActiveMask {
+	surfaceFlagsByActiveCell: Uint8Array;
+}
+
 export interface AnalysisMetadata {
 	analysis_type: 'single_hour' | 'full_day';
 	num_positions: number;
@@ -193,7 +228,7 @@ export interface AnalysisMetadata {
 	/** Analysis bounds for grid generation (x_min, x_max, y_min, y_max, z). Grid is always built from these bounds. */
 	bounds?: AnalysisRectangularBounds;
 	/** Runtime active study-area mask for compact live WebGPU outputs mapped into canonical cells. */
-	activeMask?: AnalysisActiveMask;
+	activeMask?: AnalysisActiveMask | ClassifiedAnalysisActiveMask;
 	/** Number of representative months when analysis has multi-month data (e.g. 12 for full year). */
 	num_months?: number;
 }

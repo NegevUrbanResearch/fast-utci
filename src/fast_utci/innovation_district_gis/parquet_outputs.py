@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .contracts import GEOPARQUET_CONTRACT
-from .raw import ActiveCellArtifacts
+from .raw import ActiveCellArtifacts, classify_surface_flags
 from .transforms import DerivedTables
 
 
@@ -44,6 +44,22 @@ def _geo_metadata_bytes() -> bytes:
     ).encode("utf-8")
 
 
+def _surface_columns(artifacts: ActiveCellArtifacts) -> dict[str, pa.Array]:
+    classification = classify_surface_flags(artifacts.surface_flags)
+    return {
+        "surface_flags": pa.array(artifacts.surface_flags, type=pa.uint8()),
+        "surface_class": pa.array(classification.surface_class, type=pa.string()),
+        "is_street_surface": pa.array(classification.is_street_surface, type=pa.bool_()),
+        "is_building_footprint": pa.array(classification.is_building_footprint, type=pa.bool_()),
+        "include_in_public_realm_stats": pa.array(
+            classification.include_in_public_realm_stats, type=pa.bool_()
+        ),
+        "include_in_outdoor_surface_stats": pa.array(
+            classification.include_in_outdoor_surface_stats, type=pa.bool_()
+        ),
+    }
+
+
 def write_cells_geoparquet(
     path: Path,
     artifacts: ActiveCellArtifacts,
@@ -62,6 +78,7 @@ def write_cells_geoparquet(
             "x": pa.array(artifacts.positions[:, 0], type=pa.float32()),
             "y": pa.array(artifacts.positions[:, 1], type=pa.float32()),
             "z": pa.array(artifacts.positions[:, 2], type=pa.float32()),
+            **_surface_columns(artifacts),
             "shading_index": _nullable_float32(artifacts.shading_index),
             **_utci_columns(artifacts),
         }

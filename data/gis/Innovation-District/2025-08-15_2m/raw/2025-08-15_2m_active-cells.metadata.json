@@ -45,7 +45,8 @@
     "canonicalIndices": "point-major",
     "positions": "point-major-xyz",
     "utci": "point-major-hour",
-    "shadingIndex": "point-major"
+    "shadingIndex": "point-major",
+    "surfaceFlags": "point-major"
   },
   "arrays": {
     "canonicalIndices": {
@@ -81,6 +82,14 @@
         638688
       ],
       "byteLength": 2554752
+    },
+    "surfaceFlags": {
+      "dtype": "u8",
+      "endianness": "little",
+      "shape": [
+        638688
+      ],
+      "byteLength": 638688
     }
   },
   "files": {
@@ -99,14 +108,18 @@
     "shadingIndex": {
       "fileName": "2025-08-15_2m_active-cells.shading.f32.bin",
       "checksum": "0a3824b42b5d47cae5b2557dbd35f60e8ec9b40ee2c9fcb18923b405aaa9ffba"
+    },
+    "surfaceFlags": {
+      "fileName": "2025-08-15_2m_active-cells.surface-flags.u8.bin",
+      "checksum": "d9d21a9293dfcec2faaa9826ed8190fa75e9dffde53f1dc016ed2de38f409b7d"
     }
   },
   "timingsMs": {
-    "routeLoad": 751.9354999999996,
-    "liveSessionReady": 10678.1642,
-    "utciCollection": 32879.926900000006,
-    "shadingCollection": 1481.4858999999997,
-    "binarySerialization": 350.2259000000049,
-    "total": 55923.0294
+    "routeLoad": 609.291299999999,
+    "liveSessionReady": 11121.899899999999,
+    "utciCollection": 35326.3123,
+    "shadingCollection": 1499.6218999999983,
+    "binarySerialization": 627.9863000000041,
+    "total": 58923.912000000004
   }
 }

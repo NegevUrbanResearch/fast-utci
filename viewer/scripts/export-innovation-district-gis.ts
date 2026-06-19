@@ -10,7 +10,7 @@ import {
 	buildActiveCellArrays,
 	buildRawExportMetadata
 } from '../src/lib/gis/innovationDistrictExport';
-import { resolveRepoRelativePath } from './repo-paths';
+import { resolveRepoRelativePath, resolveRepoRoot } from './repo-paths';
 
 const ANALYSIS_ID = 'Innovation-District/innovation_district_webgpu';
 const DEFAULT_PORT = 4173;
@@ -45,6 +45,7 @@ type CollectorExportResult = {
 	canonicalIndices: Uint32Array | number[];
 	positions: Float32Array | number[];
 	values: Float32Array | number[];
+	surfaceFlags: Uint8Array | number[];
 };
 
 type CollectorDiagnosticsSnapshot = {
@@ -91,10 +92,41 @@ type RawExportFileNames = {
 	positions: string;
 	utci: string;
 	shadingIndex: string;
+	surfaceFlags: string;
 };
 
-function resolveRepoRelativeOutDir(cwd: string, outDir: string): string {
-	return resolveRepoRelativePath(cwd, outDir);
+function resolveRepoRelativeOutDir(cwd: string, outDir: string, date: string): string {
+	const resolved = resolveRepoRelativePath(cwd, outDir);
+	const canonical = canonicalInnovationDistrictOutDirs(cwd, date);
+	if (samePath(resolved, canonical.raw)) {
+		return canonical.raw;
+	}
+	if (samePath(resolved, canonical.bundle)) {
+		return canonical.raw;
+	}
+	if (samePath(resolved, canonical.family)) {
+		return canonical.raw;
+	}
+	return resolved;
+}
+
+function canonicalInnovationDistrictOutDirs(cwd: string, date: string): {
+	family: string;
+	bundle: string;
+	raw: string;
+} {
+	const repoRoot = resolveRepoRoot(cwd);
+	const family = resolve(repoRoot, 'data', 'gis', 'Innovation-District');
+	const bundle = resolve(family, `${date}_${GRID_SIZE_METERS}m`);
+	return {
+		family,
+		bundle,
+		raw: resolve(bundle, 'raw')
+	};
+}
+
+function samePath(left: string, right: string): boolean {
+	return resolve(left).toLowerCase() === resolve(right).toLowerCase();
 }
 
 export function parseExportArgs(options: ParseExportArgsOptions = {}): Args {
@@ -167,7 +199,7 @@ export function parseExportArgs(options: ParseExportArgsOptions = {}): Args {
 	}
 
 	return {
-		outDir: resolveRepoRelativeOutDir(cwd, outDir),
+		outDir: resolveRepoRelativeOutDir(cwd, outDir, date),
 		date,
 		monthIndex,
 		hours,
@@ -189,7 +221,8 @@ export function buildRawExportFileNames(params: {
 		canonicalIndices: `${prefix}.canonical.u32.bin`,
 		positions: `${prefix}.positions.f32.bin`,
 		utci: `${prefix}.utci.f32.bin`,
-		shadingIndex: `${prefix}.shading.f32.bin`
+		shadingIndex: `${prefix}.shading.f32.bin`,
+		surfaceFlags: `${prefix}.surface-flags.u8.bin`
 	};
 }
 
@@ -499,7 +532,13 @@ function toFloat32Array(value: Float32Array | number[], name: string): Float32Ar
 	throw new Error(`${name} did not serialize as a Float32Array.`);
 }
 
-function arraysEqual(left: Uint32Array, right: Uint32Array): boolean {
+function toUint8Array(value: Uint8Array | number[], name: string): Uint8Array {
+	if (value instanceof Uint8Array) return new Uint8Array(value);
+	if (Array.isArray(value)) return new Uint8Array(value);
+	throw new Error(`${name} did not serialize as a Uint8Array.`);
+}
+
+function arraysEqual(left: ArrayLike<number>, right: ArrayLike<number>): boolean {
 	if (left.length !== right.length) return false;
 	for (let i = 0; i < left.length; i += 1) {
 		if (left[i] !== right[i]) return false;
@@ -507,13 +546,13 @@ function arraysEqual(left: Uint32Array, right: Uint32Array): boolean {
 	return true;
 }
 
-function sha256(array: Uint32Array | Float32Array): string {
+function sha256(array: Uint32Array | Float32Array | Uint8Array): string {
 	return createHash('sha256')
 		.update(Buffer.from(array.buffer, array.byteOffset, array.byteLength))
 		.digest('hex');
 }
 
-async function writeBinary(path: string, array: Uint32Array | Float32Array): Promise<void> {
+async function writeBinary(path: string, array: Uint32Array | Float32Array | Uint8Array): Promise<void> {
 	await writeFile(path, Buffer.from(array.buffer, array.byteOffset, array.byteLength));
 }
 
@@ -597,6 +636,7 @@ async function main(): Promise<void> {
 		const utciByHour: Float32Array[] = [];
 		let canonicalIndices: Uint32Array | null = null;
 		let positions: Float32Array | null = null;
+		let surfaceFlags: Uint8Array | null = null;
 		let activeMask:
 			| CollectorExportResult['metadata']['activeMask']
 			| null = null;
@@ -623,6 +663,7 @@ async function main(): Promise<void> {
 			const nextCanonical = toUint32Array(result.canonicalIndices, 'canonicalIndices');
 			const nextPositions = toFloat32Array(result.positions, 'positions');
 			const values = toFloat32Array(result.values, 'utci values');
+			const nextSurfaceFlags = toUint8Array(result.surfaceFlags, 'surfaceFlags');
 			if (result.metadata.metricType !== 'utci') {
 				throw new Error(`Expected UTCI export, got ${result.metadata.metricType}.`);
 			}
@@ -630,8 +671,13 @@ async function main(): Promise<void> {
 				canonicalIndices = nextCanonical;
 				positions = nextPositions;
 				activeMask = result.metadata.activeMask;
+				surfaceFlags = nextSurfaceFlags;
 			} else if (!arraysEqual(canonicalIndices, nextCanonical)) {
 				throw new Error(`UTCI hour ${hourIndex} active canonical row order changed.`);
+			} else if (surfaceFlags == null) {
+				throw new Error(`UTCI hour ${hourIndex} missing baseline surfaceFlags.`);
+			} else if (!arraysEqual(surfaceFlags, nextSurfaceFlags)) {
+				throw new Error(`UTCI hour ${hourIndex} surfaceFlags active row order changed.`);
 			}
 			utciByHour.push(values);
 		}
@@ -652,11 +698,15 @@ async function main(): Promise<void> {
 		});
 		const shadingResult = await collectCurrent(page);
 		const shadingCanonical = toUint32Array(shadingResult.canonicalIndices, 'shading canonicalIndices');
-		if (canonicalIndices == null || positions == null || activeMask == null) {
+		if (canonicalIndices == null || positions == null || activeMask == null || surfaceFlags == null) {
 			throw new Error('UTCI collection did not produce active cell arrays.');
 		}
 		if (!arraysEqual(canonicalIndices, shadingCanonical)) {
 			throw new Error('Shading Index active canonical row order does not match UTCI.');
+		}
+		const shadingSurfaceFlags = toUint8Array(shadingResult.surfaceFlags, 'shading surfaceFlags');
+		if (!arraysEqual(surfaceFlags, shadingSurfaceFlags)) {
+			throw new Error('Shading Index surfaceFlags row order does not match UTCI.');
 		}
 		const shadingIndex = toFloat32Array(shadingResult.values, 'shading values');
 		timings.shadingCollection = nowMs() - shadingStartedAt;
@@ -667,6 +717,7 @@ async function main(): Promise<void> {
 			positions,
 			utciByHour,
 			shadingIndex,
+			surfaceFlags,
 			hours: args.hours,
 			activeMaskSource: activeMask.source
 		});
@@ -680,12 +731,14 @@ async function main(): Promise<void> {
 		await writeBinary(resolve(args.outDir, fileNames.positions), arrays.positions);
 		await writeBinary(resolve(args.outDir, fileNames.utci), arrays.utci);
 		await writeBinary(resolve(args.outDir, fileNames.shadingIndex), arrays.shadingIndex);
+		await writeBinary(resolve(args.outDir, fileNames.surfaceFlags), arrays.surfaceFlags);
 
 		const fileChecksums = {
 			canonicalIndices: sha256(arrays.canonicalIndices),
 			positions: sha256(arrays.positions),
 			utci: sha256(arrays.utci),
-			shadingIndex: sha256(arrays.shadingIndex)
+			shadingIndex: sha256(arrays.shadingIndex),
+			surfaceFlags: sha256(arrays.surfaceFlags)
 		};
 		timings.binarySerialization = nowMs() - serializationStartedAt;
 		timings.total = nowMs() - totalStartedAt;
@@ -705,6 +758,7 @@ async function main(): Promise<void> {
 			positions: arrays.positions,
 			utci: arrays.utci,
 			shadingIndex: arrays.shadingIndex,
+			surfaceFlags: arrays.surfaceFlags,
 			activeMask: {
 				source: activeMask.source,
 				canonicalPointCount: activeMask.canonicalPointCount,
@@ -727,6 +781,10 @@ async function main(): Promise<void> {
 				shadingIndex: {
 					fileName: fileNames.shadingIndex,
 					checksum: fileChecksums.shadingIndex
+				},
+				surfaceFlags: {
+					fileName: fileNames.surfaceFlags,
+					checksum: fileChecksums.surfaceFlags
 				}
 			},
 			timingsMs: timings as TimingBreakdown

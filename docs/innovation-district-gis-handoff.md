@@ -36,6 +36,7 @@ Retained raw collector inputs:
 - `data/gis/Innovation-District/2025-08-15_2m/raw/2025-08-15_2m_active-cells.positions.f32.bin`
 - `data/gis/Innovation-District/2025-08-15_2m/raw/2025-08-15_2m_active-cells.utci.f32.bin`
 - `data/gis/Innovation-District/2025-08-15_2m/raw/2025-08-15_2m_active-cells.shading.f32.bin`
+- `data/gis/Innovation-District/2025-08-15_2m/raw/2025-08-15_2m_active-cells.surface-flags.u8.bin`
 - `data/gis/Innovation-District/2025-08-15_2m/raw/innovation-district-collector-run-log.json`
 
 Raw folder caveat:
@@ -68,6 +69,16 @@ Raw binary layouts:
 - `positions`: `f32`, shape `[638688, 3]`, layout `point-major-xyz`
 - `utci`: `f32`, shape `[638688, 24]`, layout `point-major-hour`
 - `shadingIndex`: `f32`, shape `[638688]`, layout `point-major`
+- `surfaceFlags`: `u8`, shape `[activeCount]` (current bundle: `[638688]`), layout `point-major`
+
+Raw classification contract:
+
+- Raw classification is `surfaceFlags` bitflags only. There is no raw primary enum/class array.
+- `surfaceFlags` is row-aligned with `canonicalIndices`, `positions`, `utci`, and `shadingIndex`.
+- Bit values are `ground = 1`, `street_surface = 2`, `building_footprint = 4`.
+- Street, road, roads, sidewalk, and sidewalks are one street-surface family in the classified export.
+- Building footprints are overlay/exclusion flags only; building-only cells do not become active rows.
+- Train tracks remain excluded from active sampled cells.
 
 ## `cells.geoparquet` Schema
 
@@ -84,6 +95,12 @@ Columns:
 - `y` (`float`)
 - `z` (`float`)
 - `shading_index` (`float`)
+- `surface_flags` (`uint8`): raw per-row bitflags copied from `surfaceFlags` with `ground = 1`, `street_surface = 2`, `building_footprint = 4`
+- `surface_class` (`string`): display-priority class derived from `surface_flags` with `building_footprint > street_surface > ground`; `unknown` is not legal for classified active export rows
+- `is_street_surface` (`bool`): true when the row matches street/road/sidewalk-family sampled geometry
+- `is_building_footprint` (`bool`): true when the sample center falls inside the building-footprint overlay rasterization
+- `include_in_public_realm_stats` (`bool`): true for street/road/sidewalk-family rows excluding any building-footprint rows
+- `include_in_outdoor_surface_stats` (`bool`): true for active sampled rows excluding any building-footprint rows
 - `utci_00` through `utci_23` (`float`, exactly one column per hour)
 
 GeoParquet notes:
@@ -92,6 +109,7 @@ GeoParquet notes:
 - Geometry type: `Point`
 - Geometry CRS: `EPSG:4326`
 - GeoParquet metadata is stored under the schema `geo` key
+- Classified export rows are sampled-surface-only active rows. Building footprints never create rows on their own.
 
 ## Active Vs Canonical
 
@@ -170,7 +188,7 @@ For this bundle:
 
 `fast-utci` stops at the reusable GIS handoff bundle. It does not implement dashboard UI.
 
-Downstream responsibility belongs to `innovation_dashboard`:
+Downstream responsibility belongs to `innovation_dashboard` and stays downstream of `fast-utci`:
 
 - derive PMTiles or other map artifacts from `cells.geoparquet`
 - derive summary/chart JSON from `cells.geoparquet`
@@ -180,6 +198,22 @@ Recommended downstream path:
 
 - `cells.geoparquet -> PMTiles/vector/raster tiles for MapLibre`
 - `cells.geoparquet -> summary/chart JSON for charts/cards`
+
+## Downstream Filter Examples
+
+Common downstream filters should operate on `cells.geoparquet`:
+
+```sql
+WHERE include_in_outdoor_surface_stats = true
+```
+
+```sql
+WHERE include_in_public_realm_stats = true
+```
+
+```sql
+WHERE is_building_footprint = false
+```
 
 ## Pasteable Dashboard Handoff
 

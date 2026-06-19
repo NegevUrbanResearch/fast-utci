@@ -60,6 +60,30 @@
         "type": "float"
       },
       {
+        "name": "surface_flags",
+        "type": "uint8"
+      },
+      {
+        "name": "surface_class",
+        "type": "string"
+      },
+      {
+        "name": "is_street_surface",
+        "type": "bool"
+      },
+      {
+        "name": "is_building_footprint",
+        "type": "bool"
+      },
+      {
+        "name": "include_in_public_realm_stats",
+        "type": "bool"
+      },
+      {
+        "name": "include_in_outdoor_surface_stats",
+        "type": "bool"
+      },
+      {
         "name": "shading_index",
         "type": "float"
       },
@@ -161,12 +185,28 @@
       }
     ]
   },
+  "surfaceClassification": {
+    "rawField": "surfaceFlags",
+    "pythonField": "surface_flags",
+    "bitFlags": {
+      "ground": 1,
+      "street_surface": 2,
+      "building_footprint": 4
+    },
+    "semanticNotes": {
+      "streetSurfaceFamily": "Street, road, and sidewalk-family sampled surfaces are grouped as street_surface.",
+      "buildingFootprintOverlay": "Building footprint is an exclusion flag for downstream maps and stats.",
+      "outdoorSurfaceStats": "include_in_outdoor_surface_stats includes active rows excluding building footprints.",
+      "publicRealmStats": "include_in_public_realm_stats includes street_surface rows excluding building footprints.",
+      "classifiedActiveRows": "Classified active export rows always have sampled-surface provenance; unknown is not a legal active-row class in this contract."
+    }
+  },
   "raw": {
     "sourceLayout": "bundle-raw",
     "metadata": {
       "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\raw\\2025-08-15_2m_active-cells.metadata.json",
-      "sizeBytes": 2657,
-      "sha256": "3a0474d02634845ec1a26e52fed59fdd060664b589ff3b4623e9e10afe82ba8d"
+      "sizeBytes": 3030,
+      "sha256": "f8b8424f58ce3a1a2c2a300befd637280209977e84bf385f53f55c7c6780a706"
     },
     "georef": {
       "path": "data\\3d_models\\Innovation-District\\innovation_district.georef.json",
@@ -245,14 +285,25 @@
         ],
         "layout": "point-major",
         "sourceChecksum": "0a3824b42b5d47cae5b2557dbd35f60e8ec9b40ee2c9fcb18923b405aaa9ffba"
+      },
+      "surfaceFlags": {
+        "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\raw\\2025-08-15_2m_active-cells.surface-flags.u8.bin",
+        "sizeBytes": 638688,
+        "sha256": "d9d21a9293dfcec2faaa9826ed8190fa75e9dffde53f1dc016ed2de38f409b7d",
+        "dtype": "u8",
+        "shape": [
+          638688
+        ],
+        "layout": "point-major",
+        "sourceChecksum": "d9d21a9293dfcec2faaa9826ed8190fa75e9dffde53f1dc016ed2de38f409b7d"
       }
     }
   },
   "outputs": {
     "cellsGeoparquet": {
       "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\cells.geoparquet",
-      "sizeBytes": 61874032,
-      "sha256": "771fcf8bf3ca1ef0c81b866299f000c23fadb33257427a542c479c881214e2be",
+      "sizeBytes": 62083470,
+      "sha256": "b83c9df74c7f33ddee495b823e849be5f32944bfa733af3a1615ade22aed0910",
       "rows": 638688,
       "schema": [
         {
@@ -286,6 +337,30 @@
         {
           "name": "z",
           "type": "float"
+        },
+        {
+          "name": "surface_flags",
+          "type": "uint8"
+        },
+        {
+          "name": "surface_class",
+          "type": "string"
+        },
+        {
+          "name": "is_street_surface",
+          "type": "bool"
+        },
+        {
+          "name": "is_building_footprint",
+          "type": "bool"
+        },
+        {
+          "name": "include_in_public_realm_stats",
+          "type": "bool"
+        },
+        {
+          "name": "include_in_outdoor_surface_stats",
+          "type": "bool"
         },
         {
           "name": "shading_index",
@@ -391,26 +466,40 @@
     },
     "qaDebugSampleGeojson": {
       "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\qa\\debug-sample.geojson",
-      "sizeBytes": 7574783,
-      "sha256": "4536b38409d6e29650cdfc83e1e9c09f85d999006804ccaf4691749dcf0f3ba8",
+      "sizeBytes": 8473395,
+      "sha256": "2fe216d53c8804313d48f9df78f0de9e98a95c17ebc7e54761dce8238b7f5f98",
       "rows": 5000,
       "sampleStrategy": "evenly-spaced-active-rows"
     },
     "manifest": {
       "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\manifest.json",
-      "sizeBytes": 11689,
-      "sha256": "fca5d7e3421cafd534e4cd10d3ceb62c2f87f3f764b97fc862632fc9bb30cb38",
+      "sizeBytes": 14876,
+      "sha256": "0678f076d5b8ffcd3ad467752e8dd9c7eb4eee8d45f45ef7de9a6836dacf4173",
       "sha256Semantics": "Hash of this manifest JSON with outputs.manifest.sha256 replaced by 64 zero characters."
     }
   },
   "qa": {
     "debugSampleGeojson": {
       "path": "data\\gis\\Innovation-District\\2025-08-15_2m\\qa\\debug-sample.geojson",
-      "sizeBytes": 7574783,
-      "sha256": "4536b38409d6e29650cdfc83e1e9c09f85d999006804ccaf4691749dcf0f3ba8",
+      "sizeBytes": 8473395,
+      "sha256": "2fe216d53c8804313d48f9df78f0de9e98a95c17ebc7e54761dce8238b7f5f98",
       "rows": 5000,
       "sampleStrategy": "evenly-spaced-active-rows"
-    }
+    },
+    "spatialCoverageExpectations": [
+      {
+        "key": "street_surface_family_sample",
+        "expectation": "If source geometry makes it available, spatial QA should include at least one street, road, or sidewalk-family sample."
+      },
+      {
+        "key": "building_footprint_overlap_sample",
+        "expectation": "If source geometry makes it available, spatial QA should include at least one building-footprint overlap sample."
+      },
+      {
+        "key": "building_only_non_active_location",
+        "expectation": "If source geometry makes it available, spatial QA should include at least one building-only non-active location proving no classified export row was created."
+      }
+    ]
   },
   "optional": {},
   "counts": {
@@ -420,7 +509,11 @@
     "rowCountEqualsActiveRows": true,
     "hourCount": 24,
     "activeRatio": 0.42791703600077985,
-    "debugRows": 5000
+    "debugRows": 5000,
+    "streetSurfaceRows": 131977,
+    "buildingFootprintRows": 76477,
+    "publicRealmRows": 131816,
+    "outdoorSurfaceRows": 562211
   },
   "activeMask": {
     "source": "base+road",
@@ -430,22 +523,22 @@
     "validation": "passed"
   },
   "collectorTimingsMs": {
-    "routeLoad": 751.9354999999996,
-    "liveSessionReady": 10678.1642,
-    "utciCollection": 32879.926900000006,
-    "shadingCollection": 1481.4858999999997,
-    "binarySerialization": 350.2259000000049,
-    "total": 55923.0294
+    "routeLoad": 609.291299999999,
+    "liveSessionReady": 11121.899899999999,
+    "utciCollection": 35326.3123,
+    "shadingCollection": 1499.6218999999983,
+    "binarySerialization": 627.9863000000041,
+    "total": 58923.912000000004
   },
   "postprocessorTimingsMs": {
-    "binaryLoadValidation": 322.5447000004351,
-    "epsg2039ToWgs84": 274.75720015354455,
-    "cellsGeoparquetWrite": 1919.7125998325646,
-    "debugSampleWrite": 768.3985999319702,
-    "manifestWrite": 394.9380998965353,
-    "totalPostprocessorRuntime": 3286.7725000251085
+    "binaryLoadValidation": 664.7592000008444,
+    "epsg2039ToWgs84": 280.4686999988917,
+    "cellsGeoparquetWrite": 2057.6756999980717,
+    "debugSampleWrite": 892.1628000025521,
+    "manifestWrite": 440.6941999986884,
+    "totalPostprocessorRuntime": 3896.878600000491
   },
-  "totalExportRuntimeMs": 59209.80190002511,
+  "totalExportRuntimeMs": 62820.790600000495,
   "timingSemantics": {
     "collectorTimingsMs": "Raw collector timing payload copied from metadata.timingsMs before postprocessing.",
     "postprocessorTimingsMs": "Python postprocessing timings captured before the final manifest file write.",
