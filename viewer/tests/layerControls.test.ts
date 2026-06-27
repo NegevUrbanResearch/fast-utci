@@ -42,4 +42,15 @@ describe('LayerControls', () => {
 			screen.getByRole('button', { name: 'Toggle Train Tracks layer visibility' })
 		).toHaveAttribute('aria-pressed', 'true');
 	});
+
+	it('does not render the UTCI data layer as a layer toggle', () => {
+		setDiscoveredLayers(['building']);
+
+		render(LayerControls, { placement: 'sidebar' });
+
+		expect(
+			screen.queryByRole('button', { name: /Toggle UTCI data layer visibility/i })
+		).not.toBeInTheDocument();
+		expect(screen.queryByText('UTCI Data')).not.toBeInTheDocument();
+	});
 });

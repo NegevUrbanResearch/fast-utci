@@ -45,6 +45,7 @@
 		"vitest": "^4.0.18"
 	},
 	"dependencies": {
+		"@iconify-icons/lucide": "^1.2.135",
 		"@threlte/core": "^8.1.8",
 		"@threlte/extras": "^9.0.0",
 		"three": "^0.175.0",
