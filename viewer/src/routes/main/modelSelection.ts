@@ -40,6 +40,19 @@ export function buildProjectSelectionHref(
 	return `${url.pathname}?${url.searchParams.toString()}`;
 }
 
+export function shouldStopComparisonForAnalysisSelection(params: {
+	currentProjectId: string | null | undefined;
+	nextProjectId: string | null | undefined;
+	isComparing: boolean;
+}): boolean {
+	return (
+		params.isComparing &&
+		params.currentProjectId != null &&
+		params.nextProjectId != null &&
+		params.currentProjectId !== params.nextProjectId
+	);
+}
+
 export function getModelReloadState(params: {
 	currentModelFile: string | null | undefined;
 	lastModelFile: string | null;

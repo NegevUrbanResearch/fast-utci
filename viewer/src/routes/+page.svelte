@@ -21,6 +21,7 @@
 	import {
 		comparisonStore,
 		comparisonAnalysis,
+		stopComparison,
 	} from "$lib/stores/comparisonStore";
 	import {
 		EMPTY_PERFORMANCE_SNAPSHOT,
@@ -44,7 +45,10 @@
 	import PerformancePanel from "$lib/components/ui/PerformancePanel.svelte";
 	import ViewerShell from "$lib/components/viewer/ViewerShell.svelte";
 	import "$lib/styles/variables.css";
-	import { getDefaultAnalysisId } from "$lib/config/projects";
+	import {
+		getDefaultAnalysisId,
+		getScenarioCategoriesForProject,
+	} from "$lib/config/projects";
 	import {
 		parseMainRouteGridResolution,
 		type MainRouteGridResolution,
@@ -86,6 +90,7 @@
 		getAnalysisSyncAfterMount,
 		getModelReloadState,
 		getMountedAnalysisId,
+		shouldStopComparisonForAnalysisSelection,
 	} from "./main/modelSelection";
 	import {
 		installFastUtciCollectorExport,
@@ -381,6 +386,9 @@
 	// Track comparison mode
 	$: isComparing = $comparisonStore.isComparing;
 	$: currentProjectId = resolveProjectId(analysisId) ?? "Ben-Gurion";
+	$: currentScenarioCategories =
+		getScenarioCategoriesForProject(currentProjectId);
+	$: hasCurrentProjectScenarios = currentScenarioCategories.length > 0;
 	$: comparisonModelForLiveCompute =
 		isComparing && comparisonRenderer && !$comparisonStore.modelLoading
 			? comparisonRenderer.getComparisonModel()
@@ -540,6 +548,16 @@
 
 	async function handleProjectSelection(newAnalysisId: string) {
 		if (!newAnalysisId || newAnalysisId === analysisId) return;
+		const nextProjectId = resolveProjectId(newAnalysisId);
+		if (
+			shouldStopComparisonForAnalysisSelection({
+				currentProjectId,
+				nextProjectId,
+				isComparing,
+			})
+		) {
+			stopComparison();
+		}
 		analysisId = newAnalysisId;
 		if (typeof window !== "undefined") {
 			goto(buildProjectSelectionHref(window.location.href, newAnalysisId), {
@@ -689,6 +707,7 @@
 
 <ViewerShell
 	bind:mainViewportElement
+	showScenarioSection={hasCurrentProjectScenarios}
 	{showTimeSection}
 >
 	<svelte:fragment slot="headerRight">
@@ -705,6 +724,7 @@
 		<ScenarioSelector
 			bind:this={scenarioSelector}
 			projectId={currentProjectId}
+			categories={currentScenarioCategories}
 			mode="compare"
 		/>
 	</svelte:fragment>

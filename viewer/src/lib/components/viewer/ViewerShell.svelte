@@ -6,6 +6,7 @@
 
 	export let debugLabel: string | null = null;
 	export let mainViewportElement: HTMLElement | null = null;
+	export let showScenarioSection = true;
 	export let showTimeSection = true;
 	export let showSidebarExtraSection = true;
 </script>
@@ -45,7 +46,7 @@
 
 	<div class="app-body">
 		<aside class="app-sidebar">
-			{#if $$slots.scenario}
+			{#if $$slots.scenario && showScenarioSection}
 				<div class="sidebar-section">
 					<slot name="scenario" />
 				</div>

@@ -5,7 +5,8 @@ import {
 	buildProjectSelectionHref,
 	getAnalysisSyncAfterMount,
 	getMountedAnalysisId,
-	getModelReloadState
+	getModelReloadState,
+	shouldStopComparisonForAnalysisSelection
 } from '../../src/routes/main/modelSelection';
 
 describe('main route model selection helpers', () => {
@@ -47,6 +48,36 @@ describe('main route model selection helpers', () => {
 		expect(href).toBe(
 			'/viewer?analysis=BGU%2Fscenario-a&utciRenderDiagnostics=1'
 		);
+	});
+
+	it('stops comparison when selecting an analysis from a different project', () => {
+		expect(
+			shouldStopComparisonForAnalysisSelection({
+				currentProjectId: 'Ben-Gurion',
+				nextProjectId: 'Ness-Tziona',
+				isComparing: true
+			})
+		).toBe(true);
+	});
+
+	it('keeps comparison state when comparison is already inactive', () => {
+		expect(
+			shouldStopComparisonForAnalysisSelection({
+				currentProjectId: 'Ben-Gurion',
+				nextProjectId: 'Ness-Tziona',
+				isComparing: false
+			})
+		).toBe(false);
+	});
+
+	it('keeps comparison state for same-project analysis selections', () => {
+		expect(
+			shouldStopComparisonForAnalysisSelection({
+				currentProjectId: 'Ben-Gurion',
+				nextProjectId: 'Ben-Gurion',
+				isComparing: true
+			})
+		).toBe(false);
 	});
 
 	it('tracks model-file reload bookkeeping when the visible model file changes', () => {
