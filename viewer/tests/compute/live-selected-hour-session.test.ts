@@ -699,7 +699,7 @@ describe('selected-hour live session', () => {
 
 		await expect(
 			prepareSelectedHourLiveSession({
-				analysisId: 'analysis-a',
+				analysisId: 'Innovation-District/innovation_district_webgpu',
 				base: createActiveMaskBaseAnalysis(),
 				model: createExcludedOnlyActiveMaskModel(layerType, layerName),
 				epwUrl: '/weather.epw',
@@ -708,6 +708,26 @@ describe('selected-hour live session', () => {
 			})
 		).rejects.toThrow(/sampled ground\/street surface/i);
 		expect(mockState.constructors).toHaveLength(0);
+	});
+
+	it('keeps rectangular analyses on the full grid when model geometry is not surface-classified', async () => {
+		updateViewerConfig({ enableNormalization: false });
+
+		const session = await prepareSelectedHourLiveSession({
+			analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
+			base: createBaseAnalysis(),
+			model: createExcludedOnlyActiveMaskModel('building', 'existing_buildings'),
+			epwUrl: '/weather.epw',
+			signal: new AbortController().signal,
+			preferredDevice: mockState.rendererDevice
+		});
+
+		expect(mockState.constructors[0].initFromModelAndWeather).toHaveBeenCalledWith(
+			expect.objectContaining({
+				activeCanonicalIndices: undefined
+			})
+		);
+		expect(session.base.metadata.activeMask).toBeUndefined();
 	});
 
 	it('extracts the normalized base and street footprint in canonical metadata coordinates', async () => {

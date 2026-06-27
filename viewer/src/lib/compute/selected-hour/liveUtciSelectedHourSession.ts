@@ -245,6 +245,10 @@ function applyActiveMaskDiagnostics(
 	diagnostics.activeMaskChecksum = activeMask.activeMaskChecksum;
 }
 
+function requiresClassifiedActiveMask(analysisId: string): boolean {
+	return analysisId === 'Innovation-District' || analysisId.startsWith('Innovation-District/');
+}
+
 function buildResolutionsToTry(requestedGridResolution: number): number[] {
 	const requested = Number.isFinite(requestedGridResolution) && requestedGridResolution > 0
 		? requestedGridResolution
@@ -1313,7 +1317,8 @@ export async function prepareSelectedHourLiveSession(params: {
 			bounds,
 			gridResolution: effectiveGridResolution,
 			coordinateSystem,
-			gridOriginOffset
+			gridOriginOffset,
+			requireClassifiedSurface: requiresClassifiedActiveMask(analysisId)
 		});
 
 		const uploadOnlyPipeline: UTCIComputePipeline = {

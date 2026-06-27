@@ -21,6 +21,7 @@ export interface ClassifiedActiveMaskBuildParams {
 	gridResolution: number;
 	coordinateSystem: AnalysisCoordinateSystem;
 	gridOriginOffset?: { x: number; y: number; z: number };
+	requireClassifiedSurface?: boolean;
 }
 
 export function normalizeSurfaceLayerName(value: unknown): string {
@@ -285,7 +286,7 @@ export function buildClassifiedActiveMaskSurface(params: ClassifiedActiveMaskBui
 			originOffset: params.gridOriginOffset,
 			includeMesh: () => true
 		});
-		if (projectedTriangleCount > 0) {
+		if (params.requireClassifiedSurface && projectedTriangleCount > 0) {
 			throw new Error(
 				'Classified active-mask surface classification found model triangles but no sampled ground/street surface triangles; refusing to fall back to the full rectangular grid.'
 			);
