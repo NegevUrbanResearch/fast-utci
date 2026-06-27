@@ -53,6 +53,7 @@ viewer/vite.config.ts.timestamp-*
 # Documentation
 docs/_build/
 site/
+docs/superpowers/plans/
 
 # Analysis outputs
 !data/analyses/*.json
