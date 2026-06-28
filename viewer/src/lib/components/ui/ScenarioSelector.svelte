@@ -6,48 +6,20 @@
 	 * When a scenario is selected, it triggers comparison mode instead of replacing
 	 * the base analysis, allowing side-by-side comparison with a curtain slider.
 	 */
-	import { loadAnalysisData } from "$lib/stores/analysisStore";
-	import { cameraStore, focusCameraOnModel } from "$lib/stores/cameraStore";
-	import {
-		comparisonStore,
-		startComparison,
-	} from "$lib/stores/comparisonStore";
-	import { get } from "svelte/store";
-	import type { Writable } from "svelte/store";
+	import { comparisonStore, startComparison } from "$lib/stores/comparisonStore";
+	import type { ScenarioCategory } from "$lib/config/projects";
 
 	export let projectId: string = "Ben-Gurion";
+	export let categories: ScenarioCategory[] = [];
+	export let mode: "compare" | "replace-analysis" = "compare";
+	export let activeAnalysisId: string | null = null;
+	export let onSelectScenarioAnalysisId:
+		| ((analysisId: string) => Promise<void> | void)
+		| undefined = undefined;
 
 	let isExpanded = false;
 	let selectedCategory = "";
 	let selectedVariant = 1;
-
-	const categories = [
-		{
-			value: "existing_buildings",
-			label: "Existing buildings with added mass",
-			description: "Current buildings made higher",
-		},
-		{
-			value: "existing_trees",
-			label: "Existing Tree Cover",
-			description: "From no trees up to current canopy",
-		},
-		{
-			value: "new_high_buildings",
-			label: "New Highrise Buildings",
-			description: "Adds more tall buildings to the site",
-		},
-		{
-			value: "new_low_buildings",
-			label: "New Lowrise Buildings",
-			description: "Adds more low and mid-rise buildings",
-		},
-		{
-			value: "new_trees",
-			label: "New Tree Cover",
-			description: "Adds more tree cover",
-		},
-	];
 
 	// Export selected category label for use by parent components
 	export function getSelectedCategoryLabel(): string {
@@ -76,72 +48,147 @@
 		isExpanded = !isExpanded;
 	}
 
-	async function applyCategory(category: string) {
-		if (projectId !== "Ben-Gurion") return;
-		selectedCategory = category;
+	function resetSelection() {
+		selectedCategory = "";
+		selectedVariant = 1;
+	}
 
-		if (selectedCategory) {
-			// Auto-load variant 1 when category is selected
-			selectedVariant = 1;
-			await loadScenario(selectedCategory, 1);
+	function syncSelectionFromAnalysisId(analysisId: string | null) {
+		if (mode !== "replace-analysis" || !hasScenarioCategories) return;
+		if (!analysisId) {
+			resetSelection();
+			return;
 		}
+
+		const [analysisProjectId, category, scenarioId] = analysisId.split("/");
+		const variantToken = scenarioId?.startsWith(`${category}_`)
+			? scenarioId.slice(category.length + 1)
+			: null;
+		if (analysisProjectId !== projectId || !category || !variantToken) {
+			resetSelection();
+			return;
+		}
+
+		const categoryExists = categories.some(({ value }) => value === category);
+		const variant = Number.parseInt(variantToken, 10);
+		if (!categoryExists || !Number.isInteger(variant) || variant < 1 || variant > 10) {
+			resetSelection();
+			return;
+		}
+
+		selectedCategory = category;
+		selectedVariant = variant;
+	}
+
+	async function applyCategory(category: string) {
+		if (!hasScenarioCategories) return;
+		if (!category) {
+			resetSelection();
+			return;
+		}
+
+		if (mode === "replace-analysis") {
+			const previousCategory = selectedCategory;
+			const previousVariant = selectedVariant;
+			const success = await loadScenario(category, 1);
+			if (success) {
+				selectedCategory = category;
+				selectedVariant = 1;
+			} else {
+				selectedCategory = previousCategory;
+				selectedVariant = previousVariant;
+			}
+			return;
+		}
+
+		selectedCategory = category;
+		selectedVariant = 1;
+		await loadScenario(selectedCategory, 1);
 	}
 
 	async function handleCategoryChange(event: Event) {
-		if (projectId !== "Ben-Gurion") return;
+		if (!hasScenarioCategories) return;
 		const target = event.target as HTMLSelectElement;
 		await applyCategory(target.value);
 	}
 
 	async function handleVariantClick(variant: number) {
-		if (projectId !== "Ben-Gurion") return;
+		if (!hasScenarioCategories) return;
+		if (mode === "replace-analysis") {
+			const previousVariant = selectedVariant;
+			const success = await loadScenario(selectedCategory, variant);
+			selectedVariant = success ? variant : previousVariant;
+			return;
+		}
+
 		selectedVariant = variant;
 		await loadScenario(selectedCategory, selectedVariant);
 	}
 
-	async function loadScenario(category: string, variant: number) {
+	async function loadScenario(category: string, variant: number): Promise<boolean> {
 		try {
 			// Construct analysis ID: category/category_variant (e.g., "existing_buildings/existing_buildings_01")
 			const variantStr = variant.toString().padStart(2, "0");
-			const analysisId = `Ben-Gurion/${category}/${category}_${variantStr}`;
+			const analysisId = `${projectId}/${category}/${category}_${variantStr}`;
+
+			if (mode === "replace-analysis") {
+				if (!onSelectScenarioAnalysisId) return false;
+				console.log(`[SCENARIO] Replacing active analysis: ${analysisId}`);
+				await onSelectScenarioAnalysisId(analysisId);
+				return true;
+			}
 
 			console.log(`[SCENARIO] Starting comparison: ${analysisId}`);
 
 			// Start comparison mode instead of replacing base analysis
 			// This loads the comparison analysis and enables the curtain slider
 			await startComparison(analysisId);
+			return true;
 		} catch (error) {
 			console.error("[SCENARIO] Failed to load scenario:", error);
+			return false;
 		}
 	}
 
 	// Check if currently comparing
 	$: isComparing = $comparisonStore.isComparing;
 	$: isLoading = $comparisonStore.isLoading;
-	$: isProjectSupported = projectId === "Ben-Gurion";
+	$: hasScenarioCategories = categories.length > 0;
 
 	// Reset selection when comparison is exited (via curtain or any other means)
-	$: if (!isComparing && selectedCategory) {
-		selectedCategory = "";
-		selectedVariant = 1;
+	$: if (mode === "compare" && !isComparing && selectedCategory) {
+		resetSelection();
+	}
+
+	$: if (!hasScenarioCategories && selectedCategory) {
+		resetSelection();
+	}
+
+	$: if (mode === "replace-analysis") {
+		syncSelectionFromAnalysisId(activeAnalysisId);
 	}
 </script>
 
+{#if hasScenarioCategories}
 <div class="scenario-panel">
 	<div class="scenario-summary">
 		<div class="summary-label">
-			{#if isComparing}
+			{#if mode === "compare" && isComparing}
 				Comparing with
+			{:else if mode === "replace-analysis"}
+				Selected scenario
 			{:else}
 				Active scenario
 			{/if}
 		</div>
 		<div class="summary-value">
-			{#if isLoading}
+			{#if mode === "compare" && isLoading}
 				Loading scenario...
 			{:else if selectedCategory}
 				{categories.find((c) => c.value === selectedCategory)?.label ??
 					"Custom"} · Variant&nbsp;{selectedVariant}
+			{:else if mode === "replace-analysis"}
+				Base analysis
 			{:else}
 				No scenario selected
 			{/if}
@@ -150,44 +197,44 @@
 
 	<button class="scenario-toggle" type="button" on:click={togglePanel}>
 		<span class="toggle-title">Browse variants</span>
-		<span class="toggle-meta"
-			>{isExpanded ? "Hide options" : "Compare design scenarios"}</span
-		>
+		<span class="toggle-meta">
+			{#if isExpanded}
+				Hide options
+			{:else if mode === "replace-analysis"}
+				Load scenario analysis
+			{:else}
+				Compare design scenarios
+			{/if}
+		</span>
 		<span class="chevron" aria-hidden="true">{isExpanded ? "▴" : "▾"}</span>
 	</button>
 
 	{#if isExpanded}
 		<div class="scenario-content">
-			{#if isProjectSupported}
-				<div class="category-list" role="list">
-					{#each categories as category}
-						<button
-							type="button"
-							class="category-item"
-							class:category-item-active={selectedCategory ===
-								category.value}
-							on:click={() => applyCategory(category.value)}
-						>
-							<div class="category-content">
-								<div class="category-header">
-									<div class="category-title">
-										{category.label}
-									</div>
-								</div>
-								<div class="category-description">
-									{category.description}
+			<div class="category-list" role="list">
+				{#each categories as category}
+					<button
+						type="button"
+						class="category-item"
+						class:category-item-active={selectedCategory ===
+							category.value}
+						on:click={() => applyCategory(category.value)}
+					>
+						<div class="category-content">
+							<div class="category-header">
+								<div class="category-title">
+									{category.label}
 								</div>
 							</div>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<div class="scenario-empty">
-					Scenarios are only available for Ben-Gurion right now.
-				</div>
-			{/if}
+							<div class="category-description">
+								{category.description}
+							</div>
+						</div>
+					</button>
+				{/each}
+			</div>
 
-			{#if selectedCategory && isProjectSupported}
+			{#if selectedCategory}
 				<div class="variant-buttons">
 					<div class="variant-header">
 						<div class="variant-title">Variant</div>
@@ -218,6 +265,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 <style>
 	:global(button) {
@@ -322,14 +370,6 @@
 		min-width: 0;
 		max-width: 100%;
 		box-sizing: border-box;
-	}
-
-	.scenario-empty {
-		padding: 10px 12px;
-		font-size: var(--font-xs);
-		color: var(--color-text-muted);
-		background: var(--color-bg-panel);
-		border-radius: var(--radius-control);
 	}
 
 	.category-list {

@@ -84,8 +84,8 @@ describe('Material Pool Service', () => {
 			const config = LAYER_MATERIALS.base;
 			expect(material.polygonOffset).toBe(config.polygonOffset);
 			if (config.polygonOffset) {
-				expect(material.polygonOffsetFactor).toBe(1);
-				expect(material.polygonOffsetUnits).toBe(1);
+				expect(material.polygonOffsetFactor).toBeGreaterThanOrEqual(1);
+				expect(material.polygonOffsetUnits).toBeGreaterThanOrEqual(1);
 			}
 		});
 

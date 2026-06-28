@@ -1,0 +1,1525 @@
+{
+  "collectedOn": "2026-05-16",
+  "sourceRoute": "/",
+  "targetGridResolutionMeters": 0.5,
+  "includedAnalyses": [
+    "Ben-Gurion/20250815_grid_2m_fullday",
+    "Ness-Tziona/exploded/nes_tziona_unblock_2"
+  ],
+  "excludedBgVariantsExplanation": "This 0.5m stress pass intentionally excludes other Ben-Gurion variants and uses only the BG base case plus Ness Tziona base/exploded model.",
+  "collectionMethod": "Main route only: / with gridResolution=0.5&utciRenderDiagnostics=1, app-visible color-mode buttons and hour slider scrub, no debug route and no parity/.bin comparison.",
+  "cases": [
+    {
+      "projectLabel": "Ben-Gurion",
+      "analysisId": "Ben-Gurion/20250815_grid_2m_fullday",
+      "sourcePointCount": 104445,
+      "sourceGridSizeMeters": 2,
+      "pointCount": 1662657,
+      "gridSizeMeters": 0.5,
+      "modes": {
+        "normalized": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "normalized",
+            "collectionMethod": "Initial main-route load at / with default Full day color mode.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-17T13:56:56.402Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 115.40000000596046,
+              "workerBvhMs": 96,
+              "pipelineUploadMs": 182.59999999403954,
+              "exposurePrecomputeMs": 6070.800000011921,
+              "oneHourDispatchMs": 7.0999999940395355,
+              "firstSelectedHourReadyMs": 7773.5999999940395,
+              "firstSelectedHourVisibleMs": 8120.5999999940395,
+              "renderUpdateMs": 1853.2000000178814,
+              "renderSceneSyncStartDelayMs": 991.4000000059605,
+              "renderSceneSyncTotalMs": 861.3000000119209,
+              "renderLayoutBuildMs": 99.40000000596046,
+              "renderSurfaceMeshMs": 530.0999999940395,
+              "renderStorageInitWaitMs": 102,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 129.2000000178814,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "created",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 133013584,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 10535.5,
+                  "controllerAcceptedAtMs": 10535.700000017881,
+                  "routePendingSurfaceExposedAtMs": 10536.800000011921,
+                  "routePublishedAtMs": 11401.5,
+                  "routeProjectedAtMs": 11402.40000000596,
+                  "scenePendingSurfaceObservedAtMs": 10538.100000023842,
+                  "sceneSyncAttemptStartedAtMs": 10539.40000000596,
+                  "sceneSyncAttemptToken": 2,
+                  "sceneSurfaceReceivedAtMs": 10538.40000000596,
+                  "publicationEffectStartedAtMs": 10539.40000000596,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 98.89999997615814,
+                    "arrayAllocationMs": 0.19999998807907104,
+                    "transformBoundsPassMs": 40.19999998807907,
+                    "coordinateAssignmentMs": 20.200000017881393,
+                    "indexToTexelFillMs": 8,
+                    "cellToPointIndexBuildMs": 29.69999998807907,
+                    "colorBufferAllocationMs": 0
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "rebuild-required",
+                    "hoverCellLookupProofStatus": "proof-inconclusive",
+                    "previousLayoutPresent": false,
+                    "canonicalRuntimeCompatibilityWouldReuse": null,
+                    "proofMatchesCanonicalRuntimeCompatibility": null,
+                    "positionsReferenceMatch": null,
+                    "pointCountMatch": null,
+                    "gridSizeMatch": null,
+                    "coordinateSystemMatch": null,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": null,
+                    "normalizationSignatureMatch": null,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": null,
+                    "constructionModeMatch": null,
+                    "dimensionsMatch": null,
+                    "placementMatch": null,
+                    "cellToPointMappingMatch": null,
+                    "proofCostMs": 0,
+                    "estimatedRetainedCpuLayoutBytes": 33253140
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "created",
+                    "totalMs": 530.0999999940395,
+                    "recreateDecision": {
+                      "missingSurface": true,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": false
+                    },
+                    "disposeResetMeshRemovalMs": 0.10000002384185791,
+                    "createComputeBufferSurfaceMeshMs": 529.7999999821186,
+                    "updateComputeBufferSurfaceMeshMs": null,
+                    "fallbackDecisionMs": null,
+                    "applySurfaceMeshStateMs": 0,
+                    "setCreatedSurfacePendingStorageInitMs": 0,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": 0,
+                    "publishUtciSurfaceDiagnosticsMs": 0
+                  },
+                  "renderStorageReadyAtMs": 11271.300000011921,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 11169.300000011921,
+                    "waitFinishedAtMs": 11271.300000011921,
+                    "waitMs": 102,
+                    "readAttemptCount": 2,
+                    "frameWaitCount": 1,
+                    "deviceAvailableCount": 2,
+                    "backendEntryAvailableCount": 2,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 11169.40000000596,
+                    "firstBackendEntryAtMs": 11169.40000000596,
+                    "firstBufferAtMs": 11271.200000017881,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 11169.40000000596,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": false
+                      },
+                      {
+                        "atMs": 11271.200000017881,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 11400.700000017881,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 2760,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 133013584,
+              "renderOwnedSelectedHourBytesHighWatermark": 133013584,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 206170492,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "normalized",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-17T13:56:56.404Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 115.40000000596046,
+              "workerBvhMs": 96,
+              "pipelineUploadMs": 182.59999999403954,
+              "exposurePrecomputeMs": 6070.800000011921,
+              "oneHourDispatchMs": 63.099999994039536,
+              "firstSelectedHourReadyMs": 96.60000002384186,
+              "firstSelectedHourVisibleMs": 220.2000000178814,
+              "renderUpdateMs": 156.80000001192093,
+              "renderSceneSyncStartDelayMs": 34.20000001788139,
+              "renderSceneSyncTotalMs": 122.39999997615814,
+              "renderLayoutBuildMs": 118.59999999403954,
+              "renderSurfaceMeshMs": 0.29999998211860657,
+              "renderStorageInitWaitMs": 0,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 3.199999988079071,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 133013584,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 11566.600000023842,
+                  "controllerAcceptedAtMs": 11566.700000017881,
+                  "routePendingSurfaceExposedAtMs": 11567.300000011921,
+                  "routePublishedAtMs": 11690.300000011921,
+                  "routeProjectedAtMs": 11690.700000017881,
+                  "scenePendingSurfaceObservedAtMs": 11567.40000000596,
+                  "sceneSyncAttemptStartedAtMs": 11567.600000023842,
+                  "sceneSyncAttemptToken": 3,
+                  "sceneSurfaceReceivedAtMs": 11567.5,
+                  "publicationEffectStartedAtMs": 11567.600000023842,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 109.5,
+                    "arrayAllocationMs": 0.09999999403953552,
+                    "transformBoundsPassMs": 56.400000005960464,
+                    "coordinateAssignmentMs": 26.900000005960464,
+                    "indexToTexelFillMs": 7.4000000059604645,
+                    "cellToPointIndexBuildMs": 18.5,
+                    "colorBufferAllocationMs": 0
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "reuse-safe",
+                    "hoverCellLookupProofStatus": "same-point-confirmed",
+                    "previousLayoutPresent": true,
+                    "canonicalRuntimeCompatibilityWouldReuse": true,
+                    "proofMatchesCanonicalRuntimeCompatibility": true,
+                    "positionsReferenceMatch": true,
+                    "pointCountMatch": true,
+                    "gridSizeMatch": true,
+                    "coordinateSystemMatch": true,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "normalizationSignatureMatch": true,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": "world-positions",
+                    "constructionModeMatch": true,
+                    "dimensionsMatch": true,
+                    "placementMatch": true,
+                    "cellToPointMappingMatch": true,
+                    "proofCostMs": 0.09999999403953552,
+                    "estimatedRetainedCpuLayoutBytes": 33253140
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "updated",
+                    "totalMs": 0.29999998211860657,
+                    "recreateDecision": {
+                      "missingSurface": false,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": true
+                    },
+                    "disposeResetMeshRemovalMs": null,
+                    "createComputeBufferSurfaceMeshMs": null,
+                    "updateComputeBufferSurfaceMeshMs": 0,
+                    "fallbackDecisionMs": 0,
+                    "applySurfaceMeshStateMs": 0.19999998807907104,
+                    "setCreatedSurfacePendingStorageInitMs": null,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": null,
+                    "publishUtciSurfaceDiagnosticsMs": null
+                  },
+                  "renderStorageReadyAtMs": 11686.700000017881,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 11686.5,
+                    "waitFinishedAtMs": 11686.5,
+                    "waitMs": 0,
+                    "readAttemptCount": 1,
+                    "frameWaitCount": 0,
+                    "deviceAvailableCount": 1,
+                    "backendEntryAvailableCount": 1,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 11686.5,
+                    "firstBackendEntryAtMs": 11686.5,
+                    "firstBufferAtMs": 11686.5,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 11686.5,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 11690,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 2760,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 133013584,
+              "renderOwnedSelectedHourBytesHighWatermark": 133013584,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 206170492,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        },
+        "discrete": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "discrete",
+            "collectionMethod": "Initial collected discrete sample after app-visible Color scale mode -> Per hour button interaction; no URL color-mode parameter exists.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-17T13:57:05.553Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 162.60000002384186,
+              "workerBvhMs": 86.09999999403954,
+              "pipelineUploadMs": 205.2000000178814,
+              "exposurePrecomputeMs": 6032.300000011921,
+              "oneHourDispatchMs": 6.5,
+              "firstSelectedHourReadyMs": 6828.100000023842,
+              "firstSelectedHourVisibleMs": 7261.4000000059605,
+              "renderUpdateMs": 1041.1000000238419,
+              "renderSceneSyncStartDelayMs": 114.7000000178814,
+              "renderSceneSyncTotalMs": 926.0999999940395,
+              "renderLayoutBuildMs": 95,
+              "renderSurfaceMeshMs": 599.0999999940395,
+              "renderStorageInitWaitMs": 95.5,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 136.09999999403954,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "created",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 133013584,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 7932.5,
+                  "controllerAcceptedAtMs": 7932.700000017881,
+                  "routePendingSurfaceExposedAtMs": 7933.200000017881,
+                  "routePublishedAtMs": 8860.200000017881,
+                  "routeProjectedAtMs": 8860.800000011921,
+                  "scenePendingSurfaceObservedAtMs": 7933.600000023842,
+                  "sceneSyncAttemptStartedAtMs": 7933.700000017881,
+                  "sceneSyncAttemptToken": 2,
+                  "sceneSurfaceReceivedAtMs": 7933.700000017881,
+                  "publicationEffectStartedAtMs": 7933.700000017881,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 94.7999999821186,
+                    "arrayAllocationMs": 0.19999998807907104,
+                    "transformBoundsPassMs": 38.099999994039536,
+                    "coordinateAssignmentMs": 19,
+                    "indexToTexelFillMs": 7.700000017881393,
+                    "cellToPointIndexBuildMs": 29.399999976158142,
+                    "colorBufferAllocationMs": 0
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "rebuild-required",
+                    "hoverCellLookupProofStatus": "proof-inconclusive",
+                    "previousLayoutPresent": false,
+                    "canonicalRuntimeCompatibilityWouldReuse": null,
+                    "proofMatchesCanonicalRuntimeCompatibility": null,
+                    "positionsReferenceMatch": null,
+                    "pointCountMatch": null,
+                    "gridSizeMatch": null,
+                    "coordinateSystemMatch": null,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": null,
+                    "normalizationSignatureMatch": null,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": null,
+                    "constructionModeMatch": null,
+                    "dimensionsMatch": null,
+                    "placementMatch": null,
+                    "cellToPointMappingMatch": null,
+                    "proofCostMs": 0.09999999403953552,
+                    "estimatedRetainedCpuLayoutBytes": 33253140
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "created",
+                    "totalMs": 599.0999999940395,
+                    "recreateDecision": {
+                      "missingSurface": true,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": false
+                    },
+                    "disposeResetMeshRemovalMs": 0,
+                    "createComputeBufferSurfaceMeshMs": 599,
+                    "updateComputeBufferSurfaceMeshMs": null,
+                    "fallbackDecisionMs": null,
+                    "applySurfaceMeshStateMs": 0,
+                    "setCreatedSurfacePendingStorageInitMs": 0,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": 0.09999999403953552,
+                    "publishUtciSurfaceDiagnosticsMs": 0
+                  },
+                  "renderStorageReadyAtMs": 8723.600000023842,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 8628,
+                    "waitFinishedAtMs": 8723.5,
+                    "waitMs": 95.5,
+                    "readAttemptCount": 2,
+                    "frameWaitCount": 1,
+                    "deviceAvailableCount": 2,
+                    "backendEntryAvailableCount": 2,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 8628,
+                    "firstBackendEntryAtMs": 8628,
+                    "firstBufferAtMs": 8723.5,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 8628,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": false
+                      },
+                      {
+                        "atMs": 8723.5,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 8859.800000011921,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1079.5,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 133013584,
+              "renderOwnedSelectedHourBytesHighWatermark": 133013584,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 206170492,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "discrete",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ben-Gurion/20250815_grid_2m_fullday|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-17T13:57:05.553Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 162.60000002384186,
+              "workerBvhMs": 86.09999999403954,
+              "pipelineUploadMs": 205.2000000178814,
+              "exposurePrecomputeMs": 6032.300000011921,
+              "oneHourDispatchMs": 14.299999982118607,
+              "firstSelectedHourReadyMs": 50.900000005960464,
+              "firstSelectedHourVisibleMs": 194.80000001192093,
+              "renderUpdateMs": 180.2000000178814,
+              "renderSceneSyncStartDelayMs": 60.80000001192093,
+              "renderSceneSyncTotalMs": 119.09999999403954,
+              "renderLayoutBuildMs": 105.69999998807907,
+              "renderSurfaceMeshMs": 0.10000002384185791,
+              "renderStorageInitWaitMs": 0,
+              "renderBufferCopyMs": 0.10000002384185791,
+              "renderQueueDrainMs": 12.799999982118607,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 1662657,
+                "renderPublicationVertexCount": 9975942,
+                "renderPublicationGridWidth": 1977,
+                "renderPublicationGridHeight": 841,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 6650628,
+                "renderPublicationTargetByteLength": 6650628,
+                "renderPublicationRenderOwnedBytes": 133013584,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 8976.40000000596,
+                  "controllerAcceptedAtMs": 8976.40000000596,
+                  "routePendingSurfaceExposedAtMs": 8976.90000000596,
+                  "routePublishedAtMs": 9096.90000000596,
+                  "routeProjectedAtMs": 9097.40000000596,
+                  "scenePendingSurfaceObservedAtMs": 8977.200000017881,
+                  "sceneSyncAttemptStartedAtMs": 8977.300000011921,
+                  "sceneSyncAttemptToken": 3,
+                  "sceneSurfaceReceivedAtMs": 8977.300000011921,
+                  "publicationEffectStartedAtMs": 8977.300000011921,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 96.69999998807907,
+                    "arrayAllocationMs": 0.19999998807907104,
+                    "transformBoundsPassMs": 50.099999994039536,
+                    "coordinateAssignmentMs": 20.19999998807907,
+                    "indexToTexelFillMs": 7.4000000059604645,
+                    "cellToPointIndexBuildMs": 18.5,
+                    "colorBufferAllocationMs": 0.09999999403953552
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "reuse-safe",
+                    "hoverCellLookupProofStatus": "same-point-confirmed",
+                    "previousLayoutPresent": true,
+                    "canonicalRuntimeCompatibilityWouldReuse": true,
+                    "proofMatchesCanonicalRuntimeCompatibility": true,
+                    "positionsReferenceMatch": true,
+                    "pointCountMatch": true,
+                    "gridSizeMatch": true,
+                    "coordinateSystemMatch": true,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 3142.616943359375,
+                        "y": -1.5000000001117586,
+                        "z": -403.2862548828125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "normalizationSignatureMatch": true,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": "world-positions",
+                    "constructionModeMatch": true,
+                    "dimensionsMatch": true,
+                    "placementMatch": true,
+                    "cellToPointMappingMatch": true,
+                    "proofCostMs": 0.09999999403953552,
+                    "estimatedRetainedCpuLayoutBytes": 33253140
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "updated",
+                    "totalMs": 0.10000002384185791,
+                    "recreateDecision": {
+                      "missingSurface": false,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": true
+                    },
+                    "disposeResetMeshRemovalMs": null,
+                    "createComputeBufferSurfaceMeshMs": null,
+                    "updateComputeBufferSurfaceMeshMs": 0,
+                    "fallbackDecisionMs": 0,
+                    "applySurfaceMeshStateMs": 0.10000002384185791,
+                    "setCreatedSurfacePendingStorageInitMs": null,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": null,
+                    "publishUtciSurfaceDiagnosticsMs": null
+                  },
+                  "renderStorageReadyAtMs": 9083.5,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 9083.100000023842,
+                    "waitFinishedAtMs": 9083.100000023842,
+                    "waitMs": 0,
+                    "readAttemptCount": 1,
+                    "frameWaitCount": 0,
+                    "deviceAvailableCount": 1,
+                    "backendEntryAvailableCount": 1,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 9083.100000023842,
+                    "firstBackendEntryAtMs": 9083.100000023842,
+                    "firstBufferAtMs": 9083.100000023842,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 9083.100000023842,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 9096.40000000596,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1079.5,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 66506280,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 6650628,
+              "selectedHourOutputBytesHighWatermark": 6650628,
+              "renderOwnedSelectedHourBytes": 133013584,
+              "renderOwnedSelectedHourBytesHighWatermark": 133013584,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 206170492,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        }
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    },
+    {
+      "projectLabel": "Ness-Tziona",
+      "analysisId": "Ness-Tziona/exploded/nes_tziona_unblock_2",
+      "sourcePointCount": 511840,
+      "sourceGridSizeMeters": 2,
+      "pointCount": 8171761,
+      "gridSizeMeters": 0.5,
+      "modes": {
+        "normalized": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "normalized",
+            "collectionMethod": "Initial main-route load at / with default Full day color mode.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-17T13:57:33.497Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 279.40000000596046,
+              "workerBvhMs": 202.5,
+              "pipelineUploadMs": 1144.800000011921,
+              "exposurePrecomputeMs": 16119.899999976158,
+              "oneHourDispatchMs": 15.199999988079071,
+              "firstSelectedHourReadyMs": 20626.80000001192,
+              "firstSelectedHourVisibleMs": 22909.70000001788,
+              "renderUpdateMs": 6605.800000011921,
+              "renderSceneSyncStartDelayMs": 2404.300000011921,
+              "renderSceneSyncTotalMs": 4200.699999988079,
+              "renderLayoutBuildMs": 459.5,
+              "renderSurfaceMeshMs": 2731.5999999940395,
+              "renderStorageInitWaitMs": 452.40000000596046,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 556.7000000178814,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "created",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 653741904,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 22358.40000000596,
+                  "controllerAcceptedAtMs": 22358.5,
+                  "routePendingSurfaceExposedAtMs": 22359.5,
+                  "routePublishedAtMs": 26563.100000023842,
+                  "routeProjectedAtMs": 26563.80000001192,
+                  "scenePendingSurfaceObservedAtMs": 22360.20000001788,
+                  "sceneSyncAttemptStartedAtMs": 22361.100000023842,
+                  "sceneSyncAttemptToken": 2,
+                  "sceneSurfaceReceivedAtMs": 22360.40000000596,
+                  "publicationEffectStartedAtMs": 22361.100000023842,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 459,
+                    "arrayAllocationMs": 0.9000000059604645,
+                    "transformBoundsPassMs": 184.69999998807907,
+                    "coordinateAssignmentMs": 94.19999998807907,
+                    "indexToTexelFillMs": 31.5,
+                    "cellToPointIndexBuildMs": 136.90000000596046,
+                    "colorBufferAllocationMs": 0.09999999403953552
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "rebuild-required",
+                    "hoverCellLookupProofStatus": "proof-inconclusive",
+                    "previousLayoutPresent": false,
+                    "canonicalRuntimeCompatibilityWouldReuse": null,
+                    "proofMatchesCanonicalRuntimeCompatibility": null,
+                    "positionsReferenceMatch": null,
+                    "pointCountMatch": null,
+                    "gridSizeMatch": null,
+                    "coordinateSystemMatch": null,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": null,
+                    "normalizationSignatureMatch": null,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": null,
+                    "constructionModeMatch": null,
+                    "dimensionsMatch": null,
+                    "placementMatch": null,
+                    "cellToPointMappingMatch": null,
+                    "proofCostMs": 0.10000002384185791,
+                    "estimatedRetainedCpuLayoutBytes": 163435220
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "created",
+                    "totalMs": 2731.5999999940395,
+                    "recreateDecision": {
+                      "missingSurface": true,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": false
+                    },
+                    "disposeResetMeshRemovalMs": 0.09999999403953552,
+                    "createComputeBufferSurfaceMeshMs": 2731.199999988079,
+                    "updateComputeBufferSurfaceMeshMs": null,
+                    "fallbackDecisionMs": null,
+                    "applySurfaceMeshStateMs": 0,
+                    "setCreatedSurfacePendingStorageInitMs": 0,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": 0,
+                    "publishUtciSurfaceDiagnosticsMs": 0.09999999403953552
+                  },
+                  "renderStorageReadyAtMs": 26005,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 25552.40000000596,
+                    "waitFinishedAtMs": 26004.80000001192,
+                    "waitMs": 452.40000000596046,
+                    "readAttemptCount": 2,
+                    "frameWaitCount": 1,
+                    "deviceAvailableCount": 2,
+                    "backendEntryAvailableCount": 2,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 25552.5,
+                    "firstBackendEntryAtMs": 25552.5,
+                    "firstBufferAtMs": 26004.80000001192,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 25552.5,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": false
+                      },
+                      {
+                        "atMs": 26004.80000001192,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 26561.80000001192,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1730.800000011921,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 653741904,
+              "renderOwnedSelectedHourBytesHighWatermark": 653741904,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1013299388,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "normalized",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-17T13:57:33.497Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 279.40000000596046,
+              "workerBvhMs": 202.5,
+              "pipelineUploadMs": 1144.800000011921,
+              "exposurePrecomputeMs": 16119.899999976158,
+              "oneHourDispatchMs": 14.5,
+              "firstSelectedHourReadyMs": 231.30000001192093,
+              "firstSelectedHourVisibleMs": 922.9000000059605,
+              "renderUpdateMs": 907.9000000059605,
+              "renderSceneSyncStartDelayMs": 218.30000001192093,
+              "renderSceneSyncTotalMs": 689.2999999821186,
+              "renderLayoutBuildMs": 681.1999999880791,
+              "renderSurfaceMeshMs": 0.30000001192092896,
+              "renderStorageInitWaitMs": 0,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 7.0999999940395355,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 653741904,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 26876.80000001192,
+                  "controllerAcceptedAtMs": 26876.80000001192,
+                  "routePendingSurfaceExposedAtMs": 26878.20000001788,
+                  "routePublishedAtMs": 27568.40000000596,
+                  "routeProjectedAtMs": 27569,
+                  "scenePendingSurfaceObservedAtMs": 26878.5,
+                  "sceneSyncAttemptStartedAtMs": 26878.70000001788,
+                  "sceneSyncAttemptToken": 3,
+                  "sceneSurfaceReceivedAtMs": 26878.5,
+                  "publicationEffectStartedAtMs": 26878.70000001788,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 641.0999999940395,
+                    "arrayAllocationMs": 1.800000011920929,
+                    "transformBoundsPassMs": 340.7000000178814,
+                    "coordinateAssignmentMs": 112.2999999821186,
+                    "indexToTexelFillMs": 43.400000005960464,
+                    "cellToPointIndexBuildMs": 142.40000000596046,
+                    "colorBufferAllocationMs": 0.09999999403953552
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "reuse-safe",
+                    "hoverCellLookupProofStatus": "same-point-confirmed",
+                    "previousLayoutPresent": true,
+                    "canonicalRuntimeCompatibilityWouldReuse": true,
+                    "proofMatchesCanonicalRuntimeCompatibility": true,
+                    "positionsReferenceMatch": true,
+                    "pointCountMatch": true,
+                    "gridSizeMatch": true,
+                    "coordinateSystemMatch": true,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "normalizationSignatureMatch": true,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": "world-positions",
+                    "constructionModeMatch": true,
+                    "dimensionsMatch": true,
+                    "placementMatch": true,
+                    "cellToPointMappingMatch": true,
+                    "proofCostMs": 0,
+                    "estimatedRetainedCpuLayoutBytes": 163435220
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "updated",
+                    "totalMs": 0.30000001192092896,
+                    "recreateDecision": {
+                      "missingSurface": false,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": true
+                    },
+                    "disposeResetMeshRemovalMs": null,
+                    "createComputeBufferSurfaceMeshMs": null,
+                    "updateComputeBufferSurfaceMeshMs": 0.09999999403953552,
+                    "fallbackDecisionMs": 0,
+                    "applySurfaceMeshStateMs": 0.09999999403953552,
+                    "setCreatedSurfacePendingStorageInitMs": null,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": null,
+                    "publishUtciSurfaceDiagnosticsMs": null
+                  },
+                  "renderStorageReadyAtMs": 27560.80000001192,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 27560.40000000596,
+                    "waitFinishedAtMs": 27560.40000000596,
+                    "waitMs": 0,
+                    "readAttemptCount": 1,
+                    "frameWaitCount": 0,
+                    "deviceAvailableCount": 1,
+                    "backendEntryAvailableCount": 1,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 27560.40000000596,
+                    "firstBackendEntryAtMs": 27560.40000000596,
+                    "firstBufferAtMs": 27560.40000000596,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 27560.40000000596,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 27568,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1730.800000011921,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 653741904,
+              "renderOwnedSelectedHourBytesHighWatermark": 653741904,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1013299388,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        },
+        "discrete": {
+          "initial": {
+            "phase": "initial",
+            "colorMode": "discrete",
+            "collectionMethod": "Initial collected discrete sample after app-visible Color scale mode -> Per hour button interaction; no URL color-mode parameter exists.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 0,
+            "selectedTimeIndex": 168,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|0",
+            "surfaceRequestId": 1,
+            "collectedAt": "2026-05-17T13:57:59.118Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 277.60000002384186,
+              "workerBvhMs": 216.90000000596046,
+              "pipelineUploadMs": 1044.800000011921,
+              "exposurePrecomputeMs": 16213.199999988079,
+              "oneHourDispatchMs": 16.5,
+              "firstSelectedHourReadyMs": 18319.70000001788,
+              "firstSelectedHourVisibleMs": 20712.09999999404,
+              "renderUpdateMs": 4298.899999976158,
+              "renderSceneSyncStartDelayMs": 256,
+              "renderSceneSyncTotalMs": 4042.199999988079,
+              "renderLayoutBuildMs": 511.7999999821186,
+              "renderSurfaceMeshMs": 2620.4000000059605,
+              "renderStorageInitWaitMs": 401.30000001192093,
+              "renderBufferCopyMs": 0,
+              "renderQueueDrainMs": 508.30000001192093,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "initial",
+                "renderPublicationMeshAction": "created",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 653741904,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 20348.90000000596,
+                  "controllerAcceptedAtMs": 20349,
+                  "routePendingSurfaceExposedAtMs": 20349.79999998212,
+                  "routePublishedAtMs": 24393.69999998808,
+                  "routeProjectedAtMs": 24395.19999998808,
+                  "scenePendingSurfaceObservedAtMs": 20350.09999999404,
+                  "sceneSyncAttemptStartedAtMs": 20350.40000000596,
+                  "sceneSyncAttemptToken": 2,
+                  "sceneSurfaceReceivedAtMs": 20350.09999999404,
+                  "publicationEffectStartedAtMs": 20350.40000000596,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 511.5,
+                    "arrayAllocationMs": 0.8999999761581421,
+                    "transformBoundsPassMs": 226.80000001192093,
+                    "coordinateAssignmentMs": 94.69999998807907,
+                    "indexToTexelFillMs": 33,
+                    "cellToPointIndexBuildMs": 142.7000000178814,
+                    "colorBufferAllocationMs": 0
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "rebuild-required",
+                    "hoverCellLookupProofStatus": "proof-inconclusive",
+                    "previousLayoutPresent": false,
+                    "canonicalRuntimeCompatibilityWouldReuse": null,
+                    "proofMatchesCanonicalRuntimeCompatibility": null,
+                    "positionsReferenceMatch": null,
+                    "pointCountMatch": null,
+                    "gridSizeMatch": null,
+                    "coordinateSystemMatch": null,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": null,
+                    "normalizationSignatureMatch": null,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": null,
+                    "constructionModeMatch": null,
+                    "dimensionsMatch": null,
+                    "placementMatch": null,
+                    "cellToPointMappingMatch": null,
+                    "proofCostMs": 0,
+                    "estimatedRetainedCpuLayoutBytes": 163435220
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "created",
+                    "totalMs": 2620.4000000059605,
+                    "recreateDecision": {
+                      "missingSurface": true,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": false
+                    },
+                    "disposeResetMeshRemovalMs": 0.09999999403953552,
+                    "createComputeBufferSurfaceMeshMs": 2620.2000000178814,
+                    "updateComputeBufferSurfaceMeshMs": null,
+                    "fallbackDecisionMs": null,
+                    "applySurfaceMeshStateMs": 0,
+                    "setCreatedSurfacePendingStorageInitMs": 0,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": 0,
+                    "publishUtciSurfaceDiagnosticsMs": 0
+                  },
+                  "renderStorageReadyAtMs": 23884.19999998808,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 23482.79999998212,
+                    "waitFinishedAtMs": 23884.09999999404,
+                    "waitMs": 401.30000001192093,
+                    "readAttemptCount": 2,
+                    "frameWaitCount": 1,
+                    "deviceAvailableCount": 2,
+                    "backendEntryAvailableCount": 2,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 23482.90000000596,
+                    "firstBackendEntryAtMs": 23482.90000000596,
+                    "firstBufferAtMs": 23884.09999999404,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 23482.90000000596,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": false
+                      },
+                      {
+                        "atMs": 23884.09999999404,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 24392.59999999404,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1913.199999988079,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 653741904,
+              "renderOwnedSelectedHourBytesHighWatermark": 653741904,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1013299388,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          },
+          "scrub": {
+            "phase": "scrub",
+            "colorMode": "discrete",
+            "collectionMethod": "App-visible keyboard scrub on the main-route Select analysis hour slider from hour 0 to hour 1; no debug route, parity, or .bin path.",
+            "selectedMonthIndex": 7,
+            "selectedHourIndex": 1,
+            "selectedTimeIndex": 169,
+            "selectionKey": "Ness-Tziona/exploded/nes_tziona_unblock_2|7|1",
+            "surfaceRequestId": 2,
+            "collectedAt": "2026-05-17T13:57:59.119Z",
+            "sourceRoute": "/",
+            "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&gridResolution=0.5&utciRender=auto&utciRenderDiagnostics=1",
+            "timings": {
+              "payloadPrepareMs": 277.60000002384186,
+              "workerBvhMs": 216.90000000596046,
+              "pipelineUploadMs": 1044.800000011921,
+              "exposurePrecomputeMs": 16213.199999988079,
+              "oneHourDispatchMs": 12.300000011920929,
+              "firstSelectedHourReadyMs": 210,
+              "firstSelectedHourVisibleMs": 1133.5999999940395,
+              "renderUpdateMs": 1121.199999988079,
+              "renderSceneSyncStartDelayMs": 304.59999999403954,
+              "renderSceneSyncTotalMs": 816.4000000059605,
+              "renderLayoutBuildMs": 808.5,
+              "renderSurfaceMeshMs": 0.29999998211860657,
+              "renderStorageInitWaitMs": 0,
+              "renderBufferCopyMs": 0.19999998807907104,
+              "renderQueueDrainMs": 6.800000011920929,
+              "renderPublication": {
+                "renderPublicationVersion": 1,
+                "renderPublicationPath": "compute-buffer-selected-hour",
+                "renderPublicationPhase": "scrub",
+                "renderPublicationMeshAction": "reused",
+                "renderPublicationPointCount": 8171761,
+                "renderPublicationVertexCount": 49030566,
+                "renderPublicationGridWidth": 2237,
+                "renderPublicationGridHeight": 3653,
+                "renderPublicationGridSize": 0.5,
+                "renderPublicationSourceByteLength": 32687044,
+                "renderPublicationTargetByteLength": 32687044,
+                "renderPublicationRenderOwnedBytes": 653741904,
+                "renderPublicationTimeline": {
+                  "computeCompletedAtMs": 24758.90000000596,
+                  "controllerAcceptedAtMs": 24758.90000000596,
+                  "routePendingSurfaceExposedAtMs": 24760,
+                  "routePublishedAtMs": 25577.19999998808,
+                  "routeProjectedAtMs": 25577.69999998808,
+                  "scenePendingSurfaceObservedAtMs": 24760.29999998212,
+                  "sceneSyncAttemptStartedAtMs": 24760.5,
+                  "sceneSyncAttemptToken": 3,
+                  "sceneSurfaceReceivedAtMs": 24760.40000000596,
+                  "publicationEffectStartedAtMs": 24760.5,
+                  "renderLayoutBuildTrace": {
+                    "totalMs": 768.7999999821186,
+                    "arrayAllocationMs": 2.199999988079071,
+                    "transformBoundsPassMs": 385.90000000596046,
+                    "coordinateAssignmentMs": 194.80000001192093,
+                    "indexToTexelFillMs": 39.599999994039536,
+                    "cellToPointIndexBuildMs": 145.5,
+                    "colorBufferAllocationMs": 0.19999998807907104
+                  },
+                  "renderLayoutReuseProofTrace": {
+                    "decision": "reuse-safe",
+                    "hoverCellLookupProofStatus": "same-point-confirmed",
+                    "previousLayoutPresent": true,
+                    "canonicalRuntimeCompatibilityWouldReuse": true,
+                    "proofMatchesCanonicalRuntimeCompatibility": true,
+                    "positionsReferenceMatch": true,
+                    "pointCountMatch": true,
+                    "gridSizeMatch": true,
+                    "coordinateSystemMatch": true,
+                    "normalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "previousNormalizationSignature": {
+                      "enabled": true,
+                      "offset": {
+                        "x": 1327.1756591796875,
+                        "y": -1.5,
+                        "z": -123.610595703125
+                      },
+                      "provenance": "anchor-offset-minus-origin"
+                    },
+                    "normalizationSignatureMatch": true,
+                    "constructionMode": "world-positions",
+                    "previousConstructionMode": "world-positions",
+                    "constructionModeMatch": true,
+                    "dimensionsMatch": true,
+                    "placementMatch": true,
+                    "cellToPointMappingMatch": true,
+                    "proofCostMs": 0,
+                    "estimatedRetainedCpuLayoutBytes": 163435220
+                  },
+                  "renderSurfaceMeshTrace": {
+                    "action": "updated",
+                    "totalMs": 0.29999998211860657,
+                    "recreateDecision": {
+                      "missingSurface": false,
+                      "notComputeBufferSurface": false,
+                      "analysisIdentityChanged": true,
+                      "layoutCompatible": true
+                    },
+                    "disposeResetMeshRemovalMs": null,
+                    "createComputeBufferSurfaceMeshMs": null,
+                    "updateComputeBufferSurfaceMeshMs": 0.09999999403953552,
+                    "fallbackDecisionMs": 0,
+                    "applySurfaceMeshStateMs": 0.19999998807907104,
+                    "setCreatedSurfacePendingStorageInitMs": null,
+                    "setPostSurfacePendingStorageInitMs": 0,
+                    "sceneAddMs": null,
+                    "publishUtciSurfaceDiagnosticsMs": null
+                  },
+                  "renderStorageReadyAtMs": 25569.90000000596,
+                  "renderStorageWaitTrace": {
+                    "waitStartedAtMs": 25569.40000000596,
+                    "waitFinishedAtMs": 25569.40000000596,
+                    "waitMs": 0,
+                    "readAttemptCount": 1,
+                    "frameWaitCount": 0,
+                    "deviceAvailableCount": 1,
+                    "backendEntryAvailableCount": 1,
+                    "bufferAvailableCount": 1,
+                    "firstDeviceAtMs": 25569.40000000596,
+                    "firstBackendEntryAtMs": 25569.40000000596,
+                    "firstBufferAtMs": 25569.40000000596,
+                    "lastReadState": {
+                      "deviceAvailable": true,
+                      "backendEntryAvailable": true,
+                      "bufferAvailable": true
+                    },
+                    "samples": [
+                      {
+                        "atMs": 25569.40000000596,
+                        "deviceAvailable": true,
+                        "backendEntryAvailable": true,
+                        "bufferAvailable": true
+                      }
+                    ]
+                  },
+                  "sceneSyncCompletedAtMs": 25576.90000000596,
+                  "sceneSyncResetHistory": [
+                    {
+                      "resetAtMs": 1913.199999988079,
+                      "resetReason": "dispose-utci-surface",
+                      "invalidateActiveRun": true,
+                      "previousCopyRunToken": 0,
+                      "nextCopyRunToken": 1,
+                      "previousSyncRunKey": null
+                    }
+                  ],
+                  "sceneSyncActiveWindowResetHistory": []
+                }
+              }
+            },
+            "trackedGpuAllocationBytes": {
+              "persistentExposureBytes": 326870440,
+              "allHoursOutputBytes": 0,
+              "selectedHourOutputBytes": 32687044,
+              "selectedHourOutputBytesHighWatermark": 32687044,
+              "renderOwnedSelectedHourBytes": 653741904,
+              "renderOwnedSelectedHourBytesHighWatermark": 653741904,
+              "trackingScope": "utci-owned-webgpu-buffers"
+            },
+            "ownedGpuMemoryBytes": 1013299388,
+            "proof": {
+              "rendererBackend": "webgpu",
+              "utciRenderResolved": "gpuNative",
+              "utciSurfaceSource": "compute-buffer-selected-hour",
+              "baseRenderTransport": "compute-buffer-selected-hour",
+              "dataTextureBuildCount": 0,
+              "selectedHourRuntimeContract": {
+                "route": "main",
+                "readbackInstrumentation": "instrumented",
+                "visibleSelectedHourReadbackCount": 0,
+                "strongVisibleGpuPath": true
+              },
+              "baseSameDeviceForComputeAndRender": true
+            }
+          }
+        }
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    }
+  ]
+}

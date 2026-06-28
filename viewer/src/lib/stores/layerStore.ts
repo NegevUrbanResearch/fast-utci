@@ -80,7 +80,7 @@ export function setDiscoveredLayers(layerTypes: string[]): void {
  * @param layerId - Layer identifier
  */
 export function toggleLayer(layerId: string): void {
-	let newVisible: boolean;
+	let newVisible = false;
 	layerStore.update((state) => {
 		newVisible = !state[layerId];
 		return {

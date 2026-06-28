@@ -1,43 +1,59 @@
 <script lang="ts">
 	import { analysisStore } from "$lib/stores/analysisStore";
+	import { comparisonStore, unifiedUtciRange } from "$lib/stores/comparisonStore";
 	import { viewerStore, setMetricType } from "$lib/stores/viewerStore";
 	import {
 		LADYBUG_NUANCED_COLORS,
 		SHADING_INDEX_COLORS,
 		createShadingIndexLegendData,
 	} from "$lib/services/colorScale";
+	import { getUtciRangeForDisplay } from "$lib/utils/effectiveHourIndex";
+	import type { Analysis } from "$lib/types/analysis";
 	import type { MetricType } from "$lib/types/viewer";
+
+	/** When set (e.g. debug page showing only live layer), use this for legend range instead of analysisStore. */
+	export let displayAnalysis: Analysis | null = null;
+	export let liveShadingMetricAvailable = false;
+	export let utciRangeOverride: { min: number; max: number } | null | undefined = undefined;
 
 	let utciMin = 0;
 	let utciMax = 100;
 	let shadingIndexMin = 0;
 	let shadingIndexMax = 1;
 
-	$: if ($analysisStore) {
+	$: effectiveAnalysis = displayAnalysis ?? $analysisStore;
+
+	$: if (effectiveAnalysis) {
 		if ($viewerStore.metricType === "utci") {
-			if ($viewerStore.colorMode === "normalized") {
-				utciMin = $analysisStore.metadata.utci_range.min;
-				utciMax = $analysisStore.metadata.utci_range.max;
+			const inComparison = $comparisonStore.isComparing && $unifiedUtciRange;
+			if (inComparison) {
+				utciMin = $unifiedUtciRange.utciMin;
+				utciMax = $unifiedUtciRange.utciMax;
+			} else if (
+				utciRangeOverride &&
+				Number.isFinite(utciRangeOverride.min) &&
+				Number.isFinite(utciRangeOverride.max) &&
+				utciRangeOverride.max > utciRangeOverride.min
+			) {
+				utciMin = utciRangeOverride.min;
+				utciMax = utciRangeOverride.max;
 			} else {
-				const hourStat =
-					$analysisStore.metadata.hour_statistics?.[
-						$viewerStore.currentHour
-					];
-				if (hourStat) {
-					utciMin = hourStat.min;
-					utciMax = hourStat.max;
-				} else {
-					utciMin = $analysisStore.metadata.utci_range.min;
-					utciMax = $analysisStore.metadata.utci_range.max;
-				}
+				const range = getUtciRangeForDisplay(
+					effectiveAnalysis.metadata,
+					$viewerStore.colorMode,
+					$viewerStore.currentHour,
+					$viewerStore.currentMonth ?? 7
+				);
+				utciMin = range.utciMin;
+				utciMax = range.utciMax;
 			}
 		} else {
 			// Shading Index
-			if ($analysisStore.metadata.shading_index_range) {
+			if (effectiveAnalysis.metadata.shading_index_range) {
 				shadingIndexMin =
-					$analysisStore.metadata.shading_index_range.min;
+					effectiveAnalysis.metadata.shading_index_range.min;
 				shadingIndexMax =
-					$analysisStore.metadata.shading_index_range.max;
+					effectiveAnalysis.metadata.shading_index_range.max;
 			}
 		}
 	}
@@ -45,7 +61,9 @@
 	// Make these reactive to ensure updates
 	$: isUTCI = $viewerStore.metricType === "utci";
 	$: isShadingIndex = $viewerStore.metricType === "shading_index";
-	$: hasShadingIndex = $analysisStore?.metadata.has_shading_index ?? false;
+	$: hasShadingIndex =
+		(effectiveAnalysis?.metadata.has_shading_index ?? false) ||
+		liveShadingMetricAvailable;
 
 	function selectUTCI() {
 		if (!isUTCI) {
@@ -96,7 +114,7 @@
 		shadingIndexLabels.length > 0 ? [...shadingIndexLabels].reverse() : [];
 </script>
 
-{#if $analysisStore}
+{#if effectiveAnalysis}
 	<div class="color-legend">
 		<div class="legend-header">
 			<div class="title">
@@ -108,9 +126,9 @@
 			</div>
 		</div>
 
-		<div class="gradient-row">
-			<div class="gradient-container">
-				{#if isUTCI}
+		<div class="gradient-row" class:shading-row={isShadingIndex}>
+			{#if isUTCI}
+				<div class="gradient-container">
 					<div
 						class="gradient"
 						style="background: linear-gradient(to bottom, {utciGradient})"
@@ -125,28 +143,32 @@
 							</div>
 						{/each}
 					</div>
-				{:else}
+				</div>
+			{:else}
+				<div class="gradient-container shading-gradient-container">
 					<div
 						class="gradient"
 						style="background: linear-gradient(to bottom, {shadingIndexGradient})"
+						aria-hidden="true"
 					></div>
-					<div class="labels">
-						{#if shadingIndexLabels.length > 0}
-							<!-- Show all category boundaries: 1.0, 0.9, 0.7, 0.5, 0.0 -->
-							<!-- Top: 1.0 (excellent max) -->
-							<div class="label" style="top: 0%">1.0</div>
-							<!-- 0.9 (boundary between excellent and good) -->
-							<div class="label" style="top: 25%">0.9</div>
-							<!-- 0.7 (boundary between good and acceptable) -->
-							<div class="label" style="top: 50%">0.7</div>
-							<!-- 0.5 (boundary between acceptable and poor) -->
-							<div class="label" style="top: 75%">0.5</div>
-							<!-- Bottom: 0.0 (poor min) -->
-							<div class="label" style="top: 100%">0.0</div>
-						{/if}
+					<div class="labels shading-labels" aria-label="Shading Index legend">
+						<div class="label shading-limit-label" style="top: 0%">
+							{shadingIndexMax.toFixed(1)}
+						</div>
+						{#each shadingIndexLabelsReversed as item, i}
+							<div class="shading-category-label" style="top: {(i + 0.5) * 25}%">
+								<div class="shading-category-name">{item.abbrev}</div>
+								<div class="shading-category-range">
+									{item.range[0].toFixed(1)}-{item.range[1].toFixed(1)}
+								</div>
+							</div>
+						{/each}
+						<div class="label shading-limit-label" style="top: 100%">
+							{shadingIndexMin.toFixed(1)}
+						</div>
 					</div>
-				{/if}
-			</div>
+				</div>
+			{/if}
 
 			{#if hasShadingIndex}
 				<div class="metric-column">
@@ -219,6 +241,10 @@
 		gap: 20px;
 	}
 
+	.shading-row {
+		gap: 18px;
+	}
+
 	.gradient-container {
 		position: relative;
 		display: flex;
@@ -256,6 +282,47 @@
 		color: var(--color-text-primary);
 		text-align: left;
 		min-width: 50px;
+	}
+
+	.shading-gradient-container {
+		width: 110px;
+	}
+
+	.shading-labels {
+		width: 66px;
+	}
+
+	.shading-limit-label {
+		left: 0;
+		right: auto;
+		min-width: 0;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.shading-category-label {
+		position: absolute;
+		left: 0;
+		transform: translateY(-50%);
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		font-size: var(--font-xs);
+		line-height: 1.05;
+		color: var(--color-text-primary);
+	}
+
+	.shading-category-name {
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.shading-category-range {
+		font-size: 10px;
+		color: var(--color-text-secondary);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
 	.metric-column {

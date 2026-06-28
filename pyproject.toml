@@ -56,6 +56,11 @@ dev = [
     "isort>=5.12.0",
 ]
 
+gis = [
+    "pyproj>=3.7.0",
+    "pyarrow>=16.0.0",
+]
+
 gpu = [
     # GPU acceleration (optional)
     "cupy-cuda12x>=12.0.0",
@@ -80,7 +85,7 @@ notebook = [
 ]
 
 all = [
-    "fast-utci[dev,gpu,profile,docs,notebook]",
+    "fast-utci[dev,gis,gpu,profile,docs,notebook]",
 ]
 
 [tool.setuptools]
@@ -100,4 +105,5 @@ line_length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
+pythonpath = ["src"]
 

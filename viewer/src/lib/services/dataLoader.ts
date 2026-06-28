@@ -6,7 +6,20 @@
  */
 
 import { base } from '$app/paths';
-import type { SingleHourData, FullDayData, UTCIData, Analysis, Position, HourStatistics } from '$lib/types/analysis';
+import type {
+	SingleHourData,
+	FullDayData,
+	UTCIData,
+	Analysis,
+	Position,
+	HourStatistics
+} from '$lib/types/analysis';
+import {
+	isSingleHourData,
+	hasCompactUtciStorage,
+	hasDecodedUtciByHour
+} from '$lib/types/analysis';
+import { canonicalGridPoints } from '$lib/compute/core/canonicalGrid';
 
 // Data base path: strip /viewer/build from base path to get project root
 // e.g., /fast-utci/viewer/build -> /fast-utci
@@ -218,7 +231,10 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
 	console.log(`[LOAD] Loading analysis: ${analysisId}`);
 	
 	// Load metadata
-	const metadata = await loadMetadata(metadataPath);
+	const metadata = {
+		...(await loadMetadata(metadataPath)),
+		source_analysis_id: analysisId
+	};
 	console.log(`[OK] Metadata loaded: ${metadata.num_positions} positions, ${metadata.hours.length} hours`);
 	
 	// Load binary data (pass metadata for format detection)
@@ -232,6 +248,71 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
 }
 
 /**
+ * Load analysis metadata without fetching UTCI binary data.
+ */
+export async function loadAnalysisMetadataOnly(
+	analysisId: string,
+	dataDir?: string
+): Promise<Analysis> {
+	const dataBasePath = getDataBasePath();
+	const baseDataDir = dataDir || `${dataBasePath}/data/analyses`;
+	const metadataPath = `${baseDataDir}/${analysisId}.json`;
+
+	console.log(`[LOAD] Loading analysis metadata: ${analysisId}`);
+
+	const metadata = {
+		...(await loadMetadata(metadataPath)),
+		source_analysis_id: analysisId
+	};
+	const positions =
+		metadata.bounds && metadata.grid_size > 0
+			? canonicalGridPointsToAnalysisPositions({
+					bounds: metadata.bounds,
+					gridSize: metadata.grid_size,
+					coordinateSystem: metadata.coordinate_system,
+					zHeight: metadata.bounds.z
+				})
+			: new Float32Array(0);
+	const derivedNumPositions = positions.length / 3;
+	if (derivedNumPositions > 0 && derivedNumPositions !== metadata.num_positions) {
+		throw new Error(
+			`Metadata-derived grid point count (${derivedNumPositions}) does not match metadata num_positions (${metadata.num_positions}) for ${analysisId}`
+		);
+	}
+
+	return {
+		metadata,
+		data: {
+			numPositions: derivedNumPositions,
+			numHours: metadata.hours.length,
+			positions,
+			utciByHour: []
+		}
+	};
+}
+
+function canonicalGridPointsToAnalysisPositions(params: {
+	bounds: NonNullable<Analysis['metadata']['bounds']>;
+	gridSize: number;
+	coordinateSystem: Analysis['metadata']['coordinate_system'];
+	zHeight?: number;
+}): Float32Array {
+	const canonicalGrid = canonicalGridPoints(params);
+	if (params.coordinateSystem !== 'xy_ground') {
+		return canonicalGrid.points;
+	}
+
+	const points = canonicalGrid.points;
+	const analysisPositions = new Float32Array(points.length);
+	for (let i = 0; i < points.length; i += 3) {
+		analysisPositions[i] = points[i];
+		analysisPositions[i + 1] = -points[i + 2];
+		analysisPositions[i + 2] = points[i + 1];
+	}
+	return analysisPositions;
+}
+
+/**
  * Get UTCI value for a specific position and hour
  * @param data - UTCI data (single hour or full day)
  * @param positionIndex - Position index (0 to numPositions-1)
@@ -239,13 +320,22 @@ export async function loadAnalysis(analysisId: string, dataDir?: string): Promis
  * @returns UTCI value in Celsius
  */
 export function getUTCIValue(data: UTCIData, positionIndex: number, hourIndex: number = 0): number {
-	if (data.numHours === 1) {
-		// Single hour
-		return (data as SingleHourData).utciValues[positionIndex];
-	} else {
-		// Full day
-		return (data as FullDayData).utciByHour[hourIndex][positionIndex];
+	if (isSingleHourData(data)) {
+		return data.utciValues[positionIndex];
 	}
+	if (hasCompactUtciStorage(data)) {
+		const { buffer, numPoints, scale, numSlices } = data.utciStorage;
+		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
+		const idx = sliceIndex * numPoints + positionIndex;
+		return buffer[idx] / scale;
+	}
+	if (hasDecodedUtciByHour(data)) {
+		const hourValues = data.utciByHour[hourIndex];
+		if (hourValues) {
+			return hourValues[positionIndex];
+		}
+	}
+	throw new Error('Full-day UTCI data is missing utciStorage and decoded utciByHour slices');
 }
 
 /**
@@ -264,17 +354,52 @@ export function getPosition(data: UTCIData, positionIndex: number): Position {
 }
 
 /**
- * Get all UTCI values for a specific hour
+ * Get all UTCI values for a specific hour/slice.
+ * For utciStorage, decodes on demand (allocates Float32Array).
  * @param data - UTCI data
- * @param hourIndex - Hour index (0 to numHours-1), defaults to 0
+ * @param hourIndex - Hour/slice index (0 to numHours-1), defaults to 0
  * @returns Array of UTCI values
  */
 export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Array {
-	if (data.numHours === 1) {
-		return (data as SingleHourData).utciValues;
-	} else {
-		return (data as FullDayData).utciByHour[hourIndex];
+	if (isSingleHourData(data)) {
+		return data.utciValues;
 	}
+	if (hasCompactUtciStorage(data)) {
+		const { buffer, numPoints, scale, numSlices } = data.utciStorage;
+		// Clamp to valid slice index to avoid reading wrong month data
+		const sliceIndex = Math.max(0, Math.min(hourIndex, numSlices - 1));
+		const out = new Float32Array(numPoints);
+		const base = sliceIndex * numPoints;
+		for (let i = 0; i < numPoints; i++) {
+			out[i] = buffer[base + i] / scale;
+		}
+		return out;
+	}
+	if (hasDecodedUtciByHour(data)) {
+		const hourValues = data.utciByHour[hourIndex];
+		if (hourValues) {
+			return hourValues;
+		}
+	}
+	throw new Error('Full-day UTCI data is missing utciStorage and decoded utciByHour slices');
+}
+
+/**
+ * Get UTCI data as number[][] for export (e.g. parity artifact).
+ * For utciStorage, decodes all slices incrementally.
+ */
+export function getUtciByHourForExport(data: FullDayData): number[][] {
+	if (data.utciByHour && data.utciByHour.length > 0) {
+		return data.utciByHour.map((arr) => Array.from(arr));
+	}
+	if (data.utciStorage) {
+		const result: number[][] = [];
+		for (let i = 0; i < data.utciStorage.numSlices; i++) {
+			result.push(Array.from(getUTCIForHour(data, i)));
+		}
+		return result;
+	}
+	return [];
 }
 
 /**
@@ -283,11 +408,7 @@ export function getUTCIForHour(data: UTCIData, hourIndex: number = 0): Float32Ar
  * @returns Shading Index array if available, null otherwise
  */
 export function getShadingIndex(data: UTCIData): Float32Array | null {
-	if (data.numHours === 1) {
-		return (data as SingleHourData).shadingIndex || null;
-	} else {
-		return (data as FullDayData).shadingIndex || null;
-	}
+	return data.shadingIndex || null;
 }
 
 /**

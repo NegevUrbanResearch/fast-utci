@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveProjectId, resolveModelPath } from '$lib/utils/analysisPaths';
+import { resolveProjectId, resolveModelPath, resolveAnalysisModelPath } from '$lib/utils/analysisPaths';
 
 describe('analysisPaths', () => {
 	it('resolves project id from analysis id', () => {
@@ -20,5 +20,26 @@ describe('analysisPaths', () => {
 			'Ness-Tziona/original/20250815_grid_2m_fullday'
 		);
 		expect(fixed).toBe('data/3d_models/Ness-Tziona/nes_tziona_1.gltf');
+	});
+
+	it('does not map legacy Ben-Gurion model paths into another project', () => {
+		const fixed = resolveModelPath(
+			'data/3d_models/original_with_layers.glb',
+			'Ness-Tziona/exploded/nes_tziona_unblock_2'
+		);
+
+		expect(fixed).toBe('data/3d_models/Ben-Gurion/original_with_layers.glb');
+	});
+
+	it('uses the metadata source analysis id instead of a stale route id', () => {
+		const fixed = resolveAnalysisModelPath(
+			{
+				model_file: 'data/3d_models/original_with_layers.glb',
+				source_analysis_id: 'Ben-Gurion/20250815_grid_2m_fullday'
+			},
+			'Ness-Tziona/exploded/nes_tziona_unblock_2'
+		);
+
+		expect(fixed).toBe('data/3d_models/Ben-Gurion/original_with_layers.glb');
 	});
 });

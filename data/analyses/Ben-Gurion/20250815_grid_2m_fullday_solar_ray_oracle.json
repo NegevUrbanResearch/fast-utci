@@ -1,0 +1,62 @@
+{
+  "basePath": "D:\\Projects\\Nur\\Shade\\fast-utci\\data\\analyses\\Ben-Gurion\\20250815_grid_2m_fullday",
+  "count": 1,
+  "rows": [
+    {
+      "flatIndex": 745913,
+      "pointIndex": 31079,
+      "hourIndex": 17,
+      "hourValue": 17,
+      "pointX": -3342.616943359375,
+      "pointY": -489.2862548828125,
+      "pointZ": 1.5,
+      "refSolar": 0,
+      "webgpuSolar": 1,
+      "refSolarBinary": 0,
+      "webgpuSolarBinary": 1,
+      "refMarginToThreshold": -0.5,
+      "webgpuMarginToThreshold": 0.5,
+      "refShortErf": null,
+      "webgpuShortErf": 95.70834350585938,
+      "shortErfDiff": null,
+      "refShortDmrt": null,
+      "webgpuShortDmrt": 21.95800018310547,
+      "shortDmrtDiff": null,
+      "refLongErf": null,
+      "webgpuLongErf": -14.99205207824707,
+      "longErfDiff": null,
+      "refLongDmrt": null,
+      "webgpuLongDmrt": -3.4395694732666016,
+      "longDmrtDiff": null,
+      "refMrt": 33.06828308105469,
+      "webgpuMrt": 50.31842803955078,
+      "mrtDiff": 17.250144958496094,
+      "refSkyAtPoint": 0.635520339012146,
+      "webgpuSkyAtPoint": 0.6344313912018175,
+      "skyDiffAtPoint": -0.0010889478103285333,
+      "score": 17.250144958496094,
+      "modelBounds": {
+        "min": {
+          "x": -516.68359375,
+          "y": -1.6890172959492975,
+          "z": -231.1687469482422
+        },
+        "max": {
+          "x": 518.516357421875,
+          "y": 19.157154083140153,
+          "z": 226.831298828125
+        }
+      },
+      "pointInsideModelBounds": true,
+      "cpuHit": false,
+      "cpuFirstDistance": null,
+      "cpuFirstPoint": null,
+      "cpuHitByVariant": {
+        "x_z_negY": false,
+        "x_z_posY": false,
+        "xyz_raw": true,
+        "x_negY_z": true
+      }
+    }
+  ]
+}

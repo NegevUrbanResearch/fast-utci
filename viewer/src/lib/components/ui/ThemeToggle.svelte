@@ -15,7 +15,7 @@
 <button class="theme-toggle" type="button" on:click={toggleTheme} aria-label="Toggle color theme">
 	<span class="label">{$viewerStore.theme === 'dark' ? 'Dark' : 'Light'}</span>
 	<span class="pill" aria-hidden="true">
-		<span class:knob-dark={$viewerStore.theme === 'dark'} class="knob" />
+		<span class:knob-dark={$viewerStore.theme === 'dark'} class="knob"></span>
 	</span>
 </button>
 

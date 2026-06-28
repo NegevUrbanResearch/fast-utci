@@ -1,0 +1,129 @@
+{
+  "collectedOn": "2026-05-15",
+  "sourceRoute": "/",
+  "includedAnalyses": [
+    "Ben-Gurion/20250815_grid_2m_fullday",
+    "Ness-Tziona/exploded/nes_tziona_unblock_2"
+  ],
+  "excludedBgVariantsExplanation": "This baseline intentionally excludes other Ben-Gurion variants so the current-head timing pass stays limited to the BG 2m base case and Ness Tziona 2m.",
+  "cases": [
+    {
+      "projectLabel": "Ben-Gurion",
+      "analysisId": "Ben-Gurion/20250815_grid_2m_fullday",
+      "pointCount": 104445,
+      "gridSizeMeters": 2,
+      "selectedMonthIndex": 7,
+      "selectedHourIndex": 0,
+      "selectedTimeIndex": 168,
+      "collectedAt": "2026-05-14T22:37:42.440Z",
+      "sourceRoute": "/",
+      "sourceUrl": "/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&utciRender=auto&utciRenderDiagnostics=1",
+      "timings": {
+        "payloadPrepareMs": null,
+        "workerBvhMs": null,
+        "pipelineUploadMs": null,
+        "exposurePrecomputeMs": 682.6999999992549,
+        "oneHourDispatchMs": 3.300000000745058,
+        "firstSelectedHourReadyMs": null,
+        "firstSelectedHourVisibleMs": 1233,
+        "renderUpdateMs": 324.9000000022352,
+        "renderSceneSyncStartDelayMs": 245.5,
+        "renderSceneSyncTotalMs": 79.10000000149012,
+        "renderLayoutBuildMs": 6.100000001490116,
+        "renderSurfaceMeshMs": 0.19999999925494194,
+        "renderStorageInitWaitMs": 27.800000000745058,
+        "renderBufferCopyMs": 0,
+        "renderQueueDrainMs": 44.80000000074506
+      },
+      "trackedGpuAllocationBytes": {
+        "persistentExposureBytes": 4177800,
+        "allHoursOutputBytes": 0,
+        "selectedHourOutputBytes": 417780,
+        "selectedHourOutputBytesHighWatermark": 417780,
+        "renderOwnedSelectedHourBytes": 10445524,
+        "renderOwnedSelectedHourBytesHighWatermark": 10445524,
+        "trackingScope": "utci-owned-webgpu-buffers"
+      },
+      "ownedGpuMemoryBytes": 15041104,
+      "proof": {
+        "rendererBackend": "webgpu",
+        "utciRenderResolved": "gpuNative",
+        "utciSurfaceSource": "compute-buffer-selected-hour",
+        "baseRenderTransport": "compute-buffer-selected-hour",
+        "dataTextureBuildCount": 0,
+        "selectedHourRuntimeContract": {
+          "route": "main",
+          "readbackInstrumentation": "instrumented",
+          "visibleSelectedHourReadbackCount": 0,
+          "strongVisibleGpuPath": true
+        },
+        "baseSameDeviceForComputeAndRender": true
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    },
+    {
+      "projectLabel": "Ness-Tziona",
+      "analysisId": "Ness-Tziona/exploded/nes_tziona_unblock_2",
+      "pointCount": 511840,
+      "gridSizeMeters": 2,
+      "selectedMonthIndex": 7,
+      "selectedHourIndex": 0,
+      "selectedTimeIndex": 168,
+      "collectedAt": "2026-05-14T22:37:47.441Z",
+      "sourceRoute": "/",
+      "sourceUrl": "/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&utciRender=auto&utciRenderDiagnostics=1",
+      "timings": {
+        "payloadPrepareMs": null,
+        "workerBvhMs": null,
+        "pipelineUploadMs": null,
+        "exposurePrecomputeMs": 1464.3999999985099,
+        "oneHourDispatchMs": 4.800000000745058,
+        "firstSelectedHourReadyMs": null,
+        "firstSelectedHourVisibleMs": 2485.199999999255,
+        "renderUpdateMs": 752.6999999992549,
+        "renderSceneSyncStartDelayMs": 608.5,
+        "renderSceneSyncTotalMs": 144.10000000149012,
+        "renderLayoutBuildMs": 23.800000000745058,
+        "renderSurfaceMeshMs": 0,
+        "renderStorageInitWaitMs": 52.30000000074506,
+        "renderBufferCopyMs": 0,
+        "renderQueueDrainMs": 68
+      },
+      "trackedGpuAllocationBytes": {
+        "persistentExposureBytes": 20473600,
+        "allHoursOutputBytes": 0,
+        "selectedHourOutputBytes": 2047360,
+        "selectedHourOutputBytesHighWatermark": 2047360,
+        "renderOwnedSelectedHourBytes": 51185024,
+        "renderOwnedSelectedHourBytesHighWatermark": 51185024,
+        "trackingScope": "utci-owned-webgpu-buffers"
+      },
+      "ownedGpuMemoryBytes": 73705984,
+      "proof": {
+        "rendererBackend": "webgpu",
+        "utciRenderResolved": "gpuNative",
+        "utciSurfaceSource": "compute-buffer-selected-hour",
+        "baseRenderTransport": "compute-buffer-selected-hour",
+        "dataTextureBuildCount": 0,
+        "selectedHourRuntimeContract": {
+          "route": "main",
+          "readbackInstrumentation": "instrumented",
+          "visibleSelectedHourReadbackCount": 0,
+          "strongVisibleGpuPath": true
+        },
+        "baseSameDeviceForComputeAndRender": true
+      },
+      "assertions": {
+        "pythonBinDebugComparisonFieldsAbsent": true,
+        "forbiddenComparisonFieldsPresent": [],
+        "forbiddenRequestUrls": [],
+        "memoryScope": "utci-owned-webgpu-buffers"
+      }
+    }
+  ]
+}

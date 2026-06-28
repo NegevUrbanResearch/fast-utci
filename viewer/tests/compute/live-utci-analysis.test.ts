@@ -1,0 +1,552 @@
+import { describe, it, expect, vi } from 'vitest';
+import type { F32MetricOutput, UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import { createSelectedHourOutputHandle } from '$lib/compute/gpu/selectedHourOutputHandle';
+import { createLiveUtciAnalysisFromCompute } from '$lib/compute/selected-hour/liveUtciAnalysis';
+import {
+	buildSelectedHourLiveShadingAnalysis,
+	buildSelectedHourLiveAnalysis,
+	resolveAcceptedGpuResidentUtciRange,
+	resolveLiveGpuResidentUtciRange,
+	resolveLiveSelectedHourTimeIndex
+} from '$lib/compute/selected-hour/liveUtciSelectedHour';
+import type { AnalysisMetadata } from '$lib/types/analysis';
+import {
+	hasCompactUtciStorage,
+	hasDecodedUtciByHour,
+	isSingleHourData,
+} from '$lib/types/analysis';
+import {
+	clearComputeTelemetryHistory,
+	getComputeTelemetryHistory
+} from '$lib/compute/telemetry';
+
+// Minimal EPW content: 8 header lines + 24 data lines for a single representative day
+const buildMinimalEpw = () => {
+	const header = [
+		'LOCATION,Beer Sheva,ISR,source,wmo,31.25,34.79,2,300',
+		'DESIGN CONDITIONS,dummy',
+		'TYPICAL/EXTREME,dummy',
+		'GROUND TEMPERATURES,dummy',
+		'HOLIDAYS/DAYLIGHT,dummy',
+		'COMMENTS 1,dummy',
+		'COMMENTS 2,dummy',
+		'DATA PERIODS,dummy'
+	];
+
+	const lines: string[] = [];
+	for (let hour = 1; hour <= 24; hour++) {
+		// year, month, day, hour, minute, ..., dryBulb(6), ..., relHum(8), ..., horizIR(12),
+		// ..., dirNorm(14), diffHoriz(15), ..., wind(21)
+		lines.push(
+			`2020,8,15,${hour},0,0,30.0,25.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
+		);
+	}
+
+	return `${header.join('\n')}\n${lines.join('\n')}`;
+};
+
+// Full-year EPW for 12-month compute: 366 days * 24 hours
+const buildFullYearEpw = () => {
+	const header = [
+		'LOCATION,Beer Sheva,ISR,source,wmo,31.25,34.79,2,300',
+		'DESIGN CONDITIONS,dummy',
+		'TYPICAL/EXTREME,dummy',
+		'GROUND TEMPERATURES,dummy',
+		'HOLIDAYS/DAYLIGHT,dummy',
+		'COMMENTS 1,dummy',
+		'COMMENTS 2,dummy',
+		'DATA PERIODS,dummy'
+	];
+
+	const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+	const lines: string[] = [];
+	for (let month = 1; month <= 12; month++) {
+		for (let day = 1; day <= DAYS_IN_MONTH[month - 1]; day++) {
+			for (let hour = 1; hour <= 24; hour++) {
+				lines.push(
+					`2020,${month},${day},${hour},0,0,30.0,25.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
+				);
+			}
+		}
+	}
+	return `${header.join('\n')}\n${lines.join('\n')}`;
+};
+
+const createSerializedBvhFixture = () => {
+	return {
+		serializedBvh: {
+			bvhNodeBuffer: new ArrayBuffer(0),
+			bvhIndexBuffer: new ArrayBuffer(0),
+			vertexBuffer: new Float32Array(0),
+			indexBuffer: new Uint32Array(0)
+		}
+	};
+};
+
+const createBaseAnalysisFixture = () => ({
+	metadata: {
+		analysis_type: 'full_day' as const,
+		num_positions: 3,
+		hours: Array.from({ length: 24 }, (_, hour) => `${hour.toString().padStart(2, '0')}:00`),
+		utci_range: { min: -10, max: 50 },
+		grid_size: 2,
+		coordinate_system: 'xy_ground' as const,
+		model_file: 'test.glb',
+		num_months: 12,
+		hour_statistics: Array.from({ length: 24 * 12 }, (_, index) => ({
+			min: -20 + index,
+			max: 10 + index,
+			mean: -5 + index
+		}))
+	},
+	data: {
+		numPositions: 3,
+		numHours: 24 * 12,
+		positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+		utciByHour: Array.from({ length: 24 * 12 }, () => new Float32Array([0, 0, 0])),
+		shadingIndex: new Float32Array([0.1, 0.2, 0.3])
+	}
+});
+
+const createFakePipeline = () => {
+	const uploadStaticData = vi.fn().mockResolvedValue(undefined);
+	const runAll = vi.fn().mockResolvedValue(undefined);
+	const readUtcisSlice = vi
+		.fn()
+		.mockImplementation(
+			async (params: { monthIndex: number; hourIndex: number; numPoints: number }) => {
+				const { monthIndex, hourIndex, numPoints } = params;
+				const arr = new Float32Array(numPoints);
+				for (let i = 0; i < numPoints; i++) {
+					// Deterministic pattern for assertions
+					arr[i] = monthIndex * 100 + hourIndex + i * 0.5;
+				}
+				return arr;
+			}
+		);
+
+	const pipeline: UTCIComputePipeline = {
+		uploadStaticData,
+		runAll,
+		readUtcisSlice
+	};
+
+	return { pipeline, uploadStaticData, runAll, readUtcisSlice };
+};
+
+describe('liveUtciAnalysis adapter', () => {
+	it('emits telemetry stages for pipeline upload and UTCI readback', async () => {
+		clearComputeTelemetryHistory();
+		const { pipeline } = createFakePipeline();
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: ['00:00', '01:00'],
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
+		};
+
+		await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'Test/telemetry',
+				baseMetadata,
+				workerResult: createSerializedBvhFixture(),
+				epwContent: buildMinimalEpw(),
+				gridResolution: 2,
+				numHours: 2,
+				startMonth: 8
+			},
+			{ pipeline }
+		);
+
+		const events = getComputeTelemetryHistory();
+		expect(events.some((e) => e.stage === 'pipeline.upload.done')).toBe(true);
+		expect(events.some((e) => e.stage === 'utci.readback.done')).toBe(true);
+	});
+
+	it('produces an Analysis-like structure for a simple grid', async () => {
+		const { pipeline, uploadStaticData, runAll, readUtcisSlice } = createFakePipeline();
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
+		};
+
+		const epw = buildMinimalEpw();
+
+		const analysis = await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'Test/20250815_grid_2m_fullday',
+				baseMetadata,
+				workerResult: createSerializedBvhFixture(),
+				epwContent: epw,
+				gridResolution: 2,
+				zHeight: 1.5,
+				numHours: 24,
+				startMonth: 8
+			},
+			{ pipeline }
+		);
+
+		// Basic structural checks
+		expect(analysis.data.numPositions).toBeGreaterThan(0);
+		expect(analysis.data.positions.length).toBe(analysis.data.numPositions * 3);
+
+		if (hasCompactUtciStorage(analysis.data)) {
+			expect(analysis.data.numHours).toBe(24);
+			expect(analysis.data.utciStorage.numSlices).toBe(24);
+
+			const { getUTCIForHour } = await import('$lib/services/dataLoader');
+			for (let h = 0; h < 24; h++) {
+				const slice = getUTCIForHour(analysis.data, h);
+				expect(slice.length).toBe(analysis.data.numPositions);
+				for (let i = 0; i < slice.length; i++) {
+					expect(Number.isFinite(slice[i])).toBe(true);
+				}
+			}
+		} else if (hasDecodedUtciByHour(analysis.data)) {
+			expect(analysis.data.numHours).toBe(24);
+			expect(analysis.data.utciByHour.length).toBe(24);
+			for (const slice of analysis.data.utciByHour) {
+				expect(slice.length).toBe(analysis.data.numPositions);
+				for (let i = 0; i < slice.length; i++) {
+					expect(Number.isFinite(slice[i])).toBe(true);
+				}
+			}
+		} else {
+			throw new Error('Expected full-day data with utciStorage or utciByHour');
+		}
+
+		// Metadata expectations
+		expect(analysis.metadata.analysis_type).toBe('full_day');
+		expect(analysis.metadata.num_positions).toBe(analysis.data.numPositions);
+		expect(analysis.metadata.grid_size).toBe(2);
+		expect(analysis.metadata.coordinate_system).toBe('xy_ground');
+		expect(analysis.metadata.utci_range.min).toBeLessThan(analysis.metadata.utci_range.max);
+		expect(analysis.metadata.hours.length).toBe(24);
+
+		// Hour statistics should be populated
+		expect(analysis.metadata.hour_statistics).toBeDefined();
+		expect(analysis.metadata.hour_statistics?.length).toBe(24);
+
+		// Pipeline interactions
+		expect(uploadStaticData).toHaveBeenCalledTimes(1);
+		expect(runAll).toHaveBeenCalledTimes(1);
+		// Should read back one slice per hour
+		expect(readUtcisSlice).toHaveBeenCalledTimes(24);
+	});
+
+	it('throws when pipeline returns UTCI slice with unexpected length', async () => {
+		const { pipeline } = createFakePipeline();
+		const badPipeline: UTCIComputePipeline = {
+			...pipeline,
+			readUtcisSlice: vi.fn(async () => new Float32Array(1))
+		};
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: ['00:00', '01:00'],
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
+		};
+
+		await expect(
+			createLiveUtciAnalysisFromCompute(
+				{
+					analysisId: 'Test/bad-slice',
+					baseMetadata,
+					workerResult: createSerializedBvhFixture(),
+					epwContent: buildMinimalEpw(),
+					gridResolution: 2,
+					numHours: 2,
+					startMonth: 8
+				},
+				{ pipeline: badPipeline }
+			)
+		).rejects.toThrow(/UTCI slice length mismatch/);
+	});
+
+	it('produces 288 utciStorage slices when numMonths=12', async () => {
+		const { pipeline, readUtcisSlice } = createFakePipeline();
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 }
+		};
+
+		const result = await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'test',
+				baseMetadata,
+				workerResult: createSerializedBvhFixture(),
+				epwContent: buildFullYearEpw(),
+				gridResolution: 2,
+				numHours: 24,
+				startMonth: 1,
+				numMonths: 12
+			},
+			{ pipeline }
+		);
+
+		expect(hasCompactUtciStorage(result.data)).toBe(true);
+		if (!hasCompactUtciStorage(result.data)) {
+			throw new Error('Expected 12-month live analysis to expose compact utciStorage');
+		}
+		expect(result.data.utciStorage.numSlices).toBe(288);
+		expect(result.metadata.num_months).toBe(12);
+		expect(result.data.numHours).toBe(288);
+		expect(readUtcisSlice).toHaveBeenCalledTimes(288);
+	});
+});
+
+describe('selected-hour live UTCI helpers', () => {
+	it('builds selected-hour live shading analysis only from authoritative GPU shading output metadata', () => {
+		const base = createBaseAnalysisFixture();
+		const period = { kind: 'month-index' as const, index: 2, startTimeIndex: 48, timeCount: 24 };
+		const shadingOutput: F32MetricOutput = {
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period,
+			numPoints: 3,
+			gpuOutputHandle: createSelectedHourOutputHandle({
+				buffer: { destroy: vi.fn() } as unknown as GPUBuffer,
+				byteLength: 12,
+				source: 'webgpu-on-demand-snapshot',
+				ownerId: 'webgpu-shading-index:test',
+				metricType: 'shading_index',
+				valueLayout: 'one-f32-per-point',
+				period
+			}),
+			outputBytes: 12,
+			debugLabel: 'webgpu-shading-index'
+		};
+		const analysis = buildSelectedHourLiveShadingAnalysis({
+			base,
+			monthIndex: 2,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 2, hourIndex: 11 }),
+			shadingOutput
+		});
+
+		expect(analysis.metadata).toMatchObject({
+			analysis_type: 'single_hour',
+			num_positions: 3,
+			num_months: 1,
+			has_shading_index: true,
+			shading_index_range: { min: 0, max: 1 }
+		});
+		expect(analysis.data.positions).toBe(base.data.positions);
+		expect((analysis.data as any).liveShadingIndexOutput).toMatchObject({
+			source: 'webgpu-on-demand-snapshot',
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
+			outputBytes: 12
+		});
+		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBeUndefined();
+		expect((analysis.data as any).selectedMonthIndex).toBe(2);
+		expect((analysis.data as any).selectedTimeIndex).toBe(59);
+	});
+
+	it('rejects selected-hour live shading analysis without authoritative shading output metadata', () => {
+		const base = createBaseAnalysisFixture();
+
+		expect(() =>
+			buildSelectedHourLiveShadingAnalysis({
+				base,
+				monthIndex: 2,
+				timeIndex: 59,
+				shadingOutput: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'webgpu-shading-index:test',
+					metricType: 'utci',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
+					numPoints: 3,
+					outputBytes: 12,
+					debugLabel: 'webgpu-shading-index'
+				} as any
+			})
+		).toThrow(/authoritative shading index output/i);
+	});
+
+	it('builds selected-hour live analysis with a supplied UTCI range without deriving a different one', () => {
+		const base = createBaseAnalysisFixture();
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues: new Float32Array([11, 29]),
+			utciRange: { min: 14, max: 32 },
+			monthIndex: 7,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 7, hourIndex: 12 })
+		});
+
+		expect(analysis.metadata.utci_range).toEqual({ min: 14, max: 32 });
+		expect(isSingleHourData(analysis.data)).toBe(true);
+		if (!isSingleHourData(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose single-hour utciValues');
+		}
+		expect(analysis.data.utciValues).toEqual(new Float32Array([11, 29]));
+		expect(hasDecodedUtciByHour(analysis.data)).toBe(true);
+		if (!hasDecodedUtciByHour(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose utciByHour');
+		}
+		expect(analysis.data.utciByHour).toEqual([new Float32Array([11, 29])]);
+	});
+
+	it.each([
+		['NaN minimum', { min: Number.NaN, max: 32 }],
+		['infinite maximum', { min: 14, max: Number.POSITIVE_INFINITY }],
+		['reversed bounds', { min: 32, max: 14 }]
+	])('derives selected-hour live analysis range when supplied UTCI range has %s', (_, utciRange) => {
+		const base = createBaseAnalysisFixture();
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues: new Float32Array([11, 29]),
+			utciRange,
+			monthIndex: 7,
+			timeIndex: resolveLiveSelectedHourTimeIndex({ monthIndex: 7, hourIndex: 12 })
+		});
+
+		expect(analysis.metadata.utci_range).toEqual({ min: 11, max: 29 });
+	});
+
+	it('uses a precomputed selected-hour range for discrete GPU-resident display', () => {
+		const range = resolveLiveGpuResidentUtciRange({
+			colorMode: 'discrete',
+			selectedHourUtciRange: { min: 14, max: 32 }
+		});
+
+		expect(range).toEqual({ min: 14, max: 32 });
+	});
+
+	it('falls back to selected-hour values when a supplied selected-hour range is invalid', () => {
+		const range = resolveLiveGpuResidentUtciRange({
+			colorMode: 'discrete',
+			selectedHourUtciRange: { min: 32, max: 14 },
+			selectedHourUtci: new Float32Array([11, 29])
+		});
+
+		expect(range).toEqual({ min: 11, max: 29 });
+	});
+
+	it('builds a single-hour analysis and resolves display ranges for selected-hour rendering', () => {
+		const base = createBaseAnalysisFixture();
+		const utciValues = new Float32Array([12.5, 18.25, 5.75]);
+
+		const analysis = buildSelectedHourLiveAnalysis({
+			base,
+			utciValues,
+			monthIndex: 2,
+			timeIndex: 59
+		});
+
+		expect(analysis.metadata.analysis_type).toBe('single_hour');
+		expect(analysis.metadata.num_positions).toBe(3);
+		expect(analysis.metadata.num_months).toBe(1);
+		expect(analysis.metadata.utci_range).toEqual({ min: 5.75, max: 18.25 });
+		expect(isSingleHourData(analysis.data)).toBe(true);
+		if (!isSingleHourData(analysis.data)) {
+			throw new Error('Expected selected-hour analysis to expose single-hour utciValues');
+		}
+		expect(analysis.data.numHours).toBe(1);
+		expect(analysis.data.utciValues).toBe(utciValues);
+		expect(hasDecodedUtciByHour(analysis.data)).toBe(true);
+		if (hasDecodedUtciByHour(analysis.data)) {
+			expect(analysis.data.utciByHour).toEqual([utciValues]);
+		}
+		expect(analysis.data.positions).toBe(base.data.positions);
+		expect(analysis.data.shadingIndex).toBe(base.data.shadingIndex);
+		expect((analysis.data as typeof analysis.data & { selectedMonthIndex: number }).selectedMonthIndex).toBe(2);
+		expect((analysis.data as typeof analysis.data & { selectedTimeIndex: number }).selectedTimeIndex).toBe(59);
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'discrete',
+				selectedHourUtci: utciValues
+			})
+		).toEqual({ min: 5.75, max: 18.25 });
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'normalized',
+				selectedHourUtci: utciValues
+			})
+		).toEqual({ min: 28, max: 81 });
+
+		expect(
+			resolveAcceptedGpuResidentUtciRange({
+				base,
+				monthIndex: 2,
+				hourIndex: 11,
+				colorMode: 'discrete',
+				selectedHourUtci: new Float32Array([Number.NaN, Number.POSITIVE_INFINITY])
+			})
+		).toEqual({ min: -20, max: 60 });
+	});
+});
+
+describe('grid position sanity', () => {
+	it('uses parity default zHeight of 0.9m when zHeight is not provided', async () => {
+		const { pipeline } = createFakePipeline();
+
+		const baseMetadata: AnalysisMetadata = {
+			analysis_type: 'full_day',
+			num_positions: 0,
+			hours: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
+			utci_range: { min: -10, max: 50 },
+			grid_size: 2,
+			coordinate_system: 'xy_ground',
+			model_file: 'test.glb',
+			bounds: { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 0.9 }
+		};
+
+		const analysis = await createLiveUtciAnalysisFromCompute(
+			{
+				analysisId: 'Test/default-zheight',
+				baseMetadata,
+				workerResult: createSerializedBvhFixture(),
+				epwContent: buildMinimalEpw(),
+				gridResolution: 2,
+				numHours: 1,
+				startMonth: 8
+			},
+			{ pipeline }
+		);
+
+		// For xy_ground mapping, world Y (sensor height) maps to analysis Z.
+		const positions = analysis.data.positions;
+		let sumZ = 0;
+		for (let i = 2; i < positions.length; i += 3) {
+			sumZ += positions[i];
+		}
+		const meanZ = sumZ / (positions.length / 3);
+		expect(meanZ).toBeCloseTo(0.9, 3);
+	});
+});

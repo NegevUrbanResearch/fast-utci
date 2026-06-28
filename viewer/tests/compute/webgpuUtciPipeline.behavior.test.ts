@@ -1,0 +1,1404 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+	__TEST_ONLY_parseRangeSummaryRecord,
+	__TEST_ONLY_WebgpuUtciComputePipeline,
+	createWebgpuUtciPipeline
+} from '$lib/compute/gpu/webgpuUtciPipeline';
+import { DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE } from '$lib/compute/gpu/exposureScheduling';
+
+function createFakeBuffer(size: number, usage = 0) {
+	return {
+		size,
+		usage,
+		destroy: vi.fn()
+	};
+}
+
+function createFakePipeline() {
+	return {
+		getBindGroupLayout: vi.fn(() => ({}))
+	};
+}
+
+function createFakeSelectedHourOutputHandle(options?: {
+	buffer?: ReturnType<typeof createFakeBuffer>;
+	byteLength?: number;
+	source?: string;
+	disposed?: boolean;
+	ownerId?: string;
+	metricType?: 'utci' | 'shading_index';
+	period?: { kind: 'time-index'; index: number } | { kind: 'month-index'; index: number; startTimeIndex: number; timeCount: number };
+}) {
+	const buffer = options?.buffer ?? createFakeBuffer(options?.byteLength ?? 16);
+	return {
+		buffer,
+		byteLength: options?.byteLength ?? buffer.size,
+		source: options?.source ?? 'webgpu-on-demand-snapshot',
+		ownerId: options?.ownerId ?? 'webgpu-on-demand-snapshot',
+		metricType: options?.metricType ?? 'utci',
+		valueLayout: 'one-f32-per-point',
+		period: options?.period ?? { kind: 'time-index', index: 8 },
+		disposed: options?.disposed ?? false,
+		dispose: vi.fn()
+	};
+}
+
+function createFakeComputePass() {
+	return {
+		setPipeline: vi.fn(),
+		setBindGroup: vi.fn(),
+		dispatchWorkgroups: vi.fn(),
+		end: vi.fn()
+	};
+}
+
+function createFakeDevice(options?: {
+	onSubmittedWorkDone?: () => Promise<void>;
+	throwOnCreateBindGroupCall?: number;
+}) {
+	const computePasses: ReturnType<typeof createFakeComputePass>[] = [];
+	const buffers: ReturnType<typeof createFakeBuffer>[] = [];
+	const createBindGroup = vi.fn(() => {
+		if (
+			options?.throwOnCreateBindGroupCall !== undefined &&
+			createBindGroup.mock.calls.length === options.throwOnCreateBindGroupCall
+		) {
+			throw new Error(`createBindGroup failed on call ${options.throwOnCreateBindGroupCall}`);
+		}
+		return {};
+	});
+	return {
+		limits: {
+			maxStorageBuffersPerShaderStage: 8
+		},
+		__computePasses: computePasses,
+		__buffers: buffers,
+		queue: {
+			writeBuffer: vi.fn(),
+			submit: vi.fn(),
+			onSubmittedWorkDone: vi.fn(options?.onSubmittedWorkDone ?? (() => Promise.resolve()))
+		},
+		createBuffer: vi.fn(({ size, usage }: { size: number; usage?: number }) => {
+			const buffer = createFakeBuffer(size, usage);
+			buffers.push(buffer);
+			return buffer;
+		}),
+		createShaderModule: vi.fn(() => ({})),
+		createComputePipelineAsync: vi.fn(() => Promise.resolve(createFakePipeline())),
+		createBindGroup,
+		createCommandEncoder: vi.fn(() => ({
+			beginComputePass: vi.fn(() => {
+				const pass = createFakeComputePass();
+				computePasses.push(pass);
+				return pass;
+			}),
+			copyBufferToBuffer: vi.fn(),
+			finish: vi.fn(() => ({}))
+		}))
+	};
+}
+
+function createFakeDeviceWithStorageLimit(maxStorageBuffersPerShaderStage: number) {
+	return {
+		...createFakeDevice(),
+		limits: {
+			maxStorageBuffersPerShaderStage
+		}
+	};
+}
+
+function baseUploadParams() {
+	return {
+		gridPoints: new Float32Array([0, 0, 0]),
+		sunVectors: new Float32Array([1, 0, 0]),
+		weather: new Float32Array([1, 2, 3, 4, 5, 6, 7])
+	};
+}
+
+function exposureUploadParams(numPoints: number) {
+	const gridPoints = new Float32Array(numPoints * 3);
+	const sunVectors = new Float32Array([1, 0, 0]);
+	const domeVectors = new Float32Array(145 * 3);
+	const domeWeights = new Float32Array(145);
+	return {
+		gridPoints,
+		sunVectors,
+		sunAltitudes: new Float32Array([0.5]),
+		weather: new Float32Array([1, 2, 3, 4, 5, 6, 7]),
+		domeVectors,
+		domeWeights,
+		serializedBvh: {
+			bvhNodeBuffer: new ArrayBuffer(32),
+			bvhIndexBuffer: new ArrayBuffer(4),
+			vertexBuffer: new Float32Array([0, 0, 0]),
+			indexBuffer: new Uint32Array([0])
+		}
+	};
+}
+
+async function createReadyShadingIndexPipeline(options?: {
+	device?: ReturnType<typeof createFakeDevice>;
+	numPoints?: number;
+	numHours?: number;
+	numMonths?: number;
+}) {
+	const device = options?.device ?? createFakeDevice();
+	const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+	const numPoints = options?.numPoints ?? 2;
+	const numHours = options?.numHours ?? 3;
+	const numMonths = options?.numMonths ?? 1;
+	const totalTimeSteps = numHours * numMonths;
+	const sunVectors = new Float32Array(totalTimeSteps * 3);
+	for (let timeIndex = 0; timeIndex < totalTimeSteps; timeIndex += 1) {
+		sunVectors[timeIndex * 3 + 1] = 1;
+	}
+
+	await pipeline.uploadStaticData({
+		gridPoints: new Float32Array(numPoints * 3),
+		sunVectors,
+		sunAltitudes: new Float32Array(totalTimeSteps).fill(0.5),
+		sunUpMask: new Uint32Array(totalTimeSteps).fill(1),
+		weather: new Float32Array(totalTimeSteps * 7).fill(1)
+	});
+	(pipeline as any).ranExposurePassesThisRun = true;
+
+	return { device, pipeline };
+}
+
+describe('WebgpuUtciComputePipeline behavioral guards', () => {
+	beforeAll(() => {
+		Object.assign(globalThis, {
+			GPUBufferUsage: {
+				STORAGE: 1,
+				COPY_DST: 2,
+				COPY_SRC: 4,
+				UNIFORM: 8,
+				MAP_READ: 16
+			}
+		});
+	});
+
+	it('snapshots weather on upload so later caller mutation does not affect samples', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const weather = new Float32Array([1, 2, 3, 4, 5, 6, 7]);
+
+		await pipeline.uploadStaticData({
+			...baseUploadParams(),
+			weather
+		});
+		weather[0] = 99;
+		weather[4] = 123;
+
+		expect(pipeline.getWeatherSample(1)).toEqual([
+			{
+				air_temp: 1,
+				direct_normal: 5,
+				diffuse_horizontal: 6,
+				horiz_infrared: 7,
+				wind_speed: 3,
+				rel_humidity: 4
+			}
+		]);
+	});
+
+	it('can wrap a provided renderer-owned GPUDevice instead of requesting a standalone device', async () => {
+		const device = createFakeDeviceWithStorageLimit(8);
+		const pipeline = await createWebgpuUtciPipeline({
+			device: device as unknown as GPUDevice
+		});
+
+		expect(pipeline.getDeviceForDebug?.()).toBe(device);
+		expect(pipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(pipeline.supportsMrtComponentDiagnostics?.call(pipeline)).toBe(false);
+	});
+
+	it('enables MRT component diagnostics for a provided device only when its limits support them', async () => {
+		const limitedDevice = createFakeDeviceWithStorageLimit(8);
+		const capableDevice = createFakeDeviceWithStorageLimit(10);
+
+		const limitedPipeline = await createWebgpuUtciPipeline({
+			device: limitedDevice as unknown as GPUDevice,
+			enableDiagnostics: true
+		});
+		const capablePipeline = await createWebgpuUtciPipeline({
+			device: capableDevice as unknown as GPUDevice,
+			enableDiagnostics: true
+		});
+
+		expect(limitedPipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(capablePipeline.supportsMrtComponentDiagnostics).toBeDefined();
+		expect(limitedPipeline.supportsMrtComponentDiagnostics?.call(limitedPipeline)).toBe(false);
+		expect(capablePipeline.supportsMrtComponentDiagnostics?.call(capablePipeline)).toBe(true);
+	});
+
+	it('clears stale BVH and optional upload buffers when a later upload omits them', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const serializedBvh = {
+			bvhNodeBuffer: new ArrayBuffer(32),
+			bvhIndexBuffer: new ArrayBuffer(4),
+			vertexBuffer: new Float32Array([0, 0, 0]),
+			indexBuffer: new Uint32Array([0])
+		};
+
+		await pipeline.uploadStaticData({
+			...baseUploadParams(),
+			sunAltitudes: new Float32Array([0.5]),
+			domeVectors: new Float32Array([0, 1, 0]),
+			domeWeights: new Float32Array([1]),
+			serializedBvh
+		});
+		await pipeline.uploadStaticData(baseUploadParams());
+
+		expect((pipeline as any).bvhNodeBuffer).toBeNull();
+		expect((pipeline as any).bvhIndexBuffer).toBeNull();
+		expect((pipeline as any).bvhVertexBuffer).toBeNull();
+		expect((pipeline as any).bvhParamsBuffer).toBeNull();
+		expect((pipeline as any).sunAltitudesBuffer).toBeNull();
+		expect((pipeline as any).domeVectorsBuffer).toBeNull();
+		expect((pipeline as any).domeWeightsBuffer).toBeNull();
+	});
+
+	it('uploads the explicit u32 sun-up mask instead of deriving it from sun altitudes', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData({
+			gridPoints: new Float32Array([0, 0, 0]),
+			sunVectors: new Float32Array([
+				1, 0, 0,
+				1, 0, 0,
+				1, 0, 0
+			]),
+			sunAltitudes: new Float32Array([0, 0.2, 0]),
+			sunUpMask: new Uint32Array([1, 0, 1]),
+			weather: new Float32Array([
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7
+			])
+		});
+
+		const sunUpMaskBuffer = (pipeline as any).sunUpMaskBuffer;
+		expect(sunUpMaskBuffer).toBeTruthy();
+		expect(sunUpMaskBuffer.size).toBe(12);
+		const maskWrite = device.queue.writeBuffer.mock.calls.find(
+			(call) => call[0] === sunUpMaskBuffer
+		);
+		expect(maskWrite).toBeTruthy();
+		expect(Array.from(new Uint32Array(maskWrite![2] as ArrayBuffer, 0, 3))).toEqual([1, 0, 1]);
+	});
+
+	it('rejects shading index runs when sun altitudes were uploaded without an explicit sun-up mask', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData({
+			gridPoints: new Float32Array([0, 0, 0]),
+			sunVectors: new Float32Array([
+				0, 0, 0,
+				0, 1, 0,
+				0, 0, 0
+			]),
+			sunAltitudes: new Float32Array([0, 0.5, 0]),
+			weather: new Float32Array([
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7
+			])
+		});
+		(pipeline as any).ranExposurePassesThisRun = true;
+
+		await expect(
+			pipeline.runShadingIndex({
+				numPoints: 1,
+				numHours: 3,
+				numMonths: 1,
+				monthIndex: 0,
+				startTimeIndex: 0,
+				timeCount: 3
+			})
+		).rejects.toThrow(/explicit sunUpMask/i);
+	});
+
+	it('rejects UTCI readback dimensions that do not match the producing run config', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+
+		pipeline.utciBuffer = createFakeBuffer(16);
+		pipeline.lastConfig = { numPoints: 1, numHours: 24, numMonths: 1 };
+
+		await expect(
+			pipeline.readUtcisSlice({
+				monthIndex: 0,
+				hourIndex: 0,
+				numPoints: 2,
+				numHours: 24,
+				numMonths: 1
+			})
+		).rejects.toThrow(/readUtcisSlice request does not match the last run config/i);
+
+		await expect(
+			pipeline.readUtciBulk({
+				numPoints: 1,
+				numHours: 12,
+				numMonths: 1
+			})
+		).rejects.toThrow(/readUtciBulk request does not match the last run config/i);
+	});
+
+	it('uses chunked exposure scheduling by default', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1
+		});
+
+		const timings = pipeline.getOnDemandDiagnostics().timings;
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+		expect(device.queue.onSubmittedWorkDone).toHaveBeenCalledTimes(1);
+		expect(timings.exposureSchedulerMode).toBe('chunked');
+		expect(timings.exposureSchedulerSliceCount).toBe(1);
+		expect(timings.exposureSchedulerSubmitCount).toBe(1);
+		expect(timings.exposureSchedulerYieldCount).toBe(0);
+		expect(timings.exposurePointDispatchChunkCount).toBe(1);
+		expect(timings.exposureSchedulerMaxWorkgroupsPerSlice).toBe(
+			DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE
+		);
+		expect(timings.exposureSchedulerQueueWaitTotalMs).toEqual(expect.any(Number));
+		expect(timings.exposureSchedulerQueueWaitMaxMs).toEqual(expect.any(Number));
+		expect(timings.exposureSchedulerQueueWaitMinMs).toEqual(expect.any(Number));
+		expect(timings.exposurePrecomputeMs).toBeGreaterThanOrEqual(
+			timings.exposureCommandEncodeTotalMs ?? Number.POSITIVE_INFINITY
+		);
+	});
+
+	it('aborts default chunked exposure during queue wait and blocks later UTCI dispatch', async () => {
+		const controller = new AbortController();
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				controller.abort();
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				signal: controller.signal
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		await expect(
+			pipeline.runUtciForTimeIndex({
+				format: 'f32-utci',
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				timeIndex: 0
+			})
+		).rejects.toThrow(/solar\/sky exposure passes did not run/i);
+	});
+
+	it('rejects already-aborted exposure precompute before GPU setup work', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		device.createComputePipelineAsync.mockClear();
+		device.createCommandEncoder.mockClear();
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				signal: controller.signal
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.createCommandEncoder).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects exposure precompute after dispose with an abort error', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		pipeline.dispose();
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			})
+		).rejects.toMatchObject({
+			name: 'AbortError',
+			message: expect.stringContaining('disposed')
+		});
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('destroys single-submit exposure transient uniform buffers when queue wait rejects', async () => {
+		const queueError = new Error('queue wait failed');
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				throw queueError;
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+		pipeline.paramsBuffer = createFakeBuffer(16);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		const firstExposureBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			})
+		).rejects.toBe(queueError);
+
+		const transientUniformBuffers = device.__buffers
+			.slice(firstExposureBufferIndex)
+			.filter((buffer) => buffer.size === 16);
+		expect(transientUniformBuffers).toHaveLength(2);
+		for (const buffer of transientUniformBuffers) {
+			expect(buffer.destroy).toHaveBeenCalledTimes(1);
+		}
+
+		await expect(
+			pipeline.runUtciForTimeIndex({
+				format: 'f32-utci',
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				timeIndex: 0
+			})
+		).rejects.toThrow(/solar\/sky exposure passes did not run/i);
+	});
+
+	it('uses one queue submit and wait per chunked exposure scheduler slice', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1,
+			exposureScheduling: {
+				mode: 'chunked',
+				maxWorkgroupsPerSlice: 4,
+				yieldBetweenSlices: false
+			}
+		});
+
+		const timings = pipeline.getOnDemandDiagnostics().timings;
+		expect(device.queue.submit).toHaveBeenCalledTimes(4);
+		expect(device.queue.onSubmittedWorkDone).toHaveBeenCalledTimes(4);
+		expect(timings.exposureSchedulerMode).toBe('chunked');
+		expect(timings.exposureSchedulerSliceCount).toBe(4);
+		expect(timings.exposureSchedulerSubmitCount).toBe(4);
+		expect(timings.exposureSchedulerYieldCount).toBe(0);
+		expect(timings.exposureSchedulerMaxWorkgroupsPerSlice).toBe(4);
+		expect(timings.exposurePointDispatchChunkCount).toBe(4);
+		expect(timings.exposureSchedulerQueueWaitTotalMs).toEqual(expect.any(Number));
+		expect(timings.exposureSchedulerQueueWaitMaxMs).toEqual(expect.any(Number));
+		expect(timings.exposureSchedulerQueueWaitMinMs).toEqual(expect.any(Number));
+		expect(timings.exposureQueueWaitMs).toEqual(expect.any(Number));
+		expect(timings.exposurePointChunks).toBe(4);
+		expect(timings.exposureSolarRayBudget).toBe(1024);
+		expect(timings.exposureSkyRayBudget).toBe(1024 * 145);
+		expect(timings.exposurePrecomputeMs).toEqual(expect.any(Number));
+		expect(timings.exposurePrecomputeMs).toBeGreaterThanOrEqual(
+			timings.exposureCommandEncodeTotalMs ?? Number.POSITIVE_INFINITY
+		);
+	});
+
+	it('publishes a bounded chunked exposure breathing trace with honest yield timing splits', async () => {
+		const queueWaitsMs = [1, 6, 2, 8, 3, 4, 7, 5, 9, 2, 1, 3, 4, 6, 2, 5];
+		let queueWaitIndex = 0;
+		const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+		globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+			return setTimeout(() => callback(performance.now()), 0) as unknown as number;
+		}) as typeof requestAnimationFrame;
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				const waitMs = queueWaitsMs[queueWaitIndex] ?? 0;
+				queueWaitIndex += 1;
+				await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		try {
+			await pipeline.uploadStaticData(exposureUploadParams(4096));
+			await pipeline.runExposurePrecompute({
+				numPoints: 4096,
+				numHours: 1,
+				numMonths: 1,
+				exposureScheduling: {
+					mode: 'chunked',
+					maxWorkgroupsPerSlice: 4,
+					yieldBetweenSlices: true
+				},
+				diagnosticsEnabled: true
+			});
+		} finally {
+			globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+		}
+
+		const trace = pipeline.getOnDemandDiagnostics().timings.exposureSchedulerBreathingTrace;
+		expect(trace).toBeDefined();
+		expect(trace?.mode).toBe('chunked');
+		expect(trace?.sliceCount).toBe(16);
+		expect(trace?.submitCount).toBe(16);
+		expect(trace?.yieldCount).toBe(15);
+		expect(trace?.allSliceWindows).toHaveLength(16);
+		expect(trace?.firstSamples).toHaveLength(8);
+		expect(trace?.lastSamples).toHaveLength(8);
+		expect(trace?.worstQueueWaitSamples).toHaveLength(8);
+		expect(trace?.worstYieldSamples).toHaveLength(8);
+		expect(trace?.queueWaitMinMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.queueWaitAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.yieldWaitAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.yieldPostRafTimeoutAverageMs).toBeGreaterThanOrEqual(0);
+		expect(trace?.worstQueueWaitSamples.map((sample) => sample.queueWaitMs)).toEqual(
+			[...((trace?.worstQueueWaitSamples ?? []).map((sample) => sample.queueWaitMs))].sort(
+				(left, right) => right - left
+			)
+		);
+		for (const sample of trace?.firstSamples.slice(0, 7) ?? []) {
+			expect(sample.yieldStartedAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldRafCallbackAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldCompletedAtMs).toEqual(expect.any(Number));
+			expect(sample.yieldWaitMs).toEqual(expect.any(Number));
+			expect(sample.yieldPostRafTimeoutMs).toEqual(expect.any(Number));
+			expect(sample.yieldCompletedAtMs).toBeGreaterThanOrEqual(sample.yieldStartedAtMs ?? Infinity);
+			expect(sample.yieldCompletedAtMs).toBeGreaterThanOrEqual(
+				sample.yieldRafCallbackAtMs ?? Infinity
+			);
+		}
+		const finalSample = trace?.lastSamples[trace.lastSamples.length - 1];
+		expect(finalSample?.sliceIndex).toBe(15);
+		expect(finalSample?.yieldStartedAtMs).toBeUndefined();
+		expect(finalSample?.yieldCompletedAtMs).toBeUndefined();
+		expect(finalSample?.yieldWaitMs).toBeUndefined();
+		expect(finalSample?.yieldPostRafTimeoutMs).toBeUndefined();
+	});
+
+	it('publishes a comparable one-slice breathing trace for single-submit exposure', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1,
+			exposureScheduling: {
+				mode: 'single-submit',
+				maxWorkgroupsPerSlice: DEFAULT_EXPOSURE_MAX_WORKGROUPS_PER_SLICE,
+				yieldBetweenSlices: false
+			},
+			diagnosticsEnabled: true
+		});
+
+		const trace = pipeline.getOnDemandDiagnostics().timings.exposureSchedulerBreathingTrace;
+		expect(trace).toBeDefined();
+		expect(trace).toMatchObject({
+			mode: 'single-submit',
+			sliceCount: 1,
+			submitCount: 1,
+			yieldCount: 0
+		});
+		expect(trace?.allSliceWindows).toHaveLength(1);
+		expect(trace?.firstSamples).toHaveLength(1);
+		expect(trace?.lastSamples).toHaveLength(1);
+		expect(trace?.worstQueueWaitSamples).toHaveLength(1);
+		expect(trace?.worstYieldSamples).toHaveLength(1);
+		expect(trace?.firstSamples[0]).toMatchObject({
+			sliceIndex: 0,
+			pointStart: 0,
+			pointCount: 1024
+		});
+		expect(trace?.firstSamples[0]?.yieldWaitMs).toBeUndefined();
+		expect(trace?.yieldWaitTotalMs).toBe(0);
+		expect(trace?.yieldWaitMaxMs).toBe(0);
+		expect(trace?.yieldWaitAverageMs).toBe(0);
+		expect(trace?.yieldPostRafTimeoutMaxMs).toBe(0);
+		expect(trace?.yieldPostRafTimeoutAverageMs).toBe(0);
+	});
+
+	it('clears stale selected-hour diagnostics when exposure precompute reruns', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1
+		});
+		await pipeline.runUtciForTimeIndex({
+			format: 'f32-utci',
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1,
+			timeIndex: 0
+		});
+
+		const afterSelectedHour = pipeline.getOnDemandDiagnostics();
+		expect(afterSelectedHour.timeIndices).toEqual([0]);
+		expect(afterSelectedHour.oneHourOutputBytes).toBeGreaterThan(0);
+		expect(afterSelectedHour.trackedGpuAllocationBytes.selectedHourOutputBytes).toBeGreaterThan(0);
+		expect(afterSelectedHour.timings.oneHourDispatchMs).toEqual(expect.any(Number));
+
+		await pipeline.runExposurePrecompute({
+			numPoints: 1024,
+			numHours: 1,
+			numMonths: 1
+		});
+
+		const afterRerun = pipeline.getOnDemandDiagnostics();
+		expect(afterRerun.timeIndices).toEqual([]);
+		expect(afterRerun.oneHourOutputBytes).toBe(0);
+		expect(afterRerun.trackedGpuAllocationBytes.selectedHourOutputBytes).toBe(0);
+		expect(
+			afterRerun.trackedGpuAllocationBytes.selectedHourOutputBytesHighWatermark
+		).toBeGreaterThan(0);
+		expect(afterRerun.timings.oneHourDispatchMs).toBeUndefined();
+		expect(afterRerun.timings.selectedHourReadbackMs).toBeUndefined();
+		expect(afterRerun.timings.renderUpdateMs).toBeUndefined();
+	});
+
+	it('destroys helper-owned exposure transient buffers when encoding throws', async () => {
+		const device = createFakeDevice({ throwOnCreateBindGroupCall: 2 });
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+		pipeline.paramsBuffer = createFakeBuffer(16);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		const firstExposureBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			})
+		).rejects.toThrow(/createBindGroup failed on call 2/);
+
+		const transientUniformBuffers = device.__buffers
+			.slice(firstExposureBufferIndex)
+			.filter((buffer) => buffer.size === 16);
+		expect(transientUniformBuffers).toHaveLength(1);
+		expect(transientUniformBuffers[0]?.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('destroys chunked exposure transient uniform buffers after each slice wait', async () => {
+		const secondQueueWaitError = new Error('second queue wait failed');
+		let device!: ReturnType<typeof createFakeDevice>;
+		let firstExposureBufferIndex = 0;
+		device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				const waitCount = device.queue.onSubmittedWorkDone.mock.calls.length;
+				if (waitCount === 2) {
+					const firstSliceUniformBuffers = device.__buffers
+						.slice(firstExposureBufferIndex)
+						.filter((buffer) => buffer.size === 16)
+						.slice(0, 2);
+					expect(firstSliceUniformBuffers).toHaveLength(2);
+					for (const buffer of firstSliceUniformBuffers) {
+						expect(buffer.destroy).toHaveBeenCalledTimes(1);
+					}
+					throw secondQueueWaitError;
+				}
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+		pipeline.paramsBuffer = createFakeBuffer(16);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		firstExposureBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				exposureScheduling: {
+					mode: 'chunked',
+					maxWorkgroupsPerSlice: 4,
+					yieldBetweenSlices: false
+				}
+			})
+		).rejects.toBe(secondQueueWaitError);
+
+		expect(device.queue.submit).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not allow UTCI dispatch after chunked exposure aborts before completion', async () => {
+		const controller = new AbortController();
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				controller.abort();
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				exposureScheduling: {
+					mode: 'chunked',
+					maxWorkgroupsPerSlice: 4,
+					yieldBetweenSlices: false
+				},
+				signal: controller.signal
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		await expect(
+			pipeline.runUtciForTimeIndex({
+				format: 'f32-utci',
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				timeIndex: 0
+			})
+		).rejects.toThrow(/solar\/sky exposure passes did not run/i);
+	});
+
+	it('destroys runAll exposure transient uniform buffers when queue wait rejects', async () => {
+		const queueError = new Error('runAll queue wait failed');
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				throw queueError;
+			}
+		});
+		const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+
+		try {
+			await pipeline.uploadStaticData(exposureUploadParams(1024));
+			const firstExposureBufferIndex = device.__buffers.length;
+			await pipeline.runAll({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			});
+			await Promise.resolve();
+
+			const transientUniformBuffers = device.__buffers
+				.slice(firstExposureBufferIndex)
+				.filter((buffer) => buffer.size === 16)
+				.slice(1);
+			expect(transientUniformBuffers).toHaveLength(2);
+			for (const buffer of transientUniformBuffers) {
+				expect(buffer.destroy).toHaveBeenCalledTimes(1);
+			}
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				'WebGPU UTCI pipeline: runAll queue completion failed',
+				queueError
+			);
+		} finally {
+			consoleErrorSpy.mockRestore();
+		}
+	});
+
+	it('blocks later UTCI dispatch when runAll exposure encoding throws before submit', async () => {
+		const device = createFakeDevice({ throwOnCreateBindGroupCall: 2 });
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		pipeline.lastConfig = { numPoints: 1024, numHours: 1, numMonths: 1 };
+		const firstRunAllBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runAll({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			})
+		).rejects.toThrow(/createBindGroup failed on call 2/);
+
+		const transientUniformBuffers = device.__buffers
+			.slice(firstRunAllBufferIndex)
+			.filter((buffer) => buffer.size === 16)
+			.slice(1);
+		expect(transientUniformBuffers).toHaveLength(1);
+		expect(transientUniformBuffers[0]?.destroy).toHaveBeenCalledTimes(1);
+		await expect(
+			pipeline.runUtciForTimeIndex({
+				format: 'f32-utci',
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				timeIndex: 0
+			})
+		).rejects.toThrow(/solar\/sky exposure passes did not run/i);
+		expect(pipeline.getOnDemandDiagnostics().path).not.toBe('run-all-baseline');
+		expect(pipeline.getOnDemandDiagnostics().usedRunAllForSelectedHour).toBe(false);
+	});
+
+	it('destroys runAll exposure transient uniform buffers when MRT bind setup throws before submit', async () => {
+		const device = createFakeDevice({ throwOnCreateBindGroupCall: 5 });
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false) as any;
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+		pipeline.lastConfig = { numPoints: 1024, numHours: 1, numMonths: 1 };
+		const firstRunAllBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runAll({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1
+			})
+		).rejects.toThrow(/createBindGroup failed on call 5/);
+
+		expect(device.queue.submit).not.toHaveBeenCalled();
+		const transientUniformBuffers = device.__buffers
+			.slice(firstRunAllBufferIndex)
+			.filter((buffer) => buffer.size === 16)
+			.slice(1);
+		expect(transientUniformBuffers).toHaveLength(2);
+		for (const buffer of transientUniformBuffers) {
+			expect(buffer.destroy).toHaveBeenCalledTimes(1);
+		}
+		expect(pipeline.getOnDemandDiagnostics().path).not.toBe('run-all-baseline');
+		expect(pipeline.getOnDemandDiagnostics().usedRunAllForSelectedHour).toBe(false);
+		await expect(
+			pipeline.runUtciForTimeIndex({
+				format: 'f32-utci',
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				timeIndex: 0
+			})
+		).rejects.toThrow(/solar\/sky exposure passes did not run/i);
+	});
+
+	it('stops chunked exposure before later slices when aborted after a queue wait', async () => {
+		const controller = new AbortController();
+		const device = createFakeDevice({
+			onSubmittedWorkDone: async () => {
+				controller.abort();
+			}
+		});
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await pipeline.uploadStaticData(exposureUploadParams(1024));
+
+		await expect(
+			pipeline.runExposurePrecompute({
+				numPoints: 1024,
+				numHours: 1,
+				numMonths: 1,
+				exposureScheduling: {
+					mode: 'chunked',
+					maxWorkgroupsPerSlice: 4,
+					yieldBetweenSlices: false
+				},
+				signal: controller.signal
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+		expect(device.queue.onSubmittedWorkDone).toHaveBeenCalledTimes(1);
+	});
+
+	it('parses mixed f32/u32 range summary records correctly', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, -3.5, true);
+		view.setFloat32(4, 42.25, true);
+		view.setUint32(8, 8171761, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: { min: -3.5, max: 42.25 },
+			validCount: 8171761
+		});
+	});
+
+	it('keeps equal-valued valid range summaries instead of dropping them', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, 12.25, true);
+		view.setFloat32(4, 12.25, true);
+		view.setUint32(8, 4, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: { min: 12.25, max: 12.25 },
+			validCount: 4
+		});
+	});
+
+	it('returns null range when compact summary valid count is zero', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, 3.4028234663852886e38, true);
+		view.setFloat32(4, -3.4028234663852886e38, true);
+		view.setUint32(8, 0, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: null,
+			validCount: 0
+		});
+	});
+
+	it('returns null range for non-finite bounds even when valid count is positive', () => {
+		const bytes = new ArrayBuffer(16);
+		const view = new DataView(bytes);
+		view.setFloat32(0, Number.NaN, true);
+		view.setFloat32(4, 42.25, true);
+		view.setUint32(8, 7, true);
+		view.setUint32(12, 0, true);
+
+		expect(__TEST_ONLY_parseRangeSummaryRecord(bytes)).toEqual({
+			range: null,
+			validCount: 7
+		});
+	});
+
+	it('range summary method does not call full selected-hour debug readback', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const methodStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
+		expect(methodStart).toBeGreaterThanOrEqual(0);
+		const methodEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', methodStart);
+		expect(methodEnd).toBeGreaterThan(methodStart);
+		const method = source.slice(methodStart, methodEnd);
+
+		expect(method).toContain('ensureRangeReduceValuesPipeline');
+		expect(method).toContain('ensureRangeReduceRangesPipeline');
+		expect(method).not.toContain('readOnDemandUtciForDebug');
+		expect(method).not.toContain('runUtciForTimeIndex(params)');
+		expect(method).toContain('copyBufferToBuffer');
+		expect(method).toContain('RANGE_SUMMARY_RECORD_BYTES');
+		expect(method).toContain('unmap()');
+		expect(method).toContain('rangeSummaryOutputBuffer');
+		expect(method).toContain('runRangeSummarySerial');
+		expect(method).toContain('parseRangeSummaryRecord');
+		expect(method).not.toContain('__TEST_ONLY_parseRangeSummaryRecord');
+		expect(method).toContain('selectedDayRangeSummaryReadbackBytes');
+	});
+
+	it('output range summary method reduces the visible GPU output buffer without debug readback', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const methodStart = source.indexOf('async runUtciRangeSummaryForOutput');
+		expect(methodStart).toBeGreaterThanOrEqual(0);
+		const methodEnd = source.indexOf(
+			'\n\n\tprivate async reduceRangeSummaryFromValuesBuffer',
+			methodStart
+		);
+		expect(methodEnd).toBeGreaterThan(methodStart);
+		const method = source.slice(methodStart, methodEnd);
+
+		expect(method).toContain('runRangeSummarySerial');
+		expect(method).toContain('return this.reduceRangeSummaryFromValuesBuffer({');
+		expect(source).not.toContain('handle?.buffer ?? output.gpuBuffer');
+		expect(method).toContain('sourceValuesBuffer: handle.buffer');
+		expect(method).not.toContain('readOnDemandUtciForDebug');
+		expect(method).not.toContain('runUtciForTimeIndex(params)');
+		expect(method).not.toContain('rangeSummaryOutputBuffer =');
+	});
+
+	it('runShadingIndex returns owned one-f32-per-point shading metadata and handle', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData({
+			gridPoints: new Float32Array([0, 0, 0, 1, 0, 0]),
+			sunVectors: new Float32Array([
+				0, 0, 0,
+				0, 1, 0,
+				0, 0, 0
+			]),
+			sunAltitudes: new Float32Array([0, 0.5, 0]),
+			sunUpMask: new Uint32Array([0, 1, 0]),
+			weather: new Float32Array([
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7,
+				1, 2, 3, 4, 5, 6, 7
+			])
+		});
+		(pipeline as any).ranExposurePassesThisRun = true;
+
+		const output = await pipeline.runShadingIndex({
+			numPoints: 2,
+			numHours: 3,
+			numMonths: 1,
+			monthIndex: 0,
+			startTimeIndex: 0,
+			timeCount: 3
+		});
+
+		expect(output).toMatchObject({
+			source: 'webgpu-on-demand-snapshot',
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: { kind: 'month-index', index: 0, startTimeIndex: 0, timeCount: 3 },
+			numPoints: 2,
+			outputBytes: 8,
+			debugLabel: 'webgpu-shading-index'
+		});
+		expect(output.ownerId).toMatch(/^webgpu-shading-index:/);
+		expect(output.gpuBuffer).toBe(output.gpuOutputHandle?.buffer);
+		expect(output.gpuOutputHandle).toMatchObject({
+			source: output.source,
+			ownerId: output.ownerId,
+			metricType: 'shading_index',
+			valueLayout: 'one-f32-per-point',
+			period: output.period,
+			byteLength: 8,
+			disposed: false
+		});
+		expect((output.gpuBuffer as any).usage & GPUBufferUsage.STORAGE).toBeTruthy();
+		expect((output.gpuBuffer as any).usage & GPUBufferUsage.COPY_SRC).toBeTruthy();
+	});
+
+	it.each([
+		{
+			name: 'month index outside configured months',
+			overrides: { monthIndex: 2 },
+			expected: /monthIndex=2/
+		},
+		{
+			name: 'month start does not match representative month',
+			overrides: { monthIndex: 1, startTimeIndex: 0 },
+			expected: /startTimeIndex=0.*monthIndex=1/i
+		},
+		{
+			name: 'zero time count',
+			overrides: { timeCount: 0 },
+			expected: /timeCount=0/
+		},
+		{
+			name: 'period exceeds uploaded time range',
+			overrides: { monthIndex: 1, startTimeIndex: 3, timeCount: 4 },
+			expected: /exceeds totalTimeSteps=6/i
+		},
+		{
+			name: 'period spans more than one representative month',
+			overrides: { timeCount: 4 },
+			expected: /timeCount=4.*numHours=3/i
+		}
+	])('rejects incoherent shading index periods: $name', async ({ overrides, expected }) => {
+		const { device, pipeline } = await createReadyShadingIndexPipeline({
+			numPoints: 2,
+			numHours: 3,
+			numMonths: 2
+		});
+
+		await expect(
+			pipeline.runShadingIndex({
+				numPoints: 2,
+				numHours: 3,
+				numMonths: 2,
+				monthIndex: 0,
+				startTimeIndex: 0,
+				timeCount: 3,
+				...overrides
+			})
+		).rejects.toThrow(expected);
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('destroys unowned shading index output buffer when queue readiness fails', async () => {
+		const device = createFakeDevice({
+			onSubmittedWorkDone: () => Promise.reject(new Error('queue readiness failed'))
+		});
+		const { pipeline } = await createReadyShadingIndexPipeline({
+			device,
+			numPoints: 2,
+			numHours: 3,
+			numMonths: 1
+		});
+		const firstRunBufferIndex = device.__buffers.length;
+
+		await expect(
+			pipeline.runShadingIndex({
+				numPoints: 2,
+				numHours: 3,
+				numMonths: 1,
+				monthIndex: 0,
+				startTimeIndex: 0,
+				timeCount: 3
+			})
+		).rejects.toThrow(/queue readiness failed/);
+
+		const runBuffers = device.__buffers.slice(firstRunBufferIndex);
+		const outputBuffer = runBuffers.find(
+			(buffer) => buffer.size === 8 && buffer.usage === (GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC)
+		);
+		const paramsBuffer = runBuffers.find(
+			(buffer) => buffer.size === 32 && buffer.usage === (GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST)
+		);
+		expect(outputBuffer?.destroy).toHaveBeenCalledTimes(1);
+		expect(paramsBuffer?.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it('rejects disposed generic f32 output handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({
+			disposed: true,
+			ownerId: 'webgpu-shading-index:test',
+			metricType: 'shading_index',
+			period: { kind: 'month-index', index: 0, startTimeIndex: 0, timeCount: 3 }
+		});
+
+		await expect(
+			pipeline.runF32OutputRangeSummary({
+				metricType: 'shading_index',
+				numPoints: 4,
+				output: {
+					source: 'webgpu-on-demand-snapshot',
+					ownerId: 'webgpu-shading-index:test',
+					metricType: 'shading_index',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'month-index', index: 0, startTimeIndex: 0, timeCount: 3 },
+					numPoints: 4,
+					gpuOutputHandle: handle as any,
+					outputBytes: 16,
+					debugLabel: 'webgpu-shading-index'
+				}
+			})
+		).rejects.toThrow(/disposed GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects output range summaries whose request time index differs from the output time index before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 9,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16)
+				}
+			})
+		).rejects.toThrow(/timeIndex mismatch.*output=8.*requested=9/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects disposed output range summary handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({ disposed: true });
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/disposed GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects raw output range summary GPU buffers without selected-hour handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16)
+				}
+			})
+		).rejects.toThrow(/requires a selected-hour GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects foreign output range summary handles before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({ source: 'foreign-output-buffer' });
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/requires a selected-hour GPU output handle/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects ambiguous output range summary GPU buffers that differ from the selected-hour handle', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle();
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: createFakeBuffer(16),
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/does not match the selected-hour GPU output handle buffer/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('rejects undersized output range summary source buffers before reduction setup', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const handle = createFakeSelectedHourOutputHandle({
+			buffer: createFakeBuffer(12),
+			byteLength: 16
+		});
+
+		await expect(
+			pipeline.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuOutputHandle: handle as any
+				}
+			})
+		).rejects.toThrow(/source buffer is too small.*required=16.*actual=12/i);
+
+		expect(device.createComputePipelineAsync).not.toHaveBeenCalled();
+		expect(device.queue.submit).not.toHaveBeenCalled();
+	});
+
+	it('creates selected-hour snapshot buffers that can be reduced as storage input', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const snapshotStart = source.indexOf('const snapshotBuffer = this.device.createBuffer');
+		expect(snapshotStart).toBeGreaterThanOrEqual(0);
+		const snapshotEnd = source.indexOf('});', snapshotStart);
+		const snapshotBlock = source.slice(snapshotStart, snapshotEnd);
+
+		expect(snapshotBlock).toContain('GPUBufferUsage.STORAGE');
+		expect(snapshotBlock).toContain('GPUBufferUsage.COPY_SRC');
+		expect(snapshotBlock).toContain('GPUBufferUsage.COPY_DST');
+	});
+
+	it('serializes all shared compact range summary buffer users', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+		const productionStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
+		const productionEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', productionStart);
+		const debugStart = source.indexOf('async __TEST_ONLY_reduceRangeValuesForDebug');
+		const debugEnd = source.indexOf('\n\n\tasync readUtcisSlice', debugStart);
+		expect(source).toContain('private rangeSummarySerial: Promise<void> = Promise.resolve()');
+		expect(source).toContain('private async runRangeSummarySerial');
+		expect(productionStart).toBeGreaterThanOrEqual(0);
+		expect(productionEnd).toBeGreaterThan(productionStart);
+		expect(debugStart).toBeGreaterThanOrEqual(0);
+		expect(debugEnd).toBeGreaterThan(debugStart);
+
+		const productionMethod = source.slice(productionStart, productionEnd);
+		const debugMethod = source.slice(debugStart, debugEnd);
+		expect(productionMethod).toContain('return this.runRangeSummarySerial(async () =>');
+		expect(debugMethod).toContain('return this.runRangeSummarySerial(async () =>');
+	});
+
+	it('disposes compact range summary GPU buffers', () => {
+		const source = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
+			'utf8'
+		);
+
+		expect(source).toContain('rangeSummaryOutputBuffer?.destroy()');
+		expect(source).toContain('rangeSummaryPartialBufferA?.destroy()');
+		expect(source).toContain('rangeSummaryPartialBufferB?.destroy()');
+		expect(source).toContain('rangeSummaryFinalStagingBuffer?.destroy()');
+	});
+
+	it('keeps compact range reduction shader source WebGPU-compatible', () => {
+		const shader = readFileSync(
+			resolve(__dirname, '../../src/lib/compute/gpu/shaders/utci_range_reduce.wgsl'),
+			'utf8'
+		);
+
+		expect(shader).toContain('fn reduce_values');
+		expect(shader).toContain('fn reduce_ranges');
+		expect(shader).toContain('array<f32, 256>');
+		expect(shader).toContain('array<u32, 256>');
+		expect(shader).toContain('value == value && abs(value) <= F32_MAX_VALUE');
+		expect(shader).not.toContain('isFinite');
+	});
+});

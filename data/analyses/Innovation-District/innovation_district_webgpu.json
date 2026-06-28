@@ -1,0 +1,63 @@
+{
+  "analysis_id": "innovation_district_webgpu",
+  "date": "20250815",
+  "grid_size": 2,
+  "analysis_type": "full_day",
+  "hours": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "bounds": {
+    "x_min": 180591.05,
+    "x_max": 183188.48,
+    "y_min": 573608.4,
+    "y_max": 575905.44,
+    "z": 1.5
+  },
+  "utci_range": {
+    "min": 0,
+    "max": 0,
+    "mean": 0,
+    "std": 0
+  },
+  "num_positions": 1492551,
+  "model_file": "data/3d_models/Innovation-District/innovation_district.glb",
+  "epw_file": "data/weather/ISR_D_Beer.Sheva.401900_TMYx/ISR_D_Beer.Sheva.401900_TMYx.epw",
+  "location": {
+    "latitude": 31.2515,
+    "longitude": 34.7995,
+    "timezone": 2,
+    "city": "Beer.Sheva"
+  },
+  "generation_date": "2026-06-11T19:42:53.951Z",
+  "runtime_seconds": 0,
+  "coordinate_system": "xy_ground",
+  "hour_statistics": [],
+  "has_shading_index": false,
+  "shading_index_range": {
+    "min": 0,
+    "max": 1
+  }
+}

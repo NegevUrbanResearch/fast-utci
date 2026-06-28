@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { calculateModelBounds, calculateModelCenter, calculateModelSize } from '$lib/utils/bounds';
+import { calculateModelBounds, calculateModelCenter, calculateModelSize, getBoundsCenterAndSize } from '$lib/utils/bounds';
 
 describe('bounds utilities', () => {
 	it('should calculate model bounds from group', () => {
@@ -45,6 +45,23 @@ describe('bounds utilities', () => {
 		expect(size.x).toBeCloseTo(10, 1);
 		expect(size.y).toBeCloseTo(20, 1);
 		expect(size.z).toBeCloseTo(30, 1);
+	});
+
+	it('getBoundsCenterAndSize returns bounds, center, size from single traversal', () => {
+		const group = new THREE.Group();
+		const mesh = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 8), new THREE.MeshBasicMaterial());
+		mesh.position.set(1, 2, 3);
+		group.add(mesh);
+
+		const { bounds, center, size } = getBoundsCenterAndSize(group);
+
+		expect(bounds.min.x).toBeLessThan(bounds.max.x);
+		expect(center.x).toBeCloseTo(1, 1);
+		expect(center.y).toBeCloseTo(2, 1);
+		expect(center.z).toBeCloseTo(3, 1);
+		expect(size.x).toBeCloseTo(4, 1);
+		expect(size.y).toBeCloseTo(6, 1);
+		expect(size.z).toBeCloseTo(8, 1);
 	});
 });
 

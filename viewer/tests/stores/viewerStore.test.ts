@@ -8,11 +8,14 @@ describe('viewerStore', () => {
 		// Reset store before each test
 		viewerStore.set({
 			currentHour: 0,
+			currentMonth: 7,
 			colorMode: 'normalized',
+			metricType: 'utci',
 			utciVisible: true,
 			analysisId: null,
 			loading: false,
-			error: null
+			error: null,
+			theme: 'dark'
 		});
 	});
 

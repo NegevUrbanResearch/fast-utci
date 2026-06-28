@@ -103,6 +103,14 @@ python batch_scenarios.py
 python batch_scenarios.py --grid-size 5.0 --month 7 --day 20
 ```
 
+### Regenerate Ben-Gurion Artifacts
+
+```powershell
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe scripts/export_ben_gurion_intermediates.py --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday --model data/3d_models/Ben-Gurion/original_with_layers.glb
+```
+
+By default, the exporter writes the `solar`, `sky`, and `mrt` stages.
+
 **Output Structure:**
 ```
 data/analyses/

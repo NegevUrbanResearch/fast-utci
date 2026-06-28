@@ -12,9 +12,21 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest",
 		"test:ui": "vitest --ui",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"test:e2e": "playwright test",
+		"test:quality:selected-hour": "vitest run tests/compute/live-selected-hour-controller.test.ts tests/compute/live-selected-hour-route-host.test.ts tests/compute/live-selected-hour-route-projection.test.ts tests/compute/live-selected-hour-render-context.test.ts tests/compute/live-selected-hour-session.test.ts tests/compute/onDemandDiagnostics.test.ts tests/compute/selectedHourOutputHandle.test.ts tests/scene/acceptedGpuResidentOutputRelease.test.ts tests/scene/acceptedGpuResidentOutputReleaseCallsites.test.ts tests/scene/utci-surface-sync.test.ts tests/scene/utciComputeBufferRenderBridge.test.ts tests/components/canvasInteractionController.test.ts tests/diagnostics/selectedHourRuntimeContract.test.ts tests/diagnostics/main-route-utci-diagnostics.test.ts tests/debug/debug-webgpu-utci-diagnostics.test.ts tests/debug/debug-on-demand-prototype-diagnostics.test.ts tests/debug/debug-selected-hour-legacy-host.test.ts tests/routes/main-route-debug-boundary-source-lock.test.ts",
+		"test:e2e:selected-hour": "cross-env REQUIRE_WEBGPU_ON_DEMAND=1 playwright test tests/e2e/main-route-manual-diagnostics.spec.ts tests/e2e/debug-route-baseline-diagnostics.spec.ts tests/e2e/debug-route-shared-host-diagnostics.spec.ts tests/e2e/debug-route-parity-runtime-diagnostics.spec.ts --project=chromium --workers=1 --reporter=list --timeout=30000",
+		"test:e2e:parity": "playwright test tests/e2e/parity-ben-gurion.spec.ts",
+		"parity:collect-webgpu": "playwright test --config=playwright.collect.config.ts tests/e2e/collect-webgpu-parity.spec.ts --project=chromium --workers=1",
+		"parity:compare": "tsx scripts/compare-parity.ts",
+		"parity:diagnose-mrt": "tsx scripts/diagnose-mrt-worst-cell.ts",
+		"parity:diagnose-flips": "tsx scripts/diagnose-solar-flips.ts",
+		"parity:diagnose-ray-oracle": "playwright test --config=playwright.collect.config.ts tests/e2e/diagnose-solar-ray-oracle.spec.ts --project=chromium --workers=1",
+		"gis:export-innovation-district": "node --import tsx ./scripts/export-innovation-district-gis.ts",
+		"summarize:main-route-performance": "tsx scripts/summarize-main-route-performance.ts"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.58.2",
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.47.1",
@@ -29,11 +41,14 @@
 		"svelte-check": "^4.3.3",
 		"typescript": "^5.9.3",
 		"vite": "^7.1.10",
+		"tsx": "^4.19.2",
 		"vitest": "^4.0.18"
 	},
 	"dependencies": {
+		"@iconify-icons/lucide": "^1.2.135",
 		"@threlte/core": "^8.1.8",
 		"@threlte/extras": "^9.0.0",
-		"three": "^0.174.0"
+		"three": "^0.175.0",
+		"three-mesh-bvh": "^0.9.3"
 	}
 }

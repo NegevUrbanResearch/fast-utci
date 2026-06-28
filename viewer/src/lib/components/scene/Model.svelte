@@ -3,6 +3,11 @@
 	// This ensures each model load gets a truly unique URL, preventing Threlte from
 	// serving a cached (and mutated) version when we return to a previously loaded model
 	let globalModelVersion = 0;
+
+	function nextGlobalModelVersion(): number {
+		globalModelVersion++;
+		return globalModelVersion;
+	}
 </script>
 
 <script lang="ts">
@@ -49,8 +54,8 @@
 	// Only used when not using cache
 	let currentModelVersion = 0;
 
-	// Process a loaded scene (from cache or GLTF loader)
-	function processScene(scene: Group, fromCache: boolean = false) {
+	// Process a loaded scene (from cache or GLTF loader). Async when !fromCache so we can yield during merge.
+	async function processScene(scene: Group, fromCache: boolean = false) {
 		// Always reset layer manager when loading a new model (even if path seems same)
 		// This ensures clean state when switching scenarios
 		resetLayerManager();
@@ -86,16 +91,15 @@
 			gltfGroup = scene;
 			lastModelPath = modelPath;
 			
-			// Apply layer materials FIRST (before coordinate transform)
-			// This discovers layers, applies materials, and merges geometries
-			applyLayerMaterials(gltfGroup);
+			// Apply layer materials FIRST (before coordinate transform). Async with yields to avoid main-thread freeze.
+			await applyLayerMaterials(gltfGroup);
 			
 			// IMPORTANT: Initialize layer manager AFTER merging is complete
 			// This ensures we track the merged meshes, not the original ones
 			initializeLayerManager(gltfGroup);
 			
 			// CRITICAL: Apply current layer visibility state from store to meshes
-			// This ensures default-hidden layers (roads, sidewalks, etc.) are actually hidden
+			// This ensures default-hidden layers are actually hidden.
 			const currentLayerState = get(layerStore);
 			applyLayerVisibilityState(currentLayerState);
 			
@@ -164,7 +168,7 @@
             return;
         }
         
-        processScene(gltf.scene, false);
+        void processScene(gltf.scene, false);
 	}
 	
 	// React to modelPath changes - check cache first, then load if needed
@@ -178,16 +182,14 @@
 			console.log(`[MODEL] Using cached model: ${modelPath}`);
 			useCache = true;
 			cachedScene = cached.scene;
-			// Process cached scene
-			processScene(cached.scene, true);
+			// Process cached scene (async for API consistency; no heavy merge when from cache)
+			void processScene(cached.scene, true);
 		} else {
 			// Not in cache, load via GLTF
 			console.log(`[MODEL] Loading model from file: ${modelPath}`);
 			useCache = false;
 			cachedScene = undefined;
-			// @ts-expect-error - Svelte warns about module var mutation but it's intentional here
-			globalModelVersion++;
-			currentModelVersion = globalModelVersion;
+			currentModelVersion = nextGlobalModelVersion();
 		}
 	})()
 	
@@ -201,9 +203,18 @@
 	// Reactive load handler that updates when sequence changes
 	$: onloadHandler = createLoadHandler();
 
-	// Apply coordinate transformation when coordinate system changes
-	$: if (gltfGroup && coordinateSystem) {
-		applyModelCoordinateTransform(gltfGroup, coordinateSystem);
+	// Apply coordinate transformation only when coordinateSystem *changes* (not when gltfGroup is first set).
+	// This prevents double-apply: processScene applies once after merge; we re-apply here only if user changes coord system.
+	let previousCoordinateSystem: typeof coordinateSystem | undefined = undefined;
+	let prevGltfGroup: Group | undefined = undefined;
+	$: if (gltfGroup) {
+		if (prevGltfGroup !== gltfGroup) {
+			prevGltfGroup = gltfGroup;
+			previousCoordinateSystem = coordinateSystem;
+		} else if (coordinateSystem !== previousCoordinateSystem) {
+			applyModelCoordinateTransform(gltfGroup, coordinateSystem);
+			previousCoordinateSystem = coordinateSystem;
+		}
 	}
 
 	// Cleanup on destroy
@@ -216,7 +227,9 @@
 
 <!-- When cached, render the cloned scene directly; otherwise load via GLTF -->
 {#if useCache && gltfGroup}
-	<T is={THREE.Group} oncreate={(ref) => ref.add(gltfGroup!)}>
+	<T is={THREE.Group} oncreate={(ref) => {
+		ref.add(gltfGroup!);
+	}}>
 		<slot />
 	</T>
 {:else}

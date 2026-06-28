@@ -12,6 +12,7 @@ import type { ViewerState, ColorMode, MetricType } from '$lib/types/viewer';
  */
 export const viewerStore: Writable<ViewerState> = writable<ViewerState>({
 	currentHour: 0,
+	currentMonth: 7,
 	colorMode: 'normalized',
 	metricType: 'utci',
 	utciVisible: true,
@@ -27,6 +28,15 @@ export const viewerStore: Writable<ViewerState> = writable<ViewerState>({
  */
 export function setCurrentHour(hour: number): void {
 	viewerStore.update((state) => ({ ...state, currentHour: hour }));
+}
+
+/**
+ * Set current month index
+ * @param month - Month index (0-11, 0=Jan, 7=Aug)
+ */
+export function setCurrentMonth(month: number): void {
+	const clamped = Math.max(0, Math.min(11, month));
+	viewerStore.update((state) => ({ ...state, currentMonth: clamped }));
 }
 
 /**

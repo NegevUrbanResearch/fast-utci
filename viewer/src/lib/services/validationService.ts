@@ -5,7 +5,8 @@
  */
 
 import { base } from '$app/paths';
-import { loadBinaryData, calculateStatistics } from './dataLoader';
+import { loadBinaryData, calculateStatistics, getUTCIForHour } from './dataLoader';
+import { hasDecodedUtciByHour, isSingleHourData } from '$lib/types/analysis';
 import type { Analysis } from '$lib/types/analysis';
 
 // Data base path: strip /viewer/build from base path to get project root
@@ -23,6 +24,20 @@ export interface ValidationData {
 	numHours: number;
 	positions: Float32Array;
 	utciByHour: Float32Array[];
+}
+
+function resolveValidationHourIndex(hourLabel: string | undefined): number | null {
+	if (hourLabel == null) return 0;
+	if (/^\d+$/.test(hourLabel)) {
+		const numericHour = Number(hourLabel);
+		return Number.isInteger(numericHour) ? numericHour : null;
+	}
+
+	const hourMatch = /^(\d{1,2}):/.exec(hourLabel);
+	if (!hourMatch) return null;
+
+	const parsedHour = Number(hourMatch[1]);
+	return Number.isInteger(parsedHour) ? parsedHour : null;
 }
 
 /**
@@ -59,6 +74,9 @@ export async function loadValidationData(
 	console.log('[LOAD] Loading Grasshopper validation data...');
 	const data = await loadBinaryData(path, 'full_day');
 	console.log('[OK] Validation data loaded');
+	if (!hasDecodedUtciByHour(data)) {
+		throw new Error('Validation data must include decoded utciByHour slices');
+	}
 	return data;
 }
 
@@ -90,8 +108,9 @@ export function calculateAvgMeanDiffAllHours(
 	let totalMeanDiff = 0;
 	let validHours = 0;
 
-	for (let hourIndex = 0; hourIndex < 24; hourIndex++) {
-		const analysisValues = analysis.data.utciByHour[hourIndex];
+	const numHours = Math.min(24, analysis.data.numHours);
+	for (let hourIndex = 0; hourIndex < numHours; hourIndex++) {
+		const analysisValues = getUTCIForHour(analysis.data, hourIndex);
 		const validationValues = validation.utciByHour[hourIndex];
 
 		if (analysisValues && validationValues) {
@@ -118,12 +137,17 @@ export function compareWithValidation(
 	let analysisValues: Float32Array;
 	let validationHourIndex = hourIndex;
 
-	if (analysis.data.numHours === 1) {
+	if (isSingleHourData(analysis.data)) {
 		analysisValues = analysis.data.utciValues;
-		// For single hour analysis, use the specific hour from metadata
-		validationHourIndex = analysis.metadata.hours[0] as number;
+		const resolvedHourIndex = resolveValidationHourIndex(analysis.metadata.hours[0]);
+		if (resolvedHourIndex == null) {
+			throw new Error(
+				`Unable to resolve validation hour index from analysis hour label: ${analysis.metadata.hours[0] ?? 'undefined'}`
+			);
+		}
+		validationHourIndex = resolvedHourIndex;
 	} else {
-		analysisValues = analysis.data.utciByHour[hourIndex];
+		analysisValues = getUTCIForHour(analysis.data, hourIndex);
 		validationHourIndex = hourIndex;
 	}
 
@@ -146,4 +170,3 @@ export function compareWithValidation(
 		}
 	};
 }
-

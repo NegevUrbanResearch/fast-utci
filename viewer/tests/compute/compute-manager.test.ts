@@ -1,0 +1,557 @@
+import { describe, it, expect, vi } from 'vitest';
+import { ComputeManager } from '$lib/compute/compute-manager';
+import type { UTCIComputePipeline } from '$lib/compute/gpu/gpu-pipeline';
+import * as sunpath from '$lib/compute/core/sunpath';
+
+// Minimal EPW content: 8 header lines + 24 data lines for month=1, day=15
+const buildMinimalEpw = () => {
+	const header = [
+		'LOCATION,Beer Sheva,ISR,source,wmo,31.25,34.79,2,300',
+		'DESIGN CONDITIONS,dummy',
+		'TYPICAL/EXTREME,dummy',
+		'GROUND TEMPERATURES,dummy',
+		'HOLIDAYS/DAYLIGHT,dummy',
+		'COMMENTS 1,dummy',
+		'COMMENTS 2,dummy',
+		'DATA PERIODS,dummy'
+	];
+
+	const lines: string[] = [];
+	for (let hour = 1; hour <= 24; hour++) {
+		// year, month, day, hour, minute, ..., dryBulb(6), ..., relHum(8), ..., horizIR(12),
+		// ..., dirNorm(14), diffHoriz(15), ..., wind(21)
+		lines.push(
+			`2020,1,15,${hour},0,0,25.0,20.0,50,99999,0,0,400,0,800,200,0,0,0,0,0,3.0`
+		);
+	}
+
+	return `${header.join('\n')}\n${lines.join('\n')}`;
+};
+
+const createSerializedBvhFixture = () => {
+	return {
+		bvhNodeBuffer: new ArrayBuffer(0),
+		bvhIndexBuffer: new ArrayBuffer(0),
+		vertexBuffer: new Float32Array(0),
+		indexBuffer: new Uint32Array(0)
+	};
+};
+
+/** Bounds for the 4x4 test plane (analysis xy_ground: x/z span Â±2, z = sensor height). */
+const TEST_BOUNDS = { x_min: -2, x_max: 2, y_min: -2, y_max: 2, z: 1.5 };
+
+const createFakePipeline = () => {
+	const uploadStaticData = vi.fn().mockResolvedValue(undefined);
+	const runAll = vi.fn().mockResolvedValue(undefined);
+	const readUtcisSlice = vi
+		.fn()
+		.mockImplementation(
+			async (params: { monthIndex: number; hourIndex: number; numPoints: number }) => {
+				// Return a simple ramp for determinism in tests
+				const arr = new Float32Array(params.numPoints);
+				for (let i = 0; i < params.numPoints; i++) {
+					arr[i] = params.monthIndex * 100 + params.hourIndex + i * 0.1;
+				}
+				return arr;
+			}
+		);
+	const runUtciRangeSummaryForTimeIndex = vi.fn(async (params) => ({
+		timeIndex: params.timeIndex,
+		range: { min: 1, max: 4 },
+		validCount: params.numPoints,
+		readbackBytes: 16,
+		reductionPassCount: 2,
+		debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+	}));
+	const runUtciRangeSummaryForOutput = vi.fn(async (params) => ({
+		timeIndex: params.timeIndex,
+		range: { min: 2, max: 9 },
+		validCount: params.numPoints,
+		readbackBytes: 16,
+		reductionPassCount: 1,
+		debugLabel: 'webgpu-on-demand-f32-utci-range-summary' as const
+	}));
+
+	const pipeline: UTCIComputePipeline = {
+		uploadStaticData,
+		runAll,
+		readUtcisSlice,
+		runUtciRangeSummaryForTimeIndex,
+		runUtciRangeSummaryForOutput
+	};
+
+	return {
+		pipeline,
+		uploadStaticData,
+		runAll,
+		readUtcisSlice,
+		runUtciRangeSummaryForTimeIndex,
+		runUtciRangeSummaryForOutput
+	};
+};
+
+describe('ComputeManager', () => {
+	it('should prepare grid, sun vectors and weather and call pipeline', async () => {
+		const { pipeline, uploadStaticData, runAll } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS
+		});
+
+		// Expect some grid points to have been generated
+		expect(result.numPoints).toBeGreaterThan(0);
+		expect(result.numMonths).toBe(1);
+		expect(result.numHours).toBe(24);
+
+		// Verify pipeline was called with correctly sized arrays and BVH/dome data
+		expect(uploadStaticData).toHaveBeenCalledTimes(1);
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.gridPoints).toBeInstanceOf(Float32Array);
+		expect(args.sunVectors).toBeInstanceOf(Float32Array);
+		expect(args.weather).toBeInstanceOf(Float32Array);
+		expect(args.serializedBvh).toBeDefined();
+		expect(args.domeVectors).toBeInstanceOf(Float32Array);
+		expect(args.domeWeights).toBeInstanceOf(Float32Array);
+		expect(args.domeVectors.length).toBe(145 * 3);
+		expect(args.domeWeights.length).toBe(145);
+
+		// sunVectors: numMonths * numHours * 3
+		expect(args.sunVectors.length).toBe(1 * 24 * 3);
+
+		// sunAltitudes: numMonths * numHours (radians)
+		expect(args.sunAltitudes).toBeInstanceOf(Float32Array);
+		expect(args.sunAltitudes!.length).toBe(1 * 24);
+		expect(args.sunUpMask).toBeInstanceOf(Uint32Array);
+		expect(args.sunUpMask!.length).toBe(1 * 24);
+
+		// weather: numMonths * numHours * 7
+		// (air, mrt_lw, wind, rh, direct_normal, diffuse_horizontal, horiz_infrared)
+		expect(args.weather.length).toBe(1 * 24 * 7);
+
+		// runAll should be called once with matching counts
+		expect(runAll).toHaveBeenCalledTimes(1);
+		expect(runAll).toHaveBeenCalledWith({
+			numPoints: result.numPoints,
+			numHours: 24,
+			numMonths: 1
+		});
+
+		// Basic orientation sanity check: in January at Beer Sheva the highest sun
+		// altitude occurs around local noon and should be mostly "up" (+Y) with a
+		// relatively small horizontal component in the XZ plane in the Three.js
+		// Y-up world frame.
+		const packedSun: Float32Array = args.sunVectors;
+		let maxY = -Infinity;
+		let maxIndex = -1;
+		for (let i = 0; i < 24; i++) {
+			const vy = packedSun[i * 3 + 1];
+			if (vy > maxY) {
+				maxY = vy;
+				maxIndex = i;
+			}
+		}
+		const vx = packedSun[maxIndex * 3];
+		const vy = packedSun[maxIndex * 3 + 1];
+		const vz = packedSun[maxIndex * 3 + 2];
+
+		// Mostly vertical with very small east/west component and a non-trivial
+		// horizontal component so the sun is not straight overhead.
+		expect(vy).toBeGreaterThan(0.5);
+		expect(Math.abs(vx)).toBeLessThan(0.3);
+		expect(Math.abs(vz)).toBeGreaterThan(0.3);
+	});
+
+	it('should delegate UTCI slice reads to the pipeline', async () => {
+		const { pipeline, readUtcisSlice } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 12, numHoursPerDay: 24 });
+
+		const slice = await manager.getUtcisForMonthHour({
+			monthIndex: 5,
+			hourIndex: 12,
+			numPoints: 10,
+			numMonths: 12,
+			numHours: 24
+		});
+
+		expect(readUtcisSlice).toHaveBeenCalledTimes(1);
+		expect(slice.length).toBe(10);
+	});
+
+	it('must not compute UTCI on CPU when reading slices', async () => {
+		const { pipeline, readUtcisSlice } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+
+		// The manager exposes only a GPU-oriented API for UTCI slices; there is
+		// no public CPU shortcut. This test locks in that contract by asserting
+		// that all reads delegate to the injected pipeline implementation.
+		const slice = await manager.getUtcisForMonthHour({
+			monthIndex: 0,
+			hourIndex: 0,
+			numPoints: 5,
+			numMonths: 1,
+			numHours: 24
+		});
+
+		expect(readUtcisSlice).toHaveBeenCalledTimes(1);
+		expect(slice.length).toBe(5);
+
+		// If a future refactor tried to introduce a CPU-computed UTCI path here,
+		// this assertion would start failing because the fake pipeline would no
+		// longer be consulted.
+	});
+
+	it('delegates compact UTCI range summary requests to the pipeline', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		const summary = await manager.runUtciRangeSummaryForTimeIndex({
+			timeIndex: 8,
+			numPoints: 4,
+			numHours: 24,
+			numMonths: 12,
+			format: 'f32-utci'
+		});
+
+		expect(pipeline.runUtciRangeSummaryForTimeIndex).toHaveBeenCalledWith({
+			timeIndex: 8,
+			numPoints: 4,
+			numHours: 24,
+			numMonths: 12,
+			format: 'f32-utci'
+		});
+		expect(summary).toMatchObject({
+			timeIndex: 8,
+			range: { min: 1, max: 4 },
+			validCount: 4,
+			readbackBytes: 16,
+			reductionPassCount: 2,
+			debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+		});
+	});
+
+	it('rejects non-f32 range summary formats before delegating', async () => {
+		const { pipeline, runUtciRangeSummaryForTimeIndex } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForTimeIndex({
+				timeIndex: 8,
+				numPoints: 4,
+				numHours: 24,
+				numMonths: 12,
+				format: 'packed-mrt-utci' as never
+			})
+		).rejects.toThrowError('UTCI range summaries support only f32-utci output format');
+
+		expect(runUtciRangeSummaryForTimeIndex).not.toHaveBeenCalled();
+	});
+
+	it('throws when the pipeline does not support compact UTCI range summaries', async () => {
+		const { pipeline } = createFakePipeline();
+		const { runUtciRangeSummaryForTimeIndex: _unused, ...pipelineWithoutSummarySupport } = pipeline;
+		const manager = new ComputeManager(pipelineWithoutSummarySupport as UTCIComputePipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForTimeIndex({
+				timeIndex: 8,
+				numPoints: 4,
+				numHours: 24,
+				numMonths: 12,
+				format: 'f32-utci'
+			})
+		).rejects.toThrowError(
+			'UTCI pipeline does not support compact selected-hour range summaries'
+		);
+	});
+
+	it('delegates compact UTCI output range summary requests to the pipeline', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+		const output = {
+			format: 'f32-utci' as const,
+			numPoints: 4,
+			timeIndex: 8,
+			gpuBuffer: { size: 16 }
+		};
+
+		const summary = await manager.runUtciRangeSummaryForOutput({
+			timeIndex: 8,
+			numPoints: 4,
+			format: 'f32-utci',
+			output
+		});
+
+		expect(pipeline.runUtciRangeSummaryForOutput).toHaveBeenCalledWith({
+			timeIndex: 8,
+			numPoints: 4,
+			format: 'f32-utci',
+			output
+		});
+		expect(summary).toMatchObject({
+			timeIndex: 8,
+			range: { min: 2, max: 9 },
+			validCount: 4,
+			readbackBytes: 16,
+			reductionPassCount: 1,
+			debugLabel: 'webgpu-on-demand-f32-utci-range-summary'
+		});
+	});
+
+	it('rejects non-f32 output range summary formats before delegating', async () => {
+		const { pipeline, runUtciRangeSummaryForOutput } = createFakePipeline();
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'packed-mrt-utci' as never,
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: { size: 16 }
+				}
+			})
+		).rejects.toThrowError('UTCI range summaries support only f32-utci output format');
+
+		expect(runUtciRangeSummaryForOutput).not.toHaveBeenCalled();
+	});
+
+	it('throws when the pipeline does not support compact output range summaries', async () => {
+		const { pipeline } = createFakePipeline();
+		pipeline.runUtciRangeSummaryForOutput = undefined;
+		const manager = new ComputeManager(pipeline);
+
+		await expect(
+			manager.runUtciRangeSummaryForOutput({
+				timeIndex: 8,
+				numPoints: 4,
+				format: 'f32-utci',
+				output: {
+					format: 'f32-utci',
+					numPoints: 4,
+					timeIndex: 8,
+					gpuBuffer: { size: 16 }
+				}
+			})
+		).rejects.toThrowError(
+			'UTCI pipeline does not support compact selected-hour output range summaries'
+		);
+	});
+
+	it('initFromModelAndWeather should return grid points', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS
+		});
+
+		expect(result.gridPoints).toBeDefined();
+		expect(result.gridPoints).toBeInstanceOf(Float32Array);
+		expect(result.gridPoints!.length).toBe(result.numPoints * 3);
+	});
+
+	it('uploads and dispatches only active canonical grid cells when active indices are provided', async () => {
+		const { pipeline, uploadStaticData, runAll } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
+			activeCanonicalIndices: new Uint32Array([0, 4, 8])
+		});
+
+		expect(result).toMatchObject({
+			numPoints: 3,
+			canonicalPointCount: 9
+		});
+		expect(Array.from(result.gridPoints)).toEqual([
+			-2, 1.5, 2,
+			0, 1.5, 0,
+			2, 1.5, -2
+		]);
+		expect(uploadStaticData).toHaveBeenCalledWith(
+			expect.objectContaining({
+				gridPoints: result.gridPoints
+			})
+		);
+		expect(runAll).toHaveBeenCalledWith({
+			numPoints: 3,
+			numHours: 24,
+			numMonths: 1
+		});
+	});
+
+	it('uses provided zHeight for generated rectangular grid points', async () => {
+		const { pipeline } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const result = await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 2.2,
+			useRectangularGridFromBounds: true,
+			analysisBounds: { ...TEST_BOUNDS, z: 0.9 }
+		});
+
+		for (let i = 1; i < result.gridPoints.length; i += 3) {
+			expect(result.gridPoints[i]).toBeCloseTo(2.2, 6);
+		}
+	});
+
+	it('should rotate ENU north vector to negative world Z for XY-ground parity', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const sunVectors = Array.from({ length: 24 }, () => [0, 1, 0] as [number, number, number]);
+		const altitudes = Array.from({ length: 24 }, () => 45);
+		const isSunUp = Array.from({ length: 24 }, () => true);
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors').mockReturnValue({
+			sunVectors,
+			altitudes,
+			isSunUp
+		});
+
+		try {
+			await manager.initFromModelAndWeather({
+				serializedBvh: createSerializedBvhFixture(),
+				epwContent: epw,
+				gridResolution: 2,
+				zHeight: 1.5,
+				useRectangularGridFromBounds: true,
+				analysisBounds: TEST_BOUNDS
+			});
+		} finally {
+			spy.mockRestore();
+		}
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunVectors[0]).toBeCloseTo(0, 6);
+		expect(args.sunVectors[1]).toBeCloseTo(0, 6);
+		expect(args.sunVectors[2]).toBeCloseTo(-1, 6);
+	});
+
+	it('should upload the explicit sun-up mask from getSunVectors isSunUp flags', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 4 });
+		const epw = buildMinimalEpw();
+
+		const sunVectors = Array.from(
+			{ length: 24 },
+			(_, hour) => [hour === 2 ? 0 : 1, hour === 2 ? 0 : 1, 0] as [number, number, number]
+		);
+		const altitudes = Array.from({ length: 24 }, (_, hour) => (hour === 1 ? 10 : 0));
+		const isSunUp = Array.from({ length: 24 }, (_, hour) => hour === 0 || hour === 2);
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors').mockReturnValue({
+			sunVectors,
+			altitudes,
+			isSunUp
+		});
+
+		try {
+			await manager.initFromModelAndWeather({
+				serializedBvh: createSerializedBvhFixture(),
+				epwContent: epw,
+				gridResolution: 2,
+				zHeight: 1.5,
+				useRectangularGridFromBounds: true,
+				analysisBounds: TEST_BOUNDS
+			});
+		} finally {
+			spy.mockRestore();
+		}
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunAltitudes[0]).toBe(0);
+		expect(args.sunAltitudes[1]).toBeCloseTo((10 * Math.PI) / 180, 6);
+		expect(args.sunAltitudes[2]).toBe(0);
+		expect(args.sunAltitudes[3]).toBe(0);
+		expect(Array.from(args.sunUpMask)).toEqual([1, 0, 1, 0]);
+	});
+
+	it('should use fixture sun vectors directly when parity fixture mode is provided', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		const fixtureVectors = new Float32Array(24 * 3);
+		const fixtureAltitudes = new Float32Array(24);
+		const fixtureSunUpMask = new Uint32Array(24);
+		for (let i = 0; i < 24; i++) {
+			fixtureVectors[i * 3] = 0.1;
+			fixtureVectors[i * 3 + 1] = 0.9;
+			fixtureVectors[i * 3 + 2] = -0.2;
+			fixtureAltitudes[i] = 0.5;
+			fixtureSunUpMask[i] = i % 2;
+		}
+
+		const spy = vi.spyOn(sunpath, 'getSunVectors');
+		await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
+			sunVectorsFixture: {
+				sunVectors: fixtureVectors,
+				sunAltitudes: fixtureAltitudes,
+				sunUpMask: fixtureSunUpMask
+			}
+		});
+
+		const args = uploadStaticData.mock.calls[0][0];
+		expect(args.sunVectors).toBe(fixtureVectors);
+		expect(args.sunAltitudes).toBe(fixtureAltitudes);
+		expect(args.sunUpMask).toBe(fixtureSunUpMask);
+		expect(spy).not.toHaveBeenCalled();
+		spy.mockRestore();
+	});
+
+	it('should not invent a sun-up mask for fixture sun vectors without one', async () => {
+		const { pipeline, uploadStaticData } = createFakePipeline();
+		const manager = new ComputeManager(pipeline, { numMonths: 1, numHoursPerDay: 24 });
+		const epw = buildMinimalEpw();
+
+		await manager.initFromModelAndWeather({
+			serializedBvh: createSerializedBvhFixture(),
+			epwContent: epw,
+			gridResolution: 2,
+			zHeight: 1.5,
+			useRectangularGridFromBounds: true,
+			analysisBounds: TEST_BOUNDS,
+			sunVectorsFixture: {
+				sunVectors: new Float32Array(24 * 3),
+				sunAltitudes: new Float32Array(24).fill(0.5)
+			}
+		});
+
+		expect(uploadStaticData.mock.calls[0][0].sunUpMask).toBeUndefined();
+	});
+});

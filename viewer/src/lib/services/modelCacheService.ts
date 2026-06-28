@@ -9,6 +9,12 @@
 import { LRUCache } from './lruCache';
 import * as THREE from 'three';
 
+function disposeTexture(value: unknown): void {
+	if (value instanceof THREE.Texture) {
+		value.dispose();
+	}
+}
+
 export interface CachedModel {
 	/** The loaded GLTF scene group */
 	scene: THREE.Group;
@@ -64,25 +70,22 @@ function disposeModel(object: THREE.Object3D): void {
  * Dispose of a Three.js material and its textures
  */
 function disposeMaterial(material: THREE.Material): void {
+	const materialWithTextures = material as THREE.Material & {
+		map?: unknown;
+		lightMap?: unknown;
+		bumpMap?: unknown;
+		normalMap?: unknown;
+		specularMap?: unknown;
+		envMap?: unknown;
+	};
+
 	// Dispose textures
-	if ('map' in material && material.map) {
-		material.map.dispose();
-	}
-	if ('lightMap' in material && material.lightMap) {
-		material.lightMap.dispose();
-	}
-	if ('bumpMap' in material && material.bumpMap) {
-		material.bumpMap.dispose();
-	}
-	if ('normalMap' in material && material.normalMap) {
-		material.normalMap.dispose();
-	}
-	if ('specularMap' in material && material.specularMap) {
-		material.specularMap.dispose();
-	}
-	if ('envMap' in material && material.envMap) {
-		material.envMap.dispose();
-	}
+	disposeTexture(materialWithTextures.map);
+	disposeTexture(materialWithTextures.lightMap);
+	disposeTexture(materialWithTextures.bumpMap);
+	disposeTexture(materialWithTextures.normalMap);
+	disposeTexture(materialWithTextures.specularMap);
+	disposeTexture(materialWithTextures.envMap);
 
 	// Dispose material itself
 	material.dispose();

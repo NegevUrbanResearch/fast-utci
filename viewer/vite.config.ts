@@ -3,6 +3,12 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	optimizeDeps: {
+		include: [
+			'three/addons/loaders/GLTFLoader.js',
+			'three/addons/utils/BufferGeometryUtils.js'
+		]
+	},
 	server: {
 		fs: {
 			// Allow serving files from the parent directory (where data/ folder is)

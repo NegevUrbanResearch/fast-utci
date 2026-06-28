@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "innovation-district-raw-export/v1",
+  "analysisId": "Innovation-District/innovation_district_webgpu:2025-08-15",
+  "sourceAnalysisId": "Innovation-District/innovation_district_webgpu",
+  "sourceModelPath": "data/3d_models/Innovation-District/innovation_district.glb",
+  "sourceGeorefPath": "data/3d_models/Innovation-District/innovation_district.georef.json",
+  "declaredCrs": "EPSG:2039",
+  "gridSize": 2,
+  "coordinateSystem": "projected-analysis",
+  "canonicalCount": 1492551,
+  "activeCount": 638688,
+  "hourCount": 24,
+  "hours": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "activeMask": {
+    "source": "base+road",
+    "checksum": "d4e1236d",
+    "signature": "xy_ground:2000000:1299x1149:ecdbc359:d4e1236d"
+  },
+  "layout": {
+    "canonicalIndices": "point-major",
+    "positions": "point-major-xyz",
+    "utci": "point-major-hour",
+    "shadingIndex": "point-major",
+    "surfaceFlags": "point-major"
+  },
+  "arrays": {
+    "canonicalIndices": {
+      "dtype": "u32",
+      "endianness": "little",
+      "shape": [
+        638688
+      ],
+      "byteLength": 2554752
+    },
+    "positions": {
+      "dtype": "f32",
+      "endianness": "little",
+      "shape": [
+        638688,
+        3
+      ],
+      "byteLength": 7664256
+    },
+    "utci": {
+      "dtype": "f32",
+      "endianness": "little",
+      "shape": [
+        638688,
+        24
+      ],
+      "byteLength": 61314048
+    },
+    "shadingIndex": {
+      "dtype": "f32",
+      "endianness": "little",
+      "shape": [
+        638688
+      ],
+      "byteLength": 2554752
+    },
+    "surfaceFlags": {
+      "dtype": "u8",
+      "endianness": "little",
+      "shape": [
+        638688
+      ],
+      "byteLength": 638688
+    }
+  },
+  "files": {
+    "canonicalIndices": {
+      "fileName": "2025-08-15_2m_active-cells.canonical.u32.bin",
+      "checksum": "cd58847c2fc96dd84f12af69bf0737e0834a4c69a56f61b95d8c1ab8f1fab3ec"
+    },
+    "positions": {
+      "fileName": "2025-08-15_2m_active-cells.positions.f32.bin",
+      "checksum": "8897c9547213f85c5c0b47a62a71edf20752ad0cd7281edd2f2e52d46c8445b5"
+    },
+    "utci": {
+      "fileName": "2025-08-15_2m_active-cells.utci.f32.bin",
+      "checksum": "2cd3bcf212b0f939e8f8a5479d7aa0445961aa0768048c01f5717b84b0c82c0e"
+    },
+    "shadingIndex": {
+      "fileName": "2025-08-15_2m_active-cells.shading.f32.bin",
+      "checksum": "0a3824b42b5d47cae5b2557dbd35f60e8ec9b40ee2c9fcb18923b405aaa9ffba"
+    },
+    "surfaceFlags": {
+      "fileName": "2025-08-15_2m_active-cells.surface-flags.u8.bin",
+      "checksum": "d9d21a9293dfcec2faaa9826ed8190fa75e9dffde53f1dc016ed2de38f409b7d"
+    }
+  },
+  "timingsMs": {
+    "routeLoad": 609.291299999999,
+    "liveSessionReady": 11121.899899999999,
+    "utciCollection": 35326.3123,
+    "shadingCollection": 1499.6218999999983,
+    "binarySerialization": 627.9863000000041,
+    "total": 58923.912000000004
+  }
+}

@@ -44,6 +44,8 @@ const defaultComparisonState: ComparisonState = {
 	error: null
 };
 
+let activeComparisonRequestToken = 0;
+
 /**
  * Comparison store
  */
@@ -85,13 +87,18 @@ export interface UnifiedUtciRange {
 
 // Import viewerStore for colorMode awareness
 import { viewerStore } from './viewerStore';
+import {
+	getEffectiveHourIndex,
+	getUtciRangeForDisplay
+} from '$lib/utils/effectiveHourIndex';
 
 /**
  * Derived store: unified UTCI range for comparison mode
- * 
+ *
  * When comparing two analyses, this store provides a unified min/max range
  * that encompasses both analyses, ensuring consistent color mapping across both views.
  * Respects the current colorMode - uses per-hour statistics when in 'discrete' mode.
+ * For multi-month comparison analysis, uses effective slice index (month + hour).
  * Returns null when not in comparison mode.
  */
 export const unifiedUtciRange: Readable<UnifiedUtciRange | null> = derived(
@@ -103,7 +110,14 @@ export const unifiedUtciRange: Readable<UnifiedUtciRange | null> = derived(
 		}
 
 		const colorMode = $viewer.colorMode;
-		const hourIndex = $viewer.currentHour;
+		const currentHour = $viewer.currentHour;
+		const currentMonth = $viewer.currentMonth ?? 7;
+		const baseHourIndex = currentHour;
+		const comparisonHourIndex = getEffectiveHourIndex(
+			$comparison.comparisonAnalysis,
+			currentHour,
+			currentMonth
+		);
 
 		let baseMin: number;
 		let baseMax: number;
@@ -111,23 +125,36 @@ export const unifiedUtciRange: Readable<UnifiedUtciRange | null> = derived(
 		let comparisonMax: number;
 
 		if (colorMode === 'discrete') {
-			// Per-hour mode: use hour-specific statistics if available
-			const baseHourStats = $baseAnalysis.metadata.hour_statistics?.[hourIndex];
-			const comparisonHourStats = $comparison.comparisonAnalysis.metadata.hour_statistics?.[hourIndex];
+			const baseHourStats = $baseAnalysis.metadata.hour_statistics?.[baseHourIndex];
+			const comparisonHourStats =
+				$comparison.comparisonAnalysis.metadata.hour_statistics?.[comparisonHourIndex];
 
 			baseMin = baseHourStats?.min ?? $baseAnalysis.metadata.utci_range.min;
 			baseMax = baseHourStats?.max ?? $baseAnalysis.metadata.utci_range.max;
-			comparisonMin = comparisonHourStats?.min ?? $comparison.comparisonAnalysis.metadata.utci_range.min;
-			comparisonMax = comparisonHourStats?.max ?? $comparison.comparisonAnalysis.metadata.utci_range.max;
+			comparisonMin =
+				comparisonHourStats?.min ?? $comparison.comparisonAnalysis.metadata.utci_range.min;
+			comparisonMax =
+				comparisonHourStats?.max ?? $comparison.comparisonAnalysis.metadata.utci_range.max;
 		} else {
-			// Normalized mode: use full-day range
-			baseMin = $baseAnalysis.metadata.utci_range.min;
-			baseMax = $baseAnalysis.metadata.utci_range.max;
-			comparisonMin = $comparison.comparisonAnalysis.metadata.utci_range.min;
-			comparisonMax = $comparison.comparisonAnalysis.metadata.utci_range.max;
+			// Normalized: for multi-month comparison use selected month's 24h range
+			const baseRange = getUtciRangeForDisplay(
+				$baseAnalysis.metadata,
+				'normalized',
+				currentHour,
+				currentMonth
+			);
+			const comparisonRange = getUtciRangeForDisplay(
+				$comparison.comparisonAnalysis.metadata,
+				'normalized',
+				currentHour,
+				currentMonth
+			);
+			baseMin = baseRange.utciMin;
+			baseMax = baseRange.utciMax;
+			comparisonMin = comparisonRange.utciMin;
+			comparisonMax = comparisonRange.utciMax;
 		}
 
-		// Calculate unified range that encompasses both analyses
 		const unifiedMin = Math.min(baseMin, comparisonMin);
 		const unifiedMax = Math.max(baseMax, comparisonMax);
 
@@ -158,6 +185,8 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		return;
 	}
 
+	const requestToken = ++activeComparisonRequestToken;
+
 	// Check if user is trying to compare base with itself
 	// (This would happen if the comparison ID matches the base ID)
 	// For now we allow it but log a warning
@@ -175,6 +204,7 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		isLoading: true,
 		error: null,
 		comparisonAnalysisId,
+		comparisonAnalysis: null,
 		curtainPosition: newCurtainPosition
 	}));
 
@@ -182,21 +212,40 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
 		// Load comparison analysis
 		const analysis = await loadAnalysis(comparisonAnalysisId);
 
-		comparisonStore.update((state) => ({
-			...state,
-			comparisonAnalysis: analysis,
-			isLoading: false
-		}));
+		comparisonStore.update((state) => {
+			if (
+				requestToken !== activeComparisonRequestToken ||
+				state.comparisonAnalysisId !== comparisonAnalysisId
+			) {
+				return state;
+			}
+
+			return {
+				...state,
+				comparisonAnalysis: analysis,
+				isLoading: false
+			};
+		});
 
 		console.log(`[COMPARISON] Loaded comparison analysis: ${comparisonAnalysisId}`);
 	} catch (error) {
 		console.error('[COMPARISON] Failed to load comparison analysis:', error);
 
-		comparisonStore.update((state) => ({
-			...state,
-			isLoading: false,
-			error: error instanceof Error ? error.message : 'Failed to load comparison analysis'
-		}));
+		comparisonStore.update((state) => {
+			if (
+				requestToken !== activeComparisonRequestToken ||
+				state.comparisonAnalysisId !== comparisonAnalysisId
+			) {
+				return state;
+			}
+
+			return {
+				...state,
+				isLoading: false,
+				comparisonAnalysis: null,
+				error: error instanceof Error ? error.message : 'Failed to load comparison analysis'
+			};
+		});
 	}
 }
 
@@ -205,6 +254,7 @@ export async function startComparison(comparisonAnalysisId: string): Promise<voi
  */
 export function stopComparison(): void {
 	console.log('[COMPARISON] Stopping comparison mode');
+	activeComparisonRequestToken += 1;
 
 	comparisonStore.set({
 		...defaultComparisonState,

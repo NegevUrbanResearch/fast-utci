@@ -37,7 +37,12 @@
 	 * Get the position as a percentage of container width
 	 */
 	function getPositionFromEvent(event: MouseEvent | TouchEvent): number {
-		const container = containerElement || document.body;
+		const doc = globalThis.document;
+		const container = containerElement || (doc ? doc.body : null);
+		if (!container) {
+			// Reasonable fallback during non-DOM environments
+			return 0.5;
+		}
 		const rect = container.getBoundingClientRect();
 
 		let clientX: number;
@@ -74,14 +79,14 @@
 
 		// Add global listeners
 		if ("touches" in event) {
-			document.addEventListener("touchmove", handlePointerMove, {
+			globalThis.document?.addEventListener("touchmove", handlePointerMove, {
 				passive: false,
 			});
-			document.addEventListener("touchend", handlePointerUp);
-			document.addEventListener("touchcancel", handlePointerUp);
+			globalThis.document?.addEventListener("touchend", handlePointerUp);
+			globalThis.document?.addEventListener("touchcancel", handlePointerUp);
 		} else {
-			document.addEventListener("mousemove", handlePointerMove);
-			document.addEventListener("mouseup", handlePointerUp);
+			globalThis.document?.addEventListener("mousemove", handlePointerMove);
+			globalThis.document?.addEventListener("mouseup", handlePointerUp);
 		}
 	}
 
@@ -104,11 +109,11 @@
 		isDragging = false;
 
 		// Remove global listeners
-		document.removeEventListener("mousemove", handlePointerMove);
-		document.removeEventListener("mouseup", handlePointerUp);
-		document.removeEventListener("touchmove", handlePointerMove);
-		document.removeEventListener("touchend", handlePointerUp);
-		document.removeEventListener("touchcancel", handlePointerUp);
+		globalThis.document?.removeEventListener("mousemove", handlePointerMove);
+		globalThis.document?.removeEventListener("mouseup", handlePointerUp);
+		globalThis.document?.removeEventListener("touchmove", handlePointerMove);
+		globalThis.document?.removeEventListener("touchend", handlePointerUp);
+		globalThis.document?.removeEventListener("touchcancel", handlePointerUp);
 	}
 
 	/**
@@ -122,7 +127,8 @@
 	 * Handle keyboard navigation
 	 */
 	function handleKeyDown(event: KeyboardEvent): void {
-		if (!handleElement?.contains(document.activeElement)) return;
+		const activeElement = globalThis.document?.activeElement;
+		if (!activeElement || !handleElement?.contains(activeElement)) return;
 
 		switch (event.key) {
 			case "ArrowLeft":
@@ -157,11 +163,11 @@
 
 	// Add keyboard listener
 	onMount(() => {
-		document.addEventListener("keydown", handleKeyDown);
+		globalThis.document?.addEventListener("keydown", handleKeyDown);
 	});
 
 	onDestroy(() => {
-		document.removeEventListener("keydown", handleKeyDown);
+		globalThis.document?.removeEventListener("keydown", handleKeyDown);
 		handlePointerUp(); // Clean up any active drag
 	});
 

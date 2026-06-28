@@ -53,9 +53,20 @@ viewer/vite.config.ts.timestamp-*
 # Documentation
 docs/_build/
 site/
+docs/superpowers/plans/
 
 # Analysis outputs
 !data/analyses/*.json
 !data/analyses/*.bin
 !data/analyses/manifest.json
-.cursor/plans/weather-api-integration.plan.md
+data/batch-parity-results/*.json
+data/infrared-capture
+data/infrared-capture-aoi-check
+atlas-viewer/
+
+# WebGPU parity/debug generated artifacts
+data/analyses/**/*_webgpu_*.json
+viewer/parity-report*.json
+
+# Large parity baseline artifact (keep out future commits)
+data/analyses/Ben-Gurion/20250815_grid_2m_fullday_mrt.json

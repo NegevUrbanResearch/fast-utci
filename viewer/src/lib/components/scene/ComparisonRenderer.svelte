@@ -7,14 +7,26 @@
 	 * scene renders on the right side (curtain position to end). Camera and layers are synced.
 	 */
 	import { onMount, onDestroy } from 'svelte';
-	import { useThrelte } from '@threlte/core';
+	import { useThrelte, useTask } from '@threlte/core';
 	import { T } from '@threlte/core';
 	import { comparisonStore, curtainPosition, comparisonAnalysis, unifiedUtciRange, setComparisonModelLoading } from '$lib/stores/comparisonStore';
+	import type { UnifiedUtciRange } from '$lib/stores/comparisonStore';
 	import { cameraStore } from '$lib/stores/cameraStore';
 	import { layerStore, discoveredLayersStore, setDiscoveredLayers } from '$lib/stores/layerStore';
 	import { viewerStore } from '$lib/stores/viewerStore';
 	import { get } from 'svelte/store';
 	import { base } from '$app/paths';
+	import type { LiveSelectedHourControllerSurfaceDiagnostics } from '$lib/compute/selected-hour/liveSelectedHourController';
+	import type { LiveSelectedHourSurfaceIdentity } from '$lib/compute/selected-hour/liveSelectedHourSurfaceIdentity';
+	import type { SelectedHourGpuResidentOutput } from '$lib/compute/selected-hour/liveUtciSelectedHourSession';
+	import {
+		resolveLiveSelectedHourSurfaceRenderState,
+		type LiveSelectedHourPublishedRenderContext
+	} from '$lib/compute/selected-hour/liveSelectedHourRenderContext';
+	import {
+		invokeDiagnosticsCallbackSafely,
+		type SelectedHourRenderTimingSubsteps
+	} from '$lib/compute/on-demand/onDemandDiagnostics';
 	import {
 		applyLayerMaterials,
 		mapLayerNameToType
@@ -29,20 +41,66 @@
 		hasModelInCache
 	} from '$lib/services/modelCacheService';
 	import {
+		applySurfaceMeshState,
+		buildUtciGridLayout,
 		createUtciSurfaceMesh,
-		updateUtciSurfaceTexture
+		disposeUtciSurfaceMesh,
+		type UtciSurfaceBackendType,
+		updateUtciSurfaceMesh
 	} from '$lib/services/pointCloudService';
+	import {
+		createComputeBufferUtciSurfaceMesh,
+		getComputeBufferUtciStorageAttribute,
+		updateComputeBufferUtciSurfaceMesh
+	} from '$lib/services/gpuUtciRenderBridge';
+	import {
+		buildCpuPublicationDiagnostics,
+		buildUtciSurfaceDiagnostics,
+		getAcceptedGpuResidentKey,
+		isComputeBufferUtciSurface,
+		type GpuResidentCopyStatus
+	} from '$lib/components/scene/utciSurfaceSync';
+	import {
+		type AcceptedGpuResidentOutputReleaseCallback
+	} from '$lib/components/scene/acceptedGpuResidentOutputRelease';
+	import {
+		createAcceptedGpuResidentSurfaceSync,
+		type AcceptedGpuResidentSurfaceSyncRun
+	} from '$lib/components/scene/acceptedGpuResidentSurfaceSync';
+	import {
+		copyComputeBufferToRenderStorage,
+		waitForRenderStorageBuffer
+	} from '$lib/components/scene/utciComputeBufferRenderBridge';
 	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
-	import { resolveModelPath } from '$lib/utils/analysisPaths';
+	import { resolveAnalysisModelPath } from '$lib/utils/analysisPaths';
 	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 	import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 	import * as THREE from 'three';
-	import type { Group, PerspectiveCamera, Mesh, MeshBasicMaterial } from 'three';
+	import type { Group, PerspectiveCamera, Mesh } from 'three';
+	import type { Analysis } from '$lib/types/analysis';
 
 	// Props
+	export let acceptedGpuResidentOutput: SelectedHourGpuResidentOutput | null = null;
 	export let baseCamera: PerspectiveCamera | undefined = undefined;
+	export let utciSurfaceBackend: UtciSurfaceBackendType = 'dataTexture';
+	export let displayAnalysis: Analysis | null | undefined = undefined;
+	export let selectedHourRenderContext:
+		| LiveSelectedHourPublishedRenderContext
+		| null
+		| undefined = undefined;
+	export let rangeOverride: UnifiedUtciRange | null | undefined = undefined;
+	export let liveSelectedHourSurfaceIdentity: LiveSelectedHourSurfaceIdentity | null = null;
+	export let pendingRenderUpdateStartedAt: number | undefined = undefined;
+	export let onUtciSurfaceDiagnostics:
+		| ((
+				diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
+		  ) => void | Promise<void>)
+		| undefined = undefined;
+	export let onAcceptedGpuResidentOutputRelease:
+		| AcceptedGpuResidentOutputReleaseCallback
+		| undefined = undefined;
 
-	const { renderer, scene, invalidate } = useThrelte();
+	const { renderer, scene, invalidate, autoRender, renderStage } = useThrelte();
 
 	// Comparison scene (separate from base scene)
 	let comparisonScene: THREE.Scene | null = null;
@@ -57,12 +115,96 @@
 
 	// UTCI surface mesh for comparison scene
 	let comparisonUtciMesh: Mesh | null = null;
+	let lastComparisonAnalysis: Analysis | null = null;
+	let lastBackend: UtciSurfaceBackendType | null = null;
+	let gpuResidentCopyStatus: GpuResidentCopyStatus = 'idle';
+	let gpuResidentCopyError: string | undefined = undefined;
+	let gpuResidentCopyRequestId: number | undefined = undefined;
+	let gpuResidentRenderTimings: SelectedHourRenderTimingSubsteps | undefined = undefined;
+	$: resolvedDisplayAnalysis =
+		displayAnalysis === undefined ? $comparisonAnalysis : displayAnalysis;
 
 	/**
 	 * Get the comparison UTCI mesh for external use (e.g., tooltip raycasting)
 	 */
 	export function getComparisonUtciMesh(): Mesh | null {
 		return comparisonUtciMesh;
+	}
+
+	export function getComparisonModel(): Group | null {
+		return comparisonModel;
+	}
+
+	function publishUtciSurfaceDiagnostics(
+		diagnostics: LiveSelectedHourControllerSurfaceDiagnostics
+	): void {
+		invokeDiagnosticsCallbackSafely(
+			onUtciSurfaceDiagnostics,
+			diagnostics,
+			'ComparisonRenderer onUtciSurfaceDiagnostics'
+		);
+	}
+
+	function setComputeBufferSurfacePendingStorageInit(mesh: Mesh): void {
+		mesh.visible = true;
+		mesh.scale.setScalar(0);
+	}
+
+	function setComputeBufferSurfacePublicationVisibility(
+		mesh: Mesh,
+		shouldBeVisible: boolean
+	): void {
+		mesh.scale.setScalar(1);
+		mesh.visible = shouldBeVisible;
+	}
+
+	function syncComparisonSurfaceDiagnostics(): void {
+		const cpuPublicationDiagnostics = buildCpuPublicationDiagnostics({
+			mesh: comparisonUtciMesh,
+			liveSelectedHourSurfaceIdentity
+		});
+		publishUtciSurfaceDiagnostics(buildUtciSurfaceDiagnostics({
+			mesh: comparisonUtciMesh,
+			cpuPublicationDiagnostics,
+			gpuResidentCopyStatus,
+			gpuResidentCopyError,
+			gpuResidentCopyRequestId,
+			gpuResidentRenderTimings
+		}));
+	}
+
+	function setGpuResidentCopyDiagnostics(
+		status: GpuResidentCopyStatus,
+		options?: {
+			error?: string;
+			requestId?: number;
+			renderTimings?: SelectedHourRenderTimingSubsteps;
+		}
+	): void {
+		gpuResidentCopyStatus = status;
+		gpuResidentCopyError = options?.error;
+		gpuResidentCopyRequestId = options?.requestId;
+		gpuResidentRenderTimings = status === 'complete' ? options?.renderTimings : undefined;
+		syncComparisonSurfaceDiagnostics();
+	}
+
+	const acceptedGpuResidentSurfaceSync =
+		createAcceptedGpuResidentSurfaceSync({
+			componentName: 'ComparisonRenderer',
+			getOnAcceptedGpuResidentOutputRelease: () =>
+				onAcceptedGpuResidentOutputRelease,
+			setCopyDiagnostics: setGpuResidentCopyDiagnostics
+		});
+
+	function getCurrentGpuResidentSyncLiveState() {
+		return {
+			acceptedGpuResidentOutput,
+			liveSelectedHourSurfaceIdentity
+		};
+	}
+
+	function waitForNextFrame(): Promise<void> {
+		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 	}
 
 	// Loading state
@@ -74,6 +216,7 @@
 
 	// Track which analysis we've loaded to avoid reloading
 	let loadedAnalysisId: string | null = null;
+	let comparisonLoadRequestToken = 0;
 
 	// Track base model layers before comparison started (for restoration)
 	let baseLayerTypesSnapshot: string[] = [];
@@ -124,91 +267,335 @@
 	/**
 	 * Create UTCI surface mesh for comparison analysis
 	 */
-	function createComparisonUtciMesh(analysis: typeof $comparisonAnalysis): void {
-		if (!analysis || !comparisonScene) return;
+	function createComparisonUtciMesh(analysis: Analysis | null): boolean {
+		if (!analysis || !comparisonScene) return false;
 
 		// Dispose existing mesh first
 		disposeComparisonUtciMesh();
 
-		// Get current viewer state for UTCI visualization
 		const currentViewerState = get(viewerStore);
-		const hourIndex = currentViewerState.currentHour ?? 0;
-		const colorMode = currentViewerState.colorMode ?? 'normalized';
-		const metricType = currentViewerState.metricType ?? 'utci';
-		
-		// Use unified range for consistent color mapping between base and comparison
-		const rangeOverride = get(unifiedUtciRange) ?? undefined;
+		const renderState = resolveLiveSelectedHourSurfaceRenderState({
+			analysis,
+			viewerState: currentViewerState,
+			publishedRenderContext: selectedHourRenderContext,
+			rangeOverride:
+				rangeOverride !== undefined
+					? rangeOverride
+					: get(unifiedUtciRange)
+		});
+		if (!renderState) {
+			return false;
+		}
 
 		try {
-			comparisonUtciMesh = createUtciSurfaceMesh(analysis, hourIndex, colorMode, metricType, rangeOverride);
+			comparisonUtciMesh = createUtciSurfaceMesh({
+				analysis: renderState.analysis,
+				hourIndex: renderState.hourIndex,
+				colorMode: renderState.colorMode,
+				metricType: renderState.metricType,
+				rangeOverride: renderState.rangeOverride,
+				monthIndex: renderState.monthIndex,
+				backend: utciSurfaceBackend
+			});
 			comparisonScene.add(comparisonUtciMesh);
 			
 			// Apply visibility based on viewer state
 			comparisonUtciMesh.visible = currentViewerState.utciVisible ?? true;
+			lastComparisonAnalysis = analysis;
+			lastBackend = utciSurfaceBackend;
+			syncComparisonSurfaceDiagnostics();
 			
 			console.log(`[COMPARISON RENDERER] Created UTCI mesh for comparison analysis`);
+			return true;
 		} catch (error) {
 			console.error('[COMPARISON RENDERER] Failed to create UTCI mesh:', error);
+			return false;
+		}
+	}
+
+	function extractUtciLayout(activeAnalysis: Analysis) {
+		const layout = buildUtciGridLayout(activeAnalysis);
+		if (!layout) {
+			throw new Error('UTCI surface layout was unavailable for compute-buffer rendering.');
+		}
+		return layout;
+	}
+
+	function recreateComputeBufferComparisonSurface(
+		activeAnalysis: Analysis,
+		acceptedOutput: SelectedHourGpuResidentOutput,
+		layout: ReturnType<typeof extractUtciLayout>
+	): void {
+		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
+		if (!sourceBuffer) {
+			throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
+		}
+
+		disposeComparisonUtciMesh({ invalidateGpuResidentCopies: false });
+		comparisonUtciMesh = createComputeBufferUtciSurfaceMesh({
+			layout,
+			utciBuffer: sourceBuffer,
+			utciRange: acceptedOutput.utciRange,
+			metricType: acceptedOutput.metricType ?? 'utci'
+		});
+		applySurfaceMeshState(comparisonUtciMesh, layout, 'gpuNative');
+		setComputeBufferSurfacePendingStorageInit(comparisonUtciMesh);
+		comparisonScene?.add(comparisonUtciMesh);
+		lastComparisonAnalysis = activeAnalysis;
+		lastBackend = utciSurfaceBackend;
+		gpuResidentCopyError = undefined;
+		syncComparisonSurfaceDiagnostics();
+	}
+
+	async function copyComputeBufferIntoRenderOwnedStorage(params: {
+		mesh: Mesh;
+		acceptedOutput: SelectedHourGpuResidentOutput;
+		activeSyncRun: AcceptedGpuResidentSurfaceSyncRun;
+		syncStartedAt: number;
+		renderTimings: SelectedHourRenderTimingSubsteps;
+	}): Promise<void> {
+		const {
+			mesh,
+			acceptedOutput,
+			activeSyncRun,
+			syncStartedAt,
+			renderTimings
+		} = params;
+		const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
+		if (!sourceBuffer) {
+			throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
+		}
+
+		const storageAttribute = getComputeBufferUtciStorageAttribute(mesh);
+		if (!storageAttribute) {
+			throw new Error('Compute-buffer UTCI storage attribute was not available.');
+		}
+		let lastDevice: GPUDevice | undefined;
+		const isSuperseded = () =>
+			acceptedGpuResidentSurfaceSync.isSuperseded(
+				activeSyncRun,
+				getCurrentGpuResidentSyncLiveState()
+			);
+		const { device, targetBuffer, waitMs } = await waitForRenderStorageBuffer({
+			deadlineMs: 1000,
+			now: performance.now.bind(performance),
+			waitForNextFrame: async () => {
+				invalidate();
+				await waitForNextFrame();
+			},
+			isSuperseded,
+			readStorageBuffer: () => {
+				const rendererBackend = (
+					renderer as unknown as {
+						backend?: {
+							device?: GPUDevice;
+							get?: (resource: unknown) => { buffer?: GPUBuffer } | undefined;
+						};
+					}
+				).backend;
+				const device = rendererBackend?.device;
+				const targetBuffer = rendererBackend?.get?.(storageAttribute)?.buffer;
+				lastDevice = device;
+				return device && targetBuffer ? { device, targetBuffer } : null;
+			},
+			getTimeoutErrorMessage: () =>
+				lastDevice
+					? 'Three storage buffer was not initialized within the GPU-resident comparison render timeout.'
+					: 'Renderer WebGPU device was not available within the GPU-resident comparison render timeout.'
+		});
+		renderTimings.renderStorageInitWaitMs = waitMs;
+		if (isSuperseded()) {
+			acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
+			return;
+		}
+		const copyTimings = await copyComputeBufferToRenderStorage({
+			device,
+			queue: device.queue,
+			sourceBuffer,
+			targetBuffer,
+			byteLength: sourceBuffer.size,
+			now: performance.now.bind(performance),
+			isSuperseded
+		});
+		renderTimings.renderBufferCopyMs = copyTimings.bufferCopyMs;
+		renderTimings.renderQueueDrainMs = copyTimings.queueDrainMs;
+		if (isSuperseded()) {
+			acceptedGpuResidentSurfaceSync.supersedeSync(activeSyncRun);
+			return;
+		}
+
+		mesh.userData.utciSurfaceSource = 'compute-buffer-selected-hour';
+		mesh.userData.selectedHourTransferCount = 0;
+		mesh.userData.dataTextureBuildCount = 0;
+		setComputeBufferSurfacePublicationVisibility(
+			mesh,
+			Boolean(resolvedDisplayAnalysis && get(viewerStore).utciVisible)
+		);
+		renderTimings.renderSceneSyncTotalMs = performance.now() - syncStartedAt;
+		if (
+			acceptedGpuResidentSurfaceSync.completeSync(activeSyncRun, {
+				...getCurrentGpuResidentSyncLiveState(),
+				renderTimings
+			}) !== 'complete'
+		) {
+			return;
+		}
+		invalidate();
+	}
+
+	async function syncAcceptedGpuResidentSurface(
+		activeAnalysis: Analysis,
+		acceptedOutput: SelectedHourGpuResidentOutput
+	): Promise<void> {
+		if (!comparisonScene) return;
+		const activeSyncRun =
+			acceptedGpuResidentSurfaceSync.startSync({
+				acceptedOutput,
+				liveSelectedHourSurfaceIdentity
+			});
+		if (!activeSyncRun) {
+			return;
+		}
+
+		try {
+			const syncStartedAt = performance.now();
+			const renderTimings: SelectedHourRenderTimingSubsteps = {};
+			if (pendingRenderUpdateStartedAt !== undefined) {
+				renderTimings.renderSceneSyncStartDelayMs = Math.max(
+					0,
+					syncStartedAt - pendingRenderUpdateStartedAt
+				);
+			}
+			const layoutStartedAt = performance.now();
+			const layout = extractUtciLayout(activeAnalysis);
+			renderTimings.renderLayoutBuildMs = performance.now() - layoutStartedAt;
+
+			if (
+				!comparisonUtciMesh ||
+				!isComputeBufferUtciSurface(comparisonUtciMesh) ||
+				activeAnalysis !== lastComparisonAnalysis
+			) {
+				const surfaceMeshStartedAt = performance.now();
+				recreateComputeBufferComparisonSurface(activeAnalysis, acceptedOutput, layout);
+				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
+			} else {
+				const sourceBuffer = acceptedOutput.output.gpuBuffer as GPUBuffer | undefined;
+				if (!sourceBuffer) {
+					throw new Error('Accepted GPU-resident UTCI output is missing its GPUBuffer handle.');
+				}
+				const surfaceMeshStartedAt = performance.now();
+				const updated = updateComputeBufferUtciSurfaceMesh(comparisonUtciMesh, {
+					layout,
+					utciBuffer: sourceBuffer,
+					utciRange: acceptedOutput.utciRange,
+					metricType: acceptedOutput.metricType ?? 'utci'
+				});
+				if (!updated) {
+					recreateComputeBufferComparisonSurface(activeAnalysis, acceptedOutput, layout);
+				} else {
+					applySurfaceMeshState(comparisonUtciMesh, layout, 'gpuNative');
+				}
+				renderTimings.renderSurfaceMeshMs = performance.now() - surfaceMeshStartedAt;
+			}
+
+			if (!comparisonUtciMesh) {
+				throw new Error('Compute-buffer UTCI surface was not created.');
+			}
+
+			setComputeBufferSurfacePendingStorageInit(comparisonUtciMesh);
+			await copyComputeBufferIntoRenderOwnedStorage({
+				mesh: comparisonUtciMesh,
+				acceptedOutput,
+				activeSyncRun,
+				syncStartedAt,
+				renderTimings
+			});
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			if (
+				acceptedGpuResidentSurfaceSync.failSync(activeSyncRun, {
+					...getCurrentGpuResidentSyncLiveState(),
+					errorMessage
+				}) === 'superseded'
+			) {
+				return;
+			}
+
+			if (comparisonUtciMesh) {
+				setComputeBufferSurfacePublicationVisibility(comparisonUtciMesh, false);
+			}
 		}
 	}
 
 	/**
 	 * Update UTCI surface mesh with new viewer state
 	 */
-	function updateComparisonUtciMesh(): void {
-		if (!comparisonUtciMesh || !$comparisonAnalysis) return;
+	function updateComparisonUtciMesh(): boolean {
+		if (!comparisonUtciMesh || !resolvedDisplayAnalysis) return false;
 
 		const currentViewerState = get(viewerStore);
-		const hourIndex = currentViewerState.currentHour ?? 0;
-		const colorMode = currentViewerState.colorMode ?? 'normalized';
-		const metricType = currentViewerState.metricType ?? 'utci';
-		
-		// Use unified range for consistent color mapping between base and comparison
-		const rangeOverride = get(unifiedUtciRange) ?? undefined;
+		const renderState = resolveLiveSelectedHourSurfaceRenderState({
+			analysis: resolvedDisplayAnalysis,
+			viewerState: currentViewerState,
+			publishedRenderContext: selectedHourRenderContext,
+			rangeOverride:
+				rangeOverride !== undefined
+					? rangeOverride
+					: get(unifiedUtciRange)
+		});
+		if (!renderState) {
+			return false;
+		}
 
 		try {
-			updateUtciSurfaceTexture(
+			const updated = updateUtciSurfaceMesh(
 				comparisonUtciMesh,
-				$comparisonAnalysis,
-				hourIndex,
-				colorMode,
-				metricType,
-				rangeOverride
+				{
+					analysis: renderState.analysis,
+					hourIndex: renderState.hourIndex,
+					colorMode: renderState.colorMode,
+					metricType: renderState.metricType,
+					rangeOverride: renderState.rangeOverride,
+					monthIndex: renderState.monthIndex,
+					backend: utciSurfaceBackend
+				}
 			);
+			if (!updated) {
+				return createComparisonUtciMesh(resolvedDisplayAnalysis);
+			}
 			
 			// Update visibility
 			comparisonUtciMesh.visible = currentViewerState.utciVisible ?? true;
+			syncComparisonSurfaceDiagnostics();
 			
 			invalidate();
+			return true;
 		} catch (error) {
 			console.error('[COMPARISON RENDERER] Failed to update UTCI mesh:', error);
+			return false;
 		}
 	}
 
 	/**
 	 * Dispose comparison UTCI mesh
 	 */
-	function disposeComparisonUtciMesh(): void {
-		if (!comparisonUtciMesh) return;
-
-		if (comparisonScene) {
+	function disposeComparisonUtciMesh(
+		options: { invalidateGpuResidentCopies?: boolean } = {}
+	): void {
+		acceptedGpuResidentSurfaceSync.reset({
+			invalidateActiveRun: options.invalidateGpuResidentCopies ?? true
+		});
+		if (comparisonUtciMesh && comparisonScene) {
 			comparisonScene.remove(comparisonUtciMesh);
 		}
-
-		// Dispose materials and textures
-		const materials = Array.isArray(comparisonUtciMesh.material)
-			? comparisonUtciMesh.material
-			: [comparisonUtciMesh.material];
-
-		materials.forEach((mat) => {
-			const material = mat as MeshBasicMaterial;
-			material.map?.dispose();
-			material.dispose();
-		});
-
-		comparisonUtciMesh.geometry.dispose();
+		if (comparisonUtciMesh) {
+			disposeUtciSurfaceMesh(comparisonUtciMesh);
+		}
 		comparisonUtciMesh = null;
-		
+		lastComparisonAnalysis = null;
+		lastBackend = null;
+		syncComparisonSurfaceDiagnostics();
+
 		console.log(`[COMPARISON RENDERER] Disposed UTCI mesh`);
 	}
 
@@ -221,17 +608,18 @@
 	/**
 	 * Load comparison model when analysis changes
 	 */
-	async function loadComparisonModel(analysis: typeof $comparisonAnalysis) {
+	async function loadComparisonModel(analysis: Analysis | null) {
 		if (!analysis) {
 			cleanupComparison();
 			return;
 		}
 
 		const analysisId = $comparisonStore.comparisonAnalysisId;
-		const modelPath = resolveModelPath(
-			analysis.metadata.model_file,
+		const modelPath = resolveAnalysisModelPath(
+			analysis.metadata,
 			analysisId
 		).replace('data/', `${getDataBasePath()}/data/`);
+		const loadToken = ++comparisonLoadRequestToken;
 		
 		// Verify the analysis matches the current store request to prevent stale loads
 		// This handles race conditions when switching scenarios rapidly
@@ -287,7 +675,12 @@
 					);
 				});
 
-				modelGroup = processLoadedModel(gltf.scene, analysis, modelPath);
+				modelGroup = await processLoadedModel(gltf.scene, analysis, modelPath);
+			}
+
+			if (!isCurrentComparisonLoad(loadToken, analysisId)) {
+				disposeGroup(modelGroup);
+				return;
 			}
 
 			// Add new model to comparison scene FIRST (before removing old one)
@@ -316,8 +709,26 @@
 			// Apply current layer visibility
 			applyLayerVisibilityToComparison($layerStore);
 
-			// Create UTCI surface mesh for comparison analysis data
-			createComparisonUtciMesh(analysis);
+			// Create a CPU surface only when the shared live contract is not
+			// about to publish a GPU-resident comparison surface.
+			if (
+				utciSurfaceBackend !== 'gpuNative' ||
+				acceptedGpuResidentOutput == null
+			) {
+				createComparisonUtciMesh(resolvedDisplayAnalysis);
+			}
+
+			if (!isCurrentComparisonLoad(loadToken, analysisId)) {
+				if (comparisonScene) {
+					comparisonScene.remove(modelGroup);
+				}
+				if (comparisonModel === modelGroup) {
+					comparisonModel = null;
+				}
+				disposeGroup(modelGroup);
+				disposeComparisonUtciMesh();
+				return;
+			}
 
 			loadedAnalysisId = modelPath;
 			isLoading = false;
@@ -326,6 +737,9 @@
 			console.log(`[COMPARISON RENDERER] Model loaded successfully`);
 			invalidate();
 		} catch (error) {
+			if (!isCurrentComparisonLoad(loadToken, analysisId)) {
+				return;
+			}
 			console.error('[COMPARISON RENDERER] Failed to load model:', error);
 			loadError = error instanceof Error ? error.message : 'Failed to load comparison model';
 			isLoading = false;
@@ -336,7 +750,7 @@
 	/**
 	 * Clone and process a cached model
 	 */
-	function cloneAndProcessCachedModel(cachedScene: Group, analysis: typeof $comparisonAnalysis): Group {
+	function cloneAndProcessCachedModel(cachedScene: Group, analysis: Analysis | null): Group {
 		const modelGroup = cachedScene.clone(true);
 
 		// Clone materials to avoid sharing
@@ -357,17 +771,17 @@
 	}
 
 	/**
-	 * Process a freshly loaded model
+	 * Process a freshly loaded model (async so layer merge can yield and avoid main-thread freeze).
 	 */
-	function processLoadedModel(
+	async function processLoadedModel(
 		loadedScene: Group,
-		analysis: typeof $comparisonAnalysis,
+		analysis: Analysis | null,
 		modelPath: string
-	): Group {
+	): Promise<Group> {
 		const modelGroup = loadedScene;
 
-		// Apply layer materials
-		applyLayerMaterials(modelGroup);
+		// Apply layer materials (yields between layers for large models)
+		await applyLayerMaterials(modelGroup);
 
 		// Apply coordinate transform
 		const coordinateSystem = analysis?.metadata.coordinate_system || 'xy_ground';
@@ -397,7 +811,7 @@
 	/**
 	 * Apply normalization offset to model
 	 */
-	function applyNormalizationOffset(modelGroup: Group, analysis: typeof $comparisonAnalysis): void {
+	function applyNormalizationOffset(modelGroup: Group, analysis: Analysis | null): void {
 		if (!analysis || !isNormalizationEnabled()) return;
 
 		const metadata = analysis.metadata;
@@ -473,6 +887,14 @@
 					child.material.dispose();
 				}
 			}
+			if (child instanceof THREE.LineSegments) {
+				child.geometry?.dispose();
+				if (Array.isArray(child.material)) {
+					child.material.forEach((mat) => mat.dispose());
+				} else if (child.material) {
+					child.material.dispose();
+				}
+			}
 		});
 	}
 
@@ -480,6 +902,7 @@
 	 * Cleanup comparison resources
 	 */
 	function cleanupComparison(): void {
+		comparisonLoadRequestToken += 1;
 		if (comparisonModel && comparisonScene) {
 			comparisonScene.remove(comparisonModel);
 			disposeGroup(comparisonModel);
@@ -504,17 +927,25 @@
 		restoreBaseOnlyLayers();
 	}
 
-	// Store original render function
-	let originalAutoRender: boolean | undefined;
-	let renderLoopActive = false;
+	function isCurrentComparisonLoad(
+		loadToken: number,
+		expectedComparisonAnalysisId: string | null
+	): boolean {
+		const comparisonState = get(comparisonStore);
+		return (
+			loadToken === comparisonLoadRequestToken &&
+			comparisonState.isComparing &&
+			comparisonState.comparisonAnalysisId === expectedComparisonAnalysisId
+		);
+	}
 
-	/**
-	 * Custom render loop with scissor-test rendering
-	 */
-	function customRenderLoop(): void {
-		if (!renderer || !$comparisonStore.isComparing || !comparisonScene || !comparisonCamera) {
-			return;
-		}
+	// Comparison render task: replaces Threlte's default auto-render while this
+	// component is mounted (i.e. while comparison mode is active) so we can
+	// fully control scissor-based passes.
+	function renderComparison() {
+		if (!renderer) return;
+		if (!$comparisonStore.isComparing) return;
+		if (!comparisonScene || !comparisonCamera) return;
 
 		// Use baseCamera prop which is passed from the parent component
 		const actualCamera = baseCamera;
@@ -528,20 +959,30 @@
 		}
 		comparisonCamera.updateProjectionMatrix();
 
-		// Get canvas dimensions
-		const canvas = renderer.domElement;
-		const width = canvas.clientWidth;
-		const height = canvas.clientHeight;
+		// Use renderer size rather than DOM element size for WebGPU safety
+		const size = new THREE.Vector2();
+		renderer.getSize(size);
+		const width = size.x;
+		const height = size.y;
+		if (width === 0 || height === 0) return;
 
 		// Calculate scissor positions based on curtain position
 		const curtain = $curtainPosition;
 		const curtainX = Math.floor(width * curtain);
 
-		// Store original state
-		const originalScissorTest = renderer.getScissorTest();
+		// Store original state (WebGLRenderer) if the API exists. WebGPURenderer
+		// does not currently expose setScissorTest / getScissorTest, but still
+		// supports setScissor + setViewport.
+		const canToggleScissorTest =
+			typeof (renderer as any).getScissorTest === 'function' &&
+			typeof (renderer as any).setScissorTest === 'function';
+		const originalScissorTest = canToggleScissorTest
+			? (renderer as any).getScissorTest()
+			: undefined;
 
-		// Enable scissor test
-		renderer.setScissorTest(true);
+		if (canToggleScissorTest) {
+			(renderer as any).setScissorTest(true);
+		}
 
 		// Clear entire canvas first
 		renderer.setViewport(0, 0, width, height);
@@ -563,58 +1004,46 @@
 			renderer.render(comparisonScene, comparisonCamera);
 		}
 
-		// Restore scissor test state
-		renderer.setScissorTest(originalScissorTest);
-	}
-
-	// Animation frame ID for cleanup
-	let animationFrameId: number | null = null;
-
-	/**
-	 * Start custom render loop
-	 */
-	function startRenderLoop(): void {
-		if (renderLoopActive) return;
-
-		renderLoopActive = true;
-		const loop = () => {
-			if (!renderLoopActive) return;
-			customRenderLoop();
-			animationFrameId = requestAnimationFrame(loop);
-		};
-		animationFrameId = requestAnimationFrame(loop);
-	}
-
-	/**
-	 * Stop custom render loop and restore normal rendering
-	 */
-	function stopRenderLoop(): void {
-		renderLoopActive = false;
-		if (animationFrameId !== null) {
-			cancelAnimationFrame(animationFrameId);
-			animationFrameId = null;
+		// Restore scissor test state if supported
+		if (canToggleScissorTest && originalScissorTest !== undefined) {
+			(renderer as any).setScissorTest(originalScissorTest);
 		}
-
-		// Reset renderer scissor state to allow normal rendering
-		if (renderer) {
-			renderer.setScissorTest(false);
-			
-			// Reset viewport to full canvas size
-			const canvas = renderer.domElement;
-			const width = canvas.clientWidth;
-			const height = canvas.clientHeight;
-			renderer.setViewport(0, 0, width, height);
-			renderer.setScissor(0, 0, width, height);
-			
-			console.log(`[COMPARISON RENDERER] Renderer state reset, triggering re-render`);
-		}
-
-		// Trigger a re-render of the base scene to update the view immediately
-		invalidate();
 	}
 
-	// React to comparison analysis changes
-	$: if ($comparisonStore.isComparing && $comparisonAnalysis) {
+	// Drive the comparison renderer as a dedicated render task. While this
+	// component is mounted we disable Threlte's autoRender so this task becomes
+	// the only render path, then restore the previous behavior on destroy.
+	const { start: startComparisonRender, stop: stopComparisonRender } = useTask(renderComparison, {
+		autoStart: false,
+		autoInvalidate: false,
+		stage: renderStage
+	});
+
+	let comparisonRenderActive = false;
+	let previousAutoRender: boolean | null = null;
+	let activeComparisonLoadRequestKey: string | null = null;
+
+	$: comparisonLoadRequestKey =
+		$comparisonStore.isComparing &&
+		!$comparisonStore.isLoading &&
+		$comparisonStore.comparisonAnalysisId &&
+		$comparisonAnalysis
+			? [
+					$comparisonStore.comparisonAnalysisId,
+					resolveAnalysisModelPath(
+						$comparisonAnalysis.metadata,
+						$comparisonStore.comparisonAnalysisId
+					)
+				].join('|')
+			: null;
+
+	// React only when the target comparison analysis/model actually changes.
+	$: if (comparisonLoadRequestKey == null) {
+		activeComparisonLoadRequestKey = null;
+		cleanupComparison();
+	} else if (comparisonLoadRequestKey !== activeComparisonLoadRequestKey) {
+		activeComparisonLoadRequestKey = comparisonLoadRequestKey;
+		setComparisonModelLoading(true);
 		loadComparisonModel($comparisonAnalysis);
 	}
 
@@ -624,51 +1053,189 @@
 		invalidate();
 	}
 
-	// Track previous viewer state for comparison UTCI updates
-	// Only trigger expensive texture updates when relevant viewer properties change
-	let lastUtciUpdateState: { hour: number; colorMode: string; metricType: string; visible: boolean } | null = null;
+	// Track previous viewer state for comparison UTCI updates.
+	let lastUtciUpdateState: {
+		hour: number;
+		month: number;
+		colorMode: string;
+		metricType: string;
+		visible: boolean;
+		unifiedRangeMin: number | null;
+		unifiedRangeMax: number | null;
+	} | null = null;
 
-	// React to viewer state changes (hour, metric type, color mode, visibility)
-	// Note: We deliberately do NOT reference $comparisonStore here to avoid
-	// triggering expensive UTCI updates on curtain position changes
-	$: if (comparisonUtciMesh && $viewerStore) {
-		const currentState = {
-			hour: $viewerStore.currentHour,
-			colorMode: $viewerStore.colorMode,
-			metricType: $viewerStore.metricType ?? 'utci',
-			visible: $viewerStore.utciVisible ?? true
-		};
-		
-		// Only update if comparison is active and state actually changed
-		if (get(comparisonStore).isComparing && (
-			!lastUtciUpdateState ||
-			lastUtciUpdateState.hour !== currentState.hour ||
-			lastUtciUpdateState.colorMode !== currentState.colorMode ||
-			lastUtciUpdateState.metricType !== currentState.metricType ||
-			lastUtciUpdateState.visible !== currentState.visible
-		)) {
-			updateComparisonUtciMesh();
-			lastUtciUpdateState = currentState;
+	// React to viewer state changes without depending on comparison store fields
+	// that change every frame, like curtain position.
+	$: {
+		const viewerState = $viewerStore;
+		const currentUnifiedRange =
+			rangeOverride !== undefined ? rangeOverride : $unifiedUtciRange;
+		const currentComparisonAnalysis = resolvedDisplayAnalysis;
+		const renderState =
+			viewerState && currentComparisonAnalysis
+				? resolveLiveSelectedHourSurfaceRenderState({
+						analysis: currentComparisonAnalysis,
+						viewerState,
+						publishedRenderContext: selectedHourRenderContext,
+						rangeOverride: currentUnifiedRange
+				  })
+				: null;
+		const acceptedKey =
+			renderState?.analysis && utciSurfaceBackend === 'gpuNative'
+				? getAcceptedGpuResidentKey(acceptedGpuResidentOutput)
+				: null;
+		const acceptedSyncRunKey =
+			renderState?.analysis && utciSurfaceBackend === 'gpuNative'
+				? acceptedGpuResidentSurfaceSync.getSyncRunKey({
+						acceptedGpuResidentOutput,
+						liveSelectedHourSurfaceIdentity
+					})
+				: null;
+		const useGpuResidentComputeSurface =
+			Boolean(renderState?.analysis) &&
+			utciSurfaceBackend === 'gpuNative' &&
+			acceptedGpuResidentOutput != null;
+		const activeRenderAnalysis = renderState?.analysis ?? null;
+		const currentState = renderState
+			? {
+					hour: renderState.hourIndex,
+					month: renderState.monthIndex,
+					colorMode: renderState.colorMode,
+					metricType: renderState.metricType,
+					visible: viewerState.utciVisible ?? true,
+					unifiedRangeMin: renderState.rangeOverride?.utciMin ?? null,
+					unifiedRangeMax: renderState.rangeOverride?.utciMax ?? null
+				}
+			: null;
+
+		if (!viewerState || !get(comparisonStore).isComparing || !currentComparisonAnalysis) {
+			if (!currentComparisonAnalysis) {
+				disposeComparisonUtciMesh();
+				lastUtciUpdateState = null;
+			}
+		} else if (
+			useGpuResidentComputeSurface &&
+			acceptedGpuResidentOutput &&
+			acceptedKey &&
+			activeRenderAnalysis
+		) {
+			lastUtciUpdateState = null;
+			if (!acceptedSyncRunKey) {
+				acceptedGpuResidentSurfaceSync.reset({ invalidateActiveRun: true });
+			} else if (
+				acceptedGpuResidentSurfaceSync.getActiveSyncRunKey() !== acceptedSyncRunKey ||
+				activeRenderAnalysis !== lastComparisonAnalysis ||
+				!isComputeBufferUtciSurface(comparisonUtciMesh)
+			) {
+				void syncAcceptedGpuResidentSurface(activeRenderAnalysis, acceptedGpuResidentOutput);
+			}
+		} else if (!currentState) {
+			// Unreachable with the guard above, but keeps TypeScript happy in the
+			// subsequent state comparisons.
+		} else {
+			acceptedGpuResidentSurfaceSync.reset();
+
+			if (comparisonUtciMesh && isComputeBufferUtciSurface(comparisonUtciMesh)) {
+				disposeComparisonUtciMesh();
+			}
+
+			if (!comparisonUtciMesh) {
+				if (comparisonScene && currentState) {
+					const recreated = createComparisonUtciMesh(currentComparisonAnalysis);
+					if (recreated) {
+						lastUtciUpdateState = currentState;
+						invalidate();
+					}
+				}
+			} else {
+				const needsRecreate =
+					activeRenderAnalysis !== lastComparisonAnalysis ||
+					utciSurfaceBackend !== lastBackend;
+				const stateChanged =
+					!lastUtciUpdateState ||
+					lastUtciUpdateState.hour !== currentState.hour ||
+					lastUtciUpdateState.month !== currentState.month ||
+					lastUtciUpdateState.colorMode !== currentState.colorMode ||
+					lastUtciUpdateState.metricType !== currentState.metricType ||
+					lastUtciUpdateState.visible !== currentState.visible ||
+					lastUtciUpdateState.unifiedRangeMin !== currentState.unifiedRangeMin ||
+					lastUtciUpdateState.unifiedRangeMax !== currentState.unifiedRangeMax;
+
+				if (needsRecreate) {
+					const recreated = createComparisonUtciMesh(currentComparisonAnalysis);
+					if (recreated) {
+						lastUtciUpdateState = currentState;
+						invalidate();
+					}
+				} else if (stateChanged) {
+					const updated = updateComparisonUtciMesh();
+					if (updated) {
+						lastUtciUpdateState = currentState;
+					}
+				}
+			}
 		}
+	}
+
+	$: {
+		if (comparisonUtciMesh) {
+			const isComputeSurface = isComputeBufferUtciSurface(comparisonUtciMesh);
+			const shouldRenderForStorageInit =
+				isComputeSurface && gpuResidentCopyStatus === 'pending';
+			const shouldBeVisible =
+				Boolean(resolvedDisplayAnalysis && $viewerStore?.utciVisible) &&
+				(!isComputeSurface || gpuResidentCopyStatus === 'complete');
+			if (shouldRenderForStorageInit) {
+				setComputeBufferSurfacePendingStorageInit(comparisonUtciMesh);
+			} else {
+				setComputeBufferSurfacePublicationVisibility(
+					comparisonUtciMesh,
+					shouldBeVisible
+				);
+			}
+			if (comparisonUtciMesh.visible) {
+				invalidate();
+			}
+		}
+	}
+
+	$: if (
+		comparisonUtciMesh &&
+		!isComputeBufferUtciSurface(comparisonUtciMesh) &&
+		liveSelectedHourSurfaceIdentity
+	) {
+		syncComparisonSurfaceDiagnostics();
 	}
 
 	// Note: No need to invalidate() on curtain position changes - the custom render loop
 	// already runs continuously via requestAnimationFrame when comparison is active
 
-	// Start/stop render loop based on comparison state
-	$: if ($comparisonStore.isComparing && comparisonScene && comparisonCamera) {
-		startRenderLoop();
-	} else {
-		stopRenderLoop();
-	}
-
 	onMount(() => {
 		console.log('[COMPARISON RENDERER] Mounted');
+
+		// Take over rendering while comparison mode is active (this component
+		// is only mounted when comparing). We disable Threlte's autoRender
+		// and run our custom scissor-based task instead.
+		previousAutoRender = autoRender.current;
+		autoRender.set(false);
+		startComparisonRender();
+		comparisonRenderActive = true;
 	});
 
 	onDestroy(() => {
 		console.log('[COMPARISON RENDERER] Destroying');
-		stopRenderLoop();
+
+		// Stop comparison render task and restore original autoRender state so
+		// the base scene resumes normal rendering.
+		if (comparisonRenderActive) {
+			stopComparisonRender();
+			comparisonRenderActive = false;
+		}
+		if (previousAutoRender !== null) {
+			autoRender.set(previousAutoRender);
+			previousAutoRender = null;
+		}
+
 		cleanupComparison();
 
 		if (comparisonScene) {

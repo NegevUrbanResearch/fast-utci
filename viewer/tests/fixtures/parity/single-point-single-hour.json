@@ -1,0 +1,15 @@
+{
+  "name": "single-point-single-hour",
+  "description": "Deterministic parity fixture for one point / one hour UTCI comparison.",
+  "inputs": {
+    "airTempC": 30.0,
+    "mrtC": 38.2,
+    "windSpeedMs": 1.0,
+    "relativeHumidityPct": 50.0
+  },
+  "expected": {
+    "pythonUtciC": 32.43,
+    "webgpuUtciC": 32.45,
+    "toleranceC": 0.25
+  }
+}
