@@ -1,4 +1,8 @@
 
+> **Historical note:** This March 2026 migration analysis is retained for design history. It is not the current onboarding source of truth. Use [docs/webgpu_strategy_analysis.md](webgpu_strategy_analysis.md) for the current main-route WebGPU architecture, fallback boundaries, and performance proof status.
+>
+> In this historical file, references to the "Python pipeline" mean the legacy Python/Ladybug reference pathway: Ladybug EPW/sun/sky/SolarCal logic plus `pythermalcomfort` UTCI.
+
 ---
 
 ## 20. Phase 1 Implementation Review Notes
@@ -503,7 +507,7 @@ The *goal* is to be entirely unreliant on Python for the viewer — the WebGPU p
 |---|----------|-----------|
 | 1 | **Go all-in on WebGPU** (not phased) | Real-time capability is transformative; phased migration prolongs complexity |
 | 2 | **f32 precision is acceptable** | ±0.3-0.5°C UTCI diff is fine for urban planning; validate against .bin files |
-| 3 | **Keep Python as validation/legacy** | Not deprecated — used as oracle for testing and for batch/research workflows |
+| 3 | **Keep Python as validation/legacy** | Kept as oracle for testing, old artifact reproduction, and legacy research scripts; not the recommended path for new high-throughput analysis |
 | 4 | **No WebGL2/CPU fallback** | WebGPU support is universal enough; effort not justified |
 | 5 | **Port ladybug formulas ourselves** | No official JS library exists; need exact parity anyway |
 | 6 | **TDD for all ported components** | Each formula port gets unit tests validated against Python reference |
@@ -1006,7 +1010,7 @@ Noted for future: the architecture is PWA-compatible since all computation is cl
 |---|----------|-----------|------|
 | 1 | **Go all-in on WebGPU** (not phased) | Real-time capability is transformative; phased migration prolongs complexity | 2026-03-13 |
 | 2 | **f32 precision is acceptable** | ±0.3-0.5°C UTCI diff is fine for urban planning; validate against .bin files | 2026-03-13 |
-| 3 | **Keep Python as validation/legacy** | Not deprecated — used as oracle for testing and for batch/research workflows | 2026-03-13 |
+| 3 | **Keep Python as validation/legacy** | Kept as oracle for testing, old artifact reproduction, and legacy research scripts; not the recommended path for new high-throughput analysis | 2026-03-13 |
 | 4 | **No WebGL2/CPU fallback** | WebGPU support is universal enough; effort not justified | 2026-03-13 |
 | 5 | **Port ladybug formulas ourselves** | No official JS library exists; need exact parity anyway | 2026-03-13 |
 | 6 | **TDD for all ported components** | Each formula port gets unit tests validated against Python reference | 2026-03-13 |

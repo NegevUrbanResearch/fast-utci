@@ -1,134 +1,95 @@
 # UTCI Analysis Viewer
 
-Interactive 3D viewer for UTCI (Universal Thermal Climate Index) analysis results, built with SvelteKit and Threlte (Three.js).
+The viewer is a SvelteKit + Three.js application for interactive UTCI and Shading Availability Index (SAI) analysis. It loads project models and metadata from `../data/`, runs WebGPU compute in the browser, and renders the active metric in a 3D scene.
 
-## Features
+Project history: the baseline workflow was conventional Ladybug/Grasshopper, followed by this repo's Embree/parallel Python/Ladybug pathway for faster reproducible reference runs. The viewer is now the main path: WebGPU + Three.js computes and renders the interactive analysis live in the browser.
 
-- **3D Model Visualization**: Load and explore 3D GLB models with layer-based visibility controls
-- **UTCI Point Cloud**: Visualize thermal comfort data as interactive point clouds
-- **Time-based Analysis**: Scrub through hourly UTCI data with an interactive timeline
-- **Scenario Comparison**: Switch between different urban design scenarios
-- **Real-time Analytics**: View statistics and heatmaps for selected hours
-- **Responsive Controls**: Orbit, zoom, and pan with smooth camera controls
+## Routes
 
-## Architecture
+- `/`: main application route.
+- `/debug`: diagnostics, collectors, parity checks, and `.bin` comparison.
 
-The viewer uses a clean separation between data and application:
-- **Data Location**: All analysis data (models, analyses, validation) resides in `../data/` (project root)
-- **GitHub Pages**: Data is served from `/fast-utci/data/`, app from `/fast-utci/viewer/build/`
-
-This eliminates redundancy and keeps the repository size manageable.
+Use `/` for normal development and user-facing behavior. Use `/debug` only when working on validation or diagnostics.
 
 ## Development
 
-Install dependencies:
-
-```bash
+```powershell
 npm install
-```
-
-Start the development server:
-
-```bash
 npm run dev
-
-# or open in browser automatically
-npm run dev -- --open
 ```
 
-The app will be available at `http://localhost:5173`.
+Vite prints the local URL, usually `http://localhost:5173`.
 
-## Building for Production
+## Build And Preview
 
-### Standard Build
-
-```bash
+```powershell
 npm run build
-```
-
-### GitHub Pages Build
-
-For deployment to GitHub Pages with the correct base path:
-
-```bash
-npm run build:gh
-```
-
-This sets `NODE_ENV=production` to configure the base path as `/fast-utci/viewer/build` and creates a `.nojekyll` file to prevent Jekyll processing.
-
-## Preview Production Build
-
-After building, preview the production version locally:
-
-```bash
 npm run preview
 ```
 
-**Note**: The preview server simulates the GitHub Pages environment with the base path `/fast-utci/viewer/build`.
+## Checks
 
-## Testing
-
-Run unit tests:
-
-```bash
+```powershell
+npm run check
 npm test
-
-# or with UI
-npm run test:ui
-
-# or with coverage
 npm run test:coverage
 ```
 
-## Deployment to GitHub Pages
+Focused WebGPU route checks:
 
-Deployment is **automatic** via GitHub Actions. When you push to the `main` branch:
-
-1. **CI/CD workflow runs automatically**:
-   - Installs dependencies
-   - Runs tests
-   - Builds the viewer
-   - Deploys to GitHub Pages
-
-2. **No manual build required** - just push your changes:
-   ```bash
-   git add .
-   git commit -m "Your changes"
-   git push
-   ```
-
-3. **The workflow will**:
-   - Build the viewer in CI (ensuring consistent builds)
-   - Run tests before deployment (prevents bad deployments)
-   - Automatically deploy to GitHub Pages
-
-**Note**: The `viewer/build/` folder is now ignored by git (built in CI). For local testing, you can still run `npm run build:gh` in the `viewer/` directory.
-
-The viewer will be accessible at: `https://[username].github.io/fast-utci/viewer/build/`
-
-The root redirect at `https://[username].github.io/fast-utci/` will automatically forward to `viewer/build/`.
-
-## Project Structure
-
-```
-viewer/
-├── src/
-│   ├── lib/
-│   │   ├── components/     # Svelte components (Scene, UI, etc.)
-│   │   ├── services/       # Business logic (data loading, caching)
-│   │   ├── stores/         # Svelte stores (state management)
-│   │   ├── utils/          # Utility functions
-│   │   └── types/          # TypeScript type definitions
-│   └── routes/             # SvelteKit routes
-├── tests/                  # Unit tests
-├── static/                 # Static assets (robots.txt)
-└── build/                  # Production build output (built in CI, not committed)
+```powershell
+npm run test:quality:selected-hour
+npm run test:e2e:selected-hour
 ```
 
-## Key Technologies
+The Playwright selected-hour checks require a browser/GPU setup that can exercise WebGPU.
 
-- **SvelteKit**: Full-stack framework with static adapter for GitHub Pages
-- **Threlte**: Svelte wrapper for Three.js, providing reactive 3D rendering
-- **Three.js**: 3D graphics library for WebGL rendering
-- **TypeScript**: Type-safe development
-- **Vitest**: Unit testing framework
+## Data Inputs
+
+The viewer reads from the repo-level `data/` directory:
+
+- `data/3d_models/`: GLB models and georeference sidecars.
+- `data/weather/`: EPW/weather inputs.
+- `data/analyses/`: project metadata, manifests, live WebGPU metadata, and legacy/debug `.bin` reference files.
+- `data/performance-results/`: collector output summarized by docs and scripts.
+- `data/gis/`: GIS exports generated from verified viewer runs.
+
+See [../docs/data-onboarding.md](../docs/data-onboarding.md) for the project/data loading workflow.
+
+## Useful Scripts
+
+- `scripts/generate-live-webgpu-metadata.ts`: generate metadata for GLB-backed WebGPU projects.
+- `scripts/compare-parity.ts`: compare WebGPU outputs with reference artifacts.
+- `scripts/compare-shading-index-parity.ts`: debug-route parity for the internal `shading_index` output that represents SAI.
+- `scripts/export-innovation-district-gis.ts`: collect verified live-route data for GIS handoff.
+- `scripts/summarize-main-route-performance.ts`: summarize main-route performance artifacts.
+
+## Runtime Notes
+
+- Three.js uses `WebGPURenderer`.
+- UTCI is selected by month and hour.
+- SAI is selected by month.
+- The preferred visible UTCI render path is `compute-buffer-selected-hour`.
+- Tooltips, diagnostics, exports, and compatibility paths may use bounded CPU readbacks; these support the WebGPU route and are not the recommended analysis workflow.
+
+## Deployment
+
+GitHub Pages deployment is handled by CI on `main`: install dependencies, run tests, build, and publish.
+
+The public app is served at:
+
+```text
+https://[username].github.io/fast-utci/viewer/build/
+```
+
+The repo root URL redirects to `viewer/build/`.
+
+## Stack
+
+- SvelteKit
+- Svelte 5
+- Three.js / Three WebGPU
+- Threlte
+- TypeScript
+- Vitest
+- Playwright

@@ -1,8 +1,12 @@
 # UTCI Calculator Module
 
+This module is part of the legacy Python/Ladybug CPU pipeline. It provides UTCI tools for reference calculations, validation, legacy exports, and parity checks.
+
+The Python/Ladybug pathway was the scriptable Embree/parallel-CPU improvement over Grasshopper/Ladybug. The current WebGPU/Three.js route is the main and faster path for new analysis.
+
 ## What This Does
 
-Computes Universal Thermal Climate Index (UTCI) from Mean Radiant Temperature (MRT) results and weather data using pythermalcomfort. This module provides a clean, modular architecture for UTCI calculations.
+Computes Universal Thermal Climate Index (UTCI) from Mean Radiant Temperature (MRT) results and weather data using `pythermalcomfort`. In the legacy pathway, those MRT and weather inputs usually come from the Ladybug-backed MRT/EPW modules.
 
 ## Architecture
 
@@ -26,20 +30,25 @@ fast_utci/utci/
 4. **Type Safety**: Uses dataclasses for structured results
 5. **Testable**: Clean interfaces make unit testing easy
 
-## Quick Start
+## Legacy Reference Example
+
+The example below documents the Python/Ladybug reference path. For new production analysis, prefer the WebGPU/Three.js viewer path unless you specifically need parity data or a legacy export.
 
 ```python
 from fast_utci.utci import UTCICalculator
 from fast_utci.mrt import MRTCalculator, create_rectangular_grid, create_analysis_period
+from fast_utci.shared import load_config
 from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
 from ladybug.epw import EPW
+
+cfg = load_config()
 
 # Load model and get combined mesh
 scene, _, _ = read_project_data('buildings.glb', 'weather.epw')
 model = get_combined_mesh(scene)
 
 # Compute MRT (see fast_utci/mrt/README.md)
-mrt_calc = MRTCalculator(context_meshes=[model])
+mrt_calc = MRTCalculator(context_meshes=[model], config=cfg.mrt)
 mrt_calc.set_location_from_epw('weather.epw')
 
 # Create analysis grid
@@ -58,7 +67,7 @@ exposure_results = mrt_calc.compute_exposure(grid.points, period)
 mrt_results = mrt_calc.compute_mrt(epw, exposure_results, period)
 
 # Compute UTCI
-utci_calc = UTCICalculator(weather_data='weather.epw')
+utci_calc = UTCICalculator(weather_data='weather.epw', config=cfg.utci)
 utci_results = utci_calc.compute_utci(
     mrt_results=mrt_results,
     show_progress=True
@@ -166,6 +175,8 @@ Returns `UTCICalculationResult` dataclass.
 
 ## Performance
 
+These notes describe performance within the legacy CPU reference path. They are useful for maintaining parity scripts and exports, but they should not be read as a recommendation to use Python for new large-scale analysis over the WebGPU/Three.js path.
+
 - **Vectorized calculations**: Uses numpy for 10-100x speedup
 - **Parallel processing**: Automatic for large datasets
 - **Memory efficient**: Zero-copy numpy views when possible
@@ -177,7 +188,7 @@ See `tests/test_utci_refactor_validation.py` for integration tests that validate
 
 ## Migration from Old Code
 
-If you're using the old `fast_utci.utci_calculator` module:
+If you need the compatibility import path:
 
 ```python
 # Old way

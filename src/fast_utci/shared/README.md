@@ -1,5 +1,9 @@
 # Shared Utilities
 
+Shared utilities for the legacy Python/Ladybug CPU pipeline: reference analysis, validation, legacy exports, parity checks, and GIS postprocessing.
+
+These helpers support the older Embree/parallel-CPU pathway. The current product path is the WebGPU/Three.js viewer; keep new analysis-oriented workflows there when possible.
+
 This package contains modules shared across both MRT and UTCI calculators.
 
 ## Purpose
@@ -8,7 +12,7 @@ To avoid code duplication and ensure consistency, common functionality is centra
 
 - **Configuration**: Parallel processing, performance settings
 - **Parallel Processing**: Chunking strategies, worker pool management
-- **Weather Data**: Loading, filtering, and format conversion (EPW, DataFrame)
+- **Weather Data**: Loading, filtering, and format conversion (Ladybug EPW, DataFrame)
 - **Environment Variables**: Centralized env var parsing
 
 ## Modules

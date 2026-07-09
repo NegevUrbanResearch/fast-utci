@@ -1,8 +1,12 @@
 # MRT Calculator Module
 
+This module is part of the legacy Python/Ladybug CPU pipeline. It provides exposure, Mean Radiant Temperature (MRT), and Shading Availability Index (SAI) tools for reference calculations, parity checks, and legacy exports.
+
+This code was an intermediate performance step between Grasshopper/Ladybug and the current WebGPU viewer: it keeps Ladybug's sun/sky/SolarCal semantics, but replaces manual Grasshopper workflows with scriptable Embree-accelerated, parallel CPU execution. New high-throughput analysis should use the WebGPU/Three.js route when possible.
+
 ## What This Does
 
-Computes Mean Radiant Temperature (MRT) for outdoor thermal comfort analysis. This module replicates Grasshopper's OutdoorSolarMRT component with optimized performance.
+Computes Mean Radiant Temperature (MRT) for the legacy CPU reference path. It uses Ladybug sun/sky helpers and `ladybug-comfort` SolarCal to replicate Grasshopper's OutdoorSolarMRT component, with Embree/BVH-backed CPU ray tracing and parallel execution as the historical performance improvement. For current production analysis, prefer the WebGPU/Three.js viewer path.
 
 ## How It Works
 
@@ -26,7 +30,7 @@ All modules are located in `fast_utci/mrt/`:
 | `solarcal.py` | Compute MRT using Ladybug SolarCal |
 | `mesh.py` | Handle context geometry (buildings, trees) |
 | `period.py` | Filter data to specific time periods |
-| `config.py` | Centralized parameters and configuration |
+| shared `config.py` | TOML-backed parameters and configuration |
 
 ### Utility Modules
 
@@ -36,20 +40,23 @@ All modules are located in `fast_utci/mrt/`:
 | `cache.py` | Thread-safe cache management for expensive computations |
 | `performance.py` | Performance optimization utilities (batch sizing, memory) |
 | `adapters.py` | Ray intersector strategies (weather adapters moved to `fast_utci.shared.weather`) |
-| `shading_index.py` | Shading Index calculation (proportion of sunlight hours fully shaded) |
+| `shading_index.py` | SAI calculation (proportion of sunlight hours fully shaded) |
 
 ## Quick Start
 
 ```python
 from fast_utci.mrt import MRTCalculator, create_validation_period_filter, create_rectangular_grid
+from fast_utci.shared import load_config
 from fast_utci.shared.io import read_project_data, get_combined_mesh, get_ground_bounds
+
+cfg = load_config()
 
 # Load model and get combined mesh
 scene, _, _ = read_project_data('buildings.glb', 'weather.epw')
 model = get_combined_mesh(scene)
 
 # Setup MRT calculator
-calc = MRTCalculator(context_meshes=[model])
+calc = MRTCalculator(context_meshes=[model], config=cfg.mrt)
 calc.set_location_from_epw('weather.epw')
 
 # Create analysis grid
@@ -70,7 +77,7 @@ epw = EPW('weather.epw')
 exposure_results = calc.compute_exposure(grid.points, period, hours)
 mrt_results = calc.compute_mrt(epw, exposure_results, period, hours)
 
-# Calculate Shading Index (optional)
+# Calculate SAI (optional; implementation module is still named shading_index)
 from fast_utci.mrt.shading_index import calculate_shading_index
 sun_data = calc.get_sun_data(period, hours)
 shading_indices = calculate_shading_index(exposure_results, sun_data)
@@ -100,42 +107,17 @@ calc.to_csv(mrt_results, 'mrt_results.csv')
 
 ## Configuration
 
-### Basic Parameters
-
-Key parameters in `config.py`:
-- `DEFAULT_HUMAN_HEIGHT`: 1.8m (person height)
-- `DEFAULT_GRID_SIZE`: 10.0m (analysis spacing)
-- `DEFAULT_BATCH_SIZE`: 10000 (ray processing batch)
-- `DEFAULT_N_WORKERS`: Auto (parallel processing)
-
-### Environment Variables
-
-Control performance optimizations via environment variables:
+Configuration is loaded from the repo-level `fast_utci.toml` through `fast_utci.shared.load_config()`:
 
 ```python
-# Ray intersection backend
-FAST_UTCI_INTERSECTOR=auto|embree|trimesh
+from fast_utci.mrt import MRTCalculator
+from fast_utci.shared import load_config
 
-# Embree-specific settings
-FAST_UTCI_EMBREE_QUALITY=auto|low|medium|high
-FAST_UTCI_EMBREE_BUILD_BVH=true|false
-FAST_UTCI_EMBREE_PACKET_SIZE=0|4|8|16
-FAST_UTCI_INTERSECTS_ANY=true|false
-
-# Performance optimizations
-FAST_UTCI_VECTORIZED_SOLAR=true|false
-FAST_UTCI_BATCH_POSITIONS=true|false
+cfg = load_config()
+calc = MRTCalculator(context_meshes=[model], config=cfg.mrt)
 ```
 
-All environment variables are centralized in `EnvironmentConfig` for type-safe access:
-
-```python
-from fast_utci.mrt import get_env_config
-
-env = get_env_config()
-print(f"Using intersector: {env.intersector}")
-print(f"Vectorized solar: {env.vectorized_solar}")
-```
+Common settings live under `[mrt]`, `[performance]`, `[engine]`, and `[parallel]`. Prefer the TOML config path in examples and scripts.
 
 ## Validation
 

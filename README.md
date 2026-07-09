@@ -1,185 +1,130 @@
 # fast-utci
 
-**Rapidly compute 2D UTCI maps from 3D models**
+fast-utci is an interactive WebGPU application for urban thermal-comfort and shade-availability analysis from 3D city models.
 
-This package calculates Universal Thermal Climate Index (UTCI) for outdoor thermal comfort analysis by combining physical 3D geometry with weather data.
+The app loads GLB models, weather inputs, and analysis metadata from `data/`, computes UTCI and Shading Availability Index (SAI) in the browser, and renders the result in an interactive 3D viewer.
 
-**Live Demo:** [3D UTCI Viewer](https://negevurbanresearch.github.io/fast-utci/)
+Live demo: [3D UTCI Viewer](https://negevurbanresearch.github.io/fast-utci/)
 
-## What is UTCI?
+## Project Status
 
-UTCI (Universal Thermal Climate Index) represents how hot or cold it *feels* to a human outdoors, accounting for:
-- **Air temperature** - ambient conditions
-- **Wind speed** - convective cooling  
-- **Humidity** - evaporative cooling
-- **Mean Radiant Temperature (MRT)** - radiation from sun, sky, and surfaces
+The current product path is the WebGPU viewer. New projects should be added as GLB + weather + metadata and analyzed through the viewer route (`/`).
 
-UTCI values range from extreme cold (< -40°C) to extreme heat (> 46°C), with comfortable conditions between 9-26°C.
+The project grew through three steps:
 
-## What is Shading Index?
+1. Ladybug/Grasshopper gave us the original environmental-analysis baseline.
+2. The Python/Ladybug pathway improved that baseline by moving the workflow into code, using Embree-accelerated ray tracing and parallel CPU processing.
+3. The current WebGPU/Three.js pathway moves the heavy exposure, MRT, UTCI, and SAI work onto the GPU in the browser. This is the main route because it is dramatically faster and gives an interactive workflow instead of a precompute-first workflow.
 
-Shading Index measures the proportion of sunlight hours during which each point is fully shaded (no direct solar radiation). This metric complements UTCI by providing a direct measure of shading availability, following Israeli shading metrics guidelines for urban planning.
+The Python/Ladybug code remains in the repo for provenance, parity checks, old artifact reproduction, and support utilities. It is not the recommended path for new high-throughput analysis when the WebGPU route can run the project.
 
-**Shading Index values:**
-- **0.0-0.5**: Poor Shading (always or mostly exposed)
-- **0.5-0.7**: Acceptable Shading
-- **0.7-0.9**: Good Shading
-- **0.9-1.0**: Excellent Shading (always or mostly shaded)
+## What It Shows
 
-The viewer allows toggling between UTCI and Shading Index visualizations to analyze both thermal comfort and shading patterns.
+### UTCI
+
+UTCI (Universal Thermal Climate Index) estimates how hot or cold it feels outdoors. It combines air temperature, wind speed, humidity, and Mean Radiant Temperature (MRT).
+
+### Shading Availability Index (SAI)
+
+SAI measures how often each point is shaded during sun-up hours. fast-utci uses SAI as the public shade metric, aligned with the Derech Tzel shade-availability methodology.
+
+Methodology source: [Derech Tzel Shading Metrics Guide](https://tzel.org.il/wp-content/uploads/2025/02/Shading-Metrics-Guide.pdf)
+
+Current viewer buckets:
+
+- `0.0-0.5`: poor shade availability
+- `0.5-0.7`: acceptable shade availability
+- `0.7-0.9`: good shade availability
+- `0.9-1.0`: excellent shade availability
+
+The code and data schema may still use `shading_index` as an internal field name for SAI.
 
 ## How It Works
 
+```text
+GLB model + weather + analysis metadata
+  -> WebGPU exposure calculation
+  -> WebGPU MRT / UTCI / SAI
+  -> GPU-backed interactive 3D visualization
 ```
-3D Model + Weather → MRT (ray tracing) → UTCI (thermal comfort)
-```
 
-**Two-stage process:**
+The main route (`/`) is the normal app. The debug route (`/debug`) is for parity checks, collectors, `.bin` comparison, and diagnostics.
 
-1. **MRT Calculation**: Ray-trace sun/sky visibility from 3D geometry to compute Mean Radiant Temperature using [Ladybug Tools](https://github.com/ladybug-tools) SolarCal
-2. **UTCI Calculation**: Combine MRT with weather data (air temp, wind, humidity) using [pythermalcomfort](https://github.com/center-for-the-built-environment/pythermalcomfort)
-
-Uses **Embree-accelerated ray tracing** via trimesh (pyembree) for fast occlusion testing.
-
-## Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd fast-utci
-
-# Create/activate venv (Windows PowerShell)
-..\.venv\Scripts\Activate.ps1
-
-# Install package (editable)
-pip install -e .
-
-# Or install with optional dependencies:
-pip install -e .[dev]      # Development tools (testing, linting)
-pip install -e .[gpu]       # GPU acceleration
-pip install -e .[profile]   # Performance profiling
-pip install -e .[all]       # Everything
-```
+The viewer can still load precomputed `.bin` analyses for debug, parity, and legacy compatibility, but new projects should use live WebGPU metadata and the main WebGPU route.
 
 ## Quick Start
 
-### Configure
-
-Edit `fast_utci.toml` at the repo root to set workers, performance, engine, and MRT/UTCI options.
-
-### Running Example Scripts
-
-```bash
-# Quick automated workflow with predefined parameters (full day)
-python quick_analysis.py
-
-# Interactive workflow with date selection (full day analysis)
-python run_analysis.py
-
-# Batch process all 50 scenario variations (5 categories × 10 variants)
-python batch_scenarios.py [--grid-size 10.0] [--month 8] [--day 15]
+```powershell
+cd viewer
+npm install
+npm run dev
 ```
 
-**Note**: 
-- `quick_analysis.py` and `run_analysis.py` perform single analysis runs
-- `batch_scenarios.py` processes all 50 scenario variations sequentially with consistent settings
-- Modify `ANALYSIS_CONFIGS` in `quick_analysis.py` to batch-run multiple custom analyses
+Open the local URL printed by Vite, usually `http://localhost:5173`.
 
-**Output**:
-- Binary (`.bin`) + metadata (`.json`) for web viewer
-  - Includes both UTCI and Shading Index data
-  - Backward compatible with older analyses (Shading Index optional)
-- CSV export (optional, set `export_csv=True` in config)
+Useful checks:
 
-### Batch Processing
-
-The `batch_scenarios.py` script processes all 50 scenario variations:
-
-```bash
-# Process all scenarios with default settings (10m grid, Aug 15)
-python batch_scenarios.py
-
-# Custom settings
-python batch_scenarios.py --grid-size 5.0 --month 7 --day 20
+```powershell
+npm run check
+npm test
+npm run build
 ```
 
-### Regenerate Ben-Gurion Artifacts
+## Data
+
+Project data lives under `data/`:
+
+- `data/3d_models/`: GLB project models and georeference sidecars.
+- `data/weather/`: EPW/weather inputs.
+- `data/analyses/`: analysis metadata, manifests, live WebGPU metadata, and legacy/debug `.bin` reference payloads.
+- `data/gis/`: GIS exports generated from verified viewer runs.
+- `data/performance-results/`: raw collector output used by performance notes.
+
+For the full data workflow, see [docs/data-onboarding.md](docs/data-onboarding.md).
+
+## Legacy Python / Ladybug Reference Path
+
+The repository also includes the earlier Python/Ladybug CPU analysis pathway. It uses Ladybug Tools and `ladybug-comfort` for EPW handling, sun paths, sky vectors, and SolarCal MRT, then uses `pythermalcomfort` for UTCI.
+
+This pathway was the first major improvement over the default Grasshopper/Ladybug workflow: it made the analysis scriptable, added Embree-accelerated ray tracing, and parallelized the CPU work. The WebGPU pathway is the next step and is now the preferred route for new analysis because it runs the heavy work on the GPU inside the Three.js viewer.
+
+Use the Python/Ladybug pathway when you need to reproduce legacy `.bin` outputs, compare against the original Ladybug-derived reference, debug parity, or run support scripts that have not moved to the viewer. Do not treat it as the normal path for new high-throughput runs.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -e .[dev,gis]
+```
+
+Reference, parity, and legacy export commands for maintaining old artifacts:
 
 ```powershell
 $env:PYTHONPATH='src'; .\.venv\Scripts\python.exe scripts/export_ben_gurion_intermediates.py --base-path data/analyses/Ben-Gurion/20250815_grid_2m_fullday --model data/3d_models/Ben-Gurion/original_with_layers.glb
 ```
 
-By default, the exporter writes the `solar`, `sky`, and `mrt` stages.
+## Project Layout
 
-**Output Structure:**
-```
-data/analyses/
-├── existing_buildings/
-│   ├── existing_buildings_01.bin
-│   ├── existing_buildings_01.json
-│   └── ... (10 variants)
-├── existing_trees/
-│   └── ... (10 variants)
-├── new_high_buildings/
-│   └── ... (10 variants)
-├── new_low_buildings/
-│   └── ... (10 variants)
-├── new_trees/
-│   └── ... (10 variants)
-└── manifest.json
-```
-
-### View Results
-
-```bash
-python -m http.server 8000
-# Open http://localhost:8000/viewer/
-```
-
-### Using the API
-
-For programmatic access, see [`src/fast_utci/README.md`](src/fast_utci/README.md) for complete API examples.
-
-
-## Project Structure
-
-```
+```text
 fast-utci/
-├── src/fast_utci/          # Main package (src layout)
-│   ├── mrt/                # MRT calculation (ray tracing, solar)
-│   ├── utci/               # UTCI calculation (thermal comfort)
-│   ├── shared/             # Shared utilities (parallel, weather, config)
-│   │   └── io/             # 3D model & EPW file loading (GLB/GLTF, scene graph)
-│   └── ...
-├── viewer/                 # Web-based 3D viewer (three.js)
-├── data/                   # Models, weather, analyses, validation
-├── scripts/                # Utility scripts
-├── quick_analysis.py       # Quick automated workflow
-└── run_analysis.py         # Interactive analysis workflow
+  viewer/                  SvelteKit + Three.js/WebGPU app
+  viewer/src/routes/       Main and debug routes
+  viewer/src/lib/compute/  WebGPU and selected-hour compute logic
+  viewer/scripts/          Metadata, parity, GIS, and performance tools
+  data/                    Models, weather, analyses, performance, GIS output
+  docs/                    Data, GIS, architecture, and performance notes
+  src/fast_utci/           Legacy Python/Ladybug reference and export package
+  scripts/                 Python utility scripts for legacy exports and GIS
 ```
-
-See module READMEs for detailed structure.
 
 ## Documentation
 
-### API Documentation
+- [viewer/README.md](viewer/README.md): viewer development, routes, build, and tests.
+- [docs/data-onboarding.md](docs/data-onboarding.md): how to add models, weather, metadata, and projects.
+- [docs/innovation-district-gis-handoff.md](docs/innovation-district-gis-handoff.md): GIS export bundle, GeoParquet, CRS, and active-cell policy.
+- [docs/webgpu_strategy_analysis.md](docs/webgpu_strategy_analysis.md): WebGPU architecture and performance boundaries.
+- [src/fast_utci/README.md](src/fast_utci/README.md): legacy Python/Ladybug API and reference/export tools.
 
-For detailed API usage and programmatic access:
-- **[`src/fast_utci/README.md`](src/fast_utci/README.md)** - Complete API guide with code examples
-- **[`src/fast_utci/mrt/README.md`](src/fast_utci/mrt/README.md)** - MRT calculation details
-- **[`src/fast_utci/utci/README.md`](src/fast_utci/utci/README.md)** - UTCI calculation details
-- **[`src/fast_utci/shared/README.md`](src/fast_utci/shared/README.md)** - Shared utilities
+## License
 
-### Module Overview
+fast-utci is licensed under the GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). See [LICENSE](LICENSE).
 
-- **`fast_utci.mrt`** - MRT calculation with ray tracing and parallel processing
-- **`fast_utci.utci`** - UTCI calculation using pythermalcomfort
-- **`fast_utci.shared`** - Parallel processing, weather data, and configuration
-- **`fast_utci.shared.io`** - 3D model (GLTF/GLB) and EPW file loading
-- **`viewer/`** - Separate web-based 3D viewer (SvelteKit + Three.js) for visualizing results
-
-## Requirements
-
-- Python 3.11+
-- See `pyproject.toml` for full dependency list
-- **Recommended**: Install `pyembree` for 10-100x speedup in ray tracing
+The license choice follows the Ladybug Tools / Ladybug Comfort licensing used by the thermal-comfort and environmental-analysis code this project depends on and adapts. See [NOTICE.md](NOTICE.md) for attribution.

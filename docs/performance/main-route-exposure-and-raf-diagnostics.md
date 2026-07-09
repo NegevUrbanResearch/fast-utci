@@ -102,6 +102,8 @@ Interpretation: page-local rAF/render-publication pain is proven, but the single
 
 ## Recommendation
 
+Current note: this recommendation is historical to the artifact. Later strategy work widened the next-step framing: rank early startup/pre-exposure, exposure breathing, and render-publication freezes together before choosing an optimization. Do not read this section as a current instruction to start only with render-publication work.
+
 The diagnostic pass separates the lanes:
 
 - Exposure breathing remains a plausible GPU/driver/system-saturation owner, but this artifact does not directly prove OS-level desktop freeze.

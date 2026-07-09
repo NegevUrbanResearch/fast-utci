@@ -1,23 +1,39 @@
 # WebGPU Strategy Analysis
 
-Updated: 2026-06-11
+Updated: 2026-07-10
 
 > **2026-05-11 route-name note:** The active debug route in this checkout is now `/debug` at `viewer/src/routes/debug/+page.svelte`. Older references to `/debug-webgpu-utci` describe the same debug/parity role before the route rename and should not be copied into new execution plans.
 
+## 2026-07-10 Current Documentation Baseline
+
+The WebGPU route is the main user-facing route for fast-utci. Onboarding docs should describe the app from this current state.
+
+Current framing for new docs:
+
+- `/` is the live WebGPU user-facing route.
+- `/debug` is for parity, collectors, `.bin` comparison, and diagnostics.
+- Python/Ladybug was the intermediate Embree/parallel-CPU improvement over Grasshopper/Ladybug. It now supports reference calculations, legacy artifact reproduction, legacy exports, and parity checks; separate Python scripts also handle GIS postprocessing.
+- Do not recommend Python/Ladybug as the normal high-throughput analysis path when a project can run through WebGPU.
+- Precomputed `.bin` artifacts are useful for reference, compatibility, and debug workflows, but new interactive projects should start from GLB + metadata + weather.
+- The public shade metric is Shading Availability Index (SAI), following Derech Tzel's shade-availability terminology. The code and data schema may still use `shading_index` as the implementation field name.
+- Do not overstate the boundary as "zero CPU readback." The product boundary is narrower: the visible selected-hour WebGPU path renders through `compute-buffer-selected-hour`, while point tooltip, diagnostics, export, fallback, and parity paths may still do bounded CPU readback.
+
 ## 2026-06-11 Innovation District Live WebGPU Contract
 
-Innovation District is now a GLB-backed live WebGPU project, not a Python-exported analysis path. The strategy boundary for this class of project is:
+Innovation District is a GLB-backed live WebGPU project. The strategy boundary for this class of project is:
 
 - no Python or `.bin` payload is part of the product path; generated metadata plus the GLB are the source of truth for live analysis setup
 - metadata `bounds` and grid resolution define the sample grid and preflight estimate; filtered occluder bounds must not shrink grid sizing or budget checks
 - compute-BVH eligibility is carried on loaded mesh `userData.includeInComputeBvh`: known ground-family/context layers such as `ground`, `street`, `train_tracks`, and `district_outline` are excluded; known occluders such as `existing_buildings` and `trees_canopy` are included; an unset flag preserves legacy behavior instead of silently opting meshes out
-- `has_shading_index: false` in generated metadata does not mean the main route lacks live Shading Index support; it only means there is no baked Shading Index binary, while live WebGPU may still publish Shading Index on the same-device GPU path
+- `has_shading_index: false` in generated metadata does not mean the main route lacks live SAI support; it only means there is no baked SAI binary, while live WebGPU may still publish SAI on the same-device GPU path
+
+GIS export sits downstream of this route. The current Innovation District handoff path is: verified main route `/` -> live WebGPU UTCI/SAI -> collector raw active-cell arrays -> Python geospatial postprocess validation -> `cells.geoparquet`, `manifest.json`, and QA sample. It is not a separate Python/Ladybug analysis route.
 
 Proof boundary for future performance claims: do not treat Innovation District as proof that dense live GLB-backed startup is broadly safe at scale without citing a browser-measured run for the exact route and hardware. Startup and publication cost remains a runtime risk to keep measuring, not a resolved performance fact.
 
 ## Decision Snapshot
 
-We should keep the selected-hour **WebGPU compute-on-demand path** as the main direction and make the next decisions from measured cold-start/render-path evidence.
+The WebGPU/Three.js selected-hour route is now the main product path; future optimization decisions should come from measured cold-start/render-path evidence.
 
 This claim is now backed by a fresh selected-hour baseline on the main route `/` plus the older debug-route captures below. The current-head main-route artifact is [docs/performance/main-route-selected-hour-current-head.md](performance/main-route-selected-hour-current-head.md). Older `debug-webgpu-utci` route references below are historical captures from before the route rename. It is not yet a blanket statement about every route or fallback path in the repo.
 
@@ -44,9 +60,9 @@ Implemented as of 2026-05-09:
 | Three.js WebGPU rendering | `WebGPURenderer` is already used. | `viewer/src/lib/components/scene/Scene.svelte` |
 | WebGPU compute pipeline | Solar exposure, sky exposure, and MRT/UTCI compute already run on WebGPU. | `viewer/src/lib/compute/gpu/webgpuUtciPipeline.ts` |
 | Solar exposure storage | Already bit-packed as one bit per point-hour in a `u32` buffer. | `gpu/webgpuUtciPipeline.ts`, `gpu/shaders/exposure_solar.wgsl`, `gpu/shaders/mrt_utci.wgsl` |
-| UTCI readback | The selected-hour on-demand debug path no longer reads back UTCI values on the hot render path; bulk readback still exists for legacy/fallback/export flows. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte`, `viewer/src/lib/compute/gpu/webgpuUtciPipeline.ts` |
-| CPU UTCI storage | Legacy live analysis still creates a full time-major `Int16Array` copy, but the selected-hour on-demand debug route avoids all-hours CPU UTCI storage as the main path. | `liveUtciAnalysis.ts`, `viewer/src/routes/debug/+page.svelte` |
-| Rendering UTCI values | The current selected-hour debug route can render from a GPU-native compute buffer surface (`compute-buffer-selected-hour`), while `dataTexture` remains as fallback/legacy path. | `viewer/src/lib/components/scene/UTCIPointCloud.svelte`, `viewer/src/lib/services/gpuUtciRenderBridge.ts`, `viewer/src/lib/services/pointCloudService.ts` |
+| UTCI readback | The visible selected-hour main-route path is GPU-native when `compute-buffer-selected-hour` is available; bulk and bounded readbacks still exist for legacy, fallback, tooltip, debug, parity, and export flows. | `viewer/src/routes/main/liveSelectedHour.ts`, `viewer/src/lib/compute/selected-hour/liveUtciSelectedHourSession.ts`, `viewer/src/lib/compute/gpu/webgpuUtciPipeline.ts` |
+| CPU UTCI storage | The main route avoids all-hours CPU UTCI storage for the visible selected-hour path; legacy/fallback/debug flows may still materialize CPU arrays. | `viewer/src/lib/compute/selected-hour/liveUtciSelectedHourSession.ts`, `liveUtciAnalysis.ts` |
+| Rendering UTCI values | The main route can render from a GPU-native compute buffer surface (`compute-buffer-selected-hour`), while `dataTexture` remains as fallback/legacy path. | `viewer/src/lib/components/scene/UTCIPointCloud.svelte`, `viewer/src/lib/services/gpuUtciRenderBridge.ts`, `viewer/src/lib/services/pointCloudService.ts` |
 | Debug route default | Plain `/debug` now defaults to on-demand `f32`; `?utciOnDemand=off` opts out, and `?collect=normal` preserves the old full-day collection harness. | `viewer/src/routes/debug/+page.svelte` |
 | MRT diagnostics | Disabled by default; opt-in only when hardware supports enough storage buffers. | `webgpuUtciPipeline.ts` |
 
@@ -346,7 +362,7 @@ Point wind, scenario deltas, and richer climate layers should be treated as late
 
 This section is historical debug-route evidence, not the current route-level baseline for `/`.
 
-The older batch reports are still useful supporting evidence:
+The older legacy batch reports are still useful only as historical/parity evidence:
 
 - Legacy run-all parity/performance: [data/batch-parity-results/parity_performance_report.md](../data/batch-parity-results/parity_performance_report.md)
 - Run-all vs strict exposure-only on-demand: [data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md](../data/batch-parity-results/parity_performance_report_run_all_vs_on_demand.md)
@@ -427,7 +443,7 @@ Focused route measurements now show this smaller working-set shape for the hot p
 | Analysis | Persistent Exposure | Selected-Hour HWM | Notes |
 | --- | ---: | ---: | --- |
 | Ben-Gurion 2m | ~3.98 MiB | ~408.0 KiB | Strict exposure-only report baseline for the same grid scale. |
-| Ness Tziona 2m | ~19.53 MiB | ~1999.4 KiB | Largest current batch grid; useful order-of-magnitude proxy for the selected-hour route. |
+| Ness Tziona 2m | ~19.53 MiB | ~1999.4 KiB | Largest current 2m analysis grid; useful order-of-magnitude proxy for the selected-hour route. |
 
 These figures are the important correction to the old mental model: the hot render path no longer requires a full all-hours UTCI CPU copy or selected-hour readback/upload when the `gpuNative` path is active.
 
@@ -537,7 +553,7 @@ This section is no longer a target-only sketch. It should describe the current r
 | Compute scope | Many/all representative hours | One selected `timeIndex` |
 | Main storage shape | All-hours UTCI/MRT buffers plus CPU compatibility storage | Persistent geometry/exposure inputs plus selected-hour output |
 | Render transport | CPU-driven decode/color/`DataTexture` upload | `compute-buffer-selected-hour` when the `gpuNative` route is active |
-| Selected-hour readback | Common architectural dependency | Zero on the proven hot path |
+| Selected-hour readback | Common architectural dependency | No visible selected-hour readback on the proven GPU-native hot path |
 | Route status | Legacy/fallback/collection context still exists | Plain `/debug` now defaults here |
 
 ### Current Route Shape
@@ -635,7 +651,7 @@ This plan is attribution-first. Render-publication optimization candidates remai
 
 1. **Preserve the measurement baseline**
    - Keep using the main route `/` for BG/NZ 2m and 0.5m route-level proof.
-   - Keep route-level proof visible: `compute-buffer-selected-hour`, zero selected-hour readback, zero `dataTexture` rebuilds.
+   - Keep route-level proof visible: `compute-buffer-selected-hour`, no visible selected-hour readback, zero `dataTexture` rebuilds.
 
 2. **Map init smoothness across phases**
    - Preserve or collect enough rAF/interval/long-task distribution data to distinguish one maximum gap from repeated roughness.

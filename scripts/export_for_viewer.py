@@ -1,7 +1,7 @@
 """
 Export UTCI analysis results to optimized binary format for web viewer.
 
-This script converts UTCI results from demo_workflow.py into:
+This script converts legacy Python/Ladybug UTCI results into:
 1. Binary data files (.bin) for fast loading
 2. JSON metadata files with analysis information
 
@@ -125,7 +125,7 @@ def export_binary_full_day(
     """
     Export full day UTCI data to binary format.
     
-    Binary structure (with optional Shading Index):
+    Binary structure (with optional SAI / `shading_index` data):
         [8 bytes: num_positions (uint32), num_hours (uint32)]
         [num_positions × 12 bytes: positions as float32 x,y,z]
         [4 bytes: has_shading_index (uint32, 0 or 1)]
@@ -139,7 +139,7 @@ def export_binary_full_day(
         utci_results: UTCI results dictionary
         output_path: Path to output .bin file
         num_hours: Number of hours (default 24)
-        shading_indices: Optional Shading Index array (shape: n_positions,)
+        shading_indices: Optional SAI array (shape: n_positions,)
     """
     # Extract positions and UTCI values organized by hour
     # Sort by numeric part of key to ensure correct order (not lexicographic)
@@ -192,7 +192,7 @@ def export_binary_full_day(
         positions_flat = np.array(positions, dtype=np.float32).flatten()
         f.write(positions_flat.tobytes())
         
-        # Shading Index flag and data (if present)
+        # SAI flag and data (stored under the legacy `shading_index` field name)
         f.write(struct.pack('I', 1 if has_shading_index else 0))
         if has_shading_index:
             f.write(shading_indices.tobytes())
@@ -365,7 +365,7 @@ def export_metadata_json(
     if analysis_type == "full_day":
         metadata["hour_statistics"] = calculate_hour_statistics(utci_results, hours)
     
-    # Add Shading Index metadata if available
+    # Add SAI metadata if available
     if shading_indices is not None:
         shading_indices = np.asarray(shading_indices)
         # Filter out NaN values for statistics
@@ -416,7 +416,7 @@ def export_utci_for_viewer(
     coordinate_system: str = "xy_ground",
     project: Optional[str] = None,  # NEW: project for per-project output
     category: Optional[str] = None,  # NEW: category for subdirectory
-    shading_indices: Optional[np.ndarray] = None  # NEW: optional Shading Index array
+    shading_indices: Optional[np.ndarray] = None  # optional SAI array
 ) -> tuple[str, str]:
     """
     Export UTCI results to optimized binary format for web viewer.
@@ -498,7 +498,7 @@ def export_utci_for_viewer(
         runtime_seconds=runtime_seconds,
         output_path=metadata_path,
         coordinate_system=coordinate_system,
-        shading_indices=shading_indices  # NEW: pass Shading Index for metadata
+        shading_indices=shading_indices  # pass SAI for metadata
     )
     
     print(f"[OK] Exported analysis: {analysis_id}")
@@ -512,7 +512,7 @@ def export_utci_for_viewer(
 if __name__ == "__main__":
     print("Export for Viewer - Usage Example")
     print("=" * 50)
-    print("Import this module in demo_workflow.py:")
+    print("Import this module from a legacy Python/Ladybug analysis/export script:")
     print()
     print("  from export_for_viewer import export_utci_for_viewer")
     print()

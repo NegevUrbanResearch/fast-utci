@@ -8,8 +8,12 @@ version = "0.1.0"
 description = "Rapidly compute 2D UTCI maps from 3D models"
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Nur"}
+]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3",
 ]
 
 dependencies = [

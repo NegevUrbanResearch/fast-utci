@@ -1,12 +1,12 @@
 """
-Shading Index calculation for thermal comfort analysis.
+Shading Availability Index (SAI) reference calculation.
 
-Shading Index measures the proportion of sunlight hours during which each point
-is fully shaded (no direct solar radiation). This metric follows Israeli
-shading metrics guidelines for urban planning.
+SAI measures the proportion of sunlight hours during which each point is fully
+shaded (no direct solar radiation). The implementation keeps the legacy module
+and field name `shading_index` for compatibility with older artifacts.
 
 Current Implementation:
-- Point-based calculation: Each point's Shading Index = (hours shaded) / (total sunlight hours)
+- Point-based calculation: each point's SAI = (hours shaded) / (total sunlight hours)
 - A point is considered "shaded" when fract_body_exp == 0.0 (no direct solar radiation)
 - Uses all sunlight hours from the analysis period (auto-detected from sun_data.is_sun_up)
 
@@ -17,7 +17,7 @@ When sidewalk layers are available in the model:
    - Count shaded points in segment
    - Calculate: (shaded_points / total_points) * 100
 3. Count hours where >50% of sidewalk area is shaded
-4. Calculate area-based Shading Index: (hours with >50% shaded) / (total sunlight hours)
+4. Calculate area-based SAI: (hours with >50% shaded) / (total sunlight hours)
 5. Export both point-based and area-based indices
 See: Israeli Shading Metrics Guide, Section on sidewalk-level calculation
 
@@ -39,9 +39,9 @@ def calculate_shading_index(
     sun_data: SunData
 ) -> np.ndarray:
     """
-    Calculate Shading Index for each position.
+    Calculate SAI for each position.
     
-    Shading Index = (hours shaded during sunlight) / (total sunlight hours)
+    SAI = (hours shaded during sunlight) / (total sunlight hours)
     
     A point is considered "shaded" when fract_body_exp == 0.0 (no direct
     solar radiation). Only sunlight hours (is_sun_up == True) are considered
@@ -52,7 +52,7 @@ def calculate_shading_index(
         sun_data: SunData object with sun vectors and is_sun_up mask
         
     Returns:
-        Array of shape (n_positions,) with Shading Index values (0.0-1.0)
+        Array of shape (n_positions,) with SAI values (0.0-1.0)
         where:
         - 0.0 = always exposed during sunlight hours
         - 1.0 = always shaded during sunlight hours
@@ -84,7 +84,7 @@ def calculate_shading_index(
         # By definition, if there are no sunlight hours, all points are fully shaded
         return np.ones(n_positions, dtype=np.float64)
     
-    # Calculate Shading Index for each position
+    # Calculate SAI for each position
     # Epsilon threshold for floating point comparison (treat very small values as 0.0)
     EPSILON = 1e-6
     
@@ -106,7 +106,7 @@ def calculate_shading_index(
         # Values very close to 0.0 are treated as fully shaded
         shaded_hours = np.sum(sunlight_exposure <= EPSILON)
         
-        # Calculate Shading Index
+        # Calculate SAI
         shading_indices[i] = shaded_hours / n_sunlight_hours
         
         # Debug: Track detailed stats for first few positions
@@ -133,7 +133,7 @@ def calculate_shading_index(
     # Debug output (can be removed later or made conditional)
     import logging
     logger = logging.getLogger(__name__)
-    logger.debug(f"Shading Index calculation summary:")
+    logger.debug(f"SAI calculation summary:")
     logger.debug(f"  Fully shaded positions (>=0.99): {fully_shaded_count}/{n_positions}")
     logger.debug(f"  Fully exposed positions (<=0.01): {fully_exposed_count}/{n_positions}")
     logger.debug(f"  Sample exposure values: {sample_exposure_values[:3]}")
