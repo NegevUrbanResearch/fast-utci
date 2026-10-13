@@ -51,6 +51,34 @@ function getRuntimeContract(result: ReturnType<typeof buildDebugOnDemandPrototyp
 }
 
 describe('buildDebugOnDemandPrototypeDiagnostics', () => {
+	it('keeps observed browser and renderer facts when a CPU runtime snapshot has empty metadata', () => {
+		const result = buildDebugOnDemandPrototypeDiagnostics({
+			patch: {
+				...createEmptyOnDemandDiagnostics(),
+				renderTransport: 'cpu-uploaded-selected-hour',
+				utciSurfaceSource: 'cpu-uploaded-selected-hour',
+				sameDeviceForComputeAndRender: false
+			},
+			defaults: createDefaults(),
+			observedEnvironment: { navigatorGpu: true, rendererBackend: 'webgpu' }
+		});
+		expect(result.navigatorGpu).toBe(true);
+		expect(result.rendererBackend).toBe('webgpu');
+		expect(result.renderTransport).toBe('cpu-uploaded-selected-hour');
+		expect(result.sameDeviceForComputeAndRender).toBe(false);
+		expect(getRuntimeContract(result).strongVisibleGpuPath).toBe(false);
+	});
+
+	it('uses current unavailable environment facts instead of a stale GPU runtime snapshot', () => {
+		const result = buildDebugOnDemandPrototypeDiagnostics({
+			patch: { navigatorGpu: true, rendererBackend: 'webgpu' },
+			defaults: createDefaults(),
+			observedEnvironment: { navigatorGpu: false, rendererBackend: 'unknown' }
+		});
+		expect(result.navigatorGpu).toBe(false);
+		expect(result.rendererBackend).toBe('unknown');
+	});
+
 	it('merges existing diagnostics and preserves debug-only parity validity', () => {
 		const existing = {
 			...createEmptyOnDemandDiagnostics(),

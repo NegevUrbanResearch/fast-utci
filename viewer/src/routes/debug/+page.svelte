@@ -1541,6 +1541,7 @@
 		const nextDiagnostics = buildDebugOnDemandPrototypeDiagnostics({
 			existing,
 			replace: options?.replace,
+			observedEnvironment: { navigatorGpu: Boolean(navigator.gpu), rendererBackend },
 			patch: {
 				...feasibilityDiagnostics,
 				...diagnostics,
