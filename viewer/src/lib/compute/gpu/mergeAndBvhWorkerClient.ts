@@ -409,91 +409,105 @@ export function runMergeAndBvhInWorker(params: {
 
 	return new Promise((resolve, reject) => {
 		const startedAt = performance.now();
+		if (signal?.aborted) {
+			reject(new DOMException('Aborted', 'AbortError'));
+			return;
+		}
 		if (typeof Worker === 'undefined') {
 			reject(new Error('Web Workers not supported'));
 			return;
 		}
 
-		const worker = new Worker(new URL('./mergeAndBvh.worker.ts', import.meta.url), {
-			type: 'module'
-		});
-
-		const timeoutId = setTimeout(() => {
-			worker.terminate();
-			reject(new Error('Merge + BVH worker timed out (model may be too large)'));
-		}, WORKER_TIMEOUT_MS);
-
+		let worker: Worker | undefined;
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		let settled = false;
 		const cleanup = () => {
+			if (settled) return;
+			settled = true;
 			clearTimeout(timeoutId);
-			worker.terminate();
+			signal?.removeEventListener('abort', onAbort);
+			if (worker) {
+				worker.onmessage = null;
+				worker.onerror = null;
+				worker.terminate();
+			}
+		};
+		const onAbort = () => {
+			if (settled) return;
+			cleanup();
+			reject(new DOMException('Aborted', 'AbortError'));
 		};
 
-		signal?.addEventListener(
-			'abort',
-			() => {
-				try {
-					worker.postMessage({ type: 'cancel' });
-				} finally {
-					cleanup();
-					reject(new DOMException('Aborted', 'AbortError'));
+		try {
+			worker = new Worker(new URL('./mergeAndBvh.worker.ts', import.meta.url), { type: 'module' });
+			timeoutId = setTimeout(() => {
+				cleanup();
+				reject(new Error('Merge + BVH worker timed out (model may be too large)'));
+			}, WORKER_TIMEOUT_MS);
+			signal?.addEventListener('abort', onAbort, { once: true });
+			if (signal?.aborted) {
+				onAbort();
+				return;
+			}
+			worker.onmessage = (
+				e: MessageEvent<MergeAndBvhResult | WorkerErrorMessage | WorkerProgressMessage>
+			) => {
+				if (settled) return;
+				const data = e.data;
+				if (data && (data as WorkerProgressMessage).type === 'progress') {
+					const p = data as WorkerProgressMessage;
+					emitComputeTelemetry(`worker.${p.stage}`, {
+						...(typeof p.ms === 'number' ? { ms: p.ms } : {}),
+						data: { ...(typeof p.numPoints === 'number' ? { numPoints: p.numPoints } : {}) }
+					});
+					return;
 				}
-			},
-			{ once: true }
-		);
+				cleanup();
+				if (data && (data as WorkerErrorMessage).type === 'error') {
+					reject(new Error((data as WorkerErrorMessage).error));
+					return;
+				}
+				emitComputeTelemetry('worker.complete', { ms: performance.now() - startedAt });
+				resolve(data as MergeAndBvhResult);
+			};
 
-		worker.onmessage = (
-			e: MessageEvent<MergeAndBvhResult | WorkerErrorMessage | WorkerProgressMessage>
-		) => {
-			const data = e.data;
-			if (data && (data as WorkerProgressMessage).type === 'progress') {
-				const p = data as WorkerProgressMessage;
-				emitComputeTelemetry(`worker.${p.stage}`, {
-					...(typeof p.ms === 'number' ? { ms: p.ms } : {}),
-					data: { ...(typeof p.numPoints === 'number' ? { numPoints: p.numPoints } : {}) }
+			worker.onerror = (err) => {
+				if (settled) return;
+				cleanup();
+				reject(new Error(err.message || 'Merge + BVH worker failed'));
+			};
+
+			// Clone payload so each buffer is unique: postMessage rejects if the same ArrayBuffer
+			// appears in the message (or transfer list) more than once.
+			const seen = new Set<ArrayBufferLike>();
+			const meshesToSend: MeshPayload[] = [];
+			const transferList: Transferable[] = [];
+			for (const m of meshes) {
+				const position = new Float32Array(m.position.length);
+				position.set(m.position);
+				const index = m.index ? new Uint32Array(m.index) : null;
+				meshesToSend.push({
+					position,
+					index,
+					matrixWorld: m.matrixWorld
 				});
-				return;
+				if (!seen.has(position.buffer)) {
+					seen.add(position.buffer);
+					transferList.push(position.buffer);
+				}
+				if (index && !seen.has(index.buffer)) {
+					seen.add(index.buffer);
+					transferList.push(index.buffer);
+				}
 			}
-			cleanup();
-			if (data && (data as WorkerErrorMessage).type === 'error') {
-				reject(new Error((data as WorkerErrorMessage).error));
-				return;
-			}
-			emitComputeTelemetry('worker.complete', { ms: performance.now() - startedAt });
-			resolve(data as MergeAndBvhResult);
-		};
 
-		worker.onerror = (err) => {
+			worker.postMessage(
+				{ type: 'start', meshes: meshesToSend, gridResolution, zHeight, maxSlopeDegrees, maxGridPoints, bvhOnly },
+				transferList
+			);
+		} catch (error) {
 			cleanup();
-			reject(new Error(err.message || 'Merge + BVH worker failed'));
-		};
-
-		// Clone payload so each buffer is unique: postMessage rejects if the same ArrayBuffer
-		// appears in the message (or transfer list) more than once.
-		const seen = new Set<ArrayBufferLike>();
-		const meshesToSend: MeshPayload[] = [];
-		const transferList: Transferable[] = [];
-		for (const m of meshes) {
-			const position = new Float32Array(m.position.length);
-			position.set(m.position);
-			const index = m.index ? new Uint32Array(m.index) : null;
-			meshesToSend.push({
-				position,
-				index,
-				matrixWorld: m.matrixWorld
-			});
-			if (!seen.has(position.buffer)) {
-				seen.add(position.buffer);
-				transferList.push(position.buffer);
-			}
-			if (index && !seen.has(index.buffer)) {
-				seen.add(index.buffer);
-				transferList.push(index.buffer);
-			}
+			reject(error);
 		}
-
-		worker.postMessage(
-			{ type: 'start', meshes: meshesToSend, gridResolution, zHeight, maxSlopeDegrees, maxGridPoints, bvhOnly },
-			transferList
-		);
 	});
 }
