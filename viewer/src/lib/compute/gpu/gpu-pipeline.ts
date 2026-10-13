@@ -283,7 +283,7 @@ export interface UTCIComputePipeline {
 
 	runF32OutputRangeSummary?(params: RunF32OutputRangeSummaryParams): Promise<UtciRangeSummary>;
 
-	readOnDemandUtciForDebug?(params: { numPoints: number }): Promise<Float32Array>;
+	readOnDemandUtciForDebug?(params: { numPoints: number; output?: OnDemandUtciOutput }): Promise<Float32Array>;
 
 	getOnDemandDiagnostics?(): OnDemandRuntimeDiagnostics;
 

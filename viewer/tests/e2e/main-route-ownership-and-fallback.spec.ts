@@ -35,6 +35,36 @@ async function publication(
 	return d;
 }
 
+async function selectTime(page: Page, kind: 'hour' | 'month', value: number) {
+	await page.getByRole('button', { name: kind === 'hour' ? /^day$/i : /^month$/i }).click();
+	const slider = page.getByRole('slider', {
+		name: kind === 'hour' ? /select analysis hour/i : /select month/i
+	});
+	await slider.focus();
+	await slider.press('Home');
+	for (let i = 0; i < value; i++) {
+		await slider.press('ArrowRight');
+	}
+	await expect(slider).toHaveAttribute('aria-valuenow', String(value));
+	await page.mouse.move(0, 0);
+}
+
+async function hover(page: Page) {
+	const handle = await page.waitForFunction(
+		() => (window as any).__mainRouteTooltipProbePosition__?.(),
+		undefined,
+		{ timeout: 15_000 }
+	);
+	const point = await handle.jsonValue();
+	await page.mouse.move(point.clientX, point.clientY);
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	await expect(page.getByRole('tooltip')).toContainText(/UTCI/i);
+	const result = await page.evaluate(() => (window as any).__mainRouteLastTooltip__);
+	expect(result.positionIndex).toBe(point.positionIndex);
+	expect(Number.isFinite(result.value)).toBe(true);
+	return { point, result };
+}
+
 test.describe('main route selection ownership and localized UTCI', () => {
 	test.setTimeout(180000);
 
@@ -100,6 +130,33 @@ test.describe('main route selection ownership and localized UTCI', () => {
 		finally {
 			releaseOld();
 			releaseNext();
+		}
+	});
+
+	test('UTCI hover reads four bytes, reuses the point, and invalidates for hour and month', async ({ page }) => {
+		await page.goto(url());
+		await publication(page, BG, 7, 0);
+		const initial = await diagnostics(page);
+		const first = await hover(page);
+		await expect.poll(async () => (await diagnostics(page)).tooltipInteraction.metricPointReadbackCount).toBe((initial.tooltipInteraction.metricPointReadbackCount ?? 0) + 1);
+		const read = (await diagnostics(page)).tooltipInteraction;
+		expect(read.metricPointReadbackBytes - initial.tooltipInteraction.metricPointReadbackBytes).toBe(4);
+		expect(read.metricPointReadbackLastBytes).toBe(4);
+		await page.mouse.move(0, 0);
+		await expect(page.getByRole('tooltip')).toBeHidden();
+		await page.mouse.move(first.point.clientX, first.point.clientY);
+		await expect(page.getByRole('tooltip')).toBeVisible();
+		await expect.poll(async () => (await diagnostics(page)).tooltipInteraction.metricPointReadbackCacheHitCount).toBeGreaterThan(read.metricPointReadbackCacheHitCount);
+		expect((await diagnostics(page)).tooltipInteraction.metricPointReadbackCount).toBe(read.metricPointReadbackCount);
+		for (const selection of [{ kind: 'hour' as const, value: 1, month: 7, hour: 1 }, { kind: 'month' as const, value: 8, month: 8, hour: 1 }]) {
+			await selectTime(page, selection.kind, selection.value);
+			await expect(page.getByRole('tooltip')).toBeHidden();
+			await publication(page, BG, selection.month, selection.hour);
+			const before = (await diagnostics(page)).tooltipInteraction;
+			const current = await hover(page);
+			expect(current.result.tooltipHourIndex).toBe(selection.month * 24 + selection.hour);
+			await expect.poll(async () => (await diagnostics(page)).tooltipInteraction.metricPointReadbackCount).toBe(before.metricPointReadbackCount + 1);
+			expect((await diagnostics(page)).tooltipInteraction.metricPointReadbackBytes - before.metricPointReadbackBytes).toBe(4);
 		}
 	});
 

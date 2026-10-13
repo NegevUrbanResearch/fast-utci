@@ -241,6 +241,29 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		});
 	});
 
+	it('reads an accepted snapshot after mutable output changes and rejects disposed snapshots', async () => {
+		Object.assign(globalThis, { GPUMapMode: { READ: 1 } });
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const accepted = createFakeSelectedHourOutputHandle({ byteLength: 8 });
+		accepted.buffer.data.set(new Uint8Array(new Float32Array([11, 29]).buffer));
+		const later = createFakeBuffer(8);
+		later.data.set(new Uint8Array(new Float32Array([80, 90]).buffer));
+		(pipeline as any).onDemandOutputBuffer = later;
+		device.createBuffer.mockImplementation(({ size, usage }: any) => {
+			const buffer = createFakeBuffer(size, usage) as any;
+			buffer.mapAsync = vi.fn(async () => undefined);
+			buffer.getMappedRange = () => buffer.data.buffer;
+			buffer.unmap = vi.fn();
+			return buffer;
+		});
+		device.createCommandEncoder.mockImplementation(() => ({ copyBufferToBuffer: (source: any, _offset: number, target: any) => target.data.set(source.data), finish: () => ({}) }) as any);
+		const output = { format: 'f32-utci', numPoints: 2, timeIndex: 8, gpuBuffer: accepted.buffer, gpuOutputHandle: accepted } as any;
+		expect(await pipeline.readOnDemandUtciForDebug({ numPoints: 2, output })).toEqual(new Float32Array([11, 29]));
+		accepted.disposed = true;
+		await expect(pipeline.readOnDemandUtciForDebug({ numPoints: 2, output })).rejects.toThrow('invalid accepted');
+	});
+
 	it('does not write zeros to fresh exposure buffers and clears reused buffers in one submission', async () => {
 		const device = createFakeDevice();
 		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);

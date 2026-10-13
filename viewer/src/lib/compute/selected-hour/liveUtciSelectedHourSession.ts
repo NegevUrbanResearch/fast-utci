@@ -24,6 +24,7 @@ import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import {
 	buildSelectedHourLiveShadingAnalysis,
+	buildSelectedHourLiveUtciGeometryAnalysis,
 	buildSelectedHourLiveAnalysis,
 	resolveLiveGpuResidentUtciRange
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
@@ -128,6 +129,7 @@ export type SelectedHourLiveSession = {
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
 		selectedHourReadbackReason?: SelectedHourReadbackReason;
+		localizedUtciTooltips?: boolean;
 	}): Promise<SelectedHourLiveResult>;
 	dispose(): void;
 };
@@ -403,10 +405,16 @@ async function readSelectedHourCpuFallback(params: {
 	timeIndex: number;
 	readbackReason: SelectedHourReadbackReason;
 	recordReadback: (reason: SelectedHourReadbackReason) => void;
+	output?: OnDemandUtciOutput;
+	signal?: AbortSignal;
+	utciRange?: { min: number; max: number } | null;
 }): Promise<SelectedHourCpuFallbackOutput> {
+	if (params.signal) ensureNotAborted(params.signal);
 	const selectedHourUtci = await params.pipeline.readOnDemandUtciForDebug?.({
-		numPoints: params.numPoints
+		numPoints: params.numPoints,
+		output: params.output
 	});
+	if (params.signal) ensureNotAborted(params.signal);
 	if (!selectedHourUtci) {
 		throw new Error(
 			'Selected-hour live session requires pipeline.readOnDemandUtciForDebug() for CPU fallback output.'
@@ -418,6 +426,7 @@ async function readSelectedHourCpuFallback(params: {
 		analysis: buildSelectedHourLiveAnalysis({
 			base: params.base,
 			utciValues: selectedHourUtci,
+			utciRange: params.utciRange,
 			monthIndex: params.monthIndex,
 			timeIndex: params.timeIndex
 		}),
@@ -932,6 +941,7 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 					state.lifecycleTimings
 				);
 				const sessionDiagnosticsAppliedAtMs = performance.now();
+				const hasOwnedSnapshot = Boolean(output.gpuOutputHandle);
 				const gpuOutputHandle = ensureSelectedHourOutputHandle({
 					output,
 					requestId,
@@ -995,7 +1005,17 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				}
 
 				const sessionDebugReadbackStartedAtMs = performance.now();
-				const selectedHourUtci = await state.pipeline.readOnDemandUtciForDebug?.({
+				const localizedUtciTooltips = params.localizedUtciTooltips === true &&
+					!params.selectedHourReadbackReason &&
+					hasOwnedSnapshot &&
+					output.format === 'f32-utci' &&
+					gpuOutputHandle?.source === 'webgpu-on-demand-snapshot' &&
+					gpuOutputHandle.metricType === 'utci' &&
+					gpuOutputHandle.valueLayout === 'one-f32-per-point' &&
+					!gpuOutputHandle.disposed &&
+					Boolean(state.pipeline.runUtciRangeSummaryForOutput) &&
+					(params.colorMode !== 'normalized' || Boolean(state.pipeline.runUtciRangeSummaryForTimeIndex));
+				const selectedHourUtci = localizedUtciTooltips ? undefined : await state.pipeline.readOnDemandUtciForDebug?.({
 					numPoints: state.numPoints
 				});
 				ensureNotAborted(state.signal);
@@ -1086,7 +1106,14 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 							monthIndex: params.monthIndex,
 							timeIndex: params.timeIndex
 					  })
-					: null;
+					: localizedUtciTooltips
+						? buildSelectedHourLiveUtciGeometryAnalysis({
+								base: state.base,
+								utciRange: selectedHourDisplayRange,
+								monthIndex: params.monthIndex,
+								timeIndex: params.timeIndex
+							})
+						: null;
 				stampSessionRenderTimeline(diagnostics, {
 					sessionSelectedHourAnalysisBuildStartedAtMs,
 					sessionSelectedHourAnalysisBuildCompletedAtMs: performance.now()
@@ -1104,6 +1131,9 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 								numPoints: state.numPoints,
 								monthIndex: params.monthIndex,
 								timeIndex: params.timeIndex,
+								output,
+								signal: state.signal,
+								utciRange: selectedHourDisplayRange,
 								readbackReason: 'visible-fallback',
 								recordReadback
 							});

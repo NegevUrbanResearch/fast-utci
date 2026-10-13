@@ -110,6 +110,7 @@ export type LiveSelectedHourControllerRequest = {
 	preferGpuResident: boolean;
 	rendererDevice?: GPUDevice;
 	selectedHourReadbackReason?: SelectedHourReadbackReason;
+	localizedUtciTooltips?: boolean;
 };
 
 export type LiveSelectedHourControllerRequestResult = {
@@ -1575,7 +1576,8 @@ export function createLiveSelectedHourController(
 					colorMode: request.colorMode,
 					preferGpuResident: request.preferGpuResident,
 					rendererDevice: request.rendererDevice,
-					selectedHourReadbackReason: request.selectedHourReadbackReason
+					selectedHourReadbackReason: request.selectedHourReadbackReason,
+					localizedUtciTooltips: request.localizedUtciTooltips
 				});
 				if (!ownsRequest(requestToken)) {
 					disposeStaleGpuResidentOutput(result.gpuResidentOutput);
@@ -1931,8 +1933,9 @@ export function createLiveSelectedHourController(
 						? state.surfaceIdentity?.requestId === requestId
 						: false) &&
 					deferredCpuFallback?.requestId === requestId;
+				if (!ownsDeferredFallback()) return;
 				let fallbackAnalysis = fallbackRequest.analysis;
-				if (!fallbackAnalysis && fallbackRequest.loadCpuFallback) {
+				if (fallbackRequest.loadCpuFallback) {
 					try {
 						const fallback = await fallbackRequest.loadCpuFallback();
 						if (!ownsDeferredFallback()) {

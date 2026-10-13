@@ -2596,8 +2596,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 	}
 
-	async readOnDemandUtciForDebug(params: { numPoints: number }): Promise<Float32Array> {
-		if (!this.onDemandOutputBuffer) {
+	async readOnDemandUtciForDebug(params: { numPoints: number; output?: OnDemandUtciOutput }): Promise<Float32Array> {
+		if (!params.output && !this.onDemandOutputBuffer) {
 			throw new Error('WebGPU UTCI pipeline: on-demand output buffer not available');
 		}
 
@@ -2609,8 +2609,29 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		await previousReadback;
 
 		const { numPoints } = params;
+		const handle = params.output?.gpuOutputHandle;
+		const validateOutput = () => {
+			if (!params.output) return;
+			if (
+				!handle || handle.disposed ||
+				handle.source !== 'webgpu-on-demand-snapshot' ||
+				handle.metricType !== 'utci' ||
+				handle.valueLayout !== 'one-f32-per-point' ||
+				handle.period.kind !== 'time-index' ||
+				handle.period.index !== params.output.timeIndex ||
+				handle.byteLength < numPoints * 4 ||
+				params.output.format !== 'f32-utci' ||
+				params.output.numPoints !== numPoints ||
+				params.output.gpuBuffer !== handle.buffer ||
+				(params.output.ownerId !== undefined && params.output.ownerId !== handle.ownerId)
+			) {
+				throw new Error('WebGPU UTCI pipeline: invalid accepted UTCI output snapshot');
+			}
+		};
 		const bytes = numPoints * 4;
+		let mappedReadback = false;
 		try {
+			validateOutput();
 			if (!this.onDemandReadbackBuffer || this.onDemandReadbackBuffer.size !== bytes) {
 				this.onDemandReadbackBuffer?.destroy();
 				this.onDemandReadbackBuffer = this.device.createBuffer({
@@ -2622,7 +2643,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			const debugReadbackStart = performance.now();
 			const encoder = this.device.createCommandEncoder();
 			encoder.copyBufferToBuffer(
-				this.onDemandOutputBuffer,
+				handle?.buffer ?? this.onDemandOutputBuffer!,
 				0,
 				this.onDemandReadbackBuffer,
 				0,
@@ -2631,10 +2652,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			this.queue.submit([encoder.finish()]);
 
 			await this.onDemandReadbackBuffer.mapAsync(GPUMapMode.READ);
+			mappedReadback = true;
+			validateOutput();
 			const mapped = new Float32Array(this.onDemandReadbackBuffer.getMappedRange());
 			const out = new Float32Array(mapped.length);
 			out.set(mapped);
 			this.onDemandReadbackBuffer.unmap();
+			mappedReadback = false;
 			this.onDemandDiagnostics = recordOnDemandTiming(
 				{
 					...this.onDemandDiagnostics,
@@ -2645,6 +2669,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			);
 			return out;
 		} finally {
+			if (mappedReadback) this.onDemandReadbackBuffer?.unmap();
 			finishReadback();
 		}
 	}

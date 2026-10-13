@@ -11,6 +11,20 @@ const TEST_GPU_BUFFER_USAGE = {
 };
 
 describe('metricPointReadback', () => {
+	it('isolates identical request and owner keys across accepted snapshot handles', async () => {
+		const cache = new MetricPointReadbackCache();
+		const key = { metricType: 'utci' as const, monthIndex: 0, positionIndex: 0, requestId: 1, ownerId: 'same-owner' };
+		const firstHandle = {};
+		const secondHandle = {};
+		const firstRead = vi.fn(async () => 11);
+		const secondRead = vi.fn(async () => 29);
+		expect(await cache.getOrRead({ ...key, snapshotIdentity: firstHandle }, firstRead)).toBe(11);
+		expect(await cache.getOrRead({ ...key, snapshotIdentity: secondHandle }, secondRead)).toBe(29);
+		expect(await cache.getOrRead({ ...key, snapshotIdentity: firstHandle }, firstRead)).toBe(11);
+		expect(firstRead).toHaveBeenCalledOnce();
+		expect(secondRead).toHaveBeenCalledOnce();
+	});
+
 	it('reads one f32 metric value from the requested point offset', async () => {
 		const copyBufferToBuffer = vi.fn();
 		const submit = vi.fn();

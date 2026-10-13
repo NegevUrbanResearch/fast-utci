@@ -181,6 +181,7 @@
 	$: requestLargeWebgpuLimits = utciRenderMode !== "data";
 	const liveRouteHost = createLiveSelectedHourRouteHost({
 		dataBasePath: getDataBasePath(),
+		localizedUtciTooltips: true,
 	});
 	let liveRouteState = liveRouteHost.getState();
 	const unsubscribeLiveRouteHost = liveRouteHost.subscribe((state) => {
@@ -813,6 +814,7 @@
 			{mainViewportElement}
 			curtainPosition={$comparisonStore.curtainPosition}
 			viewerCurrentHour={$viewerStore.currentHour}
+			requestedMonthIndex={selectedMonthIndex}
 			metricType={$viewerStore.metricType}
 			utciVisible={$viewerStore.utciVisible}
 			diagnosticsEnabled={utciRenderDiagnosticsEnabled}

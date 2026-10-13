@@ -6,6 +6,7 @@ export type MetricPointReadbackKey = {
 	positionIndex: number;
 	requestId?: number;
 	ownerId?: string;
+	snapshotIdentity?: object;
 };
 
 export type ReadF32MetricPointValueParams = {
@@ -127,12 +128,25 @@ export function clearMetricPointReadbackCache(): void {
 	sharedMetricPointReadbackCache.clear();
 }
 
+const snapshotCacheIds = new WeakMap<object, number>();
+let nextSnapshotCacheId = 1;
+function getSnapshotCacheId(snapshot: object | undefined): number | string {
+	if (!snapshot) return 'none';
+	let id = snapshotCacheIds.get(snapshot);
+	if (id === undefined) {
+		id = nextSnapshotCacheId++;
+		snapshotCacheIds.set(snapshot, id);
+	}
+	return id;
+}
+
 function serializeMetricPointReadbackKey(key: MetricPointReadbackKey): string {
 	return [
 		key.metricType,
 		key.monthIndex,
 		key.positionIndex,
 		key.requestId ?? 'none',
-		key.ownerId ?? 'none'
+		key.ownerId ?? 'none',
+		getSnapshotCacheId(key.snapshotIdentity)
 	].join(':');
 }
