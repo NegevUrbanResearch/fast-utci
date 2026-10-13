@@ -124,14 +124,20 @@ export interface OnDemandTimings {
 }
 
 export interface StaticUploadTrace {
+	/** CPU encoding/submission duration; this is not GPU elapsed clearing time. */
+	zeroFillEncodeSubmitMs?: number;
+	zeroFillClearCommandCount?: number;
+	zeroFillSubmitCount?: number;
 	totalMs: number;
 	weatherSnapshotMs?: number;
 	weatherTimeStepCount?: number;
 	solarExposureBufferCreateMs?: number;
+	/** CPU clear-command encoding time, or zero for fresh-buffer initialization. */
 	solarZeroFillMs?: number;
 	solarZeroFillWriteCount?: number;
 	solarZeroFillBytes?: number;
 	skyExposureBufferCreateMs?: number;
+	/** CPU clear-command encoding time, or zero for fresh-buffer initialization. */
 	skyZeroFillMs?: number;
 	skyZeroFillWriteCount?: number;
 	skyZeroFillBytes?: number;

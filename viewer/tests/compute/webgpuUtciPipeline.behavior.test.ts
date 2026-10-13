@@ -12,6 +12,7 @@ function createFakeBuffer(size: number, usage = 0) {
 	return {
 		size,
 		usage,
+		data: new Uint8Array(size),
 		destroy: vi.fn()
 	};
 }
@@ -94,6 +95,7 @@ function createFakeDevice(options?: {
 				computePasses.push(pass);
 				return pass;
 			}),
+			clearBuffer: vi.fn((buffer: ReturnType<typeof createFakeBuffer>) => { buffer.data.fill(0); }),
 			copyBufferToBuffer: vi.fn(),
 			finish: vi.fn(() => ({}))
 		}))
@@ -237,6 +239,52 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 				MAP_READ: 16
 			}
 		});
+	});
+
+	it('does not write zeros to fresh exposure buffers and clears reused buffers in one submission', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		const solar = (pipeline as any).solarExposureBuffer;
+		const sky = (pipeline as any).skyExposureBuffer;
+		expect(device.queue.writeBuffer.mock.calls.filter((call) => call[0] === solar || call[0] === sky)).toHaveLength(0);
+		expect(device.queue.submit).not.toHaveBeenCalled();
+		solar.data.fill(255); sky.data.fill(255);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		expect(solar.data.every((byte: number) => byte === 0)).toBe(true);
+		expect(sky.data.every((byte: number) => byte === 0)).toBe(true);
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual([solar, sky]);
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+		await pipeline.runExposurePrecompute({ numPoints: 32, numHours: 1, numMonths: 1 });
+		expect(device.queue.submit).toHaveBeenCalledTimes(2);
+		expect(encoder.clearBuffer.mock.invocationCallOrder[1]).toBeLessThan(device.queue.submit.mock.invocationCallOrder[0]);
+	});
+
+	it.each([33, 64])('clears only reused exposure buffers when point count changes to %s', async (points) => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(33));
+		const solar = (pipeline as any).solarExposureBuffer;
+		const sky = (pipeline as any).skyExposureBuffer;
+		await pipeline.uploadStaticData(exposureUploadParams(points));
+		expect((pipeline as any).solarExposureBuffer).toBe(solar);
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual(points === 33 ? [solar, sky] : [solar]);
+		await pipeline.uploadStaticData(exposureUploadParams(65));
+		expect((pipeline as any).solarExposureBuffer).not.toBe(solar);
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+	});
+
+	it('clears only sky exposure when the solar word count changes', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		const sky = (pipeline as any).skyExposureBuffer;
+		await pipeline.uploadStaticData({ ...exposureUploadParams(32), sunVectors: new Float32Array(6), sunAltitudes: new Float32Array(2), weather: new Float32Array(14) });
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual([sky]);
+		expect(pipeline.getOnDemandDiagnostics().timings.staticUploadTrace).toMatchObject({ solarZeroFillWriteCount: 0, skyZeroFillWriteCount: 0, solarZeroFillBytes: 8, skyZeroFillBytes: 128, zeroFillClearCommandCount: 1, zeroFillSubmitCount: 1 });
 	});
 
 	it('snapshots weather on upload so later caller mutation does not affect samples', async () => {

@@ -677,7 +677,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const totalSolarBits = numPoints * totalTimeSteps;
 		const solarWords = Math.ceil(totalSolarBits / 32);
 		const solarBytes = solarWords * 4;
-		if (!this.solarExposureBuffer || this.solarExposureBuffer.size !== solarBytes) {
+		const reuseSolarExposure = this.solarExposureBuffer?.size === solarBytes;
+		if (!reuseSolarExposure) {
 			const solarBufferCreateStartedAt = performance.now();
 			this.solarExposureBuffer?.destroy();
 			this.solarExposureBuffer = this.device.createBuffer({
@@ -689,7 +690,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 
 		const skyBytes = numPoints * 4;
-		if (!this.skyExposureBuffer || this.skyExposureBuffer.size !== skyBytes) {
+		const reuseSkyExposure = this.skyExposureBuffer?.size === skyBytes;
+		if (!reuseSkyExposure) {
 			const skyBufferCreateStartedAt = performance.now();
 			this.skyExposureBuffer?.destroy();
 			this.skyExposureBuffer = this.device.createBuffer({
@@ -699,38 +701,36 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			staticUploadTrace.skyExposureBufferCreateMs = performance.now() - skyBufferCreateStartedAt;
 		}
 
-		// Keep CPU allocations small by reusing tiny zero chunk writes.
-		const zeroChunk = new Float32Array(4096);
-		const solarZeroFillStartedAt = performance.now();
-		let solarZeroFillWriteCount = 0;
-		for (let offset = 0; offset < solarBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(
-				this.solarExposureBuffer,
-				offset,
-				zeroChunk.buffer,
-				0,
-				Math.min(zeroChunk.byteLength, solarBytes - offset)
-			);
-			solarZeroFillWriteCount += 1;
-		}
-		staticUploadTrace.solarZeroFillMs = performance.now() - solarZeroFillStartedAt;
-		staticUploadTrace.solarZeroFillWriteCount = solarZeroFillWriteCount;
+		// WebGPU buffer creation initializes each byte to zero. Reused buffers need an
+		// ordered GPU clear before the next exposure dispatch.
+		staticUploadTrace.solarZeroFillMs = 0;
+		staticUploadTrace.skyZeroFillMs = 0;
+		staticUploadTrace.solarZeroFillWriteCount = 0;
+		staticUploadTrace.skyZeroFillWriteCount = 0;
 		staticUploadTrace.solarZeroFillBytes = solarBytes;
-		const skyZeroFillStartedAt = performance.now();
-		let skyZeroFillWriteCount = 0;
-		for (let offset = 0; offset < skyBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(
-				this.skyExposureBuffer,
-				offset,
-				zeroChunk.buffer,
-				0,
-				Math.min(zeroChunk.byteLength, skyBytes - offset)
-			);
-			skyZeroFillWriteCount += 1;
-		}
-		staticUploadTrace.skyZeroFillMs = performance.now() - skyZeroFillStartedAt;
-		staticUploadTrace.skyZeroFillWriteCount = skyZeroFillWriteCount;
 		staticUploadTrace.skyZeroFillBytes = skyBytes;
+		staticUploadTrace.zeroFillClearCommandCount = 0;
+		staticUploadTrace.zeroFillSubmitCount = 0;
+		staticUploadTrace.zeroFillEncodeSubmitMs = 0;
+		if (reuseSolarExposure || reuseSkyExposure) {
+			const startedAt = performance.now();
+			const encoder = this.device.createCommandEncoder();
+			if (reuseSolarExposure) {
+				const clearStartedAt = performance.now();
+				encoder.clearBuffer(this.solarExposureBuffer!);
+				staticUploadTrace.solarZeroFillMs = performance.now() - clearStartedAt;
+				staticUploadTrace.zeroFillClearCommandCount += 1;
+			}
+			if (reuseSkyExposure) {
+				const clearStartedAt = performance.now();
+				encoder.clearBuffer(this.skyExposureBuffer!);
+				staticUploadTrace.skyZeroFillMs = performance.now() - clearStartedAt;
+				staticUploadTrace.zeroFillClearCommandCount += 1;
+			}
+			this.queue.submit([encoder.finish()]);
+			staticUploadTrace.zeroFillSubmitCount = 1;
+			staticUploadTrace.zeroFillEncodeSubmitMs = performance.now() - startedAt;
+		}
 
 		const gridBytes = params.gridPoints.byteLength;
 		if (!this.gridPointsBuffer || this.gridPointsBuffer.size !== gridBytes) {
@@ -3214,12 +3214,6 @@ async function getWebgpuDevice(
 					maxBufferSize
 				}
 			});
-	device.lost.then(() => {
-		if (cachedDevicePromise && cachedDevice === device) {
-			cachedDevicePromise = null;
-			cachedDevice = null;
-		}
-	});
 	return { device, supportsMrtComponents };
 }
 
@@ -3228,9 +3222,9 @@ type CreateWebgpuUtciPipelineOptions = {
 	device?: GPUDevice;
 };
 
-let cachedDevicePromise: Promise<GPUDevice> | null = null;
-let cachedDevice: GPUDevice | null = null;
-let cachedSupportsMrtComponents = false;
+type DeviceAcquisition = { device: GPUDevice; supportsMrtComponents: boolean };
+let cachedDevicePromise: Promise<DeviceAcquisition> | null = null;
+let cachedDiagnosticsRequested = false;
 
 export async function createWebgpuUtciPipeline(
 	options: CreateWebgpuUtciPipelineOptions = {}
@@ -3249,27 +3243,29 @@ export async function createWebgpuUtciPipeline(
 		return new WebgpuUtciComputePipeline(options.device, supportsMrtComponents);
 	}
 
-	if (!cachedDevicePromise || (enableDiagnostics && !cachedSupportsMrtComponents)) {
-		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(
-			({ device, supportsMrtComponents }) => {
-				cachedDevice = device;
-				cachedSupportsMrtComponents = supportsMrtComponents;
-				if (enableDiagnostics && !supportsMrtComponents) {
-					console.warn('MRT diagnostics were requested but hardware does not support them.');
-				}
-				return device;
-			}
-		);
+	if (!cachedDevicePromise || (enableDiagnostics && !cachedDiagnosticsRequested)) {
+		const acquisition = getWebgpuDevice(enableDiagnostics).then((result) => {
+			result.device.lost.then(() => {
+				if (cachedDevicePromise === acquisition) cachedDevicePromise = null;
+			});
+			return result;
+		}).catch((error) => {
+			if (cachedDevicePromise === acquisition) cachedDevicePromise = null;
+			throw error;
+		});
+		cachedDevicePromise = acquisition;
+		cachedDiagnosticsRequested = enableDiagnostics;
 	}
-	const device = await cachedDevicePromise;
-	const useDiagnostics = enableDiagnostics && cachedSupportsMrtComponents;
-	return new WebgpuUtciComputePipeline(device, useDiagnostics);
+	const { device, supportsMrtComponents } = await cachedDevicePromise;
+	if (enableDiagnostics && !supportsMrtComponents) {
+		console.warn('MRT diagnostics were requested but hardware does not support them.');
+	}
+	return new WebgpuUtciComputePipeline(device, enableDiagnostics && supportsMrtComponents);
 }
 
 export function __resetWebgpuDeviceCacheForTests(): void {
 	cachedDevicePromise = null;
-	cachedDevice = null;
-	cachedSupportsMrtComponents = false;
+	cachedDiagnosticsRequested = false;
 }
 
 export { WebgpuUtciComputePipeline as __TEST_ONLY_WebgpuUtciComputePipeline };
