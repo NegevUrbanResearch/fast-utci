@@ -195,6 +195,49 @@ function toLinearColor(r: number, g: number, b: number): THREE.Color {
 }
 
 describe('pointCloudService UTCI surface seam', () => {
+	it('renders active dataTexture cells with packed colors and updates their selected range', () => {
+		const analysis = withActiveMask(createAnalysis({
+			positions: [0, 0, 0, 1, 0, 1, 2, 0, 2],
+			utciValues: [13, 29, 38],
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 }
+		}), { activeCanonicalIndices: [0, 4, 8] });
+		const mesh = createUtciSurfaceMesh({ analysis, backend: 'dataTexture' });
+		const texture = mesh.userData.utciLayout.texture as THREE.DataTexture;
+		const pixels = texture.image.data as Uint8Array;
+		expect((mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(3);
+		expect(mesh.geometry.getAttribute('position').count).toBe(4);
+		expect(mesh.geometry.index?.count).toBe(6);
+		expect(Array.from(mesh.geometry.getAttribute('activeCanonicalIndex').array)).toEqual([0, 4, 8]);
+		expect(texture.image.width).toBe(3);
+		expect(texture.image.height).toBe(1);
+		expect(texture.colorSpace).toBe(THREE.SRGBColorSpace);
+		const colors = createColors(analysis, 0, 'normalized');
+		const packed = Array.from(colors).flatMap((_, index, array) => index % 3 === 0
+			? [...array.slice(index, index + 3).map(value => Math.floor(value * 255)), 255] : []);
+		expect(Array.from(pixels)).toEqual(packed);
+		expect(mesh.userData.utciLayout).not.toHaveProperty('colorBuffer');
+		expect(mesh.userData.utciLayout).not.toHaveProperty('cellToPointIndex');
+		expect(mesh.userData.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+		expect(mesh.userData.dataTextureBuildCount).toBe(1);
+		const updated = cloneAnalysisWithSelectedHourValues(analysis, [17, 31, 42]);
+		updated.metadata.hour_statistics = [{ min: 17, max: 42, mean: 30 }];
+		expect(updateUtciSurfaceMesh(mesh, { analysis: updated, colorMode: 'discrete' })).toBe(true);
+		expect(mesh.userData.utciLayout.texture).toBe(texture);
+		expect(mesh.userData.dataTextureBuildCount).toBe(2);
+		const updatedColors = createColors(updated, 0, 'discrete');
+		expect(Array.from(pixels).slice(0, 3)).toEqual(
+			Array.from(updatedColors.slice(0, 3)).map(value => Math.floor(value * 255)));
+		const denseAnalysis = { ...updated, metadata: { ...updated.metadata, activeMask: undefined } };
+		expect(updateUtciSurfaceMesh(mesh, { analysis: denseAnalysis })).toBe(false);
+		const anotherMask = withActiveMask(updated, { activeCanonicalIndices: [0, 4, 8], checksum: 'another-mask' });
+		expect(updateUtciSurfaceMesh(mesh, { analysis: anotherMask })).toBe(false);
+		expect(mesh.userData.dataTextureBuildCount).toBe(2);
+		let textureDisposed = false;
+		texture.addEventListener('dispose', () => { textureDisposed = true; });
+		disposeUtciSurfaceMesh(mesh);
+		expect(textureDisposed).toBe(true);
+	});
+
 	it('renders and updates CPU fallback values on compact active cells without filling holes', () => {
 		const analysis = withActiveMask(createAnalysis({
 			positions: [0, 0, 0, 1, 0, 1, 2, 0, 2],

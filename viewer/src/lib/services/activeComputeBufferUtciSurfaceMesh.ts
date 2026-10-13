@@ -97,15 +97,7 @@ function disabledActiveInstancedUtciSurfaceRaycast(): void {
 	return;
 }
 
-function createActiveUtciRenderNodes(
-	layout: ActiveCellsUtciGridLayout,
-	utciStorageAttribute: StorageBufferAttribute,
-	minUniform: ReturnType<typeof uniform>,
-	maxUniform: ReturnType<typeof uniform>,
-	colorLutTexture: THREE.DataTexture
-) {
-	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
-	const pointIndex = instanceIndex;
+export function createActiveUtciPositionNode(layout: ActiveCellsUtciGridLayout) {
 	const activeCanonicalIndex = attribute('activeCanonicalIndex', 'uint');
 	const canonicalRow = activeCanonicalIndex.mod(uint(layout.height));
 	const column = activeCanonicalIndex.div(uint(layout.height));
@@ -121,6 +113,18 @@ function createActiveUtciRenderNodes(
 		.add(0.5)
 		.mul(layout.gridSize)
 		.sub((layout.height * layout.gridSize) / 2);
+	return positionLocal.add(vec3(x, float(0), z));
+}
+
+function createActiveUtciRenderNodes(
+	layout: ActiveCellsUtciGridLayout,
+	utciStorageAttribute: StorageBufferAttribute,
+	minUniform: ReturnType<typeof uniform>,
+	maxUniform: ReturnType<typeof uniform>,
+	colorLutTexture: THREE.DataTexture
+) {
+	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
+	const pointIndex = instanceIndex;
 	const value = utciStorage.element(pointIndex);
 	const t = clamp(
 		value.sub(minUniform).div(maxUniform.sub(minUniform).max(float(0.001))),
@@ -134,7 +138,7 @@ function createActiveUtciRenderNodes(
 	return {
 		colorNode: texture(colorLutTexture, vec2(lutU, 0.5)).rgb,
 		opacityNode: float(DEFAULT_SURFACE_OPACITY),
-		positionNode: positionLocal.add(vec3(x, float(0), z))
+		positionNode: createActiveUtciPositionNode(layout)
 	};
 }
 

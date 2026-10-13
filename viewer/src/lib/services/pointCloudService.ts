@@ -6,6 +6,10 @@
 
 import * as THREE from 'three';
 import {
+	createActiveDataTextureUtciSurfaceMesh,
+	updateActiveDataTextureUtciSurfaceMesh
+} from './activeDataTextureUtciSurfaceMesh';
+import {
 	createActiveCpuUtciSurfaceMesh,
 	updateActiveCpuUtciSurfaceMesh,
 	type ActiveCpuUtciSurfaceMeshOptions
@@ -192,8 +196,8 @@ interface ResolvedUtciSurfaceMeshOptions {
 
 interface UtciSurfaceBackend {
 	type: UtciSurfaceBackendType;
-	createMesh: (layout: DenseUtciGridLayout, colors: Float32Array) => THREE.Mesh;
-	updateMesh: (mesh: THREE.Mesh, layout: DenseUtciGridLayout, colors: Float32Array) => boolean;
+	createMesh: (layout: UtciGridLayout, colors: Float32Array) => THREE.Mesh;
+	updateMesh: (mesh: THREE.Mesh, layout: UtciGridLayout, colors: Float32Array) => boolean;
 	disposeMesh: (mesh: THREE.Mesh) => void;
 }
 
@@ -266,6 +270,12 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 	dataTexture: {
 		type: 'dataTexture',
 		createMesh(layout, colors) {
+			if (layout.renderTopology === 'active-cells') {
+				const mesh = createActiveDataTextureUtciSurfaceMesh(layout, colors);
+				applySurfaceMeshState(mesh, layout, 'dataTexture');
+				incrementDataTextureBuildCount(mesh);
+				return mesh;
+			}
 			assertDenseUtciGridLayout(layout);
 			fillColorBuffer(layout, colors);
 
@@ -304,6 +314,14 @@ const utciSurfaceBackends: Record<UtciSurfaceBackendType, UtciSurfaceBackend> = 
 			return mesh;
 		},
 		updateMesh(mesh, layout, colors) {
+			if (layout.renderTopology === 'active-cells') {
+				const updated = updateActiveDataTextureUtciSurfaceMesh(mesh, layout, colors);
+				if (updated) {
+					applySurfaceMeshState(mesh, layout, 'dataTexture');
+					incrementDataTextureBuildCount(mesh);
+				}
+				return updated;
+			}
 			assertDenseUtciGridLayout(layout);
 			const material = mesh.material as THREE.MeshBasicMaterial;
 			const texture = layout.texture ?? (material.map as THREE.DataTexture | null);
@@ -527,8 +545,9 @@ export function updateUtciSurfaceMesh(mesh: THREE.Mesh, options: UtciSurfaceMesh
 		return updated;
 	}
 
-	assertDenseUtciGridLayout(nextLayout);
-	nextLayout.texture = layout.texture;
+	if (nextLayout.renderTopology === 'dense-grid') {
+		nextLayout.texture = layout.texture;
+	}
 	const colors = createColors(
 		resolved.analysis,
 		resolved.hourIndex,
@@ -587,7 +606,6 @@ function createUtciSurfaceMeshInternal(options: ResolvedUtciSurfaceMeshOptions):
 		incrementSelectedHourTransferCount(mesh);
 		return mesh;
 	}
-	assertDenseUtciGridLayout(layout);
 	const colors = createColors(
 		options.analysis,
 		options.hourIndex,
@@ -681,6 +699,7 @@ function getSurfaceBackendType(mesh: THREE.Mesh): UtciSurfaceBackendType {
 
 function canReuseUtciSurfaceLayout(current: UtciGridLayout, next: UtciGridLayout): boolean {
 	return (
+		current.renderTopology === next.renderTopology &&
 		current.numPositions === next.numPositions &&
 		current.width === next.width &&
 		current.height === next.height &&
@@ -713,7 +732,11 @@ export function applySurfaceMeshState(
 		mesh.userData.utciSurfaceSource = getGpuNativeUtciSurfaceSource(mesh);
 		mesh.userData.dataTextureBuildCount = 0;
 	} else {
-		delete mesh.userData.utciSurfaceSource;
+		if (layout.renderTopology === 'active-cells') {
+			mesh.userData.utciSurfaceSource = 'cpu-uploaded-selected-hour';
+		} else {
+			delete mesh.userData.utciSurfaceSource;
+		}
 		delete mesh.userData.selectedHourTransferCount;
 	}
 }
