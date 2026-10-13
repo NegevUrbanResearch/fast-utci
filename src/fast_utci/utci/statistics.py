@@ -68,10 +68,10 @@ def extract_positions(utci_results: Dict[str, Any]) -> np.ndarray:
 
 def calculate_utci_statistics(utci_results: Dict[str, Any]) -> Dict[str, float]:
     """
-    Calculate overall UTCI statistics (NaN-safe).
+    Calculate overall UTCI statistics from finite values.
     
-    This function uses nanmin/nanmax/nanmean to handle NaN values gracefully,
-    ensuring valid JSON output for web viewers.
+    Exclude NaN and infinite values. Raise ValueError when no finite UTCI
+    values are available; the viewer requires numeric ranges.
     
     Args:
         utci_results: Dictionary of UTCI results from compute_utci()
@@ -80,11 +80,14 @@ def calculate_utci_statistics(utci_results: Dict[str, Any]) -> Dict[str, float]:
         Dictionary with 'min', 'max', 'mean', 'std' statistics
     """
     all_utci = extract_all_utci_values(utci_results)
+    valid_utci = all_utci[np.isfinite(all_utci)]
+    if valid_utci.size == 0:
+        raise ValueError('No finite UTCI values available; check the analysis results before export.')
     return {
-        'min': float(np.nanmin(all_utci)),
-        'max': float(np.nanmax(all_utci)),
-        'mean': float(np.nanmean(all_utci)),
-        'std': float(np.nanstd(all_utci))
+        'min': float(np.min(valid_utci)),
+        'max': float(np.max(valid_utci)),
+        'mean': float(np.mean(valid_utci)),
+        'std': float(np.std(valid_utci))
     }
 
 
@@ -93,10 +96,10 @@ def calculate_hour_statistics(
     hours: List[int]
 ) -> List[Dict[str, Any]]:
     """
-    Calculate per-hour UTCI statistics for full day analysis (NaN-safe).
+    Calculate finite per-hour UTCI statistics for full day analysis.
     
     Consolidates logic from export_for_viewer.py to avoid duplication.
-    Uses NaN-safe numpy functions to prevent invalid JSON output.
+    Raise ValueError with the requested hour when no finite values are available.
     
     Args:
         utci_results: Dictionary of UTCI results from compute_utci()
@@ -119,23 +122,23 @@ def calculate_hour_statistics(
             for hour_idx, utci_val in enumerate(utci_vals[:num_hours]):
                 utci_by_hour[hour_idx].append(float(utci_val))
     
-    # Calculate statistics for each hour (NaN-safe with all-NaN protection)
+    # Keep one summary per requested hour; unavailable hours must not shift indices.
     hour_stats = []
     for hour_idx, hour in enumerate(hours):
-        if utci_by_hour[hour_idx]:
-            hour_utci = np.array(utci_by_hour[hour_idx])
-            
-            # Check if all values are NaN
-            valid_values = hour_utci[~np.isnan(hour_utci)]
-            if len(valid_values) > 0:
-                hour_stats.append({
-                    'hour': hour,
-                    'min': float(np.nanmin(hour_utci)),
-                    'max': float(np.nanmax(hour_utci)),
-                    'mean': float(np.nanmean(hour_utci))
-                })
-            # Skip hours with all NaN values
-    
+        hour_utci = np.array(utci_by_hour[hour_idx])
+        valid_values = hour_utci[np.isfinite(hour_utci)]
+        if valid_values.size == 0:
+            raise ValueError(
+                f'No finite UTCI values available for hour {hour}; '
+                'check the analysis results before export.'
+            )
+        hour_stats.append({
+            'hour': hour,
+            'min': float(np.min(valid_values)),
+            'max': float(np.max(valid_values)),
+            'mean': float(np.mean(valid_values))
+        })
+
     return hour_stats
 
 
@@ -200,9 +203,10 @@ def compute_summary_statistics(utci_results: Dict[str, Any]) -> Dict[str, Any]:
         all_mrt.extend(data.get('mrt', data.get('mrt0', [])))
     all_mrt = np.array(all_mrt)
     
-    # Remove NaN values for statistics
-    valid_utci = all_utci[~np.isnan(all_utci)]
-    valid_mrt = all_mrt[~np.isnan(all_mrt)]
+    # Exclude non-finite metric values from accepted statistics.
+    valid_utci = all_utci[np.isfinite(all_utci)]
+    valid_mrt = all_mrt[np.isfinite(all_mrt)]
+    utci_stats = calculate_utci_statistics(utci_results)
     
     # Compute comfort categories
     if len(valid_utci) > 0:
@@ -214,12 +218,7 @@ def compute_summary_statistics(utci_results: Dict[str, Any]) -> Dict[str, Any]:
         'total_positions': len(utci_results),
         'total_hours': len(all_utci),
         'valid_utci_values': len(valid_utci),
-        'utci_stats': {
-            'mean': float(np.mean(valid_utci)) if len(valid_utci) > 0 else np.nan,
-            'min': float(np.min(valid_utci)) if len(valid_utci) > 0 else np.nan,
-            'max': float(np.max(valid_utci)) if len(valid_utci) > 0 else np.nan,
-            'std': float(np.std(valid_utci)) if len(valid_utci) > 0 else np.nan
-        },
+        'utci_stats': utci_stats,
         'mrt_stats': {
             'mean': float(np.mean(valid_mrt)) if len(valid_mrt) > 0 else np.nan,
             'min': float(np.min(valid_mrt)) if len(valid_mrt) > 0 else np.nan,

@@ -335,6 +335,7 @@ def export_metadata_json(
     
     # Use shared utilities for data extraction (NaN-safe)
     all_utci = extract_all_utci_values(utci_results)
+    utci_statistics = calculate_utci_statistics(utci_results)
     all_positions = extract_positions(utci_results)
     
     # Create metadata dictionary
@@ -352,7 +353,7 @@ def export_metadata_json(
             "z": float(all_positions[0, 2])
         },
         # Use shared utility for NaN-safe statistics
-        "utci_range": calculate_utci_statistics(utci_results),
+        "utci_range": utci_statistics,
         "num_positions": len(utci_results),
         "model_file": str(model_file),
         "epw_file": str(epw_file),
@@ -396,9 +397,10 @@ def export_metadata_json(
     except Exception as e:
         print(f"[WARN] Could not calculate sun positions: {e}")
     
-    # Write JSON
+    # Validate before opening so invalid metadata cannot truncate an existing file.
+    serialized_metadata = json.dumps(metadata, indent=2, allow_nan=False)
     with open(output_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
+        f.write(serialized_metadata)
     
     print(f"[SAVE] Metadata: {output_path.name}")
 
