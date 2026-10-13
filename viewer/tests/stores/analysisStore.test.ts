@@ -7,6 +7,8 @@ import {
 	clearAnalysisCache 
 } from '$lib/stores/analysisStore';
 import type { Analysis } from '$lib/types/analysis';
+import { base } from '$app/paths';
+const cacheKey = (id: string) => JSON.stringify([`${base}/data/analyses`, id, 'full']);
 import * as dataLoader from '$lib/services/dataLoader';
 
 // Mock the dataLoader
@@ -121,7 +123,7 @@ describe('analysisStore', () => {
 
 			const stats = getAnalysisCacheStats();
 			expect(stats.size).toBe(1);
-			expect(stats.keys).toContain('test-id');
+			expect(stats.keys).toContain(cacheKey('test-id'));
 		});
 
 		it('should use cached data on subsequent loads', async () => {
@@ -154,8 +156,8 @@ describe('analysisStore', () => {
 
 			const stats = getAnalysisCacheStats();
 			expect(stats.size).toBe(2);
-			expect(stats.keys).toContain('test-id-1');
-			expect(stats.keys).toContain('test-id-2');
+			expect(stats.keys).toContain(cacheKey('test-id-1'));
+			expect(stats.keys).toContain(cacheKey('test-id-2'));
 		});
 
 		it('should update LRU order when accessing cached data', async () => {
@@ -177,7 +179,7 @@ describe('analysisStore', () => {
 
 			const stats = getAnalysisCacheStats();
 			// LRU order should be: test-id-2, test-id-1
-			expect(stats.keys).toEqual(['test-id-2', 'test-id-1']);
+			expect(stats.keys).toEqual([cacheKey('test-id-2'), cacheKey('test-id-1')]);
 		});
 
 		it('should clear cache when requested', async () => {
@@ -214,8 +216,8 @@ describe('analysisStore', () => {
 
 			const stats = getAnalysisCacheStats();
 			expect(stats.size).toBe(10);
-			expect(stats.keys).not.toContain('test-id-0');
-			expect(stats.keys).toContain('test-id-10');
+			expect(stats.keys).not.toContain(cacheKey('test-id-0'));
+			expect(stats.keys).toContain(cacheKey('test-id-10'));
 		});
 
 		it('should handle load errors gracefully', async () => {

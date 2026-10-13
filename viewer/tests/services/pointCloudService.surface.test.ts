@@ -8,6 +8,7 @@ import {
 	createUtciLayoutReuseKey,
 	createColors,
 	createUtciSurfaceMesh,
+	disposeUtciSurfaceMesh,
 	deriveUtciLayoutFrameForTest,
 	getUtciLayoutFrameCacheDiagnosticsForTest,
 	getUtciLayoutReuseSignatureDiagnosticsForTest,
@@ -194,6 +195,105 @@ function toLinearColor(r: number, g: number, b: number): THREE.Color {
 }
 
 describe('pointCloudService UTCI surface seam', () => {
+	it('renders active dataTexture cells with packed colors and updates their selected range', () => {
+		const analysis = withActiveMask(createAnalysis({
+			positions: [0, 0, 0, 1, 0, 1, 2, 0, 2],
+			utciValues: [13, 29, 38],
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 }
+		}), { activeCanonicalIndices: [0, 4, 8] });
+		const mesh = createUtciSurfaceMesh({ analysis, backend: 'dataTexture' });
+		const texture = mesh.userData.utciLayout.texture as THREE.DataTexture;
+		const pixels = texture.image.data as Uint8Array;
+		expect((mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(3);
+		expect(mesh.geometry.getAttribute('position').count).toBe(4);
+		expect(mesh.geometry.index?.count).toBe(6);
+		expect(Array.from(mesh.geometry.getAttribute('activeCanonicalIndex').array)).toEqual([0, 4, 8]);
+		expect(texture.image.width).toBe(3);
+		expect(texture.image.height).toBe(1);
+		expect(texture.colorSpace).toBe(THREE.SRGBColorSpace);
+		const colors = createColors(analysis, 0, 'normalized');
+		const packed = Array.from(colors).flatMap((_, index, array) => index % 3 === 0
+			? [...array.slice(index, index + 3).map(value => Math.floor(value * 255)), 255] : []);
+		expect(Array.from(pixels)).toEqual(packed);
+		expect(mesh.userData.utciLayout).not.toHaveProperty('colorBuffer');
+		expect(mesh.userData.utciLayout).not.toHaveProperty('cellToPointIndex');
+		expect(mesh.userData.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+		expect(mesh.userData.dataTextureBuildCount).toBe(1);
+		const updated = cloneAnalysisWithSelectedHourValues(analysis, [17, 31, 42]);
+		updated.metadata.hour_statistics = [{ min: 17, max: 42, mean: 30 }];
+		expect(updateUtciSurfaceMesh(mesh, { analysis: updated, colorMode: 'discrete' })).toBe(true);
+		expect(mesh.userData.utciLayout.texture).toBe(texture);
+		expect(mesh.userData.dataTextureBuildCount).toBe(2);
+		const updatedColors = createColors(updated, 0, 'discrete');
+		expect(Array.from(pixels).slice(0, 3)).toEqual(
+			Array.from(updatedColors.slice(0, 3)).map(value => Math.floor(value * 255)));
+		const denseAnalysis = { ...updated, metadata: { ...updated.metadata, activeMask: undefined } };
+		expect(updateUtciSurfaceMesh(mesh, { analysis: denseAnalysis })).toBe(false);
+		const anotherMask = withActiveMask(updated, { activeCanonicalIndices: [0, 4, 8], checksum: 'another-mask' });
+		expect(updateUtciSurfaceMesh(mesh, { analysis: anotherMask })).toBe(false);
+		expect(mesh.userData.dataTextureBuildCount).toBe(2);
+		let textureDisposed = false;
+		texture.addEventListener('dispose', () => { textureDisposed = true; });
+		disposeUtciSurfaceMesh(mesh);
+		expect(textureDisposed).toBe(true);
+	});
+
+	it('renders and updates CPU fallback values on compact active cells without filling holes', () => {
+		const analysis = withActiveMask(createAnalysis({
+			positions: [0, 0, 0, 1, 0, 1, 2, 0, 2],
+			utciValues: [13, 29, 38],
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 }
+		}), { activeCanonicalIndices: [0, 4, 8] });
+		const mesh = createUtciSurfaceMesh({ analysis, backend: 'gpuNative' });
+		const state = mesh.userData.gpuNativeUtciSurfaceState;
+		expect((mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(3);
+		expect(mesh.geometry.getAttribute('position').count).toBe(4);
+		expect(Array.from(mesh.geometry.getAttribute('activeCanonicalIndex').array)).toEqual([0, 4, 8]);
+		expect(Array.from(state.utciStorageAttribute.array)).toEqual([13, 29, 38]);
+		expect(state.utciStorageAttribute.count).toBe(3);
+		expect(state).not.toHaveProperty('cellToPointStorageAttribute');
+		for (const key of ['cellToPointIndex', 'indexToRow', 'indexToColumn', 'indexToTexel', 'colorBuffer']) {
+			expect(mesh.userData.utciLayout).not.toHaveProperty(key);
+		}
+		expect(getGpuNativeUtciSurfaceSource(mesh)).toBe('cpu-uploaded-selected-hour');
+		expect(mesh.userData.utciSurfaceSource).toBe('cpu-uploaded-selected-hour');
+		expect(mesh.userData.pendingComputeBufferUtciSource).toBeUndefined();
+		expect(mesh.userData.dataTextureBuildCount).toBe(0);
+		expect(mesh.userData.selectedHourTransferCount).toBe(1);
+		expect(state.valueRange).toEqual({ min: 10, max: 40 });
+		const updated = cloneAnalysisWithSelectedHourValues(analysis, [17, 31, 42]);
+		updated.metadata.hour_statistics = [{ min: 17, max: 42, mean: 30 }];
+		expect(updateUtciSurfaceMesh(mesh, { analysis: updated, colorMode: 'discrete' })).toBe(true);
+		expect(mesh.userData.gpuNativeUtciSurfaceState).toBe(state);
+		expect(Array.from(state.utciStorageAttribute.array)).toEqual([17, 31, 42]);
+		expect(state.minUniform.value).toBe(17);
+		expect(state.maxUniform.value).toBe(42);
+		expect(mesh.userData.selectedHourTransferCount).toBe(2);
+		expect(updateUtciSurfaceMesh(mesh, { analysis: updated, rangeOverride: { utciMin: 5, utciMax: 55 } })).toBe(true);
+		expect(state.valueRange).toEqual({ min: 5, max: 55 });
+		const denseAnalysis = { ...updated, metadata: { ...updated.metadata, activeMask: undefined } };
+		expect(updateUtciSurfaceMesh(mesh, { analysis: denseAnalysis })).toBe(false);
+		expect(Array.from(state.utciStorageAttribute.array)).toEqual([17, 31, 42]);
+		let geometryDisposed = false;
+		let lutDisposed = false;
+		mesh.geometry.addEventListener('dispose', () => { geometryDisposed = true; });
+		state.colorLutTexture.addEventListener('dispose', () => { lutDisposed = true; });
+		disposeUtciSurfaceMesh(mesh);
+		expect(geometryDisposed).toBe(true);
+		expect(lutDisposed).toBe(true);
+		expect(mesh.userData.gpuNativeUtciSurfaceState).toBeUndefined();
+	});
+
+	it('rejects active CPU fallback values that do not match the active point count', () => {
+		const analysis = withActiveMask(createAnalysis({
+			positions: [0, 0, 0, 1, 0, 1, 2, 0, 2],
+			utciValues: [13, 29],
+			bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 2, z: 0 }
+		}), { activeCanonicalIndices: [0, 4, 8] });
+		expect(() => createUtciSurfaceMesh({ analysis, backend: 'gpuNative' }))
+			.toThrow('one value per active point');
+	});
+
 	beforeEach(() => {
 		updateViewerConfig({
 			anchorOffset: new THREE.Vector3(0, 0, 0),

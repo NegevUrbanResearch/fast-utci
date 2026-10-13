@@ -1,0 +1,56 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import { Group, Mesh, BoxGeometry, MeshBasicMaterial, Vector3 } from 'three';
+import { processModelScene } from '$lib/services/modelSceneProcessor';
+import { applyLayerMaterials } from '$lib/services/modelLoaderService';
+import { initializeLayerManager, resetLayerManager } from '$lib/services/layerManagerService';
+import { isNormalizationEnabled } from '$lib/config/viewerConfig';
+import type { AnalysisMetadata } from '$lib/types/analysis';
+import { cacheModel } from '$lib/services/modelCacheService';
+vi.mock('$lib/services/modelLoaderService', () => ({ applyLayerMaterials: vi.fn() }));
+vi.mock('$lib/services/layerManagerService', () => ({ initializeLayerManager: vi.fn(), resetLayerManager: vi.fn(), applyLayerVisibilityState: vi.fn(), getDiscoveredLayers: () => ['building'] }));
+vi.mock('$lib/services/modelCacheService', () => ({ cacheModel: vi.fn(), hasModelInCache: () => false }));
+vi.mock('$lib/config/viewerConfig', () => ({ isNormalizationEnabled: vi.fn(() => false), getAnchorOffset: () => new Vector3(100, 200, 300) }));
+function deferred() { let resolve!: () => void; let reject!: (error: Error) => void; const promise = new Promise<Group>((yes, no) => { resolve = () => yes(new Group()); reject = no; }); return { promise, resolve, reject }; }
+const publisher = (publish: (event: string, value: string[] | Group) => void) => ({ layersDiscovered: (layers: string[]) => publish('layersDiscovered', layers), modelLoaded: (scene: Group) => publish('modelLoaded', scene) });
+beforeEach(() => vi.resetAllMocks());
+it('only B publishes when material processing overlaps A', async () => {
+	const pending = deferred();
+	vi.mocked(applyLayerMaterials).mockReturnValueOnce(pending.promise).mockResolvedValueOnce(new Group());
+	let sequence = 1;
+	const publishA = vi.fn();
+	const publishB = vi.fn();
+	const a = new Group();
+	const b = new Group();
+	const first = processModelScene(a, false, { modelPath: 'a', coordinateSystem: 'xy_ground' }, publisher(publishA), () => sequence === 1);
+	sequence = 2;
+	await processModelScene(b, false, { modelPath: 'b', coordinateSystem: 'xz_ground' }, publisher(publishB), () => sequence === 2);
+	pending.resolve();
+	await first;
+	expect(publishA).not.toHaveBeenCalled();
+	expect(publishB).toHaveBeenCalledWith('modelLoaded', b);
+	expect(initializeLayerManager).toHaveBeenCalledTimes(1);
+	expect(initializeLayerManager).toHaveBeenCalledWith(b);
+	expect(cacheModel).toHaveBeenCalledTimes(1);
+	expect(cacheModel).toHaveBeenCalledWith('b', expect.any(Group));
+	expect(a.rotation.x).toBe(0);
+});
+it('does not publish after destruction invalidates ownership', async () => { const pending = deferred(); vi.mocked(applyLayerMaterials).mockReturnValueOnce(pending.promise); let alive = true; const publish = vi.fn(); const task = processModelScene(new Group(), false, { modelPath: 'a', coordinateSystem: 'xy_ground' }, publisher(publish), () => alive); alive = false; pending.resolve(); await task; expect(publish).not.toHaveBeenCalled(); expect(initializeLayerManager).not.toHaveBeenCalled(); expect(resetLayerManager).not.toHaveBeenCalled(); });
+it('clones cached materials while retaining shared geometry', async () => { const scene = new Group(); const mesh = new Mesh(new BoxGeometry(), new MeshBasicMaterial()); scene.add(mesh); const dispose = vi.spyOn(mesh.geometry, 'dispose'); const clone = await processModelScene(scene, true, { modelPath: 'a', coordinateSystem: 'xz_ground' }, publisher(vi.fn()), () => true); const clonedMesh = clone!.children[0] as Mesh; expect(clonedMesh.material).not.toBe(mesh.material); expect(clonedMesh.geometry).toBe(mesh.geometry); expect(dispose).not.toHaveBeenCalled(); });
+it('consumes current processing errors through the app error callback', async () => { const pending = deferred(); vi.mocked(applyLayerMaterials).mockReturnValueOnce(pending.promise); const report = vi.fn(); const publish = vi.fn(); const task = processModelScene(new Group(), false, { modelPath: 'a', coordinateSystem: 'xy_ground' }, publisher(publish), () => true, report); const error = new Error('material failed'); pending.reject(error); await expect(task).resolves.toBeUndefined(); expect(report).toHaveBeenCalledWith(error); expect(publish).not.toHaveBeenCalled(); });
+it('consumes stale processing errors without changing current error state', async () => { const pending = deferred(); vi.mocked(applyLayerMaterials).mockReturnValueOnce(pending.promise); let alive = true; const report = vi.fn(); const task = processModelScene(new Group(), false, { modelPath: 'a', coordinateSystem: 'xy_ground' }, publisher(vi.fn()), () => alive, report); alive = false; pending.reject(new Error('stale')); await expect(task).resolves.toBeUndefined(); expect(report).not.toHaveBeenCalled(); });
+it('stops publication when the layers callback invalidates ownership', async () => { vi.mocked(applyLayerMaterials).mockResolvedValueOnce(new Group()); let alive = true; const modelLoaded = vi.fn(); await processModelScene(new Group(), false, { modelPath: 'a', coordinateSystem: 'xy_ground' }, { layersDiscovered: () => { alive = false; }, modelLoaded }, () => alive); expect(cacheModel).not.toHaveBeenCalled(); expect(modelLoaded).not.toHaveBeenCalled(); });
+
+it('uses captured transforms and caches before scenario normalization', async () => {
+ vi.mocked(isNormalizationEnabled).mockReturnValue(true);
+ const pending = deferred(); vi.mocked(applyLayerMaterials).mockReturnValueOnce(pending.promise);
+ const scene = new Group();
+ const metadata = { bounds: { x_min: 10, x_max: 30, y_min: 20, y_max: 40, z: 5 } } as AnalysisMetadata;
+ const snapshot = { modelPath: 'a', coordinateSystem: 'xy_ground' as 'xy_ground' | 'xz_ground', metadata };
+ const task = processModelScene(scene, false, snapshot, publisher(vi.fn()), () => true);
+ snapshot.modelPath = 'b'; snapshot.coordinateSystem = 'xz_ground'; snapshot.metadata = {} as AnalysisMetadata;
+ pending.resolve(); await task;
+ expect(scene.rotation.x).toBeCloseTo(-Math.PI / 2);
+ expect(scene.position.toArray()).toEqual([80, 195, 330]);
+ const [key, cached] = vi.mocked(cacheModel).mock.calls[0];
+ expect(key).toBe('a'); expect(cached.position.toArray()).toEqual([0, 0, 0]);
+});

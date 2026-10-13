@@ -436,6 +436,30 @@ describe('selected-hour live session', () => {
 		vi.stubGlobal('Worker', vi.fn());
 	});
 
+	it.each(['dispatch-abort', 'debug', 'summary', 'fallback', 'readback-abort'])('releases UTCI output when %s prevents publication', async (failure) => {
+		const abort = new AbortController();
+		const session = await prepareSelectedHourLiveSession({ analysisId: 'analysis-a', base: createBaseAnalysis(), model: createEmptyModel(), epwUrl: '/weather.epw', signal: abort.signal, preferredDevice: mockState.rendererDevice });
+		if (failure === 'dispatch-abort') mockState.constructors.at(-1).runUtciForTimeIndex.mockImplementationOnce(async () => { abort.abort(); return { gpuBuffer: mockState.gpuBuffer }; });
+		if (failure === 'debug' || failure === 'fallback') mockState.pipeline.readOnDemandUtciForDebug.mockRejectedValueOnce(new Error('readback failed'));
+		if (failure === 'summary') mockState.pipeline.runUtciRangeSummaryForOutput.mockRejectedValueOnce(new Error('summary failed'));
+		if (failure === 'readback-abort') mockState.pipeline.readOnDemandUtciForDebug.mockImplementationOnce(async () => { abort.abort(); return new Float32Array([11, 29]); });
+		await expect(session.runSelectedHour({ monthIndex: 0, hourIndex: 12, timeIndex: 12, colorMode: 'discrete', preferGpuResident: failure !== 'fallback', rendererDevice: mockState.rendererDevice })).rejects.toThrow();
+		expect(mockState.gpuBuffer.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([false, true])('releases compatibility snapshots when readback rejection is %s', async (rejectReadback) => {
+		mockState.pipeline.runUtciRangeSummaryForTimeIndex = undefined;
+		const session = await prepareSelectedHourLiveSession({ analysisId: 'analysis-a', base: createFullDayBaseAnalysis(), model: createEmptyModel(), epwUrl: '/weather.epw', signal: new AbortController().signal, preferredDevice: mockState.rendererDevice });
+		const buffers: any[] = [];
+		mockState.constructors.at(-1).runUtciForTimeIndex.mockImplementation(async () => { const buffer = { destroy: vi.fn() }; buffers.push(buffer); return { gpuBuffer: buffer }; });
+		if (rejectReadback) mockState.pipeline.readOnDemandUtciForDebug.mockResolvedValueOnce(new Float32Array([11, 29])).mockRejectedValueOnce(new Error('compatibility readback failed'));
+		const pending = session.runSelectedHour({ monthIndex: 0, hourIndex: 12, timeIndex: 12, colorMode: 'normalized', preferGpuResident: true, rendererDevice: mockState.rendererDevice });
+		if (rejectReadback) await expect(pending).rejects.toThrow('compatibility readback failed');
+		else { const result = await pending; expect(buffers[0].destroy).not.toHaveBeenCalled(); disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput); }
+		expect(buffers.length).toBeGreaterThan(1);
+		for (const buffer of buffers) expect(buffer.destroy).toHaveBeenCalledTimes(1);
+	});
+
 	it('propagates live session lifecycle timings onto selected-hour runtime diagnostics', async () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
@@ -1104,6 +1128,20 @@ describe('selected-hour live session', () => {
 		expect(handle.disposed).toBe(true);
 	});
 
+	it.each(['discrete', 'normalized'] as const)('publishes geometry without full UTCI reads for localized resident %s tooltips', async (colorMode) => {
+		mockState.outputOverride = { format: 'f32-utci', numPoints: 2, timeIndex: 12, gpuBuffer: mockState.gpuBuffer, gpuOutputHandle: createSelectedHourOutputHandle({ buffer: mockState.gpuBuffer, byteLength: 8, source: 'webgpu-on-demand-snapshot', timeIndex: 12 }) };
+		const session = await prepareSelectedHourLiveSession({ analysisId: 'lazy', base: createBaseAnalysis(), model: createEmptyModel(), epwUrl: '/weather.epw', signal: new AbortController().signal, preferredDevice: mockState.rendererDevice });
+		const result = await session.runSelectedHour({ monthIndex: 0, hourIndex: 12, timeIndex: 12, colorMode, preferGpuResident: true, rendererDevice: mockState.rendererDevice, localizedUtciTooltips: true });
+		expect(mockState.pipeline.readOnDemandUtciForDebug).not.toHaveBeenCalled();
+		expect(result.analysis?.data.numPositions).toBe(2);
+		expect((result.analysis?.data as { utciValues?: Float32Array })?.utciValues).toBeUndefined();
+		expect(result.gpuResidentOutput?.tooltipUtciValues).toBeUndefined();
+		expect(result.analysis?.metadata.utci_range).toEqual(colorMode === 'discrete' ? { min: 11, max: 29 } : { min: 10, max: 30 });
+		mockState.pipeline.readOnDemandUtciForDebug.mockImplementation(async ({ output }: any) => output === result.gpuResidentOutput?.output ? new Float32Array([11, 29]) : new Float32Array([80, 90]));
+		const fallback = await result.loadCpuFallback?.();
+		expect(fallback?.cpuFallbackValues).toEqual(new Float32Array([11, 29]));
+	});
+
 	it('uses compact selected-hour output summary for discrete GPU-resident range', async () => {
 		mockState.pipeline.readOnDemandUtciForDebug = vi.fn(async () => new Float32Array([100, 120]));
 		const session = await prepareSelectedHourLiveSession({
@@ -1169,6 +1207,7 @@ describe('selected-hour live session', () => {
 
 	it('falls back to scanning existing tooltip values when compact selected-hour summary is unavailable', async () => {
 		mockState.pipeline.runUtciRangeSummaryForOutput = undefined;
+		mockState.outputOverride = { format: 'f32-utci', numPoints: 2, timeIndex: 12, gpuBuffer: mockState.gpuBuffer, gpuOutputHandle: createSelectedHourOutputHandle({ buffer: mockState.gpuBuffer, byteLength: 8, source: 'webgpu-on-demand-snapshot', timeIndex: 12 }) };
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',
 			base: createBaseAnalysis(),
@@ -1184,6 +1223,7 @@ describe('selected-hour live session', () => {
 			timeIndex: 12,
 			colorMode: 'discrete',
 			preferGpuResident: true,
+			localizedUtciTooltips: true,
 			rendererDevice: mockState.rendererDevice
 		});
 		const timeline = result.diagnostics.timings.renderPublication?.renderPublicationTimeline;

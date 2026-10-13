@@ -14,7 +14,7 @@ describe('webgpuUtciPipeline implementation locks', () => {
 	});
 
 	it('handles GPU device loss by clearing cached device promise', () => {
-		expect(source.includes('device.lost.then')).toBe(true);
+		expect(source.includes('result.device.lost.then')).toBe(true);
 		expect(source.includes('cachedDevicePromise = null')).toBe(true);
 	});
 

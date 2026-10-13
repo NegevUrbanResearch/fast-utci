@@ -87,6 +87,7 @@ export interface BuildDebugOnDemandPrototypeDiagnosticsParams {
 	existing?: DebugOnDemandPrototypeDiagnostics;
 	patch: Partial<DebugOnDemandPrototypeDiagnostics>;
 	defaults: DebugOnDemandPrototypeDiagnosticsDefaults;
+	observedEnvironment?: Pick<DebugOnDemandPrototypeDiagnostics, 'navigatorGpu' | 'rendererBackend'>;
 	replace?: boolean;
 }
 
@@ -111,8 +112,12 @@ export function buildDebugOnDemandPrototypeDiagnostics(
 		...createEmptyOnDemandDiagnostics(),
 		...existing,
 		...patch,
-		navigatorGpu: patch.navigatorGpu ?? existing?.navigatorGpu ?? defaults.navigatorGpu,
-		rendererBackend: patch.rendererBackend ?? existing?.rendererBackend ?? defaults.rendererBackend,
+		navigatorGpu:
+			params.observedEnvironment?.navigatorGpu ??
+			patch.navigatorGpu ?? existing?.navigatorGpu ?? defaults.navigatorGpu,
+		rendererBackend:
+			params.observedEnvironment?.rendererBackend ??
+			patch.rendererBackend ?? existing?.rendererBackend ?? defaults.rendererBackend,
 		utciRenderRequested:
 			patch.utciRenderRequested ?? existing?.utciRenderRequested ?? defaults.utciRenderRequested,
 		utciRenderResolved:

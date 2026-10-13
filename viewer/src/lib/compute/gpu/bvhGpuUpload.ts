@@ -54,7 +54,9 @@ export interface SerializeBvhOptions {
  * vertex buffer for WGSL BVH traversal and ray–triangle intersection.
  *
  * If the geometry already has a boundsTree (e.g. from computeBoundsTree() in
- * grid-generator), that tree is serialized so the BVH is built only once.
+ * grid-generator), a direct single-root tree is reused. Grouped geometry and
+ * indirect trees use a private ungrouped BVH that preserves the source index,
+ * material groups, attributes, and cached tree. The source draw range applies.
  *
  * When used in a worker: the returned vertexBuffer/indexBuffer buffers may be
  * transferred to the main thread via postMessage transfer list; do not use
@@ -70,8 +72,24 @@ export function serializeBvhForGpu(
 		throw new Error('bvhGpuUpload: only BufferGeometry is supported');
 	}
 
-	const bvh = (geometry as THREE.BufferGeometry & { boundsTree?: InstanceType<typeof MeshBVH> }).boundsTree ?? new MeshBVH(geometry);
-	const serialized = MeshBVH.serialize(bvh, { cloneBuffers: !zeroCopy });
+	const cached = (geometry as THREE.BufferGeometry & { boundsTree?: MeshBVH }).boundsTree;
+	let serialized = cached && geometry.groups.length === 0
+		? MeshBVH.serialize(cached, { cloneBuffers: !zeroCopy })
+		: null;
+	// Material groups generate independent roots. GPU traversal accepts one root and
+	// direct triangle offsets, so rebuild grouped or indirect trees on a private index.
+	// Positions can remain shared because MeshBVH only reorders the index.
+	// The installed serializer exposes indirectBuffer, but its declaration omits it.
+	const indirectBuffer = (serialized as (typeof serialized & { indirectBuffer?: Uint16Array | Uint32Array }) | null)?.indirectBuffer;
+	if (geometry.groups.length > 0 || (serialized && (serialized.roots.length > 1 || indirectBuffer))) {
+		const ungrouped = new THREE.BufferGeometry();
+		ungrouped.setAttribute('position', geometry.getAttribute('position'));
+		if (geometry.getIndex()) ungrouped.setIndex(geometry.getIndex()!.clone());
+		ungrouped.setDrawRange(geometry.drawRange.start, geometry.drawRange.count);
+		serialized = MeshBVH.serialize(new MeshBVH(ungrouped), { cloneBuffers: !zeroCopy });
+	} else if (!serialized) {
+		serialized = MeshBVH.serialize(new MeshBVH(geometry), { cloneBuffers: !zeroCopy });
+	}
 
 	if (!serialized.roots || serialized.roots.length === 0) {
 		throw new Error('bvhGpuUpload: serialized BVH has no roots');

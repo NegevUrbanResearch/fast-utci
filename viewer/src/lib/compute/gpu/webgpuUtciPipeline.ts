@@ -677,7 +677,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const totalSolarBits = numPoints * totalTimeSteps;
 		const solarWords = Math.ceil(totalSolarBits / 32);
 		const solarBytes = solarWords * 4;
-		if (!this.solarExposureBuffer || this.solarExposureBuffer.size !== solarBytes) {
+		const reuseSolarExposure = this.solarExposureBuffer?.size === solarBytes;
+		if (!reuseSolarExposure) {
 			const solarBufferCreateStartedAt = performance.now();
 			this.solarExposureBuffer?.destroy();
 			this.solarExposureBuffer = this.device.createBuffer({
@@ -689,7 +690,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 
 		const skyBytes = numPoints * 4;
-		if (!this.skyExposureBuffer || this.skyExposureBuffer.size !== skyBytes) {
+		const reuseSkyExposure = this.skyExposureBuffer?.size === skyBytes;
+		if (!reuseSkyExposure) {
 			const skyBufferCreateStartedAt = performance.now();
 			this.skyExposureBuffer?.destroy();
 			this.skyExposureBuffer = this.device.createBuffer({
@@ -699,38 +701,36 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			staticUploadTrace.skyExposureBufferCreateMs = performance.now() - skyBufferCreateStartedAt;
 		}
 
-		// Keep CPU allocations small by reusing tiny zero chunk writes.
-		const zeroChunk = new Float32Array(4096);
-		const solarZeroFillStartedAt = performance.now();
-		let solarZeroFillWriteCount = 0;
-		for (let offset = 0; offset < solarBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(
-				this.solarExposureBuffer,
-				offset,
-				zeroChunk.buffer,
-				0,
-				Math.min(zeroChunk.byteLength, solarBytes - offset)
-			);
-			solarZeroFillWriteCount += 1;
-		}
-		staticUploadTrace.solarZeroFillMs = performance.now() - solarZeroFillStartedAt;
-		staticUploadTrace.solarZeroFillWriteCount = solarZeroFillWriteCount;
+		// WebGPU buffer creation initializes each byte to zero. Reused buffers need an
+		// ordered GPU clear before the next exposure dispatch.
+		staticUploadTrace.solarZeroFillMs = 0;
+		staticUploadTrace.skyZeroFillMs = 0;
+		staticUploadTrace.solarZeroFillWriteCount = 0;
+		staticUploadTrace.skyZeroFillWriteCount = 0;
 		staticUploadTrace.solarZeroFillBytes = solarBytes;
-		const skyZeroFillStartedAt = performance.now();
-		let skyZeroFillWriteCount = 0;
-		for (let offset = 0; offset < skyBytes; offset += zeroChunk.byteLength) {
-			this.queue.writeBuffer(
-				this.skyExposureBuffer,
-				offset,
-				zeroChunk.buffer,
-				0,
-				Math.min(zeroChunk.byteLength, skyBytes - offset)
-			);
-			skyZeroFillWriteCount += 1;
-		}
-		staticUploadTrace.skyZeroFillMs = performance.now() - skyZeroFillStartedAt;
-		staticUploadTrace.skyZeroFillWriteCount = skyZeroFillWriteCount;
 		staticUploadTrace.skyZeroFillBytes = skyBytes;
+		staticUploadTrace.zeroFillClearCommandCount = 0;
+		staticUploadTrace.zeroFillSubmitCount = 0;
+		staticUploadTrace.zeroFillEncodeSubmitMs = 0;
+		if (reuseSolarExposure || reuseSkyExposure) {
+			const startedAt = performance.now();
+			const encoder = this.device.createCommandEncoder();
+			if (reuseSolarExposure) {
+				const clearStartedAt = performance.now();
+				encoder.clearBuffer(this.solarExposureBuffer!);
+				staticUploadTrace.solarZeroFillMs = performance.now() - clearStartedAt;
+				staticUploadTrace.zeroFillClearCommandCount += 1;
+			}
+			if (reuseSkyExposure) {
+				const clearStartedAt = performance.now();
+				encoder.clearBuffer(this.skyExposureBuffer!);
+				staticUploadTrace.skyZeroFillMs = performance.now() - clearStartedAt;
+				staticUploadTrace.zeroFillClearCommandCount += 1;
+			}
+			this.queue.submit([encoder.finish()]);
+			staticUploadTrace.zeroFillSubmitCount = 1;
+			staticUploadTrace.zeroFillEncodeSubmitMs = performance.now() - startedAt;
+		}
 
 		const gridBytes = params.gridPoints.byteLength;
 		if (!this.gridPointsBuffer || this.gridPointsBuffer.size !== gridBytes) {
@@ -1000,6 +1000,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			size: values.byteLength,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		});
+		transientBuffers.push(buffer);
 		this.queue.writeBuffer(
 			buffer,
 			0,
@@ -1007,7 +1008,6 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			values.byteOffset,
 			values.byteLength
 		);
-		transientBuffers.push(buffer);
 		return buffer;
 	}
 
@@ -1941,6 +1941,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	}
 
 	async runUtciForTimeIndex(params: RunUtciForTimeIndexParams): Promise<OnDemandUtciOutput> {
+		this.ensureNotAborted(params.signal);
 		if (!this.solarExposureBuffer) {
 			throw new Error(
 				'WebGPU UTCI pipeline: solar exposure buffer not available (run runAll or runExposurePrecompute first)'
@@ -1982,7 +1983,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const skyExposureBuffer = this.skyExposureBuffer;
 		const sunAltitudesBuffer = this.sunAltitudesBuffer;
 		const weatherBuffer = await this.ensureWeatherBuffer();
+		this.ensureNotAborted(params.signal);
 		const onDemandPipeline = await this.ensureOnDemandPipeline();
+		this.ensureNotAborted(params.signal);
 		const outputBytes = numPoints * 4;
 		if (!this.onDemandOutputBuffer || this.onDemandOutputBuffer.size !== outputBytes) {
 			this.onDemandOutputBuffer?.destroy();
@@ -1997,89 +2000,97 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			size: outputBytes,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 		});
-		const encoder = this.device.createCommandEncoder();
-		const pass = encoder.beginComputePass();
-		pass.setPipeline(onDemandPipeline);
 		const onDemandUniformBuffers: GPUBuffer[] = [];
-		for (const chunk of createPointDispatchChunks(numPoints, 64)) {
-			const onDemandParamsBuffer = this.createUintParamsBuffer(
-				new Uint32Array([
-					numPoints,
-					totalTimeSteps,
-					numHours,
-					timeIndex,
-					0,
-					chunk.pointOffset,
-					0,
-					0
-				]),
-				onDemandUniformBuffers
+		let returnedOwnedOutput = false;
+		try {
+			const encoder = this.device.createCommandEncoder();
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(onDemandPipeline);
+			for (const chunk of createPointDispatchChunks(numPoints, 64)) {
+				const onDemandParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([
+						numPoints,
+						totalTimeSteps,
+						numHours,
+						timeIndex,
+						0,
+						chunk.pointOffset,
+						0,
+						0
+					]),
+					onDemandUniformBuffers
+				);
+				const bindGroup = this.device.createBindGroup({
+					layout: onDemandPipeline.getBindGroupLayout(0),
+					entries: [
+						{ binding: 0, resource: { buffer: solarExposureBuffer } },
+						{ binding: 1, resource: { buffer: skyExposureBuffer } },
+						{ binding: 2, resource: { buffer: weatherBuffer } },
+						{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
+						{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
+						{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
+					]
+				});
+				pass.setBindGroup(0, bindGroup);
+				pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+			}
+			pass.end();
+			encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
+
+			const oneHourDispatchStart = performance.now();
+			this.queue.submit([encoder.finish()]);
+			await this.queue.onSubmittedWorkDone();
+			this.ensureNotAborted(params.signal);
+			const nextTimeIndices = this.onDemandDiagnostics.timeIndices.includes(timeIndex)
+				? this.onDemandDiagnostics.timeIndices
+				: [...this.onDemandDiagnostics.timeIndices, timeIndex];
+			this.onDemandDiagnostics = recordOnDemandTiming(
+				mergeTrackedGpuAllocationBytes(
+					{
+						...this.onDemandDiagnostics,
+						path: 'exposure-only-f32',
+						timeIndices: nextTimeIndices,
+						usedRunAllForSelectedHour: false,
+						usedExposureOnlyPrecompute: true,
+						allHoursUtciBytesAllocated: 0,
+						allHoursMrtBytesAllocated: 0,
+						oneHourOutputBytes: outputBytes
+					},
+					{
+						selectedHourOutputBytes: outputBytes,
+						allHoursOutputBytes: 0
+					}
+				),
+				'oneHourDispatchMs',
+				performance.now() - oneHourDispatchStart
 			);
-			const bindGroup = this.device.createBindGroup({
-				layout: onDemandPipeline.getBindGroupLayout(0),
-				entries: [
-					{ binding: 0, resource: { buffer: solarExposureBuffer } },
-					{ binding: 1, resource: { buffer: skyExposureBuffer } },
-					{ binding: 2, resource: { buffer: weatherBuffer } },
-					{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
-					{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
-					{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
-				]
-			});
-			pass.setBindGroup(0, bindGroup);
-			pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
-		}
-		pass.end();
-		encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
 
-		const oneHourDispatchStart = performance.now();
-		this.queue.submit([encoder.finish()]);
-		await this.queue.onSubmittedWorkDone();
-		this.destroyTransientUniformBuffers(onDemandUniformBuffers);
-		const nextTimeIndices = this.onDemandDiagnostics.timeIndices.includes(timeIndex)
-			? this.onDemandDiagnostics.timeIndices
-			: [...this.onDemandDiagnostics.timeIndices, timeIndex];
-		this.onDemandDiagnostics = recordOnDemandTiming(
-			mergeTrackedGpuAllocationBytes(
-				{
-					...this.onDemandDiagnostics,
-					path: 'exposure-only-f32',
-					timeIndices: nextTimeIndices,
-					usedRunAllForSelectedHour: false,
-					usedExposureOnlyPrecompute: true,
-					allHoursUtciBytesAllocated: 0,
-					allHoursMrtBytesAllocated: 0,
-					oneHourOutputBytes: outputBytes
-				},
-				{
-					selectedHourOutputBytes: outputBytes,
-					allHoursOutputBytes: 0
-				}
-			),
-			'oneHourDispatchMs',
-			performance.now() - oneHourDispatchStart
-		);
-
-		return {
-			format,
-			metricType: 'utci',
-			valueLayout: 'one-f32-per-point',
-			period: { kind: 'time-index', index: timeIndex },
-			numPoints,
-			timeIndex,
-			gpuBuffer: snapshotBuffer,
-			gpuOutputHandle: createSelectedHourOutputHandle({
-				buffer: snapshotBuffer,
-				byteLength: outputBytes,
-				source: 'webgpu-on-demand-snapshot',
+			const output: OnDemandUtciOutput = {
+				format,
 				metricType: 'utci',
 				valueLayout: 'one-f32-per-point',
 				period: { kind: 'time-index', index: timeIndex },
-				timeIndex
-			}),
-			outputBytes,
-			debugLabel: 'webgpu-on-demand-f32-utci'
-		};
+				numPoints,
+				timeIndex,
+				gpuBuffer: snapshotBuffer,
+				gpuOutputHandle: createSelectedHourOutputHandle({
+					buffer: snapshotBuffer,
+					byteLength: outputBytes,
+					source: 'webgpu-on-demand-snapshot',
+					metricType: 'utci',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'time-index', index: timeIndex },
+					timeIndex
+				}),
+				outputBytes,
+				debugLabel: 'webgpu-on-demand-f32-utci'
+			};
+			returnedOwnedOutput = true;
+			return output;
+		} finally {
+			if (!returnedOwnedOutput) snapshotBuffer.destroy();
+			this.destroyTransientUniformBuffers(onDemandUniformBuffers);
+		}
 	}
 
 	async runShadingIndex(params: RunShadingIndexParams): Promise<F32MetricOutput> {
@@ -2585,8 +2596,8 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		}
 	}
 
-	async readOnDemandUtciForDebug(params: { numPoints: number }): Promise<Float32Array> {
-		if (!this.onDemandOutputBuffer) {
+	async readOnDemandUtciForDebug(params: { numPoints: number; output?: OnDemandUtciOutput }): Promise<Float32Array> {
+		if (!params.output && !this.onDemandOutputBuffer) {
 			throw new Error('WebGPU UTCI pipeline: on-demand output buffer not available');
 		}
 
@@ -2598,8 +2609,29 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		await previousReadback;
 
 		const { numPoints } = params;
+		const handle = params.output?.gpuOutputHandle;
+		const validateOutput = () => {
+			if (!params.output) return;
+			if (
+				!handle || handle.disposed ||
+				handle.source !== 'webgpu-on-demand-snapshot' ||
+				handle.metricType !== 'utci' ||
+				handle.valueLayout !== 'one-f32-per-point' ||
+				handle.period.kind !== 'time-index' ||
+				handle.period.index !== params.output.timeIndex ||
+				handle.byteLength < numPoints * 4 ||
+				params.output.format !== 'f32-utci' ||
+				params.output.numPoints !== numPoints ||
+				params.output.gpuBuffer !== handle.buffer ||
+				(params.output.ownerId !== undefined && params.output.ownerId !== handle.ownerId)
+			) {
+				throw new Error('WebGPU UTCI pipeline: invalid accepted UTCI output snapshot');
+			}
+		};
 		const bytes = numPoints * 4;
+		let mappedReadback = false;
 		try {
+			validateOutput();
 			if (!this.onDemandReadbackBuffer || this.onDemandReadbackBuffer.size !== bytes) {
 				this.onDemandReadbackBuffer?.destroy();
 				this.onDemandReadbackBuffer = this.device.createBuffer({
@@ -2611,7 +2643,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			const debugReadbackStart = performance.now();
 			const encoder = this.device.createCommandEncoder();
 			encoder.copyBufferToBuffer(
-				this.onDemandOutputBuffer,
+				handle?.buffer ?? this.onDemandOutputBuffer!,
 				0,
 				this.onDemandReadbackBuffer,
 				0,
@@ -2620,10 +2652,13 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			this.queue.submit([encoder.finish()]);
 
 			await this.onDemandReadbackBuffer.mapAsync(GPUMapMode.READ);
+			mappedReadback = true;
+			validateOutput();
 			const mapped = new Float32Array(this.onDemandReadbackBuffer.getMappedRange());
 			const out = new Float32Array(mapped.length);
 			out.set(mapped);
 			this.onDemandReadbackBuffer.unmap();
+			mappedReadback = false;
 			this.onDemandDiagnostics = recordOnDemandTiming(
 				{
 					...this.onDemandDiagnostics,
@@ -2634,6 +2669,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			);
 			return out;
 		} finally {
+			if (mappedReadback) this.onDemandReadbackBuffer?.unmap();
 			finishReadback();
 		}
 	}
@@ -3203,12 +3239,6 @@ async function getWebgpuDevice(
 					maxBufferSize
 				}
 			});
-	device.lost.then(() => {
-		if (cachedDevicePromise && cachedDevice === device) {
-			cachedDevicePromise = null;
-			cachedDevice = null;
-		}
-	});
 	return { device, supportsMrtComponents };
 }
 
@@ -3217,9 +3247,9 @@ type CreateWebgpuUtciPipelineOptions = {
 	device?: GPUDevice;
 };
 
-let cachedDevicePromise: Promise<GPUDevice> | null = null;
-let cachedDevice: GPUDevice | null = null;
-let cachedSupportsMrtComponents = false;
+type DeviceAcquisition = { device: GPUDevice; supportsMrtComponents: boolean };
+let cachedDevicePromise: Promise<DeviceAcquisition> | null = null;
+let cachedDiagnosticsRequested = false;
 
 export async function createWebgpuUtciPipeline(
 	options: CreateWebgpuUtciPipelineOptions = {}
@@ -3238,27 +3268,29 @@ export async function createWebgpuUtciPipeline(
 		return new WebgpuUtciComputePipeline(options.device, supportsMrtComponents);
 	}
 
-	if (!cachedDevicePromise || (enableDiagnostics && !cachedSupportsMrtComponents)) {
-		cachedDevicePromise = getWebgpuDevice(enableDiagnostics).then(
-			({ device, supportsMrtComponents }) => {
-				cachedDevice = device;
-				cachedSupportsMrtComponents = supportsMrtComponents;
-				if (enableDiagnostics && !supportsMrtComponents) {
-					console.warn('MRT diagnostics were requested but hardware does not support them.');
-				}
-				return device;
-			}
-		);
+	if (!cachedDevicePromise || (enableDiagnostics && !cachedDiagnosticsRequested)) {
+		const acquisition = getWebgpuDevice(enableDiagnostics).then((result) => {
+			result.device.lost.then(() => {
+				if (cachedDevicePromise === acquisition) cachedDevicePromise = null;
+			});
+			return result;
+		}).catch((error) => {
+			if (cachedDevicePromise === acquisition) cachedDevicePromise = null;
+			throw error;
+		});
+		cachedDevicePromise = acquisition;
+		cachedDiagnosticsRequested = enableDiagnostics;
 	}
-	const device = await cachedDevicePromise;
-	const useDiagnostics = enableDiagnostics && cachedSupportsMrtComponents;
-	return new WebgpuUtciComputePipeline(device, useDiagnostics);
+	const { device, supportsMrtComponents } = await cachedDevicePromise;
+	if (enableDiagnostics && !supportsMrtComponents) {
+		console.warn('MRT diagnostics were requested but hardware does not support them.');
+	}
+	return new WebgpuUtciComputePipeline(device, enableDiagnostics && supportsMrtComponents);
 }
 
 export function __resetWebgpuDeviceCacheForTests(): void {
 	cachedDevicePromise = null;
-	cachedDevice = null;
-	cachedSupportsMrtComponents = false;
+	cachedDiagnosticsRequested = false;
 }
 
 export { WebgpuUtciComputePipeline as __TEST_ONLY_WebgpuUtciComputePipeline };

@@ -5,11 +5,12 @@ import { createLiveUtciAnalysisFromCompute } from '$lib/compute/selected-hour/li
 import {
 	buildSelectedHourLiveShadingAnalysis,
 	buildSelectedHourLiveAnalysis,
+	buildSelectedHourLiveUtciGeometryAnalysis,
 	resolveAcceptedGpuResidentUtciRange,
 	resolveLiveGpuResidentUtciRange,
 	resolveLiveSelectedHourTimeIndex
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
-import type { AnalysisMetadata } from '$lib/types/analysis';
+import type { Analysis, AnalysisMetadata } from '$lib/types/analysis';
 import {
 	hasCompactUtciStorage,
 	hasDecodedUtciByHour,
@@ -19,6 +20,7 @@ import {
 	clearComputeTelemetryHistory,
 	getComputeTelemetryHistory
 } from '$lib/compute/telemetry';
+import { getUtciRangeForDisplay } from '$lib/utils/effectiveHourIndex';
 
 // Minimal EPW content: 8 header lines + 24 data lines for a single representative day
 const buildMinimalEpw = () => {
@@ -319,6 +321,32 @@ describe('liveUtciAnalysis adapter', () => {
 });
 
 describe('selected-hour live UTCI helpers', () => {
+	it.each(['cpu', 'geometry'] as const)('keeps the accepted live range for a %s snapshot from another month', (kind) => {
+		const base: Analysis = createBaseAnalysisFixture();
+		base.metadata.hour_statistics = Array.from({ length: 24 }, (_, hour) => ({
+			hour,
+			min: 20,
+			max: 25,
+			mean: 22
+		}));
+		const params = {
+			base,
+			utciRange: { min: 30, max: 40 },
+			monthIndex: 8,
+			timeIndex: 8 * 24 + 1
+		};
+		const snapshot = kind === 'cpu'
+			? buildSelectedHourLiveAnalysis({ ...params, utciValues: new Float32Array([30, 40]) })
+			: buildSelectedHourLiveUtciGeometryAnalysis(params);
+		expect(getUtciRangeForDisplay(snapshot.metadata, 'discrete', 1, 8)).toEqual({
+			utciMin: 30,
+			utciMax: 40
+		});
+		expect(getUtciRangeForDisplay(base.metadata, 'discrete', 1, 0)).toEqual({
+			utciMin: 20,
+			utciMax: 25
+		});
+	});
 	it('builds selected-hour live shading analysis only from authoritative GPU shading output metadata', () => {
 		const base = createBaseAnalysisFixture();
 		const period = { kind: 'month-index' as const, index: 2, startTimeIndex: 48, timeCount: 24 };
@@ -364,7 +392,19 @@ describe('selected-hour live UTCI helpers', () => {
 			period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
 			outputBytes: 12
 		});
-		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBeUndefined();
+		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBe(shadingOutput.gpuOutputHandle);
+		for (const gpuOutputHandle of [
+			undefined,
+			{ ...shadingOutput.gpuOutputHandle!, disposed: true },
+			{ ...shadingOutput.gpuOutputHandle!, ownerId: 'different-owner' }
+		]) {
+			expect(() => buildSelectedHourLiveShadingAnalysis({
+				base,
+				monthIndex: 2,
+				timeIndex: 59,
+				shadingOutput: { ...shadingOutput, gpuOutputHandle }
+			})).toThrow(/authoritative shading index output/i);
+		}
 		expect((analysis.data as any).selectedMonthIndex).toBe(2);
 		expect((analysis.data as any).selectedTimeIndex).toBe(59);
 	});

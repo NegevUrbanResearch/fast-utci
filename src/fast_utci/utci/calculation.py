@@ -105,10 +105,21 @@ class BoundaryAveragingCalculator:
         Returns:
             UTCICalculationResult with UTCI values and metadata
         """
+        mrt0 = np.asarray(mrt_data.get('mrt0', mrt_data.get('mrt')))
+        mrt1 = np.asarray(mrt_data.get('mrt1', mrt0))
+        if mrt0.ndim != 1 or mrt1.ndim != 1 or len(mrt0) != len(mrt1):
+            raise ValueError("MRT mrt0 and mrt1 must be one-dimensional arrays of equal length")
+        # Validate before either path can fall back or repeat weather rows.
+        self._prepare_weather_slices(
+            weather_data['air_temp'], weather_data['wind_speed'],
+            weather_data['relative_humidity'], len(mrt0)
+        )
         # Choose calculation path
         if self.enable_vectorized and isinstance(weather_data, dict):
             return self._calculate_vectorized(mrt_data, weather_data, include_weather, include_datetime)
         else:
+            if isinstance(weather_data, dict):
+                weather_data = pd.DataFrame(weather_data)
             return self._calculate_iterative(mrt_data, weather_data, include_weather, include_datetime)
     
     def _calculate_vectorized(self,
@@ -275,38 +286,19 @@ class BoundaryAveragingCalculator:
         Returns:
             Tuple of (air_n, wind_n, rh_n, air_n1, wind_n1, rh_n1)
         """
-        # Slice for hour N (utci0)
-        air_n = air[:n_hours] if n_hours <= air.shape[0] else air[:air.shape[0]]
-        wind_n = wind[:n_hours] if n_hours <= wind.shape[0] else wind[:wind.shape[0]]
-        rh_n = rh[:n_hours] if n_hours <= rh.shape[0] else rh[:rh.shape[0]]
-        
-        # Slice for hour N+1 (utci1)
-        air_n1 = air[1:n_hours+1] if n_hours+1 <= air.shape[0] else air[1:air.shape[0]]
-        wind_n1 = wind[1:n_hours+1] if n_hours+1 <= wind.shape[0] else wind[1:wind.shape[0]]
-        rh_n1 = rh[1:n_hours+1] if n_hours+1 <= rh.shape[0] else rh[1:rh.shape[0]]
-        
-        # Pad if needed
-        if len(air_n) < n_hours and len(air_n) > 0:
-            pad_n = n_hours - len(air_n)
-            air_n = np.concatenate([air_n, np.repeat(air_n[-1], pad_n)])
-            wind_n = np.concatenate([wind_n, np.repeat(wind_n[-1], pad_n)])
-            rh_n = np.concatenate([rh_n, np.repeat(rh_n[-1], pad_n)])
-        elif len(air_n) == 0:
-            air_n = np.zeros(n_hours)
-            wind_n = np.zeros(n_hours)
-            rh_n = np.zeros(n_hours)
-        
-        if len(air_n1) < n_hours and len(air_n1) > 0:
-            pad_n1 = n_hours - len(air_n1)
-            air_n1 = np.concatenate([air_n1, np.repeat(air_n1[-1], pad_n1)])
-            wind_n1 = np.concatenate([wind_n1, np.repeat(wind_n1[-1], pad_n1)])
-            rh_n1 = np.concatenate([rh_n1, np.repeat(rh_n1[-1], pad_n1)])
-        elif len(air_n1) == 0:
-            air_n1 = np.zeros(n_hours)
-            wind_n1 = np.zeros(n_hours)
-            rh_n1 = np.zeros(n_hours)
-        
-        return air_n, wind_n, rh_n, air_n1, wind_n1, rh_n1
+        arrays = tuple(np.asarray(values) for values in (air, wind, rh))
+        if any(values.ndim != 1 for values in arrays):
+            raise ValueError("weather arrays must be one-dimensional")
+        if len({len(values) for values in arrays}) != 1:
+            raise ValueError("weather arrays must have equal lengths")
+        if len(arrays[0]) == 0:
+            raise ValueError("weather data must not be empty")
+        # Repeat the final observed row before taking either boundary slice.
+        padded = tuple(
+            np.pad(values[:n_hours + 1], (0, max(0, n_hours + 1 - len(values))), mode='edge')
+            for values in arrays
+        )
+        return tuple(values[:n_hours] for values in padded) + tuple(values[1:n_hours + 1] for values in padded)
     
     @staticmethod
     def _extract_utci_value(utci_result) -> Union[float, np.ndarray]:

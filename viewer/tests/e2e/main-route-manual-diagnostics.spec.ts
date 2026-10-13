@@ -636,7 +636,7 @@ test.describe('main route manual diagnostics probe', () => {
 		);
 
 		const value = await waitForSelectedHourPublication(page, {
-			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0'
+			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0'
 		});
 
 		expect(value.utciRenderResolved).toBe('gpuNative');
@@ -653,7 +653,7 @@ test.describe('main route manual diagnostics probe', () => {
 		await page.goto('/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&utciRender=auto&utciRenderDiagnostics=1');
 
 		const initial = await waitForSelectedHourPublication(page, {
-			expectedSelectionKey: `${analysisId}|7|0`
+			expectedSelectionKey: `${analysisId}|utci|7|0`
 		});
 		expect(initial.baseSurfaceRequestId).toBeGreaterThan(0);
 		expect(initial.baseSceneSurfaceRequestId).toBe(initial.baseSurfaceRequestId);
@@ -664,7 +664,7 @@ test.describe('main route manual diagnostics probe', () => {
 
 		const updated = await waitForSelectedHourPublication(page, {
 			previousRequestId: initial.baseSurfaceRequestId,
-			expectedSelectionKey: `${analysisId}|7|1`
+			expectedSelectionKey: `${analysisId}|utci|7|1`
 		});
 		expect(updated.baseSurfaceRequestId).toBeGreaterThan(initial.baseSurfaceRequestId);
 		expect(updated.baseSceneSurfaceRequestId).toBe(updated.baseSurfaceRequestId);
@@ -682,7 +682,7 @@ test.describe('main route manual diagnostics probe', () => {
 
 		const perHour = await waitForSelectedHourPublication(page, {
 			previousRequestId: updated.baseSurfaceRequestId,
-			expectedSelectionKey: `${analysisId}|7|1`
+			expectedSelectionKey: `${analysisId}|utci|7|1`
 		});
 		expectFiniteUtciRange(perHour.baseAcceptedUtciRange);
 		expect(perHour.baseAcceptedUtciRange.min).toBeGreaterThanOrEqual(
@@ -702,7 +702,7 @@ test.describe('main route manual diagnostics probe', () => {
 		await page.goto('/?analysis=Ben-Gurion%2F20250815_grid_2m_fullday&utciRender=auto&utciRenderDiagnostics=1');
 
 		const initial = await waitForSelectedHourPublication(page, {
-			expectedSelectionKey: `${analysisId}|7|0`
+			expectedSelectionKey: `${analysisId}|utci|7|0`
 		});
 		expect(initial.baseSelectedTimeIndex).toBe(7 * 24);
 
@@ -710,7 +710,7 @@ test.describe('main route manual diagnostics probe', () => {
 
 		const updated = await waitForSelectedHourPublication(page, {
 			previousRequestId: initial.baseSurfaceRequestId,
-			expectedSelectionKey: `${analysisId}|8|0`
+			expectedSelectionKey: `${analysisId}|utci|8|0`
 		});
 		expect(updated.baseSurfaceRequestId).toBeGreaterThan(initial.baseSurfaceRequestId);
 		expect(updated.gpuResidentCopyRequestId).toBe(updated.baseSurfaceRequestId);
@@ -729,7 +729,7 @@ test.describe('main route manual diagnostics probe', () => {
 		);
 
 		await waitForSelectedHourPublication(page, {
-			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0'
+			expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0'
 		});
 
 		allowedForbiddenRequestPatterns = [/\/Ben-Gurion\/existing_trees\/existing_trees_01\.bin(?:\?|$)/i];
@@ -759,7 +759,7 @@ test.describe('main route manual diagnostics probe', () => {
 		await page.goto('/?analysis=Ness-Tziona%2Fexploded%2Fnes_tziona_unblock_2&utciRender=auto&utciRenderDiagnostics=1');
 
 		const initial = await waitForSelectedHourPublication(page, {
-			expectedSelectionKey: `${analysisId}|7|0`
+			expectedSelectionKey: `${analysisId}|utci|7|0`
 		});
 		expectFiniteUtciRange(initial.baseAcceptedUtciRange);
 		expect(initial.baseAcceptedUtciRange).not.toEqual({
@@ -778,7 +778,7 @@ test.describe('main route manual diagnostics probe', () => {
 
 		const updated = await waitForSelectedHourPublication(page, {
 			previousRequestId: initial.baseSurfaceRequestId,
-			expectedSelectionKey: `${analysisId}|0|0`
+			expectedSelectionKey: `${analysisId}|utci|0|0`
 		});
 		expect(updated.baseSelectedTimeIndex).toBe(0);
 		expect(updated.baseRenderContextTimeIndex).toBe(0);

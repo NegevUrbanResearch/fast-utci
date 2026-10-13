@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+	createActiveCpuUtciSurfaceMesh,
+	updateActiveCpuUtciSurfaceMesh
+} from '$lib/services/activeComputeBufferUtciSurfaceMesh';
+import {
 	createComputeBufferUtciSurfaceMesh,
 	getComputeBufferUtciStorageAttribute,
 	getGpuNativeUtciSurfaceSource,
@@ -64,6 +68,32 @@ function createDenseLayout(): DenseUtciGridLayout {
 }
 
 describe('active compute-buffer UTCI render bridge', () => {
+	it('does not reuse CPU active storage for another mask or a compute-buffer publication', () => {
+		const layout = createActiveLayout();
+		const values = new Float32Array([12, 24, 36]);
+		const mesh = createActiveCpuUtciSurfaceMesh({
+			layout, values, utciRange: { min: 10, max: 40 }
+		});
+		const storage = mesh.userData.gpuNativeUtciSurfaceState.utciStorageAttribute;
+		expect(storage.array).not.toBe(values);
+		expect(isComputeBufferUtciSurfaceLayoutCompatible(mesh, layout)).toBe(false);
+		expect(updateActiveCpuUtciSurfaceMesh(mesh, {
+			layout: createActiveLayout({ activeCanonicalIndices: [1, 3, 5], activeMaskSignature: 'other-mask' }),
+			values: new Float32Array([5, 15, 25]),
+			utciRange: { min: 0, max: 30 }
+		})).toBe(false);
+		expect(Array.from(storage.array)).toEqual([12, 24, 36]);
+		expect(() => updateActiveCpuUtciSurfaceMesh(mesh, {
+			layout, values: new Float32Array(2), utciRange: { min: 0, max: 30 }
+		})).toThrow('one value per active point');
+		const computeMesh = createComputeBufferUtciSurfaceMesh({
+			layout, utciBuffer: {} as GPUBuffer, utciRange: { min: 10, max: 40 }
+		});
+		expect(updateActiveCpuUtciSurfaceMesh(computeMesh, {
+			layout, values, utciRange: { min: 10, max: 40 }
+		})).toBe(false);
+	});
+
 	it('creates an active instanced mesh with compact per-instance canonical data and no dense cell map', () => {
 		const layout = createActiveLayout();
 		const utciBuffer = {} as GPUBuffer;

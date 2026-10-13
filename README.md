@@ -54,9 +54,11 @@ The viewer can still load precomputed `.bin` analyses for debug, parity, and leg
 
 ## Quick Start
 
+Use Node.js 22.12 or later in the Node.js 22 release line, or another version supported by `viewer/package.json`.
+
 ```powershell
 cd viewer
-npm install
+npm ci
 npm run dev
 ```
 
@@ -66,7 +68,7 @@ Useful checks:
 
 ```powershell
 npm run check
-npm test
+npm run test:unit
 npm run build
 ```
 
@@ -121,6 +123,7 @@ fast-utci/
 - [docs/data-onboarding.md](docs/data-onboarding.md): how to add models, weather, metadata, and projects.
 - [docs/innovation-district-gis-handoff.md](docs/innovation-district-gis-handoff.md): GIS export bundle, GeoParquet, CRS, and active-cell policy.
 - [docs/webgpu_strategy_analysis.md](docs/webgpu_strategy_analysis.md): WebGPU architecture and performance boundaries.
+- [docs/quality/2026-10-13-webgpu-quality-results.md](docs/quality/2026-10-13-webgpu-quality-results.md): measured startup, grid preparation, and correctness results from the local quality branch.
 - [src/fast_utci/README.md](src/fast_utci/README.md): legacy Python/Ladybug API and reference/export tools.
 
 ## License

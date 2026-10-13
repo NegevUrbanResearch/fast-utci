@@ -24,6 +24,7 @@ import { calculateScenarioOrigin } from '$lib/utils/coordinates';
 import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
 import {
 	buildSelectedHourLiveShadingAnalysis,
+	buildSelectedHourLiveUtciGeometryAnalysis,
 	buildSelectedHourLiveAnalysis,
 	resolveLiveGpuResidentUtciRange
 } from '$lib/compute/selected-hour/liveUtciSelectedHour';
@@ -128,6 +129,7 @@ export type SelectedHourLiveSession = {
 		preferGpuResident: boolean;
 		rendererDevice?: GPUDevice;
 		selectedHourReadbackReason?: SelectedHourReadbackReason;
+		localizedUtciTooltips?: boolean;
 	}): Promise<SelectedHourLiveResult>;
 	dispose(): void;
 };
@@ -403,10 +405,16 @@ async function readSelectedHourCpuFallback(params: {
 	timeIndex: number;
 	readbackReason: SelectedHourReadbackReason;
 	recordReadback: (reason: SelectedHourReadbackReason) => void;
+	output?: OnDemandUtciOutput;
+	signal?: AbortSignal;
+	utciRange?: { min: number; max: number } | null;
 }): Promise<SelectedHourCpuFallbackOutput> {
+	if (params.signal) ensureNotAborted(params.signal);
 	const selectedHourUtci = await params.pipeline.readOnDemandUtciForDebug?.({
-		numPoints: params.numPoints
+		numPoints: params.numPoints,
+		output: params.output
 	});
+	if (params.signal) ensureNotAborted(params.signal);
 	if (!selectedHourUtci) {
 		throw new Error(
 			'Selected-hour live session requires pipeline.readOnDemandUtciForDebug() for CPU fallback output.'
@@ -418,6 +426,7 @@ async function readSelectedHourCpuFallback(params: {
 		analysis: buildSelectedHourLiveAnalysis({
 			base: params.base,
 			utciValues: selectedHourUtci,
+			utciRange: params.utciRange,
 			monthIndex: params.monthIndex,
 			timeIndex: params.timeIndex
 		}),
@@ -704,20 +713,27 @@ async function resolveSelectedDayUtciRange(params: {
 		if (!readOnDemandUtciForDebug) {
 			throw new Error('Selected-day range fallback readback is unavailable.');
 		}
-		await params.state.computeManager.runUtciForTimeIndex({
+		const output = await params.state.computeManager.runUtciForTimeIndex({
 			timeIndex,
 			numPoints: params.state.numPoints,
 			numHours: params.state.numHours,
 			numMonths: params.state.numMonths,
-			format: 'f32-utci'
+			format: 'f32-utci',
+			signal: params.state.signal
 		});
-		computedHourCount += 1;
-		const values = await readOnDemandUtciForDebug({
-			numPoints: params.state.numPoints
-		});
-		params.recordReadback('range');
-		readbackCount += 1;
-		dayRange = accumulateUtciRange(dayRange, values);
+		try {
+			ensureNotAborted(params.state.signal);
+			computedHourCount += 1;
+			const values = await readOnDemandUtciForDebug({
+				numPoints: params.state.numPoints
+			});
+			params.recordReadback('range');
+			readbackCount += 1;
+			dayRange = accumulateUtciRange(dayRange, values);
+			ensureNotAborted(params.state.signal);
+		} finally {
+			disposeGpuBuffer(output);
+		}
 	}
 
 	if (dayRange) params.state.selectedDayRangeCache.set(cacheKey, dayRange);
@@ -910,250 +926,279 @@ function createSelectedHourLiveSession(state: PreparedSessionState): SelectedHou
 				numPoints: state.numPoints,
 				numHours: state.numHours,
 				numMonths: state.numMonths,
-				format: 'f32-utci'
+				format: 'f32-utci',
+				signal: state.signal
 			});
-			const sessionComputeOutputReturnedAtMs = performance.now();
-			const afterDispatchDiagnostics = copyRuntimeDiagnosticsSnapshot(
-				state.computeManager.getOnDemandDiagnostics?.()
-			);
-			applyRuntimeDiagnosticsSnapshot(
-				diagnostics,
-				afterDispatchDiagnostics,
-				state.lifecycleTimings
-			);
-			const sessionDiagnosticsAppliedAtMs = performance.now();
-			const gpuOutputHandle = ensureSelectedHourOutputHandle({
-				output,
-				requestId,
-				timeIndex: params.timeIndex,
-				byteLength: state.numPoints * 4
-			});
-			const sessionGpuOutputHandleReadyAtMs = performance.now();
-			ensureNotAborted(state.signal);
-
-			const sameDeviceForComputeAndRender = resolveSameDevice({
-				computeManager: state.computeManager,
-				rendererDevice: params.rendererDevice
-			});
-			const preferGpuResident =
-				params.preferGpuResident &&
-				sameDeviceForComputeAndRender === true &&
-				Boolean(gpuOutputHandle);
-			const pendingRenderUpdateStartedAt = performance.now();
-			const renderTransport = preferGpuResident
-				? 'compute-buffer-selected-hour'
-				: 'cpu-uploaded-selected-hour';
-			stampSessionRenderTimeline(
-				diagnostics,
-				{
-					sessionMetricType: 'utci',
-					sessionComputeOutputReturnedAtMs,
-					sessionDiagnosticsAppliedAtMs,
-					sessionGpuOutputHandleReadyAtMs,
-					sessionPreferGpuResidentResolvedAtMs: pendingRenderUpdateStartedAt,
-					sessionOutputBytes: output.outputBytes
-				},
-				renderTransport
-			);
-
-			if (!preferGpuResident) {
-				const fallback = await readSelectedHourCpuFallback({
-					pipeline: state.pipeline,
-					base: state.base,
-					numPoints: state.numPoints,
-					monthIndex: params.monthIndex,
+			let returnedOwnedOutput = false;
+			try {
+				const sessionComputeOutputReturnedAtMs = performance.now();
+				const afterDispatchDiagnostics = copyRuntimeDiagnosticsSnapshot(
+					state.computeManager.getOnDemandDiagnostics?.()
+				);
+				applyRuntimeDiagnosticsSnapshot(
+					diagnostics,
+					afterDispatchDiagnostics,
+					state.lifecycleTimings
+				);
+				const sessionDiagnosticsAppliedAtMs = performance.now();
+				const hasOwnedSnapshot = Boolean(output.gpuOutputHandle);
+				const gpuOutputHandle = ensureSelectedHourOutputHandle({
+					output,
+					requestId,
 					timeIndex: params.timeIndex,
-					readbackReason: 'visible-fallback',
-					recordReadback
-				}).catch((error) => {
-					disposeGpuBuffer(output);
-					throw error;
+					byteLength: state.numPoints * 4
 				});
-				disposeGpuBuffer(output);
+				const sessionGpuOutputHandleReadyAtMs = performance.now();
+				ensureNotAborted(state.signal);
+
+				const sameDeviceForComputeAndRender = resolveSameDevice({
+					computeManager: state.computeManager,
+					rendererDevice: params.rendererDevice
+				});
+				const preferGpuResident =
+					params.preferGpuResident &&
+					sameDeviceForComputeAndRender === true &&
+					Boolean(gpuOutputHandle);
+				const pendingRenderUpdateStartedAt = performance.now();
+				const renderTransport = preferGpuResident
+					? 'compute-buffer-selected-hour'
+					: 'cpu-uploaded-selected-hour';
+				stampSessionRenderTimeline(
+					diagnostics,
+					{
+						sessionMetricType: 'utci',
+						sessionComputeOutputReturnedAtMs,
+						sessionDiagnosticsAppliedAtMs,
+						sessionGpuOutputHandleReadyAtMs,
+						sessionPreferGpuResidentResolvedAtMs: pendingRenderUpdateStartedAt,
+						sessionOutputBytes: output.outputBytes
+					},
+					renderTransport
+				);
+
+				if (!preferGpuResident) {
+					const fallback = await readSelectedHourCpuFallback({
+						pipeline: state.pipeline,
+						base: state.base,
+						numPoints: state.numPoints,
+						monthIndex: params.monthIndex,
+						timeIndex: params.timeIndex,
+						readbackReason: 'visible-fallback',
+						recordReadback
+					});
+					ensureNotAborted(state.signal);
+					recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
+					return {
+						requestId,
+						monthIndex: params.monthIndex,
+						hourIndex: params.hourIndex,
+						timeIndex: params.timeIndex,
+						analysis: fallback.analysis,
+						gpuResidentOutput: null,
+						cpuFallbackValues: fallback.cpuFallbackValues,
+						selectedHourVisibleStartedAt,
+						pendingRenderUpdateStartedAt,
+						renderTransport: 'cpu-uploaded-selected-hour',
+						sameDeviceForComputeAndRender,
+						diagnostics
+					};
+				}
+
+				const sessionDebugReadbackStartedAtMs = performance.now();
+				const localizedUtciTooltips = params.localizedUtciTooltips === true &&
+					!params.selectedHourReadbackReason &&
+					hasOwnedSnapshot &&
+					output.format === 'f32-utci' &&
+					gpuOutputHandle?.source === 'webgpu-on-demand-snapshot' &&
+					gpuOutputHandle.metricType === 'utci' &&
+					gpuOutputHandle.valueLayout === 'one-f32-per-point' &&
+					!gpuOutputHandle.disposed &&
+					Boolean(state.pipeline.runUtciRangeSummaryForOutput) &&
+					(params.colorMode !== 'normalized' || Boolean(state.pipeline.runUtciRangeSummaryForTimeIndex));
+				const selectedHourUtci = localizedUtciTooltips ? undefined : await state.pipeline.readOnDemandUtciForDebug?.({
+					numPoints: state.numPoints
+				});
+				ensureNotAborted(state.signal);
+				stampSessionRenderTimeline(diagnostics, {
+					sessionDebugReadbackStartedAtMs,
+					sessionDebugReadbackCompletedAtMs: performance.now()
+				});
+				if (selectedHourUtci) {
+					recordReadback(params.selectedHourReadbackReason ?? 'tooltip');
+				}
+				const sessionSelectedHourRangeScanStartedAtMs = performance.now();
+				const selectedHourUtciRangeResult = await resolveSelectedHourUtciRange({
+					state,
+					output,
+					timeIndex: params.timeIndex,
+					colorMode: params.colorMode,
+					selectedHourUtci
+				});
+				ensureNotAborted(state.signal);
+				const selectedHourUtciRange = selectedHourUtciRangeResult.range;
+				diagnostics.timings = {
+					...diagnostics.timings,
+					...selectedHourUtciRangeResult.timings
+				};
+				stampSessionRenderTimeline(diagnostics, {
+					sessionSelectedHourRangeScanStartedAtMs,
+					sessionSelectedHourRangeScanCompletedAtMs: performance.now(),
+					sessionSelectedHourRangeResolutionPath:
+						selectedHourUtciRangeResult.resolutionPath,
+					sessionSelectedHourRangeReadbackCount:
+						selectedHourUtciRangeResult.readbackCount,
+					sessionSelectedHourRangeCpuScanCount:
+						selectedHourUtciRangeResult.cpuScanCount,
+					sessionSelectedHourRangeSummaryReadbackCount:
+						selectedHourUtciRangeResult.summaryReadbackCount,
+					sessionSelectedHourRangeSummaryReadbackBytes:
+						selectedHourUtciRangeResult.summaryReadbackBytes,
+					sessionSelectedHourRangeFullReadbackAvoidedCount:
+						selectedHourUtciRangeResult.fullReadbackAvoidedCount,
+					sessionSelectedHourRangeSummaryReductionPassCount:
+						selectedHourUtciRangeResult.reductionPassCount
+				});
+				const sessionRangeResolveStartedAtMs = performance.now();
+				const selectedDayUtciRangeResult =
+					params.colorMode === 'normalized'
+						? await resolveSelectedDayUtciRange({
+								state,
+								monthIndex: params.monthIndex,
+								selectedTimeIndex: params.timeIndex,
+								selectedHourUtci,
+								recordReadback
+						  })
+						: null;
+				ensureNotAborted(state.signal);
+				const selectedDayUtciRange = selectedDayUtciRangeResult?.range ?? null;
+				stampSessionRenderTimeline(diagnostics, {
+					sessionRangeResolveStartedAtMs,
+					sessionRangeResolveCompletedAtMs: performance.now(),
+					sessionSelectedDayRangeCacheKey: selectedDayUtciRangeResult?.cacheKey,
+					sessionSelectedDayRangeCacheHit: selectedDayUtciRangeResult?.cacheHit,
+					sessionSelectedDayRangeCacheSizeBefore:
+						selectedDayUtciRangeResult?.cacheSizeBefore,
+					sessionSelectedDayRangeCacheSizeAfter:
+						selectedDayUtciRangeResult?.cacheSizeAfter,
+					sessionSelectedDayRangeReadbackCount:
+						selectedDayUtciRangeResult?.readbackCount,
+					sessionSelectedDayRangeComputedHourCount:
+						selectedDayUtciRangeResult?.computedHourCount,
+					sessionSelectedDayRangeResolutionPath:
+						selectedDayUtciRangeResult?.resolutionPath,
+					sessionSelectedDayRangeSummaryReadbackCount:
+						selectedDayUtciRangeResult?.summaryReadbackCount,
+					sessionSelectedDayRangeSummaryReadbackBytes:
+						selectedDayUtciRangeResult?.summaryReadbackBytes,
+					sessionSelectedDayRangeFullReadbackAvoidedCount:
+						selectedDayUtciRangeResult?.fullReadbackAvoidedCount
+				});
+				const selectedHourDisplayRange =
+					params.colorMode === 'normalized'
+						? selectedDayUtciRange
+						: selectedHourUtciRange;
+				const sessionSelectedHourAnalysisBuildStartedAtMs = performance.now();
+				const selectedHourAnalysis = selectedHourUtci
+					? buildSelectedHourLiveAnalysis({
+							base: state.base,
+							utciValues: selectedHourUtci,
+							utciRange: selectedHourDisplayRange,
+							monthIndex: params.monthIndex,
+							timeIndex: params.timeIndex
+					  })
+					: localizedUtciTooltips
+						? buildSelectedHourLiveUtciGeometryAnalysis({
+								base: state.base,
+								utciRange: selectedHourDisplayRange,
+								monthIndex: params.monthIndex,
+								timeIndex: params.timeIndex
+							})
+						: null;
+				stampSessionRenderTimeline(diagnostics, {
+					sessionSelectedHourAnalysisBuildStartedAtMs,
+					sessionSelectedHourAnalysisBuildCompletedAtMs: performance.now()
+				});
+				const sessionCpuFallbackSetupStartedAtMs = performance.now();
+				const loadCpuFallback = selectedHourUtci
+					? async () => ({
+							analysis: selectedHourAnalysis as Analysis,
+							cpuFallbackValues: selectedHourUtci
+					  })
+					: () =>
+							readSelectedHourCpuFallback({
+								pipeline: state.pipeline,
+								base: state.base,
+								numPoints: state.numPoints,
+								monthIndex: params.monthIndex,
+								timeIndex: params.timeIndex,
+								output,
+								signal: state.signal,
+								utciRange: selectedHourDisplayRange,
+								readbackReason: 'visible-fallback',
+								recordReadback
+							});
+				stampSessionRenderTimeline(diagnostics, {
+					sessionCpuFallbackSetupStartedAtMs,
+					sessionCpuFallbackSetupCompletedAtMs: performance.now()
+				});
+
 				recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
-				return {
+				const sessionGpuResidentResultAssemblyStartedAtMs = performance.now();
+				const sessionGpuResidentRangeResolveStartedAtMs = performance.now();
+				const utciRange = resolveLiveGpuResidentUtciRange({
+					colorMode: params.colorMode,
+					selectedHourUtci,
+					selectedHourUtciRange,
+					selectedDayUtciRange
+				});
+				const sessionGpuResidentRangeResolveCompletedAtMs = performance.now();
+				const sessionTooltipValuesHandoffStartedAtMs = performance.now();
+				const tooltipUtciValues = selectedHourUtci;
+				const sessionTooltipValuesHandoffCompletedAtMs = performance.now();
+				const gpuResidentOutput = {
+					requestId,
+					metricType: 'utci' as const,
+					monthIndex: params.monthIndex,
+					hourIndex: params.hourIndex,
+					timeIndex: params.timeIndex,
+					output,
+					gpuOutputHandle: gpuOutputHandle ?? undefined,
+					utciRange,
+					tooltipUtciValues
+				};
+				stampSessionRenderTimeline(diagnostics, {
+					sessionGpuResidentRangeResolveStartedAtMs,
+					sessionGpuResidentRangeResolveCompletedAtMs,
+					sessionTooltipValuesHandoffStartedAtMs,
+					sessionTooltipValuesHandoffCompletedAtMs,
+					sessionGpuResidentResultAssemblyStartedAtMs,
+					sessionGpuResidentResultAssemblyCompletedAtMs: performance.now()
+				});
+				const result: SelectedHourLiveResult = {
 					requestId,
 					monthIndex: params.monthIndex,
 					hourIndex: params.hourIndex,
 					timeIndex: params.timeIndex,
-					analysis: fallback.analysis,
-					gpuResidentOutput: null,
-					cpuFallbackValues: fallback.cpuFallbackValues,
+					analysis: selectedHourAnalysis,
+					gpuResidentOutput,
+					loadCpuFallback,
 					selectedHourVisibleStartedAt,
 					pendingRenderUpdateStartedAt,
-					renderTransport: 'cpu-uploaded-selected-hour',
+					renderTransport: 'compute-buffer-selected-hour',
 					sameDeviceForComputeAndRender,
 					diagnostics
 				};
+				const sessionResultReadyAtMs = performance.now();
+				stampSessionRenderTimeline(diagnostics, {
+					sessionResultReadyAtMs,
+					sessionResultReturnedAtMs: performance.now()
+				});
+				ensureNotAborted(state.signal);
+				returnedOwnedOutput = true;
+				return result;
+			} finally {
+				if (!returnedOwnedOutput) disposeGpuBuffer(output);
 			}
-
-			const sessionDebugReadbackStartedAtMs = performance.now();
-			const selectedHourUtci = await state.pipeline.readOnDemandUtciForDebug?.({
-				numPoints: state.numPoints
-			});
-			stampSessionRenderTimeline(diagnostics, {
-				sessionDebugReadbackStartedAtMs,
-				sessionDebugReadbackCompletedAtMs: performance.now()
-			});
-			if (selectedHourUtci) {
-				recordReadback(params.selectedHourReadbackReason ?? 'tooltip');
-			}
-			const sessionSelectedHourRangeScanStartedAtMs = performance.now();
-			const selectedHourUtciRangeResult = await resolveSelectedHourUtciRange({
-				state,
-				output,
-				timeIndex: params.timeIndex,
-				colorMode: params.colorMode,
-				selectedHourUtci
-			});
-			const selectedHourUtciRange = selectedHourUtciRangeResult.range;
-			diagnostics.timings = {
-				...diagnostics.timings,
-				...selectedHourUtciRangeResult.timings
-			};
-			stampSessionRenderTimeline(diagnostics, {
-				sessionSelectedHourRangeScanStartedAtMs,
-				sessionSelectedHourRangeScanCompletedAtMs: performance.now(),
-				sessionSelectedHourRangeResolutionPath:
-					selectedHourUtciRangeResult.resolutionPath,
-				sessionSelectedHourRangeReadbackCount:
-					selectedHourUtciRangeResult.readbackCount,
-				sessionSelectedHourRangeCpuScanCount:
-					selectedHourUtciRangeResult.cpuScanCount,
-				sessionSelectedHourRangeSummaryReadbackCount:
-					selectedHourUtciRangeResult.summaryReadbackCount,
-				sessionSelectedHourRangeSummaryReadbackBytes:
-					selectedHourUtciRangeResult.summaryReadbackBytes,
-				sessionSelectedHourRangeFullReadbackAvoidedCount:
-					selectedHourUtciRangeResult.fullReadbackAvoidedCount,
-				sessionSelectedHourRangeSummaryReductionPassCount:
-					selectedHourUtciRangeResult.reductionPassCount
-			});
-			const sessionRangeResolveStartedAtMs = performance.now();
-			const selectedDayUtciRangeResult =
-				params.colorMode === 'normalized'
-					? await resolveSelectedDayUtciRange({
-							state,
-							monthIndex: params.monthIndex,
-							selectedTimeIndex: params.timeIndex,
-							selectedHourUtci,
-							recordReadback
-					  })
-					: null;
-			const selectedDayUtciRange = selectedDayUtciRangeResult?.range ?? null;
-			stampSessionRenderTimeline(diagnostics, {
-				sessionRangeResolveStartedAtMs,
-				sessionRangeResolveCompletedAtMs: performance.now(),
-				sessionSelectedDayRangeCacheKey: selectedDayUtciRangeResult?.cacheKey,
-				sessionSelectedDayRangeCacheHit: selectedDayUtciRangeResult?.cacheHit,
-				sessionSelectedDayRangeCacheSizeBefore:
-					selectedDayUtciRangeResult?.cacheSizeBefore,
-				sessionSelectedDayRangeCacheSizeAfter:
-					selectedDayUtciRangeResult?.cacheSizeAfter,
-				sessionSelectedDayRangeReadbackCount:
-					selectedDayUtciRangeResult?.readbackCount,
-				sessionSelectedDayRangeComputedHourCount:
-					selectedDayUtciRangeResult?.computedHourCount,
-				sessionSelectedDayRangeResolutionPath:
-					selectedDayUtciRangeResult?.resolutionPath,
-				sessionSelectedDayRangeSummaryReadbackCount:
-					selectedDayUtciRangeResult?.summaryReadbackCount,
-				sessionSelectedDayRangeSummaryReadbackBytes:
-					selectedDayUtciRangeResult?.summaryReadbackBytes,
-				sessionSelectedDayRangeFullReadbackAvoidedCount:
-					selectedDayUtciRangeResult?.fullReadbackAvoidedCount
-			});
-			const selectedHourDisplayRange =
-				params.colorMode === 'normalized'
-					? selectedDayUtciRange
-					: selectedHourUtciRange;
-			const sessionSelectedHourAnalysisBuildStartedAtMs = performance.now();
-			const selectedHourAnalysis = selectedHourUtci
-				? buildSelectedHourLiveAnalysis({
-						base: state.base,
-						utciValues: selectedHourUtci,
-						utciRange: selectedHourDisplayRange,
-						monthIndex: params.monthIndex,
-						timeIndex: params.timeIndex
-				  })
-				: null;
-			stampSessionRenderTimeline(diagnostics, {
-				sessionSelectedHourAnalysisBuildStartedAtMs,
-				sessionSelectedHourAnalysisBuildCompletedAtMs: performance.now()
-			});
-			const sessionCpuFallbackSetupStartedAtMs = performance.now();
-			const loadCpuFallback = selectedHourUtci
-				? async () => ({
-						analysis: selectedHourAnalysis as Analysis,
-						cpuFallbackValues: selectedHourUtci
-				  })
-				: () =>
-						readSelectedHourCpuFallback({
-							pipeline: state.pipeline,
-							base: state.base,
-							numPoints: state.numPoints,
-							monthIndex: params.monthIndex,
-							timeIndex: params.timeIndex,
-							readbackReason: 'visible-fallback',
-							recordReadback
-						});
-			stampSessionRenderTimeline(diagnostics, {
-				sessionCpuFallbackSetupStartedAtMs,
-				sessionCpuFallbackSetupCompletedAtMs: performance.now()
-			});
-
-			recordSelectedHourReadyTiming(diagnostics, requestReadyStartedAt);
-			const sessionGpuResidentResultAssemblyStartedAtMs = performance.now();
-			const sessionGpuResidentRangeResolveStartedAtMs = performance.now();
-			const utciRange = resolveLiveGpuResidentUtciRange({
-				colorMode: params.colorMode,
-				selectedHourUtci,
-				selectedHourUtciRange,
-				selectedDayUtciRange
-			});
-			const sessionGpuResidentRangeResolveCompletedAtMs = performance.now();
-			const sessionTooltipValuesHandoffStartedAtMs = performance.now();
-			const tooltipUtciValues = selectedHourUtci;
-			const sessionTooltipValuesHandoffCompletedAtMs = performance.now();
-			const gpuResidentOutput = {
-				requestId,
-				metricType: 'utci' as const,
-				monthIndex: params.monthIndex,
-				hourIndex: params.hourIndex,
-				timeIndex: params.timeIndex,
-				output,
-				gpuOutputHandle: gpuOutputHandle ?? undefined,
-				utciRange,
-				tooltipUtciValues
-			};
-			stampSessionRenderTimeline(diagnostics, {
-				sessionGpuResidentRangeResolveStartedAtMs,
-				sessionGpuResidentRangeResolveCompletedAtMs,
-				sessionTooltipValuesHandoffStartedAtMs,
-				sessionTooltipValuesHandoffCompletedAtMs,
-				sessionGpuResidentResultAssemblyStartedAtMs,
-				sessionGpuResidentResultAssemblyCompletedAtMs: performance.now()
-			});
-			const result: SelectedHourLiveResult = {
-				requestId,
-				monthIndex: params.monthIndex,
-				hourIndex: params.hourIndex,
-				timeIndex: params.timeIndex,
-				analysis: selectedHourAnalysis,
-				gpuResidentOutput,
-				loadCpuFallback,
-				selectedHourVisibleStartedAt,
-				pendingRenderUpdateStartedAt,
-				renderTransport: 'compute-buffer-selected-hour',
-				sameDeviceForComputeAndRender,
-				diagnostics
-			};
-			const sessionResultReadyAtMs = performance.now();
-			stampSessionRenderTimeline(diagnostics, {
-				sessionResultReadyAtMs,
-				sessionResultReturnedAtMs: performance.now()
-			});
-			return result;
 		},
 		dispose() {
 			state.pipeline.dispose?.();

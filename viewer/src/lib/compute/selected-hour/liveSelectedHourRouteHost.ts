@@ -115,6 +115,7 @@ export type LiveSelectedHourRouteHostDeps = {
 		analysisMetadata?: Analysis['metadata'] | null;
 	}) => string;
 	dataBasePath?: string;
+	localizedUtciTooltips?: boolean;
 };
 
 type ControllerSlot = 'base' | 'comparison';
@@ -1192,7 +1193,8 @@ export function createLiveSelectedHourRouteHost(
 			metricType: inputs.metricType,
 			colorMode: inputs.colorMode,
 			preferGpuResident: selectionPlan.preferGpuResident,
-			rendererDevice: selectionPlan.preferredDevice
+			rendererDevice: selectionPlan.preferredDevice,
+			localizedUtciTooltips: deps.localizedUtciTooltips ?? false
 		});
 		if (
 			requestResult.accepted &&

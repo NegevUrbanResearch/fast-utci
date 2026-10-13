@@ -110,6 +110,7 @@ export type LiveSelectedHourControllerRequest = {
 	preferGpuResident: boolean;
 	rendererDevice?: GPUDevice;
 	selectedHourReadbackReason?: SelectedHourReadbackReason;
+	localizedUtciTooltips?: boolean;
 };
 
 export type LiveSelectedHourControllerRequestResult = {
@@ -156,6 +157,7 @@ type DeferredCpuFallbackState = {
 	timeIndex: number;
 	analysis: Analysis | null;
 	loadCpuFallback?: () => Promise<SelectedHourCpuFallbackOutput>;
+	diagnostics: OnDemandRuntimeDiagnostics;
 };
 
 type AcceptedCpuPublication = {
@@ -1575,7 +1577,8 @@ export function createLiveSelectedHourController(
 					colorMode: request.colorMode,
 					preferGpuResident: request.preferGpuResident,
 					rendererDevice: request.rendererDevice,
-					selectedHourReadbackReason: request.selectedHourReadbackReason
+					selectedHourReadbackReason: request.selectedHourReadbackReason,
+					localizedUtciTooltips: request.localizedUtciTooltips
 				});
 				if (!ownsRequest(requestToken)) {
 					disposeStaleGpuResidentOutput(result.gpuResidentOutput);
@@ -1609,7 +1612,8 @@ export function createLiveSelectedHourController(
 							hourIndex: result.hourIndex,
 							timeIndex: result.timeIndex,
 							analysis: result.analysis,
-							loadCpuFallback: result.loadCpuFallback
+							loadCpuFallback: result.loadCpuFallback,
+							diagnostics: result.diagnostics
 						}
 					: null;
 				acceptedCpuPublication =
@@ -1931,8 +1935,9 @@ export function createLiveSelectedHourController(
 						? state.surfaceIdentity?.requestId === requestId
 						: false) &&
 					deferredCpuFallback?.requestId === requestId;
+				if (!ownsDeferredFallback()) return;
 				let fallbackAnalysis = fallbackRequest.analysis;
-				if (!fallbackAnalysis && fallbackRequest.loadCpuFallback) {
+				if (fallbackRequest.loadCpuFallback) {
 					try {
 						const fallback = await fallbackRequest.loadCpuFallback();
 						if (!ownsDeferredFallback()) {
@@ -1985,6 +1990,10 @@ export function createLiveSelectedHourController(
 				deferredCpuFallback = null;
 				replaceAcceptedGpuResidentOutput(null, {
 					analysis: fallbackAnalysis,
+					selectedHourReadbackReasons:
+						fallbackRequest.diagnostics.selectedHourReadbackReasons,
+					selectedHourReadbackReasonCounts:
+						fallbackRequest.diagnostics.selectedHourReadbackReasonCounts,
 					surfaceIdentity: createSurfaceIdentity({
 						requestId: acceptedCpuPublication.requestId,
 						monthIndex: acceptedCpuPublication.monthIndex,

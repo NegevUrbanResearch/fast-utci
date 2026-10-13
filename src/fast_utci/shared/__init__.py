@@ -28,15 +28,19 @@ from .parallel_utils import (
     create_spatial_chunks
 )
 
-from .weather import (
-    WeatherDataSource,
-    EPWAdapter,
-    DataFrameAdapter,
-    create_weather_adapter,
-    WeatherDataManager,
-    load_weather_data,
-    filter_weather_data
-)
+def __getattr__(name):
+    """Defer weather dependencies until a weather export is requested."""
+    if name in {
+        "WeatherDataSource", "EPWAdapter", "DataFrameAdapter",
+        "create_weather_adapter", "WeatherDataManager", "load_weather_data",
+        "filter_weather_data",
+    }:
+        from importlib import import_module
+
+        value = getattr(import_module("fast_utci.shared.weather"), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     # Config

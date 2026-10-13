@@ -39,6 +39,7 @@
 
 	export let analysis: Analysis | null;
 	export let analysisId: string;
+	export let isModelRequestCurrent: () => boolean = () => true;
 	export let dataBasePath: string;
 	export let theme: 'light' | 'dark';
 	export let requestLargeWebgpuLimits: boolean;
@@ -100,14 +101,21 @@
 		<Lights />
 
 		{#if analysis && modelPath}
-			{#key analysis.metadata.model_file}
-				<Model
-					{modelPath}
-					coordinateSystem={analysis.metadata.coordinate_system || 'xy_ground'}
-					metadata={analysis.metadata}
-					on:modelLoaded={(event) => dispatch('modelLoaded', event.detail)}
-					on:layersDiscovered={(event) => dispatch('layersDiscovered', event.detail)}
-				/>
+			{#key isModelRequestCurrent}
+				{#key analysis.metadata.model_file}
+					<Model
+						{modelPath}
+						isRequestCurrent={isModelRequestCurrent}
+						coordinateSystem={analysis.metadata.coordinate_system || 'xy_ground'}
+						metadata={analysis.metadata}
+						on:modelLoaded={(event) => {
+							if (isModelRequestCurrent()) dispatch('modelLoaded', event.detail);
+						}}
+						on:layersDiscovered={(event) => {
+							if (isModelRequestCurrent()) dispatch('layersDiscovered', event.detail);
+						}}
+					/>
+				{/key}
 			{/key}
 
 			{#if model}

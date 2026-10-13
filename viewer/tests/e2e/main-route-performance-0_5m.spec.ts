@@ -12,7 +12,7 @@ const RESET_PROOF_ARTIFACT_PATH = resolve(
 	RESULTS_DIR,
 	RESET_PROOF_ARTIFACT_FILENAME
 );
-const COLLECTED_ON = '2026-05-17';
+const COLLECTED_ON = new Date().toISOString().slice(0, 10);
 const SOURCE_ROUTE = '/';
 const TARGET_GRID_RESOLUTION_METERS = 0.5;
 const WARMUP_SCRUB_HOUR_INDEX = 1;
@@ -469,7 +469,7 @@ const CASES: AnalysisCase[] = [
 ];
 
 function expectedSelectionKey(caseConfig: AnalysisCase, hourIndex: number) {
-	return `${caseConfig.analysisId}|7|${hourIndex}`;
+	return `${caseConfig.analysisId}|utci|7|${hourIndex}`;
 }
 
 function readMetadata(caseConfig: AnalysisCase): AnalysisMetadata {

@@ -776,6 +776,15 @@ describe('liveSelectedHourRouteHost', () => {
 		expect(factory.records[0].requests[0]?.sessionKey).toBe(firstRequest?.sessionKey);
 	});
 
+	it.each([false, true])('propagates localized UTCI option %s to base only', async (enabled) => {
+		const factory = createControllerFactory();
+		const host = createLiveSelectedHourRouteHost({ ...makeHostDeps(factory), localizedUtciTooltips: enabled });
+		host.setRouteInputs(makeComparisonInputs());
+		await host.flush();
+		expect(factory.records[0].requests[0].localizedUtciTooltips).toBe(enabled);
+		expect(factory.records[1].requests[0].localizedUtciTooltips).toBeUndefined();
+	});
+
 	it('threads exposure scheduler options into comparison live session identity and config', async () => {
 		const factory = createControllerFactory();
 		const host = createLiveSelectedHourRouteHost(makeHostDeps(factory));

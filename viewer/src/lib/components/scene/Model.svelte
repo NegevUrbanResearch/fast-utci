@@ -1,7 +1,5 @@
 <script lang="ts" context="module">
-	// CRITICAL: Global cache-busting counter that persists across component instances
-	// This ensures each model load gets a truly unique URL, preventing Threlte from
-	// serving a cached (and mutated) version when we return to a previously loaded model
+	// Keep loader URLs unique across component instances.
 	let globalModelVersion = 0;
 
 	function nextGlobalModelVersion(): number {
@@ -11,29 +9,23 @@
 </script>
 
 <script lang="ts">
+	import { processModelScene } from '$lib/services/modelSceneProcessor';
 	import { GLTF } from '@threlte/extras';
-	import { applyModelCoordinateTransform, calculateScenarioOrigin, applyModelOffset } from '$lib/utils/coordinates';
+	import { applyModelCoordinateTransform } from '$lib/utils/coordinates';
 	import { createEventDispatcher, onDestroy } from 'svelte';
 	import type { Group } from 'three';
 	import type { AnalysisMetadata } from '$lib/types/analysis';
 	import type { ThrelteGltf } from '@threlte/extras';
-	import { applyLayerMaterials } from '$lib/services/modelLoaderService';
-	import {
-		initializeLayerManager,
-		getDiscoveredLayers,
-		resetLayerManager,
-		applyLayerVisibilityState
-	} from '$lib/services/layerManagerService';
-	import { layerStore } from '$lib/stores/layerStore';
-	import { get } from 'svelte/store';
-	import { getAnchorOffset, isNormalizationEnabled } from '$lib/config/viewerConfig';
-	import { getCachedModel, cacheModel, hasModelInCache } from '$lib/services/modelCacheService';
+	import { resetLayerManager } from '$lib/services/layerManagerService';
+	import { getCachedModel } from '$lib/services/modelCacheService';
+	import { setError, setLoading } from '$lib/stores/viewerStore';
 	import { T } from '@threlte/core';
 	import * as THREE from 'three';
 
 	export let modelPath: string;
 	export let coordinateSystem: 'xy_ground' | 'xz_ground' = 'xy_ground';
 	export let metadata: AnalysisMetadata | undefined = undefined;
+	export let isRequestCurrent: () => boolean = () => true;
 
 	const dispatch = createEventDispatcher<{
 		modelLoaded: Group;
@@ -41,9 +33,7 @@
 	}>();
 
 	let gltfGroup: Group | undefined;
-	let lastModelPath: string | undefined;
 	let useCache = false;
-	let cachedScene: Group | undefined;
 	
 	// Loading sequence ID to prevent race conditions
 	// When modelPath changes, we increment this to invalidate any in-flight loads
@@ -54,125 +44,27 @@
 	// Only used when not using cache
 	let currentModelVersion = 0;
 
-	// Process a loaded scene (from cache or GLTF loader). Async when !fromCache so we can yield during merge.
-	async function processScene(scene: Group, fromCache: boolean = false) {
-		// Always reset layer manager when loading a new model (even if path seems same)
-		// This ensures clean state when switching scenarios
-		resetLayerManager();
-		
-		// If from cache, the scene is already processed (materials, coordinate transform applied)
-		// Just clone it and apply normalization offset
-		if (fromCache) {
-			gltfGroup = scene.clone(true);
-			// Clone materials to avoid sharing references
-			gltfGroup.traverse((child) => {
-				if (child instanceof THREE.Mesh && child.material) {
-					if (Array.isArray(child.material)) {
-						child.material = child.material.map(mat => mat.clone());
-					} else {
-						child.material = child.material.clone();
-					}
-				}
-			});
-			
-			// Re-initialize layer manager for the cloned scene
-			initializeLayerManager(gltfGroup);
-			
-			// Apply current layer visibility state
-			const currentLayerState = get(layerStore);
-			applyLayerVisibilityState(currentLayerState);
-			
-			// Get discovered layer types
-			const discoveredLayers = getDiscoveredLayers();
-			console.log(`[MODEL] Discovered ${discoveredLayers.length} layers: ${discoveredLayers.join(', ')}`);
-			dispatch('layersDiscovered', discoveredLayers);
-		} else {
-			// Not from cache - process the raw scene
-			gltfGroup = scene;
-			lastModelPath = modelPath;
-			
-			// Apply layer materials FIRST (before coordinate transform). Async with yields to avoid main-thread freeze.
-			await applyLayerMaterials(gltfGroup);
-			
-			// IMPORTANT: Initialize layer manager AFTER merging is complete
-			// This ensures we track the merged meshes, not the original ones
-			initializeLayerManager(gltfGroup);
-			
-			// CRITICAL: Apply current layer visibility state from store to meshes
-			// This ensures default-hidden layers are actually hidden.
-			const currentLayerState = get(layerStore);
-			applyLayerVisibilityState(currentLayerState);
-			
-			// Get discovered layer types and dispatch event
-			const discoveredLayers = getDiscoveredLayers();
-			console.log(`[MODEL] Discovered ${discoveredLayers.length} layers: ${discoveredLayers.join(', ')}`);
-			dispatch('layersDiscovered', discoveredLayers);
-			
-			// Apply coordinate transform AFTER materials (to preserve layer info)
-			if (gltfGroup && coordinateSystem) {
-				applyModelCoordinateTransform(gltfGroup, coordinateSystem);
-			}
-			
-			// Cache the processed scene (before normalization)
-			// This allows us to apply scenario-specific normalization offsets later
-			if (!hasModelInCache(modelPath)) {
-				// Clone the processed scene for caching
-				const sceneToCache = gltfGroup.clone(true);
-				// Clone materials for cached version
-				sceneToCache.traverse((child) => {
-					if (child instanceof THREE.Mesh && child.material) {
-						if (Array.isArray(child.material)) {
-							child.material = child.material.map(mat => mat.clone());
-						} else {
-							child.material = child.material.clone();
-						}
-					}
-				});
-				cacheModel(modelPath, sceneToCache);
-			}
-		}
-		
-		// Apply normalization offset if enabled
-		// This must be applied each time since different scenarios may have different offsets
-		if (gltfGroup && isNormalizationEnabled() && metadata) {
-			const scenarioOrigin = calculateScenarioOrigin(metadata);
-			const anchorOffset = getAnchorOffset();
-			
-			// Transform scenario origin to world space to match the coordinate system
-			// For xy_ground: rotation around X by -90° transforms (x, y, z) → (x, z, -y)
-			let transformedOrigin: THREE.Vector3;
-			if (coordinateSystem === 'xy_ground') {
-				// Transform origin to world space: (x, y, z) → (x, z, -y)
-				transformedOrigin = new THREE.Vector3(scenarioOrigin.x, scenarioOrigin.z, -scenarioOrigin.y);
-			} else {
-				transformedOrigin = scenarioOrigin.clone();
-			}
-			
-			// Calculate offset in world space (where anchorOffset already is)
-			const offset = anchorOffset.clone().sub(transformedOrigin);
-			
-			if (offset.lengthSq() > 0.001) { // Only apply if offset is significant
-				console.log(`[MODEL] Applying normalization offset:`, offset);
-				applyModelOffset(gltfGroup, offset);
-			}
-		}
-		
-		dispatch('modelLoaded', gltfGroup);
+	async function processScene(scene: Group, fromCache = false, sequenceId = loadSequenceId) {
+		const snapshot = { modelPath, coordinateSystem, metadata };
+		const ownsSelection = isRequestCurrent;
+		const isCurrent = () => sequenceId === loadSequenceId && ownsSelection();
+		const processed = await processModelScene(scene, fromCache, snapshot, {
+			modelLoaded: (scene) => dispatch('modelLoaded', scene),
+			layersDiscovered: (layers) => dispatch('layersDiscovered', layers)
+		}, isCurrent, (error) => {
+			console.error('[MODEL] Failed to process model:', error);
+			setError(error instanceof Error ? error.message : 'Failed to process model');
+			setLoading(false);
+		});
+		if (isCurrent() && processed) gltfGroup = processed;
 	}
 
-    // Handle model loading from GLTF loader
-    function handleLoad(gltf: ThrelteGltf, sequenceId: number) {
-        // Check if this load is still valid (not superseded by a newer load)
-        if (sequenceId !== loadSequenceId) {
-            console.log(`[MODEL] Ignoring stale load (sequence ${sequenceId} vs current ${loadSequenceId})`);
-            return;
-        }
-        
-        void processScene(gltf.scene, false);
+	function handleLoad(gltf: ThrelteGltf, sequenceId: number) {
+		if (sequenceId !== loadSequenceId || !isRequestCurrent()) return;
+		void processScene(gltf.scene, false, sequenceId);
 	}
 	
 	// React to modelPath changes - check cache first, then load if needed
-	// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 	$: modelPath, (() => {
 		loadSequenceId++;
 		
@@ -181,27 +73,24 @@
 		if (cached) {
 			console.log(`[MODEL] Using cached model: ${modelPath}`);
 			useCache = true;
-			cachedScene = cached.scene;
 			// Process cached scene (async for API consistency; no heavy merge when from cache)
 			void processScene(cached.scene, true);
 		} else {
 			// Not in cache, load via GLTF
 			console.log(`[MODEL] Loading model from file: ${modelPath}`);
 			useCache = false;
-			cachedScene = undefined;
 			currentModelVersion = nextGlobalModelVersion();
 		}
 	})()
 	
 	// Create wrapper function that captures current sequence ID
 	// This ensures we can detect stale loads
-	function createLoadHandler() {
-		const currentSequenceId = loadSequenceId;
+	function createLoadHandler(currentSequenceId: number) {
 		return (gltf: ThrelteGltf) => handleLoad(gltf, currentSequenceId);
 	}
 	
 	// Reactive load handler that updates when sequence changes
-	$: onloadHandler = createLoadHandler();
+	$: onloadHandler = createLoadHandler(loadSequenceId);
 
 	// Apply coordinate transformation only when coordinateSystem *changes* (not when gltfGroup is first set).
 	// This prevents double-apply: processScene applies once after merge; we re-apply here only if user changes coord system.
@@ -219,6 +108,7 @@
 
 	// Cleanup on destroy
 	onDestroy(() => {
+		loadSequenceId++;
 		// Threlte's GLTF component handles disposal automatically
 		// But we should reset the layer manager to clear any stale references
 		resetLayerManager();

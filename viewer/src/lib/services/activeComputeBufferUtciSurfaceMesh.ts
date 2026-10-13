@@ -62,6 +62,17 @@ export interface ActiveComputeBufferUtciSurfaceMeshOptions {
 	now?: () => number;
 }
 
+export type ActiveCpuUtciSurfaceState = Omit<ActiveComputeBufferUtciSurfaceState, 'source'> & {
+	source: 'cpu-uploaded-selected-hour';
+};
+
+export type ActiveCpuUtciSurfaceMeshOptions = Omit<
+	ActiveComputeBufferUtciSurfaceMeshOptions,
+	'utciBuffer'
+> & {
+	values: Float32Array;
+};
+
 function addCreateSurfaceTraceTiming(
 	trace: SelectedHourRenderSurfaceMeshTrace | undefined,
 	key: Exclude<
@@ -86,15 +97,7 @@ function disabledActiveInstancedUtciSurfaceRaycast(): void {
 	return;
 }
 
-function createActiveUtciRenderNodes(
-	layout: ActiveCellsUtciGridLayout,
-	utciStorageAttribute: StorageBufferAttribute,
-	minUniform: ReturnType<typeof uniform>,
-	maxUniform: ReturnType<typeof uniform>,
-	colorLutTexture: THREE.DataTexture
-) {
-	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
-	const pointIndex = instanceIndex;
+export function createActiveUtciPositionNode(layout: ActiveCellsUtciGridLayout) {
 	const activeCanonicalIndex = attribute('activeCanonicalIndex', 'uint');
 	const canonicalRow = activeCanonicalIndex.mod(uint(layout.height));
 	const column = activeCanonicalIndex.div(uint(layout.height));
@@ -110,6 +113,18 @@ function createActiveUtciRenderNodes(
 		.add(0.5)
 		.mul(layout.gridSize)
 		.sub((layout.height * layout.gridSize) / 2);
+	return positionLocal.add(vec3(x, float(0), z));
+}
+
+function createActiveUtciRenderNodes(
+	layout: ActiveCellsUtciGridLayout,
+	utciStorageAttribute: StorageBufferAttribute,
+	minUniform: ReturnType<typeof uniform>,
+	maxUniform: ReturnType<typeof uniform>,
+	colorLutTexture: THREE.DataTexture
+) {
+	const utciStorage = storage(utciStorageAttribute, 'float', utciStorageAttribute.count).toReadOnly();
+	const pointIndex = instanceIndex;
 	const value = utciStorage.element(pointIndex);
 	const t = clamp(
 		value.sub(minUniform).div(maxUniform.sub(minUniform).max(float(0.001))),
@@ -123,12 +138,61 @@ function createActiveUtciRenderNodes(
 	return {
 		colorNode: texture(colorLutTexture, vec2(lutU, 0.5)).rgb,
 		opacityNode: float(DEFAULT_SURFACE_OPACITY),
-		positionNode: positionLocal.add(vec3(x, float(0), z))
+		positionNode: createActiveUtciPositionNode(layout)
 	};
 }
 
 export function createActiveComputeBufferUtciSurfaceMesh(
 	options: ActiveComputeBufferUtciSurfaceMeshOptions
+): THREE.Mesh {
+	return createActiveUtciSurfaceMesh(options);
+}
+
+export function createActiveCpuUtciSurfaceMesh(options: ActiveCpuUtciSurfaceMeshOptions): THREE.Mesh {
+	assertActiveValueCount(options);
+	return createActiveUtciSurfaceMesh(options);
+}
+
+function assertActiveValueCount(options: ActiveCpuUtciSurfaceMeshOptions): void {
+	if (options.values.length !== options.layout.numPositions) {
+		throw new Error('Active UTCI surface values must contain one value per active point.');
+	}
+}
+
+export function updateActiveCpuUtciSurfaceMesh(
+	mesh: THREE.Mesh,
+	options: ActiveCpuUtciSurfaceMeshOptions
+): boolean {
+	assertActiveValueCount(options);
+	const state = mesh.userData[GPU_NATIVE_SURFACE_STATE_KEY] as ActiveCpuUtciSurfaceState | undefined;
+	const previous = mesh.userData.utciLayout as ActiveCellsUtciGridLayout | undefined;
+	const { metricType, valueRange } = resolveComputeBufferMetricColorPolicy(options);
+	if (
+		!state ||
+		state.source !== 'cpu-uploaded-selected-hour' ||
+		state.renderTopology !== 'active-cells' ||
+		state.activeMaskSignature !== options.layout.activeMaskSignature ||
+		state.utciStorageAttribute.count !== options.values.length ||
+		state.width !== options.layout.width ||
+		state.height !== options.layout.height ||
+		state.gridSize !== options.layout.gridSize ||
+		previous?.coordinateSystem !== options.layout.coordinateSystem ||
+		state.colorLutMetricType !== metricType
+	) {
+		return false;
+	}
+	(state.utciStorageAttribute.array as Float32Array).set(options.values);
+	state.utciStorageAttribute.needsUpdate = true;
+	state.utciRange = { ...valueRange };
+	state.valueRange = { ...valueRange };
+	state.minUniform.value = valueRange.min;
+	state.maxUniform.value = valueRange.max;
+	mesh.userData.utciLayout = options.layout;
+	return true;
+}
+
+function createActiveUtciSurfaceMesh(
+	options: ActiveComputeBufferUtciSurfaceMeshOptions | ActiveCpuUtciSurfaceMeshOptions
 ): THREE.Mesh {
 	assertTslInstanceIndexSupport();
 	const now = options.now ?? performance.now.bind(performance);
@@ -136,7 +200,9 @@ export function createActiveComputeBufferUtciSurfaceMesh(
 	const geometry = createActiveMaskUtciInstancedSurfaceGeometry(options.layout);
 	const vertexCount = geometry.getAttribute('position').count;
 	const utciArrayStartedAt = now();
-	const utciArray = new Float32Array(options.layout.numPositions);
+	const utciArray = 'values' in options
+		? new Float32Array(options.values)
+		: new Float32Array(options.layout.numPositions);
 	addCreateSurfaceTraceTiming(
 		options.trace,
 		'createComputeBufferSurfaceUtciStorageAllocMs',
@@ -182,12 +248,16 @@ export function createActiveComputeBufferUtciSurfaceMesh(
 
 	const meshConstructStartedAt = now();
 	const mesh = new THREE.Mesh(geometry, material);
-	mesh.name = 'UTCI GPU Resident Active Instanced Surface Overlay';
+	mesh.name = 'values' in options
+		? 'UTCI CPU Uploaded Active Instanced Surface Overlay'
+		: 'UTCI GPU Resident Active Instanced Surface Overlay';
 	mesh.renderOrder = 2;
 	mesh.raycast = disabledActiveInstancedUtciSurfaceRaycast;
 	mesh.userData.raycastDisabledReason =
 		'active-instanced UTCI surface uses sparse tooltip lookup instead of Mesh.raycast';
-	mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
+	if ('utciBuffer' in options) {
+		mesh.userData.pendingComputeBufferUtciSource = options.utciBuffer;
+	}
 	mesh.userData.utciLayout = options.layout;
 	const renderEstimate =
 		options.renderEstimate ??
@@ -205,7 +275,7 @@ export function createActiveComputeBufferUtciSurfaceMesh(
 		height: options.layout.height,
 		gridSize: options.layout.gridSize,
 		vertexCount,
-		source: 'compute-buffer-selected-hour',
+		source: 'values' in options ? 'cpu-uploaded-selected-hour' : 'compute-buffer-selected-hour',
 		utciRange: { ...valueRange },
 		valueRange: { ...valueRange },
 		metricType,
@@ -214,7 +284,7 @@ export function createActiveComputeBufferUtciSurfaceMesh(
 		colorLutTexture,
 		colorLutMetricType: metricType,
 		renderEstimate
-	} satisfies ActiveComputeBufferUtciSurfaceState;
+	} satisfies ActiveComputeBufferUtciSurfaceState | ActiveCpuUtciSurfaceState;
 	addCreateSurfaceTraceTiming(
 		options.trace,
 		'createComputeBufferSurfaceMeshConstructMs',

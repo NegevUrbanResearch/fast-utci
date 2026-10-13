@@ -1,10 +1,17 @@
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
-const RESULTS_DIR = resolve(REPO_ROOT, 'data/performance-results');
-const ARTIFACT_FILENAME = 'main-route-cold-start-waterfall.json';
+const RESULTS_DIR = process.env.WATERFALL_ARTIFACT_DIR
+	? resolve(REPO_ROOT, process.env.WATERFALL_ARTIFACT_DIR)
+	: resolve(REPO_ROOT, 'data/performance-results');
+const ARTIFACT_LABEL = process.env.WATERFALL_ARTIFACT_LABEL ?? '';
+if (ARTIFACT_LABEL && !/^[a-zA-Z0-9_-]+$/.test(ARTIFACT_LABEL)) {
+	throw new Error('WATERFALL_ARTIFACT_LABEL must contain only letters, digits, underscores, or hyphens');
+}
+const ARTIFACT_FILENAME = `main-route-cold-start-waterfall${ARTIFACT_LABEL ? `-${ARTIFACT_LABEL}` : ''}.json`;
 const ARTIFACT_PATH = resolve(RESULTS_DIR, ARTIFACT_FILENAME);
 const SOURCE_ROUTE = '/';
 const INITIAL_MONTH_INDEX = 7;
@@ -91,28 +98,28 @@ const CASES: AnalysisCase[] = [
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',
 		metadataPath: 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday.json',
-		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0',
+		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0',
 		gridResolutionMeters: 2
 	},
 	{
 		projectLabel: 'Ness-Tziona',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|utci|7|0',
 		gridResolutionMeters: 2
 	},
 	{
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',
 		metadataPath: 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday.json',
-		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0',
+		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0',
 		gridResolutionMeters: 0.5
 	},
 	{
 		projectLabel: 'Ness-Tziona',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|utci|7|0',
 		gridResolutionMeters: 0.5
 	}
 ];
@@ -238,6 +245,7 @@ function extractTimings(timings: Record<string, unknown> | undefined) {
 		payloadPrepareMs: numberOrNull(timings?.payloadPrepareMs),
 		workerBvhMs: numberOrNull(timings?.workerBvhMs),
 		pipelineUploadMs: numberOrNull(timings?.pipelineUploadMs),
+		staticUploadTrace: recordOrNull(timings?.staticUploadTrace),
 		exposurePrecomputeMs: numberOrNull(timings?.exposurePrecomputeMs),
 		exposureCommandEncodeTotalMs: numberOrNull(timings?.exposureCommandEncodeTotalMs),
 		exposureEncodeMs: numberOrNull(timings?.exposureEncodeMs),
@@ -525,6 +533,15 @@ test.describe('main route cold-start waterfall collector', () => {
 
 		const artifact = {
 			collectedOn: formatLocalDate(new Date()),
+			provenance: {
+				capturedAt: new Date().toISOString(),
+				commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim(),
+				workingTreeStatus: execFileSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim(),
+				collector: 'viewer/tests/e2e/main-route-cold-start-waterfall.spec.ts',
+				browserVersion: page.context().browser()?.version() ?? null,
+				project: testInfo.project.name,
+				artifactLabel: ARTIFACT_LABEL || null
+			},
 			sourceRoute: SOURCE_ROUTE,
 			collectionMethod:
 				'Main route cold-start waterfall: / with utciRender=auto&utciRenderDiagnostics=1, collecting both initial first visible and first post-visible hour-slider scrub; no debug route and no parity/.bin comparison.',

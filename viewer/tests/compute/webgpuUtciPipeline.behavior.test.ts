@@ -12,6 +12,7 @@ function createFakeBuffer(size: number, usage = 0) {
 	return {
 		size,
 		usage,
+		data: new Uint8Array(size),
 		destroy: vi.fn()
 	};
 }
@@ -94,6 +95,7 @@ function createFakeDevice(options?: {
 				computePasses.push(pass);
 				return pass;
 			}),
+			clearBuffer: vi.fn((buffer: ReturnType<typeof createFakeBuffer>) => { buffer.data.fill(0); }),
 			copyBufferToBuffer: vi.fn(),
 			finish: vi.fn(() => ({}))
 		}))
@@ -168,6 +170,65 @@ async function createReadyShadingIndexPipeline(options?: {
 }
 
 describe('WebgpuUtciComputePipeline behavioral guards', () => {
+	it.each(['bind', 'encode', 'submit', 'queue', 'uniform-write'])('releases unreturned UTCI allocations on %s failure', async (failure) => {
+		const { device, pipeline } = await createReadyShadingIndexPipeline();
+		const shared = [...device.__buffers];
+		if (failure === 'uniform-write') device.queue.writeBuffer.mockImplementation((buffer) => { if ((buffer as any).usage & GPUBufferUsage.UNIFORM) throw new Error('injected'); });
+		if (failure === 'bind') device.createBindGroup.mockImplementationOnce(() => { throw new Error('injected'); });
+		if (failure === 'encode') device.createCommandEncoder.mockImplementationOnce(() => { throw new Error('injected'); });
+		if (failure === 'submit') device.queue.submit.mockImplementationOnce(() => { throw new Error('injected'); });
+		if (failure === 'queue') device.queue.onSubmittedWorkDone.mockRejectedValueOnce(new Error('injected'));
+		await expect(pipeline.runUtciForTimeIndex({ format: 'f32-utci', numPoints: 2, numHours: 3, numMonths: 1, timeIndex: 0 })).rejects.toThrow('injected');
+		const local = device.__buffers.filter((buffer) => !shared.includes(buffer));
+		const reusable = (pipeline as any).onDemandOutputBuffer;
+		for (const buffer of local.filter((buffer) => buffer !== reusable && buffer !== (pipeline as any).weatherBuffer)) expect(buffer.destroy).toHaveBeenCalledTimes(1);
+		for (const buffer of shared) expect(buffer.destroy).not.toHaveBeenCalled();
+		expect(reusable.destroy).not.toHaveBeenCalled();
+	});
+
+	it.each(['weather', 'compile', 'queue'])('rejects UTCI aborted or disposed during %s', async (boundary) => {
+		for (const action of ['abort', 'dispose']) {
+			const { device, pipeline } = await createReadyShadingIndexPipeline();
+			const abort = new AbortController();
+			let resolve!: (value?: any) => void;
+			const deferred = new Promise<any>((done) => { resolve = done; });
+			let reached!: () => void;
+			const started = new Promise<void>((done) => { reached = done; });
+			if (boundary === 'weather') vi.spyOn(pipeline as any, 'ensureWeatherBuffer').mockImplementationOnce(() => { reached(); return deferred; });
+			else if (boundary === 'compile') device.createComputePipelineAsync.mockImplementationOnce(() => { reached(); return deferred; });
+			else device.queue.onSubmittedWorkDone.mockImplementationOnce(() => { reached(); return deferred; });
+			const pending = pipeline.runUtciForTimeIndex({ format: 'f32-utci', numPoints: 2, numHours: 3, numMonths: 1, timeIndex: 0, signal: abort.signal });
+			const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+			await started;
+			const count = device.__buffers.length;
+			if (action === 'abort') abort.abort(); else pipeline.dispose();
+			resolve(boundary === 'compile' ? createFakePipeline() : undefined);
+			await rejected;
+			expect(device.__buffers).toHaveLength(count);
+			if (boundary === 'queue') {
+				const snapshot = device.__buffers.findLast((buffer) => buffer.usage === (GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST));
+				expect(snapshot?.destroy).toHaveBeenCalledTimes(1);
+			}
+		}
+	});
+
+	it('rejects already-aborted UTCI before allocating resources', async () => {
+		const { device, pipeline } = await createReadyShadingIndexPipeline();
+		const abort = new AbortController(); abort.abort();
+		const count = device.__buffers.length;
+		await expect(pipeline.runUtciForTimeIndex({ format: 'f32-utci', numPoints: 2, numHours: 3, numMonths: 1, timeIndex: 0, signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' });
+		expect(device.__buffers).toHaveLength(count);
+	});
+
+	it('hands off a live UTCI snapshot and releases uniforms on success', async () => {
+		const { device, pipeline } = await createReadyShadingIndexPipeline();
+		const output = await pipeline.runUtciForTimeIndex({ format: 'f32-utci', numPoints: 2, numHours: 3, numMonths: 1, timeIndex: 0 });
+		expect((output.gpuBuffer as any).destroy).not.toHaveBeenCalled();
+		for (const buffer of device.__buffers.filter((buffer) => buffer.usage === (GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST))) expect(buffer.destroy).toHaveBeenCalledTimes(1);
+		output.gpuOutputHandle?.dispose();
+		expect((output.gpuBuffer as any).destroy).toHaveBeenCalledTimes(1);
+	});
+
 	beforeAll(() => {
 		Object.assign(globalThis, {
 			GPUBufferUsage: {
@@ -178,6 +239,75 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 				MAP_READ: 16
 			}
 		});
+	});
+
+	it('reads an accepted snapshot after mutable output changes and rejects disposed snapshots', async () => {
+		Object.assign(globalThis, { GPUMapMode: { READ: 1 } });
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		const accepted = createFakeSelectedHourOutputHandle({ byteLength: 8 });
+		accepted.buffer.data.set(new Uint8Array(new Float32Array([11, 29]).buffer));
+		const later = createFakeBuffer(8);
+		later.data.set(new Uint8Array(new Float32Array([80, 90]).buffer));
+		(pipeline as any).onDemandOutputBuffer = later;
+		device.createBuffer.mockImplementation(({ size, usage }: any) => {
+			const buffer = createFakeBuffer(size, usage) as any;
+			buffer.mapAsync = vi.fn(async () => undefined);
+			buffer.getMappedRange = () => buffer.data.buffer;
+			buffer.unmap = vi.fn();
+			return buffer;
+		});
+		device.createCommandEncoder.mockImplementation(() => ({ copyBufferToBuffer: (source: any, _offset: number, target: any) => target.data.set(source.data), finish: () => ({}) }) as any);
+		const output = { format: 'f32-utci', numPoints: 2, timeIndex: 8, gpuBuffer: accepted.buffer, gpuOutputHandle: accepted } as any;
+		expect(await pipeline.readOnDemandUtciForDebug({ numPoints: 2, output })).toEqual(new Float32Array([11, 29]));
+		accepted.disposed = true;
+		await expect(pipeline.readOnDemandUtciForDebug({ numPoints: 2, output })).rejects.toThrow('invalid accepted');
+	});
+
+	it('does not write zeros to fresh exposure buffers and clears reused buffers in one submission', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		const solar = (pipeline as any).solarExposureBuffer;
+		const sky = (pipeline as any).skyExposureBuffer;
+		expect(device.queue.writeBuffer.mock.calls.filter((call) => call[0] === solar || call[0] === sky)).toHaveLength(0);
+		expect(device.queue.submit).not.toHaveBeenCalled();
+		solar.data.fill(255); sky.data.fill(255);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		expect(solar.data.every((byte: number) => byte === 0)).toBe(true);
+		expect(sky.data.every((byte: number) => byte === 0)).toBe(true);
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual([solar, sky]);
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+		await pipeline.runExposurePrecompute({ numPoints: 32, numHours: 1, numMonths: 1 });
+		expect(device.queue.submit).toHaveBeenCalledTimes(2);
+		expect(encoder.clearBuffer.mock.invocationCallOrder[1]).toBeLessThan(device.queue.submit.mock.invocationCallOrder[0]);
+	});
+
+	it.each([33, 64])('clears only reused exposure buffers when point count changes to %s', async (points) => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(33));
+		const solar = (pipeline as any).solarExposureBuffer;
+		const sky = (pipeline as any).skyExposureBuffer;
+		await pipeline.uploadStaticData(exposureUploadParams(points));
+		expect((pipeline as any).solarExposureBuffer).toBe(solar);
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual(points === 33 ? [solar, sky] : [solar]);
+		await pipeline.uploadStaticData(exposureUploadParams(65));
+		expect((pipeline as any).solarExposureBuffer).not.toBe(solar);
+		expect(device.queue.submit).toHaveBeenCalledTimes(1);
+	});
+
+	it('clears only sky exposure when the solar word count changes', async () => {
+		const device = createFakeDevice();
+		const pipeline = new __TEST_ONLY_WebgpuUtciComputePipeline(device as any, false);
+		await pipeline.uploadStaticData(exposureUploadParams(32));
+		const sky = (pipeline as any).skyExposureBuffer;
+		await pipeline.uploadStaticData({ ...exposureUploadParams(32), sunVectors: new Float32Array(6), sunAltitudes: new Float32Array(2), weather: new Float32Array(14) });
+		const encoder = device.createCommandEncoder.mock.results[0].value;
+		expect(encoder.clearBuffer.mock.calls.map((call: any[]) => call[0])).toEqual([sky]);
+		expect(pipeline.getOnDemandDiagnostics().timings.staticUploadTrace).toMatchObject({ solarZeroFillWriteCount: 0, skyZeroFillWriteCount: 0, solarZeroFillBytes: 8, skyZeroFillBytes: 128, zeroFillClearCommandCount: 1, zeroFillSubmitCount: 1 });
 	});
 
 	it('snapshots weather on upload so later caller mutation does not affect samples', async () => {
@@ -989,7 +1119,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		const source = readFileSync(
 			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
 			'utf8'
-		);
+		).replace(/\r\n/g, '\n');
 		const methodStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
 		expect(methodStart).toBeGreaterThanOrEqual(0);
 		const methodEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', methodStart);
@@ -1014,7 +1144,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		const source = readFileSync(
 			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
 			'utf8'
-		);
+		).replace(/\r\n/g, '\n');
 		const methodStart = source.indexOf('async runUtciRangeSummaryForOutput');
 		expect(methodStart).toBeGreaterThanOrEqual(0);
 		const methodEnd = source.indexOf(
@@ -1358,7 +1488,7 @@ describe('WebgpuUtciComputePipeline behavioral guards', () => {
 		const source = readFileSync(
 			resolve(__dirname, '../../src/lib/compute/gpu/webgpuUtciPipeline.ts'),
 			'utf8'
-		);
+		).replace(/\r\n/g, '\n');
 		const productionStart = source.indexOf('async runUtciRangeSummaryForTimeIndex');
 		const productionEnd = source.indexOf('\n\n\tasync readOnDemandUtciForDebug', productionStart);
 		const debugStart = source.indexOf('async __TEST_ONLY_reduceRangeValuesForDebug');

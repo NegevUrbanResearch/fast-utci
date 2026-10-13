@@ -32,7 +32,8 @@ async function collectIntermediates(page: Page, includeMrt: boolean): Promise<{
 	debugMrt: number[] | null;
 }> {
 	await page.goto(
-		`/debug?parity=1&analysis=${encodeURIComponent(ANALYSIS_SLUG)}`
+		// Statistical references cover the full August day, not a selected-hour comparison.
+		`/debug?parity=1&utciOnDemand=off&analysis=${encodeURIComponent(ANALYSIS_SLUG)}`
 	);
 	await page.waitForFunction(
 		() => {
@@ -49,6 +50,7 @@ async function collectIntermediates(page: Page, includeMrt: boolean): Promise<{
 			if (status === 'success') return w.__parityIntermediates__ != null;
 			return false;
 		},
+		undefined,
 		{ timeout: INTERMEDIATES_WAIT_MS, polling: POLL_INTERVAL_MS }
 	);
 
@@ -101,7 +103,7 @@ async function collectIntermediates(page: Page, includeMrt: boolean): Promise<{
  * This default check avoids MRT payload transfer to keep local loops fast and memory-safe.
  */
 test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', () => {
-	test('solar and sky exposure distributions match reference', async ({ page }) => {
+	test('solar and sky exposure distributions match reference', async ({ page }, testInfo) => {
 		test.setTimeout(INTERMEDIATES_WAIT_MS + 10_000);
 
 		const hasSolar = existsSync(BASE_PATH + '_solar.json');
@@ -129,6 +131,10 @@ test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', (
 				toleranceMean: TOLERANCE_MEAN,
 				toleranceMax: TOLERANCE_MAX
 			});
+			await testInfo.attach('solar-reference-parity', {
+				body: JSON.stringify(result, null, 2),
+				contentType: 'application/json'
+			});
 			if (!result.pass) {
 				failures.push(
 					`solar: meanDiff=${result.meanDiff.toFixed(4)} (ref mean=${result.refStats.mean.toFixed(4)}, webgpu mean=${result.webgpuStats.mean.toFixed(4)}), maxDiff=${result.maxDiff.toFixed(4)}`
@@ -144,6 +150,10 @@ test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', (
 				toleranceMean: TOLERANCE_MEAN,
 				toleranceMax: TOLERANCE_MAX
 			});
+			await testInfo.attach('sky-reference-parity', {
+				body: JSON.stringify(result, null, 2),
+				contentType: 'application/json'
+			});
 			if (!result.pass) {
 				failures.push(
 					`sky: meanDiff=${result.meanDiff.toFixed(4)} (ref mean=${result.refStats.mean.toFixed(4)}, webgpu mean=${result.webgpuStats.mean.toFixed(4)}), maxDiff=${result.maxDiff.toFixed(4)}`
@@ -156,7 +166,7 @@ test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', (
 		).toEqual([]);
 	});
 
-	test('mrt distribution matches reference (opt-in)', async ({ page }) => {
+	test('mrt distribution matches reference (opt-in)', async ({ page }, testInfo) => {
 		if (!INCLUDE_MRT) {
 			test.skip();
 			return;
@@ -182,6 +192,10 @@ test.describe('WebGPU intermediate validation (Ben-Gurion base, statistical)', (
 			webgpu: webgpuMrt as number[],
 			toleranceMean: MRT_TOLERANCE_MEAN,
 			toleranceMax: MRT_TOLERANCE_MAX
+		});
+		await testInfo.attach('mrt-reference-parity', {
+			body: JSON.stringify(result, null, 2),
+			contentType: 'application/json'
 		});
 		if (!result.pass) {
 			throw new Error(

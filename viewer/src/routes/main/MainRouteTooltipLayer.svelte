@@ -56,6 +56,7 @@
 	export let mainViewportElement: HTMLElement | null;
 	export let curtainPosition: number;
 	export let viewerCurrentHour: number;
+	export let requestedMonthIndex: number = 0;
 	export let metricType: MetricType;
 	export let utciVisible: boolean;
 	export let diagnosticsEnabled = false;
@@ -291,22 +292,34 @@
 		const { canvas, camera, mesh, analysis, acceptedGpuResidentOutput, metricType, hourIndex, clientX, clientY } = params;
 		if (!canvas || !camera || !mesh || !analysis) return null;
 		const metricPointValueReader =
-			metricType === 'shading_index' &&
-			acceptedGpuResidentOutput?.metricType === 'shading_index' &&
+			(metricType === 'shading_index' || metricType === 'utci') &&
+			acceptedGpuResidentOutput?.metricType === metricType &&
 			acceptedGpuResidentOutput.gpuOutputHandle &&
+			!acceptedGpuResidentOutput.gpuOutputHandle.disposed &&
+			acceptedGpuResidentOutput.gpuOutputHandle.source === 'webgpu-on-demand-snapshot' &&
+			acceptedGpuResidentOutput.gpuOutputHandle.valueLayout === 'one-f32-per-point' &&
+			acceptedGpuResidentOutput.gpuOutputHandle.metricType === metricType &&
+			(metricType === 'shading_index'
+				? acceptedGpuResidentOutput.gpuOutputHandle.period.kind === 'month-index' &&
+					acceptedGpuResidentOutput.gpuOutputHandle.period.index === acceptedGpuResidentOutput.monthIndex
+				: acceptedGpuResidentOutput.gpuOutputHandle.period.kind === 'time-index' &&
+					acceptedGpuResidentOutput.gpuOutputHandle.period.index === acceptedGpuResidentOutput.timeIndex) &&
 			rendererDevice
 				? {
 						monthIndex: acceptedGpuResidentOutput.monthIndex,
 						requestId: acceptedGpuResidentOutput.requestId,
 						ownerId: acceptedGpuResidentOutput.gpuOutputHandle.ownerId,
 						readbackByteLength: METRIC_POINT_READBACK_BYTES,
+						snapshotIdentity: acceptedGpuResidentOutput.gpuOutputHandle,
 						readMetricPointValue: async ({ positionIndex }: { positionIndex: number }) => {
+							if (acceptedGpuResidentOutput.gpuOutputHandle!.disposed) throw new Error('Tooltip output was disposed');
 							const value = await readF32MetricPointValue({
 								device: rendererDevice as GPUDevice,
 								sourceBuffer: acceptedGpuResidentOutput.gpuOutputHandle!.buffer,
 								pointIndex: positionIndex,
 								numPoints: analysis.data.numPositions
 							});
+							if (acceptedGpuResidentOutput.gpuOutputHandle!.disposed) throw new Error('Tooltip output was disposed');
 							return value;
 						}
 				  }
@@ -733,6 +746,24 @@
 		tooltipMotionInteractionController?.dispose();
 		tooltipMotionInteractionController = null;
 		tooltipMotionInteractionCanvas = null;
+	}
+
+	// Monthly Shading Index has no selected-hour dependency.
+	$: requestedTooltipHour = metricType === 'utci' ? viewerCurrentHour : 0;
+
+	// Selection changes invalidate any hover read that is still awaiting the GPU.
+	$: {
+		basePendingGpuResidentOutput;
+		comparisonPendingGpuResidentOutput;
+		baseDisplayedAnalysis;
+		comparisonDisplayedAnalysis;
+		metricType;
+		requestedTooltipHour;
+		requestedMonthIndex;
+		baseSceneTimeIndex;
+		comparisonSceneTimeIndex;
+		cancelPendingHover();
+		hideTooltip();
 	}
 
 	$: if (typeof window !== 'undefined') {

@@ -1,26 +1,36 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import type { RequestHandler } from './$types';
 
-/**
- * Proxy route handler to serve data files from outside the project directory
- * Handles requests to /data/* and proxies them to ../data/* in the file system
- */
+function isContainedFile(root: string, candidate: string): boolean {
+	const path = relative(root, candidate);
+	return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+/** Serve local data files from ../data relative to the viewer working directory. */
 export const GET: RequestHandler = async ({ params }) => {
 	try {
-		const pathParts = params.path?.split('/') || [];
+		// Svelte already decodes route params. Preserve literal percent-encoded filenames.
+		const requestedPath = params.path?.replace(/\\/g, '/') || '';
+		const pathParts = requestedPath.split('/');
 		const filename = pathParts[pathParts.length - 1];
-		
-		if (!filename) {
+		if (!filename || requestedPath.includes('\0') || isAbsolute(requestedPath) ||
+			win32.isAbsolute(requestedPath) || /^[a-z]:/i.test(requestedPath) ||
+			pathParts.includes('..')) {
 			return new Response('Invalid path', { status: 400 });
 		}
-		
-		// Build path to data folder (outside viewer directory)
-		// process.cwd() is the viewer directory, so go up one level to access ../data
-		const dataPath = join(process.cwd(), '..', 'data', ...pathParts);
-		
-		// Read file
-		const file = await readFile(dataPath);
+
+		const dataRoot = resolve(process.cwd(), '..', 'data');
+		const dataPath = resolve(dataRoot, requestedPath);
+		if (!isContainedFile(dataRoot, dataPath)) {
+			return new Response('Invalid path', { status: 400 });
+		}
+		const realRoot = await realpath(dataRoot);
+		const realFile = await realpath(dataPath);
+		if (!isContainedFile(realRoot, realFile)) {
+			return new Response('Invalid path', { status: 400 });
+		}
+		const file = await readFile(realFile);
 		
 		// Determine content type based on file extension
 		const extension = filename.split('.').pop()?.toLowerCase();

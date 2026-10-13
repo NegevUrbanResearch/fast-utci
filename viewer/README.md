@@ -13,14 +13,16 @@ Use `/` for normal development and user-facing behavior. Use `/debug` only when 
 
 ## Development
 
+Run commands from `viewer/`. Use Node.js 20.19.x, 22.12.x or later in the 22.x series, or 24.x and later. CI uses Node.js 22.
+
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
 Vite prints the local URL, usually `http://localhost:5173`.
 
-## Build And Preview
+## Build and preview
 
 ```powershell
 npm run build
@@ -31,9 +33,11 @@ npm run preview
 
 ```powershell
 npm run check
-npm test
+npm run test:unit
 npm run test:coverage
 ```
+
+`npm test` starts Vitest watch mode. Unit discovery includes `.test.ts` files in `tests/` and `src/`, including source guards under `tests/e2e/`; Playwright `.spec.ts` files use the separate browser runner.
 
 Focused WebGPU route checks:
 
@@ -44,7 +48,7 @@ npm run test:e2e:selected-hour
 
 The Playwright selected-hour checks require a browser/GPU setup that can exercise WebGPU.
 
-## Data Inputs
+## Data inputs
 
 The viewer reads from the repo-level `data/` directory:
 
@@ -56,7 +60,7 @@ The viewer reads from the repo-level `data/` directory:
 
 See [../docs/data-onboarding.md](../docs/data-onboarding.md) for the project/data loading workflow.
 
-## Useful Scripts
+## Useful scripts
 
 - `scripts/generate-live-webgpu-metadata.ts`: generate metadata for GLB-backed WebGPU projects.
 - `scripts/compare-parity.ts`: compare WebGPU outputs with reference artifacts.
@@ -64,7 +68,7 @@ See [../docs/data-onboarding.md](../docs/data-onboarding.md) for the project/dat
 - `scripts/export-innovation-district-gis.ts`: collect verified live-route data for GIS handoff.
 - `scripts/summarize-main-route-performance.ts`: summarize main-route performance artifacts.
 
-## Runtime Notes
+## Runtime notes
 
 - Three.js uses `WebGPURenderer`.
 - UTCI is selected by month and hour.
@@ -74,15 +78,11 @@ See [../docs/data-onboarding.md](../docs/data-onboarding.md) for the project/dat
 
 ## Deployment
 
-GitHub Pages deployment is handled by CI on `main`: install dependencies, run tests, build, and publish.
+The viewer quality workflow runs `npm ci`, type checking, unit tests, and the build on pull requests and pushes. The Pages workflow runs the same gates before publishing from `main` or a manual dispatch.
 
-The public app is served at:
+The current configuration uses an empty base path for the custom domain utci.nurlab.org. CI copies the contents of `viewer/build/` directly to the deployment root, alongside `data/`. The main route is `/`, and diagnostics use `/debug`. This describes the configured deployment; it does not verify the site's current availability.
 
-```text
-https://[username].github.io/fast-utci/viewer/build/
-```
-
-The repo root URL redirects to `viewer/build/`.
+Hosted CI checks types, CPU unit behavior, and build output. It does not establish hardware WebGPU execution or parity. Run the separate browser collectors on a supported WebGPU browser and GPU to verify those contracts.
 
 ## Stack
 

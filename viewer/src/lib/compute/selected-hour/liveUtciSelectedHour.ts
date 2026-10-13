@@ -46,6 +46,7 @@ export function buildSelectedHourLiveAnalysis(params: {
 			analysis_type: 'single_hour',
 			num_positions: params.utciValues.length,
 			num_months: 1,
+			hour_statistics: undefined,
 			utci_range: range
 		},
 		data: {
@@ -56,6 +57,32 @@ export function buildSelectedHourLiveAnalysis(params: {
 			utciByHour: [params.utciValues],
 			shadingIndex:
 				'shadingIndex' in params.base.data ? params.base.data.shadingIndex : undefined,
+			selectedMonthIndex: params.monthIndex,
+			selectedTimeIndex: params.timeIndex
+		} as Analysis['data']
+	};
+}
+
+/** Geometry and range metadata for resident UTCI; metric values remain on the GPU. */
+export function buildSelectedHourLiveUtciGeometryAnalysis(params: {
+	base: Analysis;
+	utciRange: { min: number; max: number } | null;
+	monthIndex: number;
+	timeIndex: number;
+}): Analysis {
+	return {
+		metadata: {
+			...params.base.metadata,
+			analysis_type: 'single_hour',
+			num_positions: params.base.data.numPositions,
+			num_months: 1,
+			hour_statistics: undefined,
+			utci_range: params.utciRange ?? params.base.metadata.utci_range
+		},
+		data: {
+			numPositions: params.base.data.numPositions,
+			numHours: 1,
+			positions: params.base.data.positions,
 			selectedMonthIndex: params.monthIndex,
 			selectedTimeIndex: params.timeIndex
 		} as Analysis['data']

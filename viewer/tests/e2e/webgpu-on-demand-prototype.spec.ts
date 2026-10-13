@@ -7,6 +7,16 @@ type PrototypeDiagnostics = {
 	utciRenderResolved?: string;
 	renderTransport?: string;
 	utciSurfaceSource?: string;
+	completedTimeIndex?: number;
+	completedRequestId?: number;
+	selectedHourTransferCount?: number;
+	sameDeviceForComputeAndRender?: boolean;
+	selectedHourRuntimeContract?: { selectedHourEngine?: string; visibleSelectedHourReadbackCount?: number; strongVisibleGpuPath?: boolean };
+	selectedMonthIndex?: number;
+	selectedHourIndex?: number;
+	selectedTimeIndex?: number;
+	surfaceRequestId?: number;
+	selectionKey?: string;
 	bridgeAttached?: boolean;
 	debugReadbackCount?: number;
 	dataTextureBuildCount?: number;
@@ -43,6 +53,7 @@ type MainRouteUtciRenderDiagnostics = {
 	baseRenderTransport?: string;
 	baseSameDeviceForComputeAndRender?: boolean | null;
 	comparisonRenderTransport?: string;
+	selectedHourRuntimeContract?: { visibleSelectedHourReadbackCount?: number; strongVisibleGpuPath?: boolean };
 	baseLiveReady?: boolean;
 	comparisonLiveReady?: boolean;
 	baseSurfaceRequestId?: number;
@@ -74,6 +85,30 @@ async function readPrototypeDiagnostics(page: Page) {
 	});
 }
 
+async function waitForDebugDiagnosticPublication(page: Page) {
+	await expect(page.locator('canvas').first()).toBeVisible();
+	await expect.poll(() => readPrototypeDiagnostics(page)).toBeTruthy();
+}
+
+async function waitForDebugPublishedSelectedHour(page: Page) {
+	let diagnostics: PrototypeDiagnostics | undefined;
+	await expect.poll(async () => {
+		diagnostics = await readPrototypeDiagnostics(page);
+		if (!diagnostics || diagnostics.utciSurfaceSource !== diagnostics.renderTransport) return false;
+		if (diagnostics.renderTransport === 'compute-buffer-selected-hour') {
+			return diagnostics.sameDeviceForComputeAndRender === true && diagnostics.dataTextureBuildCount === 0;
+		}
+		if (diagnostics.renderTransport === 'cpu-uploaded-selected-hour') {
+			return (diagnostics.selectedHourTransferCount ?? 0) > 0 &&
+				(diagnostics.debugReadbackCount ?? 0) > 0 &&
+				(diagnostics.completedRequestId ?? 0) > 0 &&
+				diagnostics.completedTimeIndex === diagnostics.selectedTimeIndex;
+		}
+		return false;
+	}, { timeout: 20_000 }).toBe(true);
+	await expect(page.locator('canvas').first()).toBeVisible();
+	return diagnostics;
+}
 async function readTooltipProbePoint(page: Page) {
 	return page.evaluate(() => {
 		const resolver = (window as Window & {
@@ -399,7 +434,7 @@ async function waitForMainRouteInteractiveLiveReady(page: Page) {
 	});
 	await expect(page.getByRole('button', { name: /^day$/i })).toBeVisible();
 	await expect(page.getByRole('button', { name: /^month$/i })).toBeVisible();
-	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toBeVisible();
+	await expect(page.getByRole('slider', { name: /select analysis hour|select month/i })).toBeVisible();
 }
 
 async function waitForMainRouteBaseSelectedHourContract(
@@ -473,7 +508,7 @@ async function waitForDebugRouteInteractiveReady(page: Page) {
 	});
 	await expect(page.getByRole('button', { name: /^day$/i })).toBeVisible();
 	await expect(page.getByRole('button', { name: /^month$/i })).toBeVisible();
-	await expect(page.getByRole('slider', { name: /select analysis hour/i })).toBeVisible();
+	await expect(page.getByRole('slider', { name: /select analysis hour|select month/i })).toBeVisible();
 }
 
 function getDebugRouteSelectedHourSignature(diagnostics: PrototypeDiagnostics | undefined): string {
@@ -482,6 +517,11 @@ function getDebugRouteSelectedHourSignature(diagnostics: PrototypeDiagnostics | 
 		utciRenderResolved: diagnostics?.utciRenderResolved ?? null,
 		renderTransport: diagnostics?.renderTransport ?? null,
 		utciSurfaceSource: diagnostics?.utciSurfaceSource ?? null,
+		selectedMonthIndex: diagnostics?.selectedMonthIndex ?? null,
+		selectedHourIndex: diagnostics?.selectedHourIndex ?? null,
+		selectedTimeIndex: diagnostics?.selectedTimeIndex ?? null,
+		surfaceRequestId: diagnostics?.surfaceRequestId ?? null,
+		selectionKey: diagnostics?.selectionKey ?? null,
 		debugReadbackCount: diagnostics?.debugReadbackCount ?? null,
 		dataTextureBuildCount: diagnostics?.dataTextureBuildCount ?? null
 	});
@@ -736,11 +776,10 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				`/?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&utciRenderDiagnostics=1`
 			);
 			await skipIfMainRouteLiveComputeUnavailable(page);
-			await waitForMainRouteInteractiveLiveReady(page);
-			const initialMainDiagnostics = await readMainRouteUtciRenderDiagnostics(page);
+			const initialMainDiagnostics = await waitForMainRouteBaseSelectedHourContract(page);
 
 			await debugPage.goto(
-				`/debug?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&monthIndex=0&timeIndex=0`
+				`/debug?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=gpu&parity=0`
 			);
 			const debugNavigatorGpuAvailable = await debugPage.evaluate(() => Boolean(navigator.gpu));
 			const requireWebgpu = process.env.REQUIRE_WEBGPU_ON_DEMAND === '1';
@@ -749,8 +788,7 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 				'WebGPU unavailable on the debug route and REQUIRE_WEBGPU_ON_DEMAND is not set.'
 			);
 
-			await waitForDebugRouteInteractiveReady(debugPage);
-			const initialDebugDiagnostics = await readPrototypeDiagnostics(debugPage);
+			const initialDebugDiagnostics = await waitForDebugRouteSelectedHourSurface(debugPage);
 			await setMonthSelection(page, 7, 'Aug');
 			await setHourSelection(page, 12);
 			await setMonthSelection(debugPage, 7, 'Aug');
@@ -768,6 +806,14 @@ test.describe('WebGPU on-demand prototype diagnostics', () => {
 			expect(debugDiagnostics?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
 			expect(debugDiagnostics?.renderTransport).toBe('compute-buffer-selected-hour');
 			expect(debugDiagnostics?.utciRenderResolved).toBe('gpuNative');
+			expect(debugDiagnostics?.selectedMonthIndex).toBe(7);
+			expect(debugDiagnostics?.selectedHourIndex).toBe(12);
+			expect(debugDiagnostics?.selectedTimeIndex).toBe(7 * 24 + 12);
+			expect(debugDiagnostics?.sameDeviceForComputeAndRender).toBe(true);
+			expect(debugDiagnostics?.dataTextureBuildCount).toBe(0);
+			expect(debugDiagnostics?.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount).toBe(0);
+			expect(debugDiagnostics?.selectedHourRuntimeContract?.strongVisibleGpuPath).toBe(true);
+			expect(mainDiagnostics?.baseSelectionKey).toBe(BEN_GURION_BASE_ANALYSIS_ID + '|utci|7|12');
 			expectMainRouteBaseSelectedHourContract(mainDiagnostics);
 		} finally {
 			await debugPage.close();
@@ -778,43 +824,70 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 	page
 }) => {
 	test.setTimeout(45_000);
+	// Record diagnostic assignments before compute starts so polling cannot miss bootstrap.
+	await page.addInitScript(() => {
+		const snapshots: Array<Record<string, unknown>> = [];
+		const observedWindow = window as Window & {
+			__utciRenderDiagnostics__?: MainRouteUtciRenderDiagnostics;
+			__testBootstrapDiagnostics__?: Array<Record<string, unknown>>;
+		};
+		let current: MainRouteUtciRenderDiagnostics | undefined;
+		observedWindow.__testBootstrapDiagnostics__ = snapshots;
+		Object.defineProperty(observedWindow, '__utciRenderDiagnostics__', {
+			configurable: true,
+			enumerable: true,
+			get: () => current,
+			set: (value: MainRouteUtciRenderDiagnostics | undefined) => {
+				current = value;
+				if (!value) return;
+				snapshots.push({
+					baseLiveReady: value.baseLiveReady,
+					baseRenderTransport: value.baseRenderTransport,
+					utciSurfaceSource: value.utciSurfaceSource,
+					baseSameDeviceForComputeAndRender: value.baseSameDeviceForComputeAndRender,
+					baseSurfaceRequestId: value.baseSurfaceRequestId,
+					baseSelectionKey: value.baseSelectionKey,
+					baseSceneSurfaceRequestId: value.baseSceneSurfaceRequestId,
+					baseSceneSelectionKey: value.baseSceneSelectionKey
+				});
+			}
+		});
+	});
 	await page.goto(
 		`/?analysis=${encodeURIComponent(BEN_GURION_BASE_ANALYSIS_ID)}&utciRender=auto&utciRenderDiagnostics=1`
 	);
 	await skipIfMainRouteLiveComputeUnavailable(page);
-	await waitForMainRouteInteractiveLiveReady(page);
+	const ready = await waitForMainRouteBaseSelectedHourContract(page);
 
-	let diagnostics: MainRouteUtciRenderDiagnostics | undefined;
-	await expect
-		.poll(async () => {
-			diagnostics = await readMainRouteUtciRenderDiagnostics(page);
-			return (
-				diagnostics?.baseRenderTransport === 'compute-buffer-selected-hour' &&
-				diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour' &&
-				diagnostics?.baseSameDeviceForComputeAndRender === true &&
-				diagnostics?.baseLiveReady === false &&
-				diagnostics?.baseSceneSurfaceRequestId != null &&
-				diagnostics?.baseSceneSelectionKey != null &&
-				(diagnostics?.baseSurfaceRequestId == null ||
-					diagnostics.baseSurfaceRequestId !==
-						diagnostics.baseSceneSurfaceRequestId) &&
-				(diagnostics?.baseSelectionKey == null ||
-					diagnostics.baseSelectionKey !== diagnostics.baseSceneSelectionKey)
-			);
-		}, { timeout: 30_000 })
-		.toBe(true);
-
-	expect(diagnostics?.baseLiveReady).toBe(false);
-	expect(diagnostics?.baseSceneSurfaceRequestId).not.toBeNull();
-	expect(diagnostics?.baseSceneSelectionKey).toBeTruthy();
-	expect(diagnostics?.baseSurfaceRequestId ?? null).not.toBe(
-		diagnostics?.baseSceneSurfaceRequestId ?? null
+	const snapshots = await page.evaluate(() =>
+		(window as Window & {
+			__testBootstrapDiagnostics__?: Array<Record<string, unknown>>;
+		}).__testBootstrapDiagnostics__ ?? []
 	);
-	expect(diagnostics?.baseSelectionKey ?? null).not.toBe(
-		diagnostics?.baseSceneSelectionKey ?? null
+	const bootstrap = snapshots.find((value) =>
+		value.baseRenderTransport === 'compute-buffer-selected-hour' &&
+		value.utciSurfaceSource === 'compute-buffer-selected-hour' &&
+		value.baseSameDeviceForComputeAndRender === true &&
+		value.baseLiveReady === false &&
+		value.baseSceneSurfaceRequestId != null &&
+		value.baseSceneSelectionKey != null &&
+		value.baseSurfaceRequestId !== value.baseSceneSurfaceRequestId &&
+		value.baseSelectionKey !== value.baseSceneSelectionKey
 	);
+	expect(bootstrap, JSON.stringify(snapshots)).toBeTruthy();
+	expect(ready?.baseLiveReady).toBe(true);
+	expect(ready?.rendererBackend).toBe('webgpu');
+	expect(ready?.baseRenderTransport).toBe('compute-buffer-selected-hour');
+	expect(ready?.utciSurfaceSource).toBe('compute-buffer-selected-hour');
+	expect(ready?.baseSameDeviceForComputeAndRender).toBe(true);
+	expect(ready?.dataTextureBuildCount).toBe(0);
+	expect(ready?.selectedHourRuntimeContract?.visibleSelectedHourReadbackCount).toBe(0);
+	expect(ready?.selectedHourRuntimeContract?.strongVisibleGpuPath).toBe(true);
+	expect(ready?.baseSurfaceRequestId).toBe(bootstrap?.baseSceneSurfaceRequestId);
+	expect(ready?.baseSelectionKey).toBe(bootstrap?.baseSceneSelectionKey);
+	expect(ready?.baseSceneSurfaceRequestId).toBe(ready?.baseSurfaceRequestId);
+	expect(ready?.baseSceneSelectionKey).toBe(ready?.baseSelectionKey);
 });
-
 	test('plain debug route defaults to on-demand diagnostics', async ({ page }) => {
 		await page.goto('/debug');
 
@@ -826,10 +899,9 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 			'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
 		);
 
-		const prototypeStatus = page.getByTestId('on-demand-prototype-status');
-		await expect(prototypeStatus).toContainText(/diagnostics|ready|error/i);
+		await waitForDebugDiagnosticPublication(page);
 		if (navigatorGpuAvailable) {
-			await expect(prototypeStatus).toContainText(/ready/i);
+			await waitForDebugPublishedSelectedHour(page);
 		}
 
 		const diagnostics = await page.evaluate(() => {
@@ -847,20 +919,21 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 
 		expect(diagnostics).toBeTruthy();
 		expect(diagnostics?.rendererBackend).toMatch(/webgpu|unknown/i);
-		expect(typeof diagnostics?.navigatorGpu).toBe('boolean');
+		expect(diagnostics?.navigatorGpu).toBe(navigatorGpuAvailable);
 		expect(diagnostics?.utciRenderRequested).toBe('auto');
 		expect(diagnostics?.utciRenderResolved).toBe(
-			diagnostics?.rendererBackend === 'webgpu' ? 'gpuNative' : 'dataTexture'
+			navigatorGpuAvailable ? 'gpuNative' : 'dataTexture'
 		);
 		if (navigatorGpuAvailable) {
-			expect(diagnostics?.rendererBackend).toMatch(/webgpu/i);
+			expect(diagnostics?.rendererBackend).toBe('webgpu');
+			expect(['compute-buffer-selected-hour', 'cpu-uploaded-selected-hour']).toContain(diagnostics?.renderTransport);
 		}
 		if (
 			diagnostics?.rendererBackend === 'webgpu' ||
 			diagnostics?.renderTransport === 'compute-buffer-selected-hour' ||
 			diagnostics?.utciSurfaceSource === 'compute-buffer-selected-hour'
 		) {
-			await expect(prototypeStatus).not.toContainText(/unsupported/i);
+			await expect(page.locator('canvas').first()).toBeVisible();
 		}
 	});
 
@@ -946,9 +1019,8 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 			'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
 		);
 
-		await expect(page.getByTestId('on-demand-render-selection')).toContainText(
-			/utciRender data -> dataTexture/
-		);
+		await waitForDebugDiagnosticPublication(page);
+		await expect.poll(async () => (await readPrototypeDiagnostics(page))?.utciRenderResolved).toBe('dataTexture');
 
 		const diagnostics = await readPrototypeDiagnostics(page);
 		expect(diagnostics?.utciRenderRequested).toBe('data');
@@ -957,9 +1029,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 
 	test('debug route hover populates tooltip diagnostics by default', async ({ page }) => {
 		await page.goto('/debug?onDemandPrototype=1');
-		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
-			/diagnostics|ready|error/i
-		);
+		await waitForDebugPublishedSelectedHour(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (window as Window & {
@@ -998,9 +1068,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 		page
 	}) => {
 		await page.goto('/debug?onDemandPrototype=1');
-		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
-			/diagnostics|ready|error/i
-		);
+		await waitForDebugDiagnosticPublication(page);
 		await expect(page.locator('canvas')).toBeVisible();
 		await page.waitForFunction(() => !document.querySelector('.model-loading-overlay'));
 		await page.waitForFunction(() => {
@@ -1056,9 +1124,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 		page
 	}) => {
 		await page.goto('/debug?onDemandPrototype=1&disableTooltip=1');
-		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
-			/diagnostics|ready|error/i
-		);
+		await waitForDebugDiagnosticPublication(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (window as Window & {
@@ -1094,9 +1160,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 		page
 	}) => {
 		await page.goto('/debug?onDemandPrototype=1');
-		await expect(page.getByTestId('on-demand-prototype-status')).toContainText(
-			/diagnostics|ready|error/i
-		);
+		await waitForDebugDiagnosticPublication(page);
 
 		await expect(page.locator('canvas')).toBeVisible();
 		await page.waitForFunction(() => !document.querySelector('.model-loading-overlay'));
@@ -1150,8 +1214,7 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 			'WebGPU unavailable in this runtime and REQUIRE_WEBGPU_ON_DEMAND is not set.'
 		);
 
-		const prototypeStatus = page.getByTestId('on-demand-prototype-status');
-		await expect(prototypeStatus).toContainText(/ready|error/i);
+		await waitForDebugDiagnosticPublication(page);
 
 		await page.waitForFunction(() => {
 			const diagnostics = (
@@ -1185,10 +1248,9 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 		const resetDiagnostics = await readPrototypeDiagnostics(page);
 		expect(resetDiagnostics?.bridgeAttached).toBe(false);
 		expect(resetDiagnostics?.visibleColorVariance).toBe(0);
-		await expect(prototypeStatus).not.toContainText(/ready/i);
 	});
 
-	test('one-hour f32 on-demand output matches all-hours UTCI slice', async ({ page }) => {
+	test('one-hour f32 on-demand output matches all-hours UTCI slice', async ({ page }, testInfo) => {
 		test.setTimeout(120_000);
 		await page.goto('/debug?parity=1&onDemandPrototype=1&compareOneHour=1');
 
@@ -1221,6 +1283,10 @@ test('main route diagnostics export base scene identity during gpu-native bootst
 		expect(result?.numCompared).toBeGreaterThan(0);
 		expect(result?.maxAbsDiff).toBeLessThanOrEqual(1e-5);
 		expect(result?.debugReadbackCount).toBeGreaterThan(0);
+		await testInfo.attach('selected-hour-all-hours-parity', {
+			body: JSON.stringify(result, null, 2),
+			contentType: 'application/json'
+		});
 
 		const diagnostics = await readPrototypeDiagnostics(page);
 		expect(diagnostics?.dataTextureBuildCount).toBe(0);

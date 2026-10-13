@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
 	prepareMeshPayloadForWorker,
@@ -139,4 +139,81 @@ describe('mergeAndBvhWorkerClient preflight', () => {
 			expect(result.gridPoints.length).toBe(0);
 		}
 	);
+});
+
+
+describe('worker lifecycle', () => {
+	class FakeWorker {
+		static instances: FakeWorker[] = [];
+		onmessage: ((event: any) => void) | null = null;
+		onerror: ((event: any) => void) | null = null;
+		terminate = vi.fn();
+		postMessage = vi.fn();
+		constructor() { FakeWorker.instances.push(this); }
+	}
+	const params = { meshes: [], gridResolution: 2, zHeight: 0.9 };
+	it('rejects constructor failure without leaving a timer or signal callback', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('Worker', class { constructor() { throw new Error('constructor failure'); } });
+		const controller = new AbortController();
+		const add = vi.spyOn(controller.signal, 'addEventListener');
+		await expect(runMergeAndBvhInWorker({ ...params, signal: controller.signal })).rejects.toThrow('constructor failure');
+		expect(add).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+	it('clones repeated payload buffers into a unique transfer list', async () => {
+		vi.stubGlobal('Worker', FakeWorker);
+		const mesh = { position: new Float32Array([1, 2, 3]), index: new Uint32Array([0]), matrixWorld: [] };
+		const pending = runMergeAndBvhInWorker({ ...params, meshes: [mesh, mesh] });
+		const worker = FakeWorker.instances[0];
+		const [message, transfers] = worker.postMessage.mock.calls[0] as unknown as [any, ArrayBuffer[]];
+		expect(new Set(transfers).size).toBe(4);
+		for (const sent of message.meshes) {
+			expect(sent.position).toEqual(mesh.position);
+			expect(sent.position.buffer).not.toBe(mesh.position.buffer);
+			expect(sent.index.buffer).not.toBe(mesh.index.buffer);
+		}
+		worker.onmessage?.({ data: {} });
+		await pending;
+	});
+	afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); FakeWorker.instances = []; });
+	it('rejects an already aborted signal without creating a worker', async () => {
+		vi.stubGlobal('Worker', FakeWorker);
+		const controller = new AbortController(); controller.abort();
+		const pending = runMergeAndBvhInWorker({ ...params, signal: controller.signal });
+		FakeWorker.instances[0]?.onmessage?.({ data: {} });
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+		expect(FakeWorker.instances).toHaveLength(0);
+	});
+	it.each(['success', 'error', 'workerError', 'abort', 'timeout', 'postFailure', 'payloadFailure'])('cleans callbacks and timers on %s', async (path) => {
+		vi.useFakeTimers(); vi.stubGlobal('Worker', FakeWorker);
+		const controller = new AbortController();
+		const remove = vi.spyOn(controller.signal, 'removeEventListener');
+		const payload = path === 'payloadFailure' ? [{ get position() { throw new Error('payload failure'); } }] as any : [];
+		if (path === 'postFailure') {
+			class ThrowingWorker extends FakeWorker { postMessage = vi.fn(() => { throw new Error('post failure'); }); }
+			vi.stubGlobal('Worker', ThrowingWorker);
+		}
+		const pending = runMergeAndBvhInWorker({ ...params, meshes: payload, signal: controller.signal });
+		const settled = pending.catch((error) => error);
+		const worker = FakeWorker.instances[0];
+		const lateMessage = worker.onmessage;
+		const lateError = worker.onerror;
+		if (path === 'success') worker.onmessage?.({ data: {} });
+		if (path === 'error') worker.onmessage?.({ data: { type: 'error', error: 'failed' } });
+		if (path === 'workerError') worker.onerror?.({ message: 'failed' });
+		if (path === 'abort') controller.abort();
+		if (path === 'timeout') vi.advanceTimersByTime(600_000);
+		const outcome = await settled;
+		if (path === 'abort') expect(outcome).toMatchObject({ name: 'AbortError' });
+		else if (path !== 'success') expect(outcome).toBeInstanceOf(Error);
+		expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+		expect(worker.onmessage).toBeNull(); expect(worker.onerror).toBeNull();
+		expect(worker.terminate).toHaveBeenCalledTimes(1);
+		expect(vi.getTimerCount()).toBe(0);
+		controller.abort(); expect(worker.terminate).toHaveBeenCalledTimes(1);
+		lateMessage?.({ data: { type: 'progress', stage: 'merge' } });
+		lateError?.({ message: 'late error' });
+		expect(worker.terminate).toHaveBeenCalledTimes(1);
+	});
 });

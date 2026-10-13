@@ -33,13 +33,18 @@ const analysisCache = new LRUCache<Analysis>({
  * @param analysisId - Analysis identifier
  * @param dataDir - Base directory for data files (optional, defaults to base path + "/data/analyses")
  */
+let requestSequence = 0;
+let cacheGeneration = 0;
+
 export async function loadAnalysisData(
 	analysisId: string,
 	dataDir?: string,
 	options?: { metadataOnly?: boolean }
 ): Promise<void> {
+	const sequence = ++requestSequence;
+	const generation = cacheGeneration;
 	try {
-		const cacheKey = options?.metadataOnly ? `${analysisId}::metadata` : analysisId;
+		const cacheKey = JSON.stringify([dataDir ?? `${base}/data/analyses`, analysisId, options?.metadataOnly ? "metadata" : "full"]);
 		// Check cache first
 		const cached = analysisCache.get(cacheKey);
 		if (cached) {
@@ -55,11 +60,13 @@ export async function loadAnalysisData(
 			: await loadAnalysis(analysisId, dataDir);
 		
 		// Cache the loaded analysis
-		analysisCache.set(cacheKey, analysis);
+		if (generation === cacheGeneration) analysisCache.set(cacheKey, analysis);
 		
 		// Update store
-		analysisStore.set(analysis);
+		if (sequence === requestSequence) analysisStore.set(analysis);
 	} catch (error) {
+		// Stale failures must not reach the route catch that sets the current UI error.
+		if (sequence !== requestSequence) return;
 		console.error('[ERROR] Failed to load analysis:', error);
 		throw error;
 	}
@@ -83,6 +90,8 @@ export function getAnalysisCacheStats(): {
  * Useful for testing or manual cache invalidation
  */
 export function clearAnalysisCache(): void {
+	requestSequence++;
+	cacheGeneration++;
 	analysisCache.clear();
 	console.log('[ANALYSIS CACHE] Cache cleared');
 }

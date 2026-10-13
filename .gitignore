@@ -29,7 +29,9 @@ node_modules/
 # Viewer build output (built in CI)
 viewer/build/
 viewer/.svelte-kit/
-viewer/package-lock.json
+viewer/coverage/
+viewer/test-results/
+viewer/playwright-report/
 
 # Viewer OS files
 viewer/.DS_Store
@@ -70,3 +72,6 @@ viewer/parity-report*.json
 
 # Large parity baseline artifact (keep out future commits)
 data/analyses/Ben-Gurion/20250815_grid_2m_fullday_mrt.json
+
+# Local WebGPU quality measurements and verification captures
+/data/performance-results/quality-2026-10-13/**/*.json

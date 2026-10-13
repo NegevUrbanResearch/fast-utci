@@ -32,6 +32,7 @@ export type TooltipMetricPointValueReader = {
 	requestId?: number;
 	ownerId?: string;
 	readbackByteLength?: number;
+	snapshotIdentity?: object;
 	readMetricPointValue: (key: {
 		metricType: MetricType;
 		monthIndex: number;
@@ -614,6 +615,11 @@ function getMetricValue(
 		return shadingIndexValues[positionIndex];
 	}
 
+	if (
+		!('utciValues' in data && data.utciValues) &&
+		!('utciByHour' in data && data.utciByHour?.length) &&
+		!('utciStorage' in data && data.utciStorage)
+	) return null;
 	const utciValues = getUTCIForHour(data, hourIndex);
 	if (!utciValues || positionIndex >= utciValues.length) {
 		return null;
@@ -903,7 +909,7 @@ export async function getTooltipDataAsync(
 	let value = analysis ? getMetricValue(analysis, hit.positionIndex, metricType, hourIndex) : null;
 	if (
 		value === null &&
-		metricType === 'shading_index' &&
+		(metricType === 'shading_index' || metricType === 'utci') &&
 		options?.metricPointValueReader
 	) {
 		const reader = options.metricPointValueReader;
@@ -919,7 +925,7 @@ export async function getTooltipDataAsync(
 				ownerId: reader.ownerId
 			};
 			const result = await sharedMetricPointReadbackCache.getOrReadWithStats(
-				key,
+				{ ...key, snapshotIdentity: reader.snapshotIdentity },
 				() =>
 					reader.readMetricPointValue({
 						metricType,

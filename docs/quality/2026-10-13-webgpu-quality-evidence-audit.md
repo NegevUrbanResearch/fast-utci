@@ -1,0 +1,17 @@
+# Final evidence audit
+
+PASS. No concrete mismatch found in the results or review claims checked.
+
+This audit read saved evidence and source only. It did not run GPU, browser, build, unit, or Python workloads.
+
+- Recomputed all four browser rows from baseline waterfall samples 1–3 and final treatment samples 1–3. Initial firstVisibleMs, firstPostVisibleScrub.visibleMs, and initial.timings.staticUploadTrace.totalMs reproduce comparison.json and the rounded report medians and ranges. Active point counts match in all six captures for each case.
+- The largest model improves by 1,074.60 ms for startup and 32.3039 ms for the first hour change. Percentage reductions are 4.6533%, 17.9285%, and 84.9253%, matching 4.7%, 17.9%, and 84.9% in the report.
+- All 48 initial/scrub proof records assert main-route strong GPU publication, shared compute/render device, zero visible selected-hour readbacks, and zero metric DataTexture builds. All 24 case records have no forbidden request URLs. The final treatment source records identify 5a022e2; environment metadata identifies baseline d3d824f and final treatment 5a022e2.
+- Canonical-grid medians reproduce every time and process resident-memory row. Each of the four cases has one unique output SHA-256 across both arms and all samples. The script validates Float32Array output, spawns fresh Node subprocesses with explicit garbage collection, and records process.resourceUsage().maxRSS. The report correctly limits the 5.8-fold result to this benchmark and distinguishes process memory from GPU memory and active browser point counts.
+- Solar, sky, and MRT meanDiff/maxDiff values reproduce the report. The reference test defines distribution-mean and distribution-maximum tolerances; these are not maximum per-point errors. The selected-hour f32 comparison is separately described as a per-value check.
+- final-unit-4.log confirms 138 files, 1,141 passed tests, and five skips. final-check.log confirms zero errors and warnings. final-build.log ends with successful static output. task-12-report.md records the full Python suite as 107 passes.
+- browser-final-selected-hour-complete.log confirms 25 passes. The successful main-route manual subset contains seven distinct cases in browser-final-integrated.log. The scientific provenance manifest records 13 expected cases with zero unexpected, skipped, or flaky cases. These disjoint subsets support 45 targeted cases. All three final waterfall logs report one passing four-dataset collector.
+- Verified SHA-256 hashes for all eight extracted scientific artifacts against their provenance manifest. Scientific evidence records an earlier base plus frozen source changes, rather than pretending it was captured at the later final commit. The saved source diff documents renderer/DataTexture work; git diff b4a2cd7..5a022e2 contains no compute-directory change. Later commits include the legacy storage guard and debug environment diagnostics, so the scientific capture is correctly treated as preserved scoped evidence rather than a claim that every final source byte was captured in that batch.
+- The report explicitly limits three-sample, single-machine measurements and development-server startup; it does not claim 5.8-fold overall startup, GPU memory savings from Node RSS, per-point reference parity, or a full 8,760-hour annual calculation.
+
+The integrated review remains source-only approval; the results document separately cites completed hardware and final acceptance checks. Known pending root plan-checkbox work was outside this audit.
