@@ -46,6 +46,7 @@ export function buildSelectedHourLiveAnalysis(params: {
 			analysis_type: 'single_hour',
 			num_positions: params.utciValues.length,
 			num_months: 1,
+			hour_statistics: undefined,
 			utci_range: range
 		},
 		data: {
@@ -75,6 +76,7 @@ export function buildSelectedHourLiveUtciGeometryAnalysis(params: {
 			analysis_type: 'single_hour',
 			num_positions: params.base.data.numPositions,
 			num_months: 1,
+			hour_statistics: undefined,
 			utci_range: params.utciRange ?? params.base.metadata.utci_range
 		},
 		data: {

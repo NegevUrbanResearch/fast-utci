@@ -160,4 +160,60 @@ test.describe('main route selection ownership and localized UTCI', () => {
 		}
 	});
 
+	for (const colorMode of ['normalized', 'discrete'] as const) {
+		test(`one native render copy failure preserves month 8 ${colorMode} range and recovers`, async ({ page }) => {
+			await page.goto(url());
+			await publication(page, BG, 7, 0);
+			await selectTime(page, 'month', 8);
+			await publication(page, BG, 8, 0);
+			await page.getByRole('button', { name: colorMode === 'normalized' ? /^full day$/i : /^per hour$/i }).click();
+			await page.waitForFunction(mode => (window as any).__utciRenderDiagnostics__?.baseColorMode === mode, colorMode);
+			const gpuBeforeFallback = await publication(page, BG, 8, 0);
+			expect(gpuBeforeFallback.basePointCount).toBeGreaterThan(0);
+			await page.evaluate(() => {
+				const state = { failures: 0, snapshotReadbackBytes: [] as number[], copies: [] as unknown[], rangeAtCopy: null as { min: number; max: number } | null };
+				(window as any).__copyFailureEvidence = state;
+				const original = GPUCommandEncoder.prototype.copyBufferToBuffer;
+				GPUCommandEncoder.prototype.copyBufferToBuffer = function (this: GPUCommandEncoder, ...args: unknown[]): undefined {
+					const source = args[0];
+					const hasOffsets = typeof args[1] === 'number';
+					const target = args[hasOffsets ? 2 : 1];
+					// Preserve both native overloads, including the native validation of invalid arguments.
+					if (!(source instanceof GPUBuffer) || !(target instanceof GPUBuffer)) {
+						return Reflect.apply(original, this, args);
+					}
+					const sourceOffset = hasOffsets ? Number(args[1]) : 0;
+					const bytes = Number(args[hasOffsets ? 4 : 2] ?? source.size - sourceOffset);
+					const stack = new Error().stack ?? '';
+					state.copies.push({ stack, bytes, sourceUsage: source.usage, targetUsage: target.usage });
+					if (state.failures === 0 && stack.includes('utciComputeBufferRenderBridge')) {
+						state.failures++;
+						state.rangeAtCopy = { ...(window as any).__utciRenderDiagnostics__.baseAcceptedUtciRange };
+						throw new Error('Regression test: one native render storage copy failure');
+					}
+					if (state.failures && stack.includes('webgpuUtciPipeline') && (target.usage & GPUBufferUsage.MAP_READ) && bytes > 16) {
+						state.snapshotReadbackBytes.push(bytes);
+					}
+					return Reflect.apply(original, this, args);
+				};
+			});
+			await selectTime(page, 'hour', 1);
+			const fallback = await publication(page, BG, 8, 1, 'cpu-uploaded-selected-hour');
+			const evidence = await page.evaluate(() => (window as any).__copyFailureEvidence);
+			expect(evidence.failures).toBe(1);
+			expect(evidence.snapshotReadbackBytes).toEqual([gpuBeforeFallback.basePointCount * 4]);
+			expect(fallback.selectedHourReadbackReasonCounts['visible-fallback']).toBe(1);
+			expect(fallback.baseColorMode).toBe(colorMode);
+			expect(evidence.rangeAtCopy.min).toBeLessThan(evidence.rangeAtCopy.max);
+			// The accepted GPU output is released after fallback. Check the actual CPU legend.
+			const labels = page.locator('.color-legend .label');
+			await expect(labels).toHaveCount(6);
+			await expect(labels.first()).toHaveText(`${evidence.rangeAtCopy.max.toFixed(1)}°C`);
+			await expect(labels.last()).toHaveText(`${evidence.rangeAtCopy.min.toFixed(1)}°C`);
+			await hover(page);
+			await selectTime(page, 'hour', 2);
+			await publication(page, BG, 8, 2);
+			expect((await page.evaluate(() => (window as any).__copyFailureEvidence)).failures).toBe(1);
+		});
+	}
 });

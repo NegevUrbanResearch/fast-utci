@@ -483,9 +483,20 @@ export function getComputeBufferUtciSurfaceLayoutCompatibilityState(
 ): ComputeBufferUtciSurfaceLayoutCompatibilityStateSnapshot | null {
 	const state = mesh?.userData[GPU_NATIVE_SURFACE_STATE_KEY] as
 		| ComputeBufferUtciSurfaceState
+		| GpuNativeUtciSurfaceState
 		| undefined;
 	if (!state) {
 		return null;
+	}
+	if (state.source === 'cpu-uploaded-selected-hour') {
+		return {
+			source: state.source,
+			width: state.width,
+			height: state.height,
+			gridSize: state.gridSize,
+			vertexCount: state.vertexCount,
+			storageCount: 0
+		};
 	}
 
 	return {

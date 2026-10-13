@@ -5,6 +5,11 @@
  */
 
 import * as THREE from 'three';
+import {
+	createActiveCpuUtciSurfaceMesh,
+	updateActiveCpuUtciSurfaceMesh,
+	type ActiveCpuUtciSurfaceMeshOptions
+} from './activeComputeBufferUtciSurfaceMesh';
 import type {
 	Analysis,
 	AnalysisMetadata,
@@ -510,6 +515,17 @@ export function updateUtciSurfaceMesh(mesh: THREE.Mesh, options: UtciSurfaceMesh
 		console.warn('[UTCI] Surface layout changed; recreate the mesh to realign surface assets.');
 		return false;
 	}
+	if (nextLayout.renderTopology === 'active-cells' && resolved.backend === 'gpuNative') {
+		const updated = updateActiveCpuUtciSurfaceMesh(
+			mesh,
+			resolveActiveCpuSurfaceOptions(resolved, nextLayout)
+		);
+		if (updated) {
+			applySurfaceMeshState(mesh, nextLayout, 'gpuNative');
+			incrementSelectedHourTransferCount(mesh);
+		}
+		return updated;
+	}
 
 	assertDenseUtciGridLayout(nextLayout);
 	nextLayout.texture = layout.texture;
@@ -565,6 +581,12 @@ export function disposeUtciSurfaceMesh(mesh: THREE.Mesh | null): void {
 
 function createUtciSurfaceMeshInternal(options: ResolvedUtciSurfaceMeshOptions): THREE.Mesh {
 	const layout = buildUtciGridLayout(options.analysis);
+	if (layout.renderTopology === 'active-cells' && options.backend === 'gpuNative') {
+		const mesh = createActiveCpuUtciSurfaceMesh(resolveActiveCpuSurfaceOptions(options, layout));
+		applySurfaceMeshState(mesh, layout, 'gpuNative');
+		incrementSelectedHourTransferCount(mesh);
+		return mesh;
+	}
 	assertDenseUtciGridLayout(layout);
 	const colors = createColors(
 		options.analysis,
@@ -576,6 +598,29 @@ function createUtciSurfaceMeshInternal(options: ResolvedUtciSurfaceMeshOptions):
 	);
 
 	return getUtciSurfaceBackend(options.backend).createMesh(layout, colors);
+}
+
+function resolveActiveCpuSurfaceOptions(
+	options: ResolvedUtciSurfaceMeshOptions,
+	layout: ActiveCpuUtciSurfaceMeshOptions['layout']
+): ActiveCpuUtciSurfaceMeshOptions {
+	const { analysis, metricType } = options;
+	const values =
+		metricType === 'shading_index'
+			? getShadingIndex(analysis.data)
+			: getUTCIForHour(analysis.data, options.hourIndex);
+	if (!values) {
+		throw new Error('Active UTCI surface requires selected metric values.');
+	}
+	const { utciMin, utciMax } =
+		options.rangeOverride ??
+		getUtciRangeForDisplay(
+			analysis.metadata,
+			options.colorMode,
+			options.hourIndex,
+			options.monthIndex
+		);
+	return { layout, values, metricType, utciRange: { min: utciMin, max: utciMax } };
 }
 
 function resolveUtciSurfaceMeshOptions(

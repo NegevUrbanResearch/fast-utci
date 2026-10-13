@@ -12,7 +12,10 @@ import {
 	type LiveSelectedHourController,
 	type LiveSelectedHourControllerSurfaceDiagnostics
 } from '$lib/compute/selected-hour/liveSelectedHourController';
-import { createEmptyOnDemandDiagnostics } from '$lib/compute/on-demand/onDemandDiagnostics';
+import {
+	createEmptyOnDemandDiagnostics,
+	recordSelectedHourReadbackReason
+} from '$lib/compute/on-demand/onDemandDiagnostics';
 import type { SelectedHourReadbackReason } from '$lib/diagnostics/selectedHourRuntimeContract';
 import { createRenderPublicationDiagnostics } from '$lib/diagnostics/selectedHourRenderPublicationDiagnostics';
 
@@ -826,12 +829,15 @@ describe('liveSelectedHourController', () => {
 
 	it('activates the deferred CPU fallback when render-surface diagnostics report a GPU copy failure', async () => {
 		const gpu = createGpuResidentOutput(11, 11);
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		Object.assign(diagnostics, recordSelectedHourReadbackReason(diagnostics, 'tooltip'));
 		const sessionMock = createSessionMock([
 			async () =>
 				createLiveResult({
 					requestId: 11,
 					timeIndex: 11,
 					analysis: createSelectionAnalysis('gpu-fallback', [30, 31]),
+					diagnostics,
 					gpuResidentOutput: gpu.accepted,
 					renderTransport: 'compute-buffer-selected-hour',
 					sameDeviceForComputeAndRender: true,
@@ -858,6 +864,8 @@ describe('liveSelectedHourController', () => {
 			renderReady: false
 		});
 		expect(controller.getState().acceptedGpuResidentOutput).toBeNull();
+		expect(controller.getState().selectedHourReadbackReasons).toEqual(['tooltip']);
+		expect(controller.getState().selectedHourReadbackReasonCounts).toEqual({ tooltip: 1 });
 		expect(controller.getState().analysis?.metadata.model_file).toBe('gpu-fallback.glb');
 		expect(controller.getState().renderSurfaceDiagnostics.gpuResidentCopyError).toBe('copy failed');
 		controller.releaseAcceptedGpuResidentOutput({
@@ -1004,16 +1012,24 @@ describe('liveSelectedHourController', () => {
 	it('builds the deferred CPU fallback only after a GPU copy failure with geometry-only analysis', async () => {
 		const gpu = createGpuResidentOutput(13, 13);
 		const fallbackAnalysis = createSelectionAnalysis('gpu-lazy-fallback', [32, 33]);
-		const loadCpuFallback = vi.fn(async () => ({
-			analysis: fallbackAnalysis,
-			cpuFallbackValues: new Float32Array([32, 33])
-		}));
+		const diagnostics = createEmptyOnDemandDiagnostics();
+		const loadCpuFallback = vi.fn(async () => {
+			Object.assign(
+				diagnostics,
+				recordSelectedHourReadbackReason(diagnostics, 'visible-fallback')
+			);
+			return {
+				analysis: fallbackAnalysis,
+				cpuFallbackValues: new Float32Array([32, 33])
+			};
+		});
 		const sessionMock = createSessionMock([
 			async () =>
 				createLiveResult({
 					requestId: 13,
 					timeIndex: 13,
 					analysis: createSelectionAnalysis('geometry', []),
+					diagnostics,
 					gpuResidentOutput: gpu.accepted,
 					loadCpuFallback,
 					pendingRenderUpdateStartedAt: 1300,
@@ -1049,7 +1065,9 @@ describe('liveSelectedHourController', () => {
 			loading: false,
 			awaitingGpuSurface: false,
 			ready: true,
-			renderReady: false
+			renderReady: false,
+			selectedHourReadbackReasons: ['visible-fallback'],
+			selectedHourReadbackReasonCounts: { 'visible-fallback': 1 }
 		});
 		controller.releaseAcceptedGpuResidentOutput({
 			controllerIdentity: 'controller',
