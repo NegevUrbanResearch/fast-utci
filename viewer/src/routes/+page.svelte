@@ -343,6 +343,8 @@
 	}
 
 	function handleMainRouteModelLoaded(event: CustomEvent<Group>): void {
+		if (modelMetadataSequence !== analysisLoadSequence) return;
+		modelLoadedSequence = modelMetadataSequence;
 		model = event.detail;
 		modelLoading = false;
 		if (!model) return;
@@ -520,21 +522,32 @@
 			? scenarioSelector.getScenarioName()
 			: "Comparison";
 
+	let analysisLoadSequence = 0;
+	let modelMetadataSequence = 0;
+	let modelLoadedSequence = -1;
+	function captureModelRequest(sequence: number): () => boolean {
+		return () => sequence === analysisLoadSequence;
+	}
+	$: isModelRequestCurrent = captureModelRequest(modelMetadataSequence);
 	async function loadAnalysis(id: string) {
+		const sequence = ++analysisLoadSequence;
 		try {
 			modelLoading = true;
 			setLoading(true);
 			setError(null);
 			setAnalysisId(id);
 			await loadAnalysisData(id, undefined, { metadataOnly: true });
+			if (sequence !== analysisLoadSequence) return;
+			modelMetadataSequence = sequence;
 
-			if (model && $analysisStore) {
+			if (model && modelLoadedSequence === sequence && $analysisStore) {
 				const bounds = calculateModelBounds(model);
 				const center = calculateModelCenter(model);
 				const size = calculateModelSize(model);
 				focusCameraOnModel(center, size);
 			}
 		} catch (error) {
+			if (sequence !== analysisLoadSequence) return;
 			console.error("[ERROR] Failed to load analysis:", error);
 			setError(
 				error instanceof Error
@@ -542,7 +555,7 @@
 					: "Failed to load analysis",
 			);
 		} finally {
-			setLoading(false);
+			if (sequence === analysisLoadSequence) setLoading(false);
 		}
 	}
 
@@ -689,6 +702,7 @@
 	}
 
 	onDestroy(() => {
+		analysisLoadSequence++;
 		if (typeof window !== "undefined") {
 			const win = window as MainRouteDiagnosticsWindow;
 			win.__utciRenderDiagnostics__ = undefined;
@@ -830,6 +844,7 @@
 			bind:utciMesh
 			bind:comparisonRenderer
 			analysis={$analysisStore}
+			{isModelRequestCurrent}
 			{analysisId}
 			dataBasePath={getDataBasePath()}
 			theme={$viewerStore.theme}
@@ -856,7 +871,9 @@
 			onBaseAcceptedGpuResidentOutputRelease={handleBaseAcceptedGpuResidentOutputRelease}
 			onComparisonAcceptedGpuResidentOutputRelease={handleComparisonAcceptedGpuResidentOutputRelease}
 			on:modelLoaded={handleMainRouteModelLoaded}
-			on:layersDiscovered={(event) => setDiscoveredLayers(event.detail)}
+			on:layersDiscovered={(event) => {
+				if (modelMetadataSequence === analysisLoadSequence) setDiscoveredLayers(event.detail);
+			}}
 		/>
 	</svelte:fragment>
 </ViewerShell>
