@@ -20,27 +20,22 @@ function roundToMicrounit(value: number): number {
 	return Math.round(value * 1_000_000);
 }
 
-function fnv1a32Hash(values: readonly number[]): string {
-	let hash = FNV32_OFFSET;
-	for (const value of values) {
-		hash ^= value >>> 0;
-		hash = Math.imul(hash, FNV32_PRIME) >>> 0;
-	}
-	return hash.toString(16).padStart(8, '0');
-}
-
 export function canonicalGridPoints(params: CanonicalGridParams): CanonicalGridResult {
 	const { xValues, zValues, y, ox, oy, oz } = resolveCanonicalGridAxes(params);
-	const values: number[] = [];
+	const numPoints = xValues.length * zValues.length;
+	const points = new Float32Array(numPoints * 3);
+	let offset = 0;
 	for (const x of xValues) {
 		for (const z of zValues) {
-			values.push(x + ox, y + oy, z + oz);
+			points[offset++] = x + ox;
+			points[offset++] = y + oy;
+			points[offset++] = z + oz;
 		}
 	}
 
 	return {
-		points: new Float32Array(values),
-		numPoints: values.length / 3
+		points,
+		numPoints
 	};
 }
 
@@ -75,9 +70,10 @@ export function canonicalGridPointsForActiveIndices(
 
 export function canonicalGridChecksum(params: CanonicalGridParams): string {
 	const { points } = canonicalGridPoints(params);
-	const quantized = new Array<number>(points.length);
-	for (let i = 0; i < points.length; i++) {
-		quantized[i] = roundToMicrounit(points[i]);
+	let hash = FNV32_OFFSET;
+	for (const point of points) {
+		hash ^= roundToMicrounit(point) >>> 0;
+		hash = Math.imul(hash, FNV32_PRIME) >>> 0;
 	}
-	return fnv1a32Hash(quantized);
+	return hash.toString(16).padStart(8, '0');
 }
