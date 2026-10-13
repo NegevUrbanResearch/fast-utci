@@ -2,12 +2,14 @@
 
 Date: 2026-05-30
 
-This note is refreshed from the current JSON artifact only:
+This historical note records the May 2026 measurement protocol and results. For the October 2026 matched comparison, see [WebGPU quality results](../quality/2026-10-13-webgpu-quality-results.md).
+
+The original measurement artifact is preserved at:
 [data/performance-results/main-route-cold-start-waterfall.json](../../data/performance-results/main-route-cold-start-waterfall.json).
 
 The collector measures the product route `/` with `utciRender=auto` and `utciRenderDiagnostics=1`. It records initial first visible publication and the first post-visible scrub on the accessible `Select analysis hour` slider. It does not use `/debug`, parity, Python reference data, or `.bin` comparison.
 
-The clean rerun passed after the earlier overlapped verification failed, so this artifact is current as of 2026-05-30:
+The clean rerun passed after the earlier overlapped verification failed:
 
 ```powershell
 cd viewer
