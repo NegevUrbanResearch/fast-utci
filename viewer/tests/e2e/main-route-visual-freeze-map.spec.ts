@@ -106,21 +106,21 @@ const CASES: AnalysisCase[] = [
 		caseId: 'ness-tziona-0_5m',
 		projectLabel: 'Ness-Tziona',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|utci|7|0',
 		gridResolutionMeters: 0.5
 	},
 	{
 		caseId: 'ben-gurion-0_5m',
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',
-		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0',
+		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0',
 		gridResolutionMeters: 0.5
 	},
 	{
 		caseId: 'ness-tziona-2m',
 		projectLabel: 'Ness-Tziona',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0',
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|utci|7|0',
 		gridResolutionMeters: 2
 	}
 ];

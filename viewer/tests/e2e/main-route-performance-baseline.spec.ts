@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const REPO_ROOT = resolve(process.cwd(), process.cwd().endsWith('viewer') ? '..' : '.');
 const RESULTS_DIR = resolve(REPO_ROOT, 'data/performance-results');
 const ARTIFACT_PATH = resolve(RESULTS_DIR, 'main-route-selected-hour-current-head.json');
-const COLLECTED_ON = '2026-05-15';
+const COLLECTED_ON = new Date().toISOString().slice(0, 10);
 const SOURCE_ROUTE = '/';
 
 type AnalysisCase = {
@@ -69,13 +69,13 @@ const CASES: AnalysisCase[] = [
 		projectLabel: 'Ben-Gurion',
 		analysisId: 'Ben-Gurion/20250815_grid_2m_fullday',
 		metadataPath: 'data/analyses/Ben-Gurion/20250815_grid_2m_fullday.json',
-		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|7|0'
+		expectedSelectionKey: 'Ben-Gurion/20250815_grid_2m_fullday|utci|7|0'
 	},
 	{
 		projectLabel: 'Ness-Tziona',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		metadataPath: 'data/analyses/Ness-Tziona/exploded/nes_tziona_unblock_2.json',
-		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|7|0'
+		expectedSelectionKey: 'Ness-Tziona/exploded/nes_tziona_unblock_2|utci|7|0'
 	}
 ];
 

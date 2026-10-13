@@ -39,14 +39,14 @@ const CASES: CollectorCase[] = [
 		entry: 'direct-nz',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		gridResolutionMeters: 0.5,
-		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|7|0`
+		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|utci|7|0`
 	},
 	{
 		caseId: 'bg-then-nz-0_5m-default-chunked-2048',
 		entry: 'bg-then-nz',
 		analysisId: 'Ness-Tziona/exploded/nes_tziona_unblock_2',
 		gridResolutionMeters: 0.5,
-		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|7|0`
+		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|utci|7|0`
 	},
 	{
 		caseId: 'direct-nz-0_5m-chunked-2048',
@@ -57,7 +57,7 @@ const CASES: CollectorCase[] = [
 			utciExposureSchedule: 'chunked',
 			utciExposureMaxWorkgroupsPerSlice: '2048'
 		},
-		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|7|0`
+		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|utci|7|0`
 	},
 	{
 		caseId: 'bg-then-nz-0_5m-chunked-2048',
@@ -68,7 +68,7 @@ const CASES: CollectorCase[] = [
 			utciExposureSchedule: 'chunked',
 			utciExposureMaxWorkgroupsPerSlice: '2048'
 		},
-		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|7|0`
+		expectedInitialSelectionKey: `${NZ_ANALYSIS_ID}|utci|7|0`
 	}
 ];
 
@@ -80,7 +80,7 @@ function formatLocalDate(date: Date) {
 }
 
 function selectionKey(analysisId: string, monthIndex: number, hourIndex: number) {
-	return `${analysisId}|${monthIndex}|${hourIndex}`;
+	return `${analysisId}|utci|${monthIndex}|${hourIndex}`;
 }
 
 function buildMainRouteUrl(
