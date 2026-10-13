@@ -154,6 +154,7 @@ export interface RunUtciForTimeIndexParams {
 	numHours: number;
 	numMonths: number;
 	format: OnDemandOutputFormat;
+	signal?: AbortSignal;
 }
 
 export interface RunUtciRangeSummaryForTimeIndexParams extends RunUtciForTimeIndexParams {

@@ -436,6 +436,30 @@ describe('selected-hour live session', () => {
 		vi.stubGlobal('Worker', vi.fn());
 	});
 
+	it.each(['dispatch-abort', 'debug', 'summary', 'fallback', 'readback-abort'])('releases UTCI output when %s prevents publication', async (failure) => {
+		const abort = new AbortController();
+		const session = await prepareSelectedHourLiveSession({ analysisId: 'analysis-a', base: createBaseAnalysis(), model: createEmptyModel(), epwUrl: '/weather.epw', signal: abort.signal, preferredDevice: mockState.rendererDevice });
+		if (failure === 'dispatch-abort') mockState.constructors.at(-1).runUtciForTimeIndex.mockImplementationOnce(async () => { abort.abort(); return { gpuBuffer: mockState.gpuBuffer }; });
+		if (failure === 'debug' || failure === 'fallback') mockState.pipeline.readOnDemandUtciForDebug.mockRejectedValueOnce(new Error('readback failed'));
+		if (failure === 'summary') mockState.pipeline.runUtciRangeSummaryForOutput.mockRejectedValueOnce(new Error('summary failed'));
+		if (failure === 'readback-abort') mockState.pipeline.readOnDemandUtciForDebug.mockImplementationOnce(async () => { abort.abort(); return new Float32Array([11, 29]); });
+		await expect(session.runSelectedHour({ monthIndex: 0, hourIndex: 12, timeIndex: 12, colorMode: 'discrete', preferGpuResident: failure !== 'fallback', rendererDevice: mockState.rendererDevice })).rejects.toThrow();
+		expect(mockState.gpuBuffer.destroy).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([false, true])('releases compatibility snapshots when readback rejection is %s', async (rejectReadback) => {
+		mockState.pipeline.runUtciRangeSummaryForTimeIndex = undefined;
+		const session = await prepareSelectedHourLiveSession({ analysisId: 'analysis-a', base: createFullDayBaseAnalysis(), model: createEmptyModel(), epwUrl: '/weather.epw', signal: new AbortController().signal, preferredDevice: mockState.rendererDevice });
+		const buffers: any[] = [];
+		mockState.constructors.at(-1).runUtciForTimeIndex.mockImplementation(async () => { const buffer = { destroy: vi.fn() }; buffers.push(buffer); return { gpuBuffer: buffer }; });
+		if (rejectReadback) mockState.pipeline.readOnDemandUtciForDebug.mockResolvedValueOnce(new Float32Array([11, 29])).mockRejectedValueOnce(new Error('compatibility readback failed'));
+		const pending = session.runSelectedHour({ monthIndex: 0, hourIndex: 12, timeIndex: 12, colorMode: 'normalized', preferGpuResident: true, rendererDevice: mockState.rendererDevice });
+		if (rejectReadback) await expect(pending).rejects.toThrow('compatibility readback failed');
+		else { const result = await pending; expect(buffers[0].destroy).not.toHaveBeenCalled(); disposeSelectedHourGpuResidentOutput(result.gpuResidentOutput); }
+		expect(buffers.length).toBeGreaterThan(1);
+		for (const buffer of buffers) expect(buffer.destroy).toHaveBeenCalledTimes(1);
+	});
+
 	it('propagates live session lifecycle timings onto selected-hour runtime diagnostics', async () => {
 		const session = await prepareSelectedHourLiveSession({
 			analysisId: 'analysis-a',

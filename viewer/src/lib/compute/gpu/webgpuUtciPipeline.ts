@@ -1000,6 +1000,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			size: values.byteLength,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		});
+		transientBuffers.push(buffer);
 		this.queue.writeBuffer(
 			buffer,
 			0,
@@ -1007,7 +1008,6 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			values.byteOffset,
 			values.byteLength
 		);
-		transientBuffers.push(buffer);
 		return buffer;
 	}
 
@@ -1941,6 +1941,7 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 	}
 
 	async runUtciForTimeIndex(params: RunUtciForTimeIndexParams): Promise<OnDemandUtciOutput> {
+		this.ensureNotAborted(params.signal);
 		if (!this.solarExposureBuffer) {
 			throw new Error(
 				'WebGPU UTCI pipeline: solar exposure buffer not available (run runAll or runExposurePrecompute first)'
@@ -1982,7 +1983,9 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 		const skyExposureBuffer = this.skyExposureBuffer;
 		const sunAltitudesBuffer = this.sunAltitudesBuffer;
 		const weatherBuffer = await this.ensureWeatherBuffer();
+		this.ensureNotAborted(params.signal);
 		const onDemandPipeline = await this.ensureOnDemandPipeline();
+		this.ensureNotAborted(params.signal);
 		const outputBytes = numPoints * 4;
 		if (!this.onDemandOutputBuffer || this.onDemandOutputBuffer.size !== outputBytes) {
 			this.onDemandOutputBuffer?.destroy();
@@ -1997,89 +2000,97 @@ class WebgpuUtciComputePipeline implements UTCIComputePipeline {
 			size: outputBytes,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
 		});
-		const encoder = this.device.createCommandEncoder();
-		const pass = encoder.beginComputePass();
-		pass.setPipeline(onDemandPipeline);
 		const onDemandUniformBuffers: GPUBuffer[] = [];
-		for (const chunk of createPointDispatchChunks(numPoints, 64)) {
-			const onDemandParamsBuffer = this.createUintParamsBuffer(
-				new Uint32Array([
-					numPoints,
-					totalTimeSteps,
-					numHours,
-					timeIndex,
-					0,
-					chunk.pointOffset,
-					0,
-					0
-				]),
-				onDemandUniformBuffers
+		let returnedOwnedOutput = false;
+		try {
+			const encoder = this.device.createCommandEncoder();
+			const pass = encoder.beginComputePass();
+			pass.setPipeline(onDemandPipeline);
+			for (const chunk of createPointDispatchChunks(numPoints, 64)) {
+				const onDemandParamsBuffer = this.createUintParamsBuffer(
+					new Uint32Array([
+						numPoints,
+						totalTimeSteps,
+						numHours,
+						timeIndex,
+						0,
+						chunk.pointOffset,
+						0,
+						0
+					]),
+					onDemandUniformBuffers
+				);
+				const bindGroup = this.device.createBindGroup({
+					layout: onDemandPipeline.getBindGroupLayout(0),
+					entries: [
+						{ binding: 0, resource: { buffer: solarExposureBuffer } },
+						{ binding: 1, resource: { buffer: skyExposureBuffer } },
+						{ binding: 2, resource: { buffer: weatherBuffer } },
+						{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
+						{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
+						{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
+					]
+				});
+				pass.setBindGroup(0, bindGroup);
+				pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
+			}
+			pass.end();
+			encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
+
+			const oneHourDispatchStart = performance.now();
+			this.queue.submit([encoder.finish()]);
+			await this.queue.onSubmittedWorkDone();
+			this.ensureNotAborted(params.signal);
+			const nextTimeIndices = this.onDemandDiagnostics.timeIndices.includes(timeIndex)
+				? this.onDemandDiagnostics.timeIndices
+				: [...this.onDemandDiagnostics.timeIndices, timeIndex];
+			this.onDemandDiagnostics = recordOnDemandTiming(
+				mergeTrackedGpuAllocationBytes(
+					{
+						...this.onDemandDiagnostics,
+						path: 'exposure-only-f32',
+						timeIndices: nextTimeIndices,
+						usedRunAllForSelectedHour: false,
+						usedExposureOnlyPrecompute: true,
+						allHoursUtciBytesAllocated: 0,
+						allHoursMrtBytesAllocated: 0,
+						oneHourOutputBytes: outputBytes
+					},
+					{
+						selectedHourOutputBytes: outputBytes,
+						allHoursOutputBytes: 0
+					}
+				),
+				'oneHourDispatchMs',
+				performance.now() - oneHourDispatchStart
 			);
-			const bindGroup = this.device.createBindGroup({
-				layout: onDemandPipeline.getBindGroupLayout(0),
-				entries: [
-					{ binding: 0, resource: { buffer: solarExposureBuffer } },
-					{ binding: 1, resource: { buffer: skyExposureBuffer } },
-					{ binding: 2, resource: { buffer: weatherBuffer } },
-					{ binding: 3, resource: { buffer: onDemandOutputBuffer } },
-					{ binding: 4, resource: { buffer: onDemandParamsBuffer } },
-					{ binding: 5, resource: { buffer: sunAltitudesBuffer } }
-				]
-			});
-			pass.setBindGroup(0, bindGroup);
-			pass.dispatchWorkgroups(chunk.workgroupsX, 1, 1);
-		}
-		pass.end();
-		encoder.copyBufferToBuffer(onDemandOutputBuffer, 0, snapshotBuffer, 0, outputBytes);
 
-		const oneHourDispatchStart = performance.now();
-		this.queue.submit([encoder.finish()]);
-		await this.queue.onSubmittedWorkDone();
-		this.destroyTransientUniformBuffers(onDemandUniformBuffers);
-		const nextTimeIndices = this.onDemandDiagnostics.timeIndices.includes(timeIndex)
-			? this.onDemandDiagnostics.timeIndices
-			: [...this.onDemandDiagnostics.timeIndices, timeIndex];
-		this.onDemandDiagnostics = recordOnDemandTiming(
-			mergeTrackedGpuAllocationBytes(
-				{
-					...this.onDemandDiagnostics,
-					path: 'exposure-only-f32',
-					timeIndices: nextTimeIndices,
-					usedRunAllForSelectedHour: false,
-					usedExposureOnlyPrecompute: true,
-					allHoursUtciBytesAllocated: 0,
-					allHoursMrtBytesAllocated: 0,
-					oneHourOutputBytes: outputBytes
-				},
-				{
-					selectedHourOutputBytes: outputBytes,
-					allHoursOutputBytes: 0
-				}
-			),
-			'oneHourDispatchMs',
-			performance.now() - oneHourDispatchStart
-		);
-
-		return {
-			format,
-			metricType: 'utci',
-			valueLayout: 'one-f32-per-point',
-			period: { kind: 'time-index', index: timeIndex },
-			numPoints,
-			timeIndex,
-			gpuBuffer: snapshotBuffer,
-			gpuOutputHandle: createSelectedHourOutputHandle({
-				buffer: snapshotBuffer,
-				byteLength: outputBytes,
-				source: 'webgpu-on-demand-snapshot',
+			const output: OnDemandUtciOutput = {
+				format,
 				metricType: 'utci',
 				valueLayout: 'one-f32-per-point',
 				period: { kind: 'time-index', index: timeIndex },
-				timeIndex
-			}),
-			outputBytes,
-			debugLabel: 'webgpu-on-demand-f32-utci'
-		};
+				numPoints,
+				timeIndex,
+				gpuBuffer: snapshotBuffer,
+				gpuOutputHandle: createSelectedHourOutputHandle({
+					buffer: snapshotBuffer,
+					byteLength: outputBytes,
+					source: 'webgpu-on-demand-snapshot',
+					metricType: 'utci',
+					valueLayout: 'one-f32-per-point',
+					period: { kind: 'time-index', index: timeIndex },
+					timeIndex
+				}),
+				outputBytes,
+				debugLabel: 'webgpu-on-demand-f32-utci'
+			};
+			returnedOwnedOutput = true;
+			return output;
+		} finally {
+			if (!returnedOwnedOutput) snapshotBuffer.destroy();
+			this.destroyTransientUniformBuffers(onDemandUniformBuffers);
+		}
 	}
 
 	async runShadingIndex(params: RunShadingIndexParams): Promise<F32MetricOutput> {
