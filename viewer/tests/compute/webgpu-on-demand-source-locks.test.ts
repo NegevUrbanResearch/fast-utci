@@ -17,6 +17,10 @@ describe('WebGPU on-demand source guards', () => {
 		resolve(testDir, '../../src/lib/compute/gpu/shaders/mrt_utci_on_demand.wgsl'),
 		'utf8'
 	);
+	const surfaceCompatibilitySource = readFileSync(
+		resolve(testDir, '../../src/lib/services/gpuUtciSurfaceLayoutCompatibility.ts'),
+		'utf8'
+	);
 
 	function getSection(startMarker: string, endMarker: string): string {
 		const start = source.indexOf(startMarker);
@@ -203,9 +207,10 @@ describe('WebGPU on-demand source guards', () => {
 	});
 
 	it('keeps the UTCI render bridge honest about cpu-uploaded versus compute-buffer sources', () => {
-		expect(renderBridgeSource.includes('export type GpuNativeUtciSurfaceSource')).toBe(true);
-		expect(renderBridgeSource.includes("'cpu-uploaded-selected-hour'")).toBe(true);
-		expect(renderBridgeSource.includes("'compute-buffer-selected-hour'")).toBe(true);
+		expect(surfaceCompatibilitySource.includes('export type GpuNativeUtciSurfaceSource')).toBe(true);
+		expect(surfaceCompatibilitySource.includes("'cpu-uploaded-selected-hour'")).toBe(true);
+		expect(surfaceCompatibilitySource.includes("'compute-buffer-selected-hour'")).toBe(true);
+		expect(renderBridgeSource.includes("from './gpuUtciSurfaceLayoutCompatibility'")).toBe(true);
 		expect(renderBridgeSource.includes("source: 'cpu-uploaded-selected-hour'")).toBe(true);
 		expect(renderBridgeSource.includes("source: 'compute-buffer-selected-hour'")).toBe(true);
 		expect(renderBridgeSource.includes('export function createComputeBufferUtciSurfaceMesh')).toBe(
@@ -219,14 +224,16 @@ describe('WebGPU on-demand source guards', () => {
 	});
 
 	it('derives compute-buffer cell lookup from local surface coordinates', () => {
-		const colorNodeBody = extractFunctionBody(renderBridgeSource, 'createUtciColorNode');
+		const colorNodeBody = extractFunctionBody(renderBridgeSource, 'createDenseUtciColorNode');
 		expect(colorNodeBody).toContain('positionLocal.x');
 		expect(colorNodeBody).toContain('positionLocal.z');
 		expect(colorNodeBody).toContain('.floor()');
 		expect(colorNodeBody).toContain('clamp(');
 		expect(colorNodeBody).toContain('row.mul(uint(layout.width)).add(column)');
 		expect(colorNodeBody).toContain('cellToPointStorage.element(cellIndex)');
-		expect(colorNodeBody).toContain('utciStorage.element(pointIndex)');
+		expect(colorNodeBody).toContain('pointIndex.lessThan(uint(layout.numPositions))');
+		expect(colorNodeBody).toContain('hasPoint.select(pointIndex, uint(0))');
+		expect(colorNodeBody).toContain('utciStorage.element(safePointIndex)');
 		expect(colorNodeBody).not.toContain(
 			'vertexIndex.div(uint(SURFACE_VERTICES_PER_CELL))'
 		);
@@ -236,8 +243,8 @@ describe('WebGPU on-demand source guards', () => {
 			renderBridgeSource,
 			'createComputeBufferUtciSurfaceMesh'
 		);
-		expect(computeBufferBody).toContain('createUtciColorNode(');
-		expect(computeBufferBody).toMatch(/createUtciColorNode\(\s*options\.layout,/);
+		expect(computeBufferBody).toContain('createDenseUtciColorNode(');
+		expect(computeBufferBody).toMatch(/createDenseUtciColorNode\(\s*options\.layout,/);
 	});
 
 	it('keeps compute-buffer indexed grid bounds analytic', () => {

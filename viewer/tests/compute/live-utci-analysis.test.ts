@@ -364,7 +364,19 @@ describe('selected-hour live UTCI helpers', () => {
 			period: { kind: 'month-index', index: 2, startTimeIndex: 48, timeCount: 24 },
 			outputBytes: 12
 		});
-		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBeUndefined();
+		expect((analysis.data as any).liveShadingIndexOutput.gpuOutputHandle).toBe(shadingOutput.gpuOutputHandle);
+		for (const gpuOutputHandle of [
+			undefined,
+			{ ...shadingOutput.gpuOutputHandle!, disposed: true },
+			{ ...shadingOutput.gpuOutputHandle!, ownerId: 'different-owner' }
+		]) {
+			expect(() => buildSelectedHourLiveShadingAnalysis({
+				base,
+				monthIndex: 2,
+				timeIndex: 59,
+				shadingOutput: { ...shadingOutput, gpuOutputHandle }
+			})).toThrow(/authoritative shading index output/i);
+		}
 		expect((analysis.data as any).selectedMonthIndex).toBe(2);
 		expect((analysis.data as any).selectedTimeIndex).toBe(59);
 	});

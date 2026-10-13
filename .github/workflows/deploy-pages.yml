@@ -28,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: viewer/package-lock.json
       
@@ -36,12 +36,14 @@ jobs:
         working-directory: viewer
         run: npm ci
       
-      # Temporarily disabled due to vite-plugin-svelte v6 incompatibility with vitest's embedded Vite
-      # TODO: Re-enable after fixing vitest configuration or updating dependencies
-      # - name: Run tests
-      #   working-directory: viewer
-      #   run: npm test
-      
+      - name: Typecheck viewer
+        working-directory: viewer
+        run: npm run check
+
+      - name: Run unit tests
+        working-directory: viewer
+        run: npm run test:unit
+
       - name: Build viewer
         working-directory: viewer
         run: npm run build
